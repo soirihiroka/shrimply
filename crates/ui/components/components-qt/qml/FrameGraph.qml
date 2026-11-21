@@ -7,6 +7,9 @@ FocusScope {
     id: root
     signal togglePlayback()
     signal editFinished()
+    signal editStarted()
+    signal editCancelled()
+    signal historyRequested(bool redo)
     signal playheadChanged(int component, var numerator, var denominator)
     signal keysChanged(int component, var times, var values)
     signal keysMoved(int component, var oldTimes, var times, var values)
@@ -91,7 +94,7 @@ FocusScope {
                 icon.color: palette.buttonText
                 display: AbstractButton.IconOnly
                 ToolTip.visible: hovered
-                ToolTip.text: "Previous keyframe"
+                ToolTip.text: graph.previousLabel
                 onClicked: {
                     graph.previousKey()
                     graph.forceActiveFocus()
@@ -104,9 +107,7 @@ FocusScope {
                 icon.color: palette.buttonText
                 display: AbstractButton.IconOnly
                 ToolTip.visible: hovered
-                ToolTip.text: graph.keyAtPlayhead
-                              ? "Delete keyframe at playhead"
-                              : "Add keyframe at playhead"
+                ToolTip.text: graph.toggleLabel
                 onClicked: {
                     graph.toggleKey()
                     graph.forceActiveFocus()
@@ -118,7 +119,7 @@ FocusScope {
                 icon.color: palette.buttonText
                 display: AbstractButton.IconOnly
                 ToolTip.visible: hovered
-                ToolTip.text: "Next keyframe"
+                ToolTip.text: graph.nextLabel
                 onClicked: {
                     graph.nextKey()
                     graph.forceActiveFocus()
@@ -134,6 +135,9 @@ FocusScope {
             mirrorVertically: true
             onTogglePlayback: root.togglePlayback()
             onEditFinished: root.editFinished()
+            onEditStarted: root.editStarted()
+            onEditCancelled: root.editCancelled()
+            onHistoryRequested: function(redo) { root.historyRequested(redo) }
             onPlayheadChanged: function(component, numerator, denominator) {
                 root.playheadChanged(component, numerator, denominator)
             }
@@ -158,21 +162,26 @@ FocusScope {
             onPasteRequested: function(component, numerator, denominator) {
                 root.pasteRequested(component, numerator, denominator)
             }
-            onTextInterpolationRequested: function(component, ownerId, x, y) {
-                root.textInterpolationRequested(component, ownerId, x, y)
+            onTextInterpolationRequested: function(component, ownerId, position, touch) {
+                root.textInterpolationRequested(component, ownerId, position.x, position.y)
                 if (root.textInterpolationLabels.length === 0)
                     return
-                textInterpolationAnchor.x = x
-                textInterpolationAnchor.y = controls.height + y
+                textInterpolationAnchor.x = position.x
+                textInterpolationAnchor.y = controls.height + position.y
                 textInterpolationMenu.selectedIndex = root.textInterpolationIndexForOwner
                     ? root.textInterpolationIndexForOwner(ownerId) : -1
-                textInterpolationMenu.popup(textInterpolationAnchor, 0, 0)
+                textInterpolationMenu.presentForInput(textInterpolationAnchor, touch)
             }
-            onInterpolationRequested: function(component, ownerId, index, x, y) {
-                interpolationAnchor.x = x
-                interpolationAnchor.y = controls.height + y
+            onContextMenuRequested: function(position, touch) {
+                contextAnchor.x = position.x
+                contextAnchor.y = controls.height + position.y
+                contextMenu.presentForInput(contextAnchor, touch)
+            }
+            onInterpolationRequested: function(component, ownerId, index, position, touch) {
+                interpolationAnchor.x = position.x
+                interpolationAnchor.y = controls.height + position.y
                 interpolationMenu.selectedIndex = index
-                interpolationMenu.popup(interpolationAnchor, 0, 0)
+                interpolationMenu.presentForInput(interpolationAnchor, touch)
             }
             onInterpolationChanged: function(component, ownerId, index) {
                 root.interpolationChanged(component, ownerId, index)
@@ -208,6 +217,10 @@ FocusScope {
                 preventStealing: true
 
                 onPressed: function(mouse) {
+                    if (mouse.source === Qt.MouseEventSynthesizedByQt) {
+                        mouse.accepted = false
+                        return
+                    }
                     mouse.accepted = true
                     graph.forceActiveFocus()
                     const button = mouse.button === Qt.LeftButton ? 0
@@ -246,6 +259,21 @@ FocusScope {
     }
 
     Item {
+        id: contextAnchor
+        width: 1
+        height: 1
+    }
+
+    SearchMenu {
+        id: contextMenu
+        searchEnabled: false
+        preferredWidth: 280
+        labels: graph.contextActionLabels()
+        onActivated: function(index) { graph.activateContextAction(index) }
+        onClosed: graph.forceActiveFocus(Qt.PopupFocusReason)
+    }
+
+    Item {
         id: interpolationAnchor
         width: 1
         height: 1
@@ -259,7 +287,7 @@ FocusScope {
 
     SearchMenu {
         id: interpolationMenu
-        width: 280
+        preferredWidth: 280
         labels: root.interpolationLabels
         placeholderText: ComponentTranslations.text("Search interpolations")
         minimumListHeight: 180
@@ -270,7 +298,7 @@ FocusScope {
 
     SearchMenu {
         id: textInterpolationMenu
-        width: 280
+        preferredWidth: 280
         labels: root.textInterpolationLabels
         tooltips: root.textInterpolationTooltips
         placeholderText: ComponentTranslations.text("Search interpolations")

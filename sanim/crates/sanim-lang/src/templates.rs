@@ -28,7 +28,7 @@ pub(crate) fn register(output: &mut Vec<Builtin>) {
                 required: true,
             }],
             result,
-            schedule: false,
+            state_effect: false,
             timing: Default::default(),
             content: Default::default(),
             execute: Execution::Access(execute),

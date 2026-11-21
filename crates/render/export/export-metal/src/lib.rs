@@ -79,6 +79,8 @@ where
         container: settings.container,
         fps: settings.fps,
         background_alpha: settings.background_alpha,
+        rate_control: core::ExportRateControl::VariableBitrate,
+        constant_qp: 0,
         bitrate_kbps: settings.bitrate_kbps,
         keyframe_interval_seconds: settings.keyframe_interval_seconds,
         b_frames: settings.b_frames,

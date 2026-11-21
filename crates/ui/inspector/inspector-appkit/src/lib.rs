@@ -461,7 +461,7 @@ impl State {
                     if result.is_ok() {
                         context.focus.toggle(&context.target, &action, requested);
                     }
-                    context.refresh(result);
+                    context.refresh(result.map(|_| ()));
                     accepted
                 },
                 mtm,

@@ -86,17 +86,13 @@ pub(in crate::scene::pointer) fn begin_pointer_action(
         debug_assert_eq!(action, TrackLabelAction::Select);
         runtime.pressed_track_selection = Some(key);
         DragMode::None
-    } else if x < timeline_x() || x > timeline_x() + timeline_width {
+    } else if x < timeline_x(runtime.view) || x > timeline_x(runtime.view) + timeline_width {
         DragMode::None
-    } else if y < RULER_HEIGHT && x >= timeline_x() && x <= timeline_x() + timeline_width {
-        let position = Time::from_seconds_f64(
-            x_to_time(
-                x,
-                runtime.view.scroll_seconds,
-                runtime.view.seconds_per_pixel,
-            )
-            .max(0.0),
-        );
+    } else if y < RULER_HEIGHT
+        && x >= timeline_x(runtime.view)
+        && x <= timeline_x(runtime.view) + timeline_width
+    {
+        let position = Time::from_seconds_f64(x_to_time(x, runtime.view).max(0.0));
         let position = runtime.snap_repository.snap(position).unwrap_or(position);
         player_state::set_scrubbing(player_state, true);
         runtime.pending_seek = Some(position);
@@ -119,7 +115,7 @@ pub(in crate::scene::pointer) fn begin_pointer_action(
         crate::folded_sequence::hit_projected_item(project, runtime.view, x, y)
     {
         let (item_x, item_width) =
-            crate::drawing::item_rect(hit.start, hit.end, timeline_x(), runtime.view);
+            crate::drawing::item_rect(hit.start, hit.end, timeline_x(runtime.view), runtime.view);
         let drag_kind = if x <= item_x + ITEM_RESIZE_HANDLE_WIDTH {
             crate::folded_sequence::FoldedDragKind::ResizeStart
         } else if x >= item_x + item_width - ITEM_RESIZE_HANDLE_WIDTH {
@@ -158,11 +154,7 @@ pub(in crate::scene::pointer) fn begin_pointer_action(
                     project,
                     hit,
                     drag_kind,
-                    x_to_time(
-                        x,
-                        runtime.view.scroll_seconds,
-                        runtime.view.seconds_per_pixel,
-                    ),
+                    x_to_time(x, runtime.view),
                     &selection_state::selected_item_addresses(selection_state, project),
                 );
                 runtime.pending_pause_playback = true;
@@ -271,14 +263,7 @@ pub(in crate::scene::pointer) fn begin_pointer_action(
         if runtime.suppress_double_click_selection {
             DragMode::None
         } else {
-            let time = Time::from_seconds_f64(
-                x_to_time(
-                    x,
-                    runtime.view.scroll_seconds,
-                    runtime.view.seconds_per_pixel,
-                )
-                .max(0.0),
-            );
+            let time = Time::from_seconds_f64(x_to_time(x, runtime.view).max(0.0));
             let time = runtime.snap_repository.snap(time).unwrap_or(time);
             let y = content_y(runtime.view, y);
             shrimply_process_reporting::crash::set_context(format!(

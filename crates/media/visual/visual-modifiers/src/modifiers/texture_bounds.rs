@@ -4,12 +4,14 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use super::{KeyframeSpan, ModifierModel, combine, ensure_timeline_value_ids, timeline_value_span};
+#[cfg(feature = "preview")]
 use shrimply_preview_provider_skia::{
     CursorUpdate, PointerEvent, PreviewBuilder, PreviewContext, PreviewEditOutcome,
     PreviewEditSink, PreviewProvider, PreviewRefresh, PreviewResponse, PreviewTarget, Rect,
 };
 use shrimply_property_model::{TextureAddressMode, VisualEdges, timeline_value::*};
 
+#[cfg(feature = "preview")]
 use super::preview::{self, HANDLES, Handle};
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -77,6 +79,7 @@ impl ModifierModel for TextureBoundsModifier {
 }
 
 #[derive(Clone)]
+#[cfg(feature = "preview")]
 struct TextureBoundsPreview {
     target: PreviewTarget,
     snapshot: TextureBoundsModifier,
@@ -89,6 +92,7 @@ struct TextureBoundsPreview {
 }
 
 #[derive(Clone, Copy)]
+#[cfg(feature = "preview")]
 struct BoundsDrag {
     map: glam::Mat3,
     size: glam::Vec2,
@@ -97,6 +101,7 @@ struct BoundsDrag {
 }
 
 impl TextureBoundsModifier {
+    #[cfg(feature = "preview")]
     pub(crate) fn preview_provider(
         &self,
         target: PreviewTarget,
@@ -129,6 +134,7 @@ impl TextureBoundsModifier {
     }
 }
 
+#[cfg(feature = "preview")]
 impl TextureBoundsPreview {
     fn rect(&self) -> Rect {
         Rect {
@@ -138,6 +144,7 @@ impl TextureBoundsPreview {
     }
 }
 
+#[cfg(feature = "preview")]
 impl PreviewProvider for TextureBoundsPreview {
     fn on_draw(
         &mut self,
@@ -245,6 +252,7 @@ impl PreviewProvider for TextureBoundsPreview {
     }
 }
 
+#[cfg(feature = "preview")]
 fn bounds_edit(changed: bool, commit: bool) -> PreviewResponse {
     if !changed {
         return PreviewResponse::handled();
@@ -257,6 +265,7 @@ fn bounds_edit(changed: bool, commit: bool) -> PreviewResponse {
     })
 }
 
+#[cfg(feature = "preview")]
 fn update_bounds(
     modifier: &mut TextureBoundsModifier,
     drag: &BoundsDrag,

@@ -7,7 +7,7 @@ fn prepare(text: &str) -> Prepared {
 }
 fn prepare_in(text: &str, width: u32, height: u32, rate: Fraction) -> Prepared {
     let mut files = MemorySources::default();
-    files.insert("main.sanim", text);
+    files.insert("main.sanim", format!("{}\nAnimation()", text));
     Engine::new(sanim_core::Viewport {
         width,
         height,
@@ -21,19 +21,19 @@ fn prepare_in(text: &str, width: u32, height: u32, rate: Fraction) -> Prepared {
 #[test]
 fn direct_seek_has_no_playback_history() {
     let p = prepare(
-        "let marker = Circle(id= \"marker\", position= Vec2(-40%, 0%))\nMoveTo(marker, Vec2(40%, 0%), duration=2s, ease=\"linear\")\n",
+        "let marker = Box(id=\"marker\", position=[-40%, 0%], width=2*(32pt), height=2*(32pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nmarker.move_to([40%, 0%], duration=2s, ease=\"linear\")\n",
     );
     let later = p.animation.sample(Fraction::from(2)).unwrap();
     let middle = p.animation.sample(Fraction::from(1)).unwrap();
     let first = p.animation.sample(Fraction::from(0)).unwrap();
-    assert_eq!(middle[0].position.values[0], 0.0);
+    assert!(middle[0].position.values[0].abs() < f64::EPSILON);
     assert!(first[0].position.values[0] < later[0].position.values[0]);
     assert_eq!(later, p.animation.sample(Fraction::from(2)).unwrap());
 }
 #[test]
 fn final_values_hold_past_motion_end() {
     let p = prepare(
-        "let marker = Circle(id= \"marker\", position= Vec2(-40%, 0%))\nMoveTo(marker, Vec2(40%, 0%), duration=1s, ease=\"linear\")\nwait(2s)\n",
+        "let marker = Box(id=\"marker\", position=[-40%, 0%], width=2*(32pt), height=2*(32pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nmarker.move_to([40%, 0%], duration=1s, ease=\"linear\")\nwait(2s)\n",
     );
     assert_eq!(
         p.animation.sample(Fraction::from(2)).unwrap()[0]
@@ -45,14 +45,16 @@ fn final_values_hold_past_motion_end() {
 #[test]
 fn multiple_tracks_run_together() {
     let p = prepare(
-        "let marker = Circle(id= \"marker\")\nbackground { FadeIn(marker, duration=1s, ease=\"linear\") }; MoveTo(marker, Vec2(40%, 0%), duration=1s, ease=\"linear\")\n",
+        "let marker = Box(id=\"marker\", width=2*(32pt), height=2*(32pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\n<Animation absolute flow=\"sequence\">{marker.fade_in(duration=1s, ease=\"linear\") }</Animation>; marker.move_to([40%, 0%], duration=1s, ease=\"linear\")\n",
     );
     assert_eq!(p.animation.tracks["marker"].len(), 2);
     assert_eq!(p.animation.duration, Fraction::from(1));
 }
 #[test]
 fn fade_default_duration() {
-    let p = prepare("let marker = Circle()\nFadeIn(marker, duration=1s, ease=\"linear\")\n");
+    let p = prepare(
+        "let marker = Box(width=2*(32pt), height=2*(32pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nmarker.fade_in(duration=1s, ease=\"linear\")\n",
+    );
     assert_eq!(p.animation.duration, Fraction::from(1));
 }
 
@@ -61,17 +63,17 @@ fn manim_ranges_expand_from_the_median_with_matching_curve_and_timing() {
     let p = prepare(
         r#"
 let before_range = Box(id="before_range",children=[
-    Line(position=Vec2(-30pt,20pt),end=Vec2(40pt,0pt)),
-    Line(position=Vec2(10pt,20pt),end=Vec2(0pt,16pt))
+    Line(position=[-30pt, 20pt],end=[40pt, 0pt]),
+    Line(position=[10pt, 20pt],end=[0pt, 16pt])
 ])
 let after_range = Box(id="after_range",children=[
-    Line(position=Vec2(-30pt,60pt),end=Vec2(40pt,0pt)),
-    Line(position=Vec2(-10pt,60pt),end=Vec2(0pt,16pt))
+    Line(position=[-30pt, 60pt],end=[40pt, 0pt]),
+    Line(position=[-10pt, 60pt],end=[0pt, 16pt])
 ])
 wait(300ms)
-ExpandX(before_range,origin=50%,offset=10pt,duration=400ms,ease="smootherstep")
+before_range.expand_x(origin=50%, offset=10pt, duration=400ms, ease="smootherstep")
 wait(700ms)
-ExpandX(after_range,origin=50%,offset=-10pt,duration=300ms,ease="smootherstep")
+after_range.expand_x(origin=50%, offset=-10pt, duration=300ms, ease="smootherstep")
 "#,
     );
     assert_eq!(p.animation.duration, Fraction::new(17u64, 10u64));
@@ -123,8 +125,9 @@ ExpandX(after_range,origin=50%,offset=-10pt,duration=300ms,ease="smootherstep")
 }
 #[test]
 fn not_visible_before_added() {
-    let p =
-        prepare("wait(1s)\nlet marker = Circle()\nFadeIn(marker, duration=1s, ease=\"linear\")\n");
+    let p = prepare(
+        "wait(1s)\nlet marker = Box(width=2*(32pt), height=2*(32pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nmarker.fade_in(duration=1s, ease=\"linear\")\n",
+    );
     assert!(p.animation.sample(Fraction::from(0)).unwrap().is_empty());
     assert_eq!(
         p.animation.sample(Fraction::from(1)).unwrap()[0].opacity,
@@ -133,8 +136,9 @@ fn not_visible_before_added() {
 }
 #[test]
 fn parent_relative_positions_resize() {
-    let p =
-        prepare("let marker = Circle(id= \"marker\", position= Vec2(-25%, 25%))\nadd(marker)\n");
+    let p = prepare(
+        "let marker = Box(id=\"marker\", position=[-25%, 25%], width=2*(32pt), height=2*(32pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nAnimation(children=[marker])\n",
+    );
     let a = p
         .animation
         .layout(Fraction::from(0), Fraction::from(400), Fraction::from(200))
@@ -143,14 +147,14 @@ fn parent_relative_positions_resize() {
         .animation
         .layout(Fraction::from(0), Fraction::from(800), Fraction::from(600))
         .unwrap();
-    assert_eq!(a[0].position.values[0], 100.0);
-    assert_eq!(b[0].position.values[0], 200.0);
-    assert_eq!(b[0].position.values[1], 450.0);
+    assert_eq!(a[0].position.values[0], 68.0);
+    assert_eq!(b[0].position.values[0], 168.0);
+    assert_eq!(b[0].position.values[1], 418.0);
 }
 #[test]
 fn row_layout_wraps_when_parent_shrinks() {
     let p = prepare(
-        "let a = Rect(id= \"a\", width= 60pt, height= 20pt, flex_shrink=0)\nlet b = Rect(id= \"b\", width= 60pt, height= 20pt, flex_shrink=0)\nadd(Box(flex_direction=\"row\",children= [a, b], gap= 10pt, wrap=true))\n",
+        "let a = Box(id=\"a\", width=60pt, height=20pt, flex_shrink=0, fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nlet b = Box(id=\"b\", width=60pt, height=20pt, flex_shrink=0, fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nAnimation(children=[Box(flex_direction=\"row\",children= [a, b], gap= 10pt, wrap=true)])\n",
     );
     let rows = p
         .animation
@@ -159,12 +163,12 @@ fn row_layout_wraps_when_parent_shrinks() {
     let sanim_core::Geometry::Box { children, .. } = rows[0].geometry.as_ref() else {
         panic!()
     };
-    assert_eq!(children[1].position.values[1], 40.0);
+    assert_eq!(children[1].position.values[1], 30.0);
 }
 #[test]
 fn nested_box_flow_positions_remain_local() {
     let p = prepare(
-        "let marker = Circle(id= \"marker\", position= Vec2(0%, 0%))\nadd(Box(children= [marker], width= 200pt, height= 100pt, align=Align.Center, position= Vec2(20pt, 30pt)))\n",
+        "let marker = Box(id=\"marker\", position=[0%, 0%], width=2*(32pt), height=2*(32pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nAnimation(children=[Box(children= [marker], width= 200pt, height= 100pt, align=Align.Center, position= [20pt, 30pt])])\n",
     );
     let group = p
         .animation
@@ -173,7 +177,7 @@ fn nested_box_flow_positions_remain_local() {
     let sanim_core::Geometry::Box { children, .. } = group[0].geometry.as_ref() else {
         panic!()
     };
-    assert_eq!(children[0].position.values[0], 100.0);
+    assert_eq!(children[0].position.values[0], 68.0);
     assert_eq!(group[0].position.values[1], 30.0);
 }
 #[test]
@@ -187,7 +191,7 @@ fn rational_frame_rate_is_exact() {
 #[test]
 fn visual_assertions_name_objects() {
     let p = prepare(
-        "let circle = Circle(id= \"circle\", radius= 10pt, position= Vec2(0%, -30%))\nlet rect = Rect(id= \"rect\", position= Vec2(0%, 30%))\nassert(circle.above(rect))\n",
+        "let circle = Box(id=\"circle\", position=[0%, -30%], width=2*(10pt), height=2*(10pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nlet rect = Box(id=\"rect\", position=[0%, 30%], width=64pt, height=64pt, fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nassert(circle.above(rect))\n",
     );
     assert_eq!(p.checks[0].evidence, Evidence::Proved);
     assert!(p.checks[0].message.contains("circle"));
@@ -195,7 +199,7 @@ fn visual_assertions_name_objects() {
 #[test]
 fn continuous_inside_proof_covers_translation() {
     let p = prepare_in(
-        "let marker = Circle(id= \"marker\", radius= 5pt, position= Vec2(-40%, 0%))\nMoveTo(marker, Vec2(40%, 0%), duration=1s, ease=\"cubic_out\")\nassert(always(inside_canvas(marker)))\n",
+        "let marker = Box(id=\"marker\", position=[-40%, 0%], width=2*(5pt), height=2*(5pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nmarker.move_to([40%, 0%], duration=1s, ease=\"cubic_out\")\nassert(always(inside_canvas(marker)))\n",
         200,
         100,
         Fraction::from(30),
@@ -205,14 +209,14 @@ fn continuous_inside_proof_covers_translation() {
 #[test]
 fn unsupported_continuous_proof_is_unknown() {
     let p = prepare(
-        "let marker = Rect(id= \"marker\")\nRotateTo(marker, 90deg, duration=1s, ease=\"linear\")\ncheck(always(inside_canvas(marker)))\n",
+        "let marker = Box(id=\"marker\", width=64pt, height=64pt, fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nmarker.rotate_to(90deg, duration=1s, ease=\"linear\")\ncheck(always(inside_canvas(marker)))\n",
     );
     assert_eq!(p.checks[0].evidence, Evidence::Unknown);
 }
 #[test]
 fn failed_visual_assertion_has_counterexample() {
     let mut files = MemorySources::default();
-    files.insert("main.sanim","let circle = Circle(id= \"circle\", position= Vec2(0%, 40%))\nlet rect = Rect(id= \"rect\", position= Vec2(0%, -40%))\nassert(circle.above(rect))\n");
+    files.insert("main.sanim","let circle = Box(id=\"circle\", position=[0%, 40%], width=2*(32pt), height=2*(32pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nlet rect = Box(id=\"rect\", position=[0%, -40%], width=64pt, height=64pt, fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nassert(circle.above(rect))\n\nAnimation()");
     let e = Engine::default()
         .prepare("main.sanim", &files, &BTreeMap::new())
         .unwrap_err();
@@ -225,18 +229,18 @@ fn overlapping_writers_fail_atomically() {
     let mut files = MemorySources::default();
     files.insert(
         "main.sanim",
-        "let marker = Circle(id= \"marker\")\nbackground { FadeIn(marker, duration=1s, ease=\"linear\") }; FadeOut(marker, duration=1s, ease=\"linear\")\n",
+        "let marker = Box(id=\"marker\", width=2*(32pt), height=2*(32pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\n<Animation absolute flow=\"sequence\">{marker.fade_in(duration=1s, ease=\"linear\") }</Animation>; marker.fade_out(duration=1s, ease=\"linear\")\n",
     );
     let e = Engine::default()
         .prepare("main.sanim", &files, &BTreeMap::new())
         .unwrap_err();
-    assert_eq!(e.code, "S305");
+    assert_eq!(e.code, "S304");
     assert!(e.message.contains("overlapping"));
 }
 #[test]
 fn sequential_properties_have_indexed_tracks() {
     let p = prepare(
-        "let marker = Circle(id= \"marker\")\nrepeat 4 { FadeIn(marker, duration=1s, ease=\"linear\") }\n",
+        "let marker = Box(id=\"marker\", width=2*(32pt), height=2*(32pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nrepeat 4 { marker.fade_in(duration=1s, ease=\"linear\") }\n",
     );
     assert_eq!(p.animation.tracks["marker"][&Property::Opacity].len(), 4);
     assert!(matches!(p.bindings["marker"], Value::Element(_)));
@@ -245,7 +249,7 @@ fn sequential_properties_have_indexed_tracks() {
 #[test]
 fn external_viewports_revalidate_required_contracts() {
     let p = prepare_in(
-        "let marker=Circle(id= \"marker\",radius= 20pt)\nadd(marker)\nassert(inside_canvas(marker))\n",
+        "let marker=Box(id=\"marker\", width=2*(20pt), height=2*(20pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nAnimation(children=[marker])\nassert(inside_canvas(marker))\n",
         200,
         100,
         Fraction::from(30),
@@ -259,7 +263,7 @@ fn external_viewports_revalidate_required_contracts() {
 #[test]
 fn taffy_flex_layout_aligns_distributes_and_resizes() {
     let p = prepare(
-        "let a=Circle(id=\"a\",radius=10pt)\nlet b=Rect(id=\"b\",width=40pt,height=40pt)\nadd(Box(flex_direction=\"row\",children=[a,b],height=100pt,padding=10pt,justify=Justify.SpaceBetween,align=Align.Center,wrap=false))",
+        "let a=Box(id=\"a\", width=2*(10pt), height=2*(10pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nlet b=Box(id=\"b\", width=40pt, height=40pt, fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nAnimation(children=[Box(flex_direction=\"row\",children=[a,b],height=100pt,padding=10pt,justify=Justify.SpaceBetween,align=Align.Center,wrap=false)])",
     );
     for (width, expected) in [(200, 170.), (300, 270.)] {
         let layout = p
@@ -273,14 +277,14 @@ fn taffy_flex_layout_aligns_distributes_and_resizes() {
         let sanim_core::Geometry::Box { children, .. } = layout[0].geometry.as_ref() else {
             panic!()
         };
-        assert_eq!(children[0].position.values, [20., 50.]);
-        assert_eq!(children[1].position.values, [expected, 50.]);
+        assert_eq!(children[0].position.values, [10., 40.]);
+        assert_eq!(children[1].position.values, [expected - 20., 30.]);
     }
 }
 #[test]
 fn column_layout_supports_spacing_and_cross_axis_alignment() {
     let p = prepare(
-        "let a=Rect(width=20pt,height=20pt)\nlet b=Rect(width=40pt,height=40pt)\nadd(Box(flex_direction=\"column\",children=[a,b],width=100pt,height=200pt,padding=10pt,justify=Justify.SpaceEvenly,align=Align.Center))",
+        "let a=Box(width=20pt, height=20pt, fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nlet b=Box(width=40pt, height=40pt, fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nAnimation(children=[Box(flex_direction=\"column\",children=[a,b],width=100pt,height=200pt,padding=10pt,justify=Justify.SpaceEvenly,align=Align.Center)])",
     );
     let layout = p
         .animation
@@ -289,13 +293,13 @@ fn column_layout_supports_spacing_and_cross_axis_alignment() {
     let sanim_core::Geometry::Box { children, .. } = layout[0].geometry.as_ref() else {
         panic!()
     };
-    assert_eq!(children[0].position.values, [50., 60.]);
-    assert_eq!(children[1].position.values, [50., 130.]);
+    assert_eq!(children[0].position.values, [40., 50.]);
+    assert_eq!(children[1].position.values, [30., 110.]);
 }
 #[test]
 fn box_flow_respects_padding_and_end_alignment() {
     let p = prepare(
-        "let marker=Circle(radius=5pt)\nadd(Box(flex_direction=\"column\",children=[marker],width=100pt,height=100pt,padding=10pt,align=Align.End,justify=Justify.End))",
+        "let marker=Box(width=2*(5pt), height=2*(5pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nAnimation(children=[Box(flex_direction=\"column\",children=[marker],width=100pt,height=100pt,padding=10pt,align=Align.End,justify=Justify.End)])",
     );
     let layout = p
         .animation
@@ -304,18 +308,18 @@ fn box_flow_respects_padding_and_end_alignment() {
     let sanim_core::Geometry::Box { children, .. } = layout[0].geometry.as_ref() else {
         panic!()
     };
-    assert_eq!(children[0].position.values, [85., 85.]);
+    assert_eq!(children[0].position.values, [80., 80.]);
 }
 
 #[test]
 fn manim_title_overshoot_is_per_motion_and_does_not_invalidate_continuous_proofs() {
     let p = prepare(
         r#"
-let title=Rect(id="title",width=10pt,height=10pt,position=Vec2(0pt,12pt))
-let labels=Rect(id="labels",width=10pt,height=10pt)
-background { FadeIn(title,duration=300ms,ease="overshoot") }
-background { MoveTo(title,Vec2(0pt,0pt),duration=300ms,ease="overshoot") }
-FadeIn(labels,duration=300ms,ease="smootherstep")
+let title=Box(id="title", width=10pt, height=10pt, position=[0pt, 12pt], fill=Color("light1"), x_align=Align.Center, y_align=Align.Center)
+let labels=Box(id="labels", width=10pt, height=10pt, fill=Color("light1"), x_align=Align.Center, y_align=Align.Center)
+<Animation absolute flow="sequence">{title.fade_in(duration=300ms, ease="overshoot") }</Animation>
+<Animation absolute flow="sequence">{title.move_to([0pt, 0pt], duration=300ms, ease="overshoot") }</Animation>
+labels.fade_in(duration=300ms, ease="smootherstep")
 check(always(inside_canvas(title)))
 "#,
     );

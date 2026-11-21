@@ -10,11 +10,11 @@ fn scene() -> (Renderer, sanim_render::Scene, Options) {
 mut size=14pt
 mut typeface=Font("sans-serif")
 let title=<Label font={typeface} font_size={size}>Count = {count:.0f}</Label>
-add(title)
-background {animate(count,to=10,duration=1s,ease="linear")}
-background {animate(size,to=30pt,duration=1s,ease="linear")}
+Animation(children=[title])
+<Animation absolute flow="sequence">{animate(count,to=10,duration=1s,ease="linear")}</Animation>
+<Animation absolute flow="sequence">{animate(size,to=30pt,duration=1s,ease="linear")}</Animation>
 wait(500ms)
-typeface=Font("serif")
+animate(typeface,to=Font("serif"),duration=0s)
 wait(500ms)
 "#,
     );
@@ -59,7 +59,7 @@ fn invalid_signal_content_fails_only_its_frame_and_preserves_previous_cached_tex
         "font.ttf",
         include_bytes!("../../../examples/assets/DejaVuSansCondensed-subset.ttf"),
     );
-    files.insert("main.sanim", "mut words=\"safe\"\nlet title=Label(words,font=read<Font>(\"font.ttf\"))\nadd(title)\nwait(1s)\nwords=\"Ω\"\nwait(1s)\n");
+    files.insert("main.sanim", "mut words=\"safe\"\nlet title=Label(words,font=read<Font>(\"font.ttf\"))\nAnimation(children=[title])\nwait(1s)\nanimate(words,to=\"Ω\",duration=0s)\nwait(1s)\n");
     let prepared = Engine::default()
         .prepare("main.sanim", &files, &Default::default())
         .unwrap();
@@ -82,7 +82,7 @@ fn invalid_signal_content_fails_only_its_frame_and_preserves_previous_cached_tex
 #[test]
 fn changing_text_bounds_reflows_siblings_before_recording_and_picking() {
     let mut files = MemorySources::default();
-    files.insert("main.sanim", "mut words=\"short\"\nlet title=Label(words)\nlet marker=Circle(radius=5pt)\nlet row=Box(flex_direction=\"row\",children=[title,marker],gap=10pt)\nadd(row)\nwait(1s)\nwords=\"much longer text\"\nwait(1s)\n");
+    files.insert("main.sanim", "mut words=\"short\"\nlet title=Label(words)\nlet marker=Box(width=2*(5pt), height=2*(5pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nlet row=Box(flex_direction=\"row\",children=[title,marker],gap=10pt)\nAnimation(children=[row])\nwait(1s)\nanimate(words,to=\"much longer text\",duration=0s)\nwait(1s)\n");
     let prepared = Engine::default()
         .prepare("main.sanim", &files, &Default::default())
         .unwrap();

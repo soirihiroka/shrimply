@@ -11,6 +11,7 @@ objc2-uniform-type-identifiers = "0.3"
 block2.workspace = true
 shrimply-components-appkit = { workspace = true }
 shrimply-preview-render-metal = { workspace = true }
+shrimply-i18n.workspace = true
 shrimply-inspector-core = { workspace = true, default-features = false }
 shrimply-inspector-document = { workspace = true }
 shrimply-math-color = { workspace = true }

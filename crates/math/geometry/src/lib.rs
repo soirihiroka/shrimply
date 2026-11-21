@@ -6,6 +6,7 @@ pub use shapes::*;
 mod camera_reconstruction;
 mod ellipse;
 mod morph;
+pub mod optical_flow;
 mod projective;
 #[cfg(feature = "skia")]
 mod skia;
@@ -20,6 +21,17 @@ pub use morph::*;
 pub use projective::*;
 pub use stabilization::*;
 pub use transform::*;
+
+/// Fit a nonempty raster into a square pixel bound, preserving its aspect ratio.
+pub fn fit_pixel_dimensions(size: [u32; 2], max_edge: u32) -> [u32; 2] {
+    assert!(
+        max_edge > 0 && size.iter().all(|side| *side > 0),
+        "pixel dimensions must be positive"
+    );
+    let longest = u64::from(size[0].max(size[1]));
+    let limit = longest.min(u64::from(max_edge));
+    size.map(|side| (u64::from(side) * limit / longest).max(1) as u32)
+}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Rect {

@@ -98,3 +98,11 @@ fn push_distinct(points: &mut Vec<PaintPoint>, point: PaintPoint) {
         points.push(point);
     }
 }
+
+pub(crate) fn rounded_tool_size(value: f32) -> f32 {
+    if value < 1.0 {
+        (value * 10.0).round() / 10.0
+    } else {
+        value.round()
+    }
+}

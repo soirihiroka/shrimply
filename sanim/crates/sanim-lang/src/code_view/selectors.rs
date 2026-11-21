@@ -102,14 +102,14 @@ fn qualified(scope: &Scope, scopes: &BTreeMap<&str, &Scope>) -> String {
 
 pub(super) fn query(
     args: &imbl::OrdMap<String, Value>,
-    mut context: Context<'_>,
+    context: &mut Context<'_>,
     plural: bool,
 ) -> Result<Value, String> {
     let view = args.get("view").ok_or("range query requires a CodeView")?;
     let Value::Element(element) = view else {
         return Err("range query requires a CodeView".into());
     };
-    let document = syntax::parse(current_document(view, &context)?.as_ref().clone())?;
+    let document = syntax::parse(current_document(view, context)?.as_ref().clone())?;
     context.charge_work(document.text.len().saturating_add(document.scopes.len()))?;
     let mut index = SourceIndex::new(document.source()?);
     let within = args.get("within").map(range).transpose()?;
@@ -377,14 +377,29 @@ pub(super) fn action(
     args: &imbl::OrdMap<String, Value>,
     mut context: Context<'_>,
 ) -> Result<Value, String> {
-    let value = args
-        .get("range")
-        .ok_or("range action requires a source range")?;
+    let queried;
+    let value = if let Some(value) = args.get("range") {
+        value
+    } else if let Some(Value::Record(query_args)) = args.get("query") {
+        let mut query_args = query_args.clone();
+        query_args.insert(
+            "view".into(),
+            args.get("view")
+                .ok_or("inline source query requires its CodeView")?
+                .clone(),
+        );
+        queried = query(&query_args, &mut context, false)?;
+        &queried
+    } else {
+        return Err("range action requires a source range or inline source query".into());
+    };
     let selected = range(value)?;
-    let origin = selected.origin.as_ref().ok_or("range actions need an owner; select with view.range(...) and add(view) before using the range")?;
-    let view = context.animation.find(&origin.owner).ok_or_else(|| format!("CodeView '{}' is not on the animation timeline; call add(view) before using its range actions", origin.owner))?.clone();
+    let origin = selected.origin.as_ref().ok_or("range animations need an owner; select with view.range(...) and include the view in Animation(children=[view, ...])")?;
+    let view = context.animation.find(&origin.owner).ok_or_else(|| format!("CodeView '{}' is not mounted; include the view in Animation(children=[view, ...]) before its range animations", origin.owner))?.clone();
     let owner = Value::Element(Arc::new(view));
     let mut normalized = args.clone();
+    normalized.remove("query");
+    normalized.insert("range".into(), value.clone());
     normalized.insert("view".into(), owner);
     let operation = match name {
         "CodeRange.fold" => "CodeView.fold",
@@ -436,7 +451,7 @@ pub(super) fn action(
     };
     context.charge_work(1)?;
     if operation == "Element.scroll_to" {
-        crate::scrolling::execute(operation, &normalized, context)
+        crate::scrolling::execute_effect(operation, &normalized, context)
     } else {
         edits::execute(operation, &normalized, context)
     }

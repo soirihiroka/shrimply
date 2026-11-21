@@ -6,13 +6,14 @@ import nis_coefficients;
 
 #if defined(SHRIMPLY_VULKAN)
 // Remove unused filter implementations before the driver allocates registers.
-[[vk::constant_id(0)]] const uint COMPOSITE_OPTIONS = 0xffffffffu;
+static const uint ALIGNED_RGBA = 1u << 27;
+[[vk::constant_id(0)]] const uint COMPOSITE_OPTIONS = ~ALIGNED_RGBA;
 // Upper bits describe optional compositor paths; lower bits select samplers.
 static const uint ADVANCED_BLEND = 1u << 31;
 static const uint MOTION_SAMPLES = 1u << 30;
 static const uint EXTENDED_BORDER = 1u << 29;
 static const uint GENERAL_ADDRESS = 1u << 28;
-static const uint SAMPLER_MASK = GENERAL_ADDRESS - 1u;
+static const uint SAMPLER_MASK = ALIGNED_RGBA - 1u;
 #define SAMPLE_ENABLED(method) ((COMPOSITE_OPTIONS & (1u << uint(VideoSampleMethod::method))) != 0u)
 #else
 #define SAMPLE_ENABLED(method) true
@@ -53,32 +54,32 @@ bool address_index(int index, uint size, float crop_start, float crop_end,
 }
 float load_luma(Nv12LayerParams p, int x, int y) {
   uint sx, sy;
-  if (!address_index(x, p.source_width, p.crop[3], p.crop[1], p.address_mode,
+  if (!address_index(x, p.source_width, p.crop[3], p.crop[1], layer_address_mode(p),
                      sx) ||
-      !address_index(y, p.source_height, p.crop[0], p.crop[2], p.address_mode,
+      !address_index(y, p.source_height, p.crop[0], p.crop[2], layer_address_mode(p),
                      sy))
     return 0.0f;
-  return float(((uint8_t *)p.y_plane)[uint64_t(sy) * p.y_pitch + sx]) / 255.0f;
+  return float(load_byte(p.y_plane, BufferIndex(sy) * buffer_pitch(p.y_pitch) + sx)) / 255.0f;
 }
 float load_chroma(Nv12LayerParams p, int x, int y, uint component) {
   uint sx, sy, cw = max((p.source_width + 1u) / 2u, 1u),
                ch = max((p.source_height + 1u) / 2u, 1u);
-  if (!address_index(x, cw, p.crop[3], p.crop[1], p.address_mode, sx) ||
-      !address_index(y, ch, p.crop[0], p.crop[2], p.address_mode, sy))
+  if (!address_index(x, cw, p.crop[3], p.crop[1], layer_address_mode(p), sx) ||
+      !address_index(y, ch, p.crop[0], p.crop[2], layer_address_mode(p), sy))
     return 0.5f;
-  return float(((uint8_t *)p.uv_plane)[uint64_t(sy) * p.uv_pitch +
-                                       uint64_t(sx) * 2u + component]) /
+  return float(load_byte(p.uv_plane, BufferIndex(sy) * buffer_pitch(p.uv_pitch) +
+                                       BufferIndex(sx) * 2u + component)) /
          255.0f;
 }
 Color load_rgba(Nv12LayerParams p, int x, int y) {
   uint sx, sy;
-  if (!address_index(x, p.source_width, p.crop[3], p.crop[1], p.address_mode,
+  if (!address_index(x, p.source_width, p.crop[3], p.crop[1], layer_address_mode(p),
                      sx) ||
-      !address_index(y, p.source_height, p.crop[0], p.crop[2], p.address_mode,
+      !address_index(y, p.source_height, p.crop[0], p.crop[2], layer_address_mode(p),
                      sy))
     return color(0.0f, 0.0f, 0.0f, 0.0f);
   return color_premultiply(color_from_rgba(
-      ((uint *)p.rgba)[uint64_t(sy) * (p.rgba_pitch / 4u) + sx]));
+      ((uint *)p.rgba)[BufferIndex(sy) * (buffer_pitch(p.rgba_pitch) / 4u) + sx]));
 }
 float filter_weight(float value, VideoSampleMethod method) {
   float x = abs(value);
@@ -170,10 +171,10 @@ Color sample_rgba_weighted_p(Nv12LayerParams p, float x, float y,
 }
 float valid_at(Nv12LayerParams p, int x, int y) {
   uint value;
-  return address_index(x, p.source_width, p.crop[3], p.crop[1], p.address_mode,
+  return address_index(x, p.source_width, p.crop[3], p.crop[1], layer_address_mode(p),
                        value) &&
                  address_index(y, p.source_height, p.crop[0], p.crop[2],
-                               p.address_mode, value)
+                               layer_address_mode(p), value)
              ? 1.0f
              : 0.0f;
 }
@@ -193,16 +194,16 @@ float coverage_weighted(Nv12LayerParams p, float x, float y,
   return abs(total) > 0.000001f ? clamp(value / total, 0.0f, 1.0f) : 0.0f;
 }
 float coverage(Nv12LayerParams p, float x, float y) {
-  if (p.address_mode != TextureAddressMode::Transparent)
+  if (layer_address_mode(p) != TextureAddressMode::Transparent)
     return 1.0f;
-  if (p.sample_method == VideoSampleMethod::Nearest ||
-      p.sample_method == VideoSampleMethod::Xbrz)
+  if (layer_sample_method(p) == VideoSampleMethod::Nearest ||
+      layer_sample_method(p) == VideoSampleMethod::Xbrz)
     return valid_at(p, int(floor_f32(x + 0.5f)), int(floor_f32(y + 0.5f)));
-  if (p.sample_method == VideoSampleMethod::Bilinear ||
-      p.sample_method == VideoSampleMethod::Fsr1Easu ||
-      p.sample_method == VideoSampleMethod::NvidiaImageScaling ||
-      p.sample_method == VideoSampleMethod::Anime4k ||
-      p.sample_method == VideoSampleMethod::Anime4kSrgan) {
+  if (layer_sample_method(p) == VideoSampleMethod::Bilinear ||
+      layer_sample_method(p) == VideoSampleMethod::Fsr1Easu ||
+      layer_sample_method(p) == VideoSampleMethod::NvidiaImageScaling ||
+      layer_sample_method(p) == VideoSampleMethod::Anime4k ||
+      layer_sample_method(p) == VideoSampleMethod::Anime4kSrgan) {
     int x0 = int(floor_f32(x)), y0 = int(floor_f32(y));
     float tx = x - float(x0), ty = y - float(y0);
     return clamp(
@@ -212,7 +213,7 @@ float coverage(Nv12LayerParams p, float x, float y) {
             ty),
         0.0f, 1.0f);
   }
-  return coverage_weighted(p, x, y, p.sample_method);
+  return coverage_weighted(p, x, y, layer_sample_method(p));
 }
 float4 crop_rect(Nv12LayerParams p) {
   float left = float(p.source_width) * p.crop[3],
@@ -333,7 +334,7 @@ Color fsr_easu(Nv12LayerParams p, float x, float y, bool nv12) {
 }
 
 float4 finish_nv12(Nv12LayerParams p, float4 sample) {
-  if (p.address_mode == TextureAddressMode::Transparent && sample.w > 0.000001f)
+  if (layer_address_mode(p) == TextureAddressMode::Transparent && sample.w > 0.000001f)
     sample.xyz /= sample.w;
   return sample;
 }
@@ -692,7 +693,7 @@ float stochastic_amount(Nv12LayerParams p, float distance_value) {
 
 Color sample_rgba_plain(Nv12LayerParams p, float source_x, float source_y) {
   float x = source_x - 0.5f, y = source_y - 0.5f;
-  bool nearest = p.sample_method == VideoSampleMethod::Nearest;
+  bool nearest = layer_sample_method(p) == VideoSampleMethod::Nearest;
 #if defined(SHRIMPLY_VULKAN)
   nearest = nearest || (COMPOSITE_OPTIONS & SAMPLER_MASK) ==
                            (1u << uint(VideoSampleMethod::Nearest));
@@ -702,26 +703,26 @@ Color sample_rgba_plain(Nv12LayerParams p, float source_x, float source_y) {
 #if defined(SHRIMPLY_VULKAN)
   // Bilinear and cardinal bicubic weights select exactly one texel at integer
   // coordinates. Preserve those pixels without evaluating zero-weight taps.
-  if ((p.sample_method == VideoSampleMethod::Bilinear ||
-       p.sample_method == VideoSampleMethod::Bicubic) &&
+  if ((layer_sample_method(p) == VideoSampleMethod::Bilinear ||
+       layer_sample_method(p) == VideoSampleMethod::Bicubic) &&
       x == floor_f32(x) && y == floor_f32(y))
     return load_rgba(p, int(x), int(y));
 #endif
-  if (SAMPLE_ENABLED(Fsr1Easu) && p.sample_method == VideoSampleMethod::Fsr1Easu) {
+  if (SAMPLE_ENABLED(Fsr1Easu) && layer_sample_method(p) == VideoSampleMethod::Fsr1Easu) {
     Color bilinear = sample_rgba_bilinear_p(p, x, y);
     return magnifying(p)
                ? color_with_alpha(fsr_easu(p, x, y, false), bilinear.a)
                : bilinear;
   }
-  if (SAMPLE_ENABLED(NvidiaImageScaling) && p.sample_method == VideoSampleMethod::NvidiaImageScaling)
+  if (SAMPLE_ENABLED(NvidiaImageScaling) && layer_sample_method(p) == VideoSampleMethod::NvidiaImageScaling)
     return nis_rgba(p, x, y);
-  if (SAMPLE_ENABLED(Xbrz) && p.sample_method == VideoSampleMethod::Xbrz)
+  if (SAMPLE_ENABLED(Xbrz) && layer_sample_method(p) == VideoSampleMethod::Xbrz)
     return xbrz_sample(p, x, y, false);
-  if ((SAMPLE_ENABLED(Bicubic) && p.sample_method == VideoSampleMethod::Bicubic) ||
-      (SAMPLE_ENABLED(Mitchell) && p.sample_method == VideoSampleMethod::Mitchell) ||
-      (SAMPLE_ENABLED(Lanczos2) && p.sample_method == VideoSampleMethod::Lanczos2) ||
-      (SAMPLE_ENABLED(Lanczos3) && p.sample_method == VideoSampleMethod::Lanczos3))
-    return sample_rgba_weighted_p(p, x, y, p.sample_method);
+  if ((SAMPLE_ENABLED(Bicubic) && layer_sample_method(p) == VideoSampleMethod::Bicubic) ||
+      (SAMPLE_ENABLED(Mitchell) && layer_sample_method(p) == VideoSampleMethod::Mitchell) ||
+      (SAMPLE_ENABLED(Lanczos2) && layer_sample_method(p) == VideoSampleMethod::Lanczos2) ||
+      (SAMPLE_ENABLED(Lanczos3) && layer_sample_method(p) == VideoSampleMethod::Lanczos3))
+    return sample_rgba_weighted_p(p, x, y, layer_sample_method(p));
   return sample_rgba_bilinear_p(p, x, y);
 }
 // Keep one sampler call in the loop. Repeating the complete sampling call graph
@@ -736,7 +737,7 @@ uint layer_sample_points(Nv12LayerParams p, float x, float y,
   float distance_value = outside_distance(p, x, y);
   if (distance_value <= 0.0f)
     return 1u;
-  if (p.address_mode == TextureAddressMode::BlurredMirror) {
+  if (layer_address_mode(p) == TextureAddressMode::BlurredMirror) {
     float offset = min(distance_value * 0.2f, 12.0f) * 0.70710677f;
     points[0].z = 0.4f;
     points[1] = float3(x - offset, y - offset, 0.15f);
@@ -745,7 +746,7 @@ uint layer_sample_points(Nv12LayerParams p, float x, float y,
     points[4] = float3(x + offset, y + offset, 0.15f);
     return 5u;
   }
-  if (p.address_mode == TextureAddressMode::Stochastic) {
+  if (layer_address_mode(p) == TextureAddressMode::Stochastic) {
     float3 stochastic[3];
     stochastic_samples(p, x, y, stochastic);
     float amount = stochastic_amount(p, distance_value);
@@ -756,6 +757,12 @@ uint layer_sample_points(Nv12LayerParams p, float x, float y,
   }
   return 1u;
 }
+Color finish_rgba_sample(float4 sum) {
+  float alpha = clamp(sum.w, 0.0f, 1.0f);
+  return color_unpremultiply(color(clamp(sum.x, 0.0f, alpha),
+                                   clamp(sum.y, 0.0f, alpha),
+                                   clamp(sum.z, 0.0f, alpha), alpha));
+}
 Color sample_rgba_layer(Nv12LayerParams p, float x, float y) {
   float3 points[5];
   uint count = layer_sample_points(p, x, y, points);
@@ -764,18 +771,15 @@ Color sample_rgba_layer(Nv12LayerParams p, float x, float y) {
     Color sample = sample_rgba_plain(p, points[i].x, points[i].y);
     sum += float4(sample.r, sample.g, sample.b, sample.a) * points[i].z;
   }
-  float alpha = clamp(sum.w, 0.0f, 1.0f);
-  return color_unpremultiply(color(clamp(sum.x, 0.0f, alpha),
-                                   clamp(sum.y, 0.0f, alpha),
-                                   clamp(sum.z, 0.0f, alpha), alpha));
+  return finish_rgba_sample(sum);
 }
 float4 sample_nv12_plain_values(Nv12LayerParams p, float source_x,
                                 float source_y) {
   float x = source_x - 0.5f, y = source_y - 0.5f, cx = (x - 0.5f) * 0.5f,
         cy = (y - 0.5f) * 0.5f, alpha = coverage(p, x, y), luma, cb, cr;
-  if (p.sample_method == VideoSampleMethod::Fsr1Easu)
+  if (layer_sample_method(p) == VideoSampleMethod::Fsr1Easu)
     return fsr_nv12(p, x, y, alpha);
-  if (p.sample_method == VideoSampleMethod::Nearest) {
+  if (layer_sample_method(p) == VideoSampleMethod::Nearest) {
     luma = load_luma(p, int(floor_f32(x + 0.5f)), int(floor_f32(y + 0.5f)));
     cb = load_chroma(p, int(floor_f32(cx + 0.5f)), int(floor_f32(cy + 0.5f)),
                      0u) -
@@ -783,17 +787,17 @@ float4 sample_nv12_plain_values(Nv12LayerParams p, float source_x,
     cr = load_chroma(p, int(floor_f32(cx + 0.5f)), int(floor_f32(cy + 0.5f)),
                      1u) -
          0.5f;
-  } else if (p.sample_method == VideoSampleMethod::Bicubic ||
-             p.sample_method == VideoSampleMethod::Mitchell ||
-             p.sample_method == VideoSampleMethod::Lanczos2 ||
-             p.sample_method == VideoSampleMethod::Lanczos3) {
-    luma = sample_scalar_weighted(p, x, y, p.sample_method, false, 0u);
-    cb = sample_scalar_weighted(p, cx, cy, p.sample_method, true, 0u) - 0.5f;
-    cr = sample_scalar_weighted(p, cx, cy, p.sample_method, true, 1u) - 0.5f;
+  } else if (layer_sample_method(p) == VideoSampleMethod::Bicubic ||
+             layer_sample_method(p) == VideoSampleMethod::Mitchell ||
+             layer_sample_method(p) == VideoSampleMethod::Lanczos2 ||
+             layer_sample_method(p) == VideoSampleMethod::Lanczos3) {
+    luma = sample_scalar_weighted(p, x, y, layer_sample_method(p), false, 0u);
+    cb = sample_scalar_weighted(p, cx, cy, layer_sample_method(p), true, 0u) - 0.5f;
+    cr = sample_scalar_weighted(p, cx, cy, layer_sample_method(p), true, 1u) - 0.5f;
   } else {
-    luma = p.sample_method == VideoSampleMethod::NvidiaImageScaling
+    luma = layer_sample_method(p) == VideoSampleMethod::NvidiaImageScaling
                ? nis_luma(p, x, y)
-               : (p.sample_method == VideoSampleMethod::Xbrz
+               : (layer_sample_method(p) == VideoSampleMethod::Xbrz
                       ? xbrz_sample(p, x, y, true).r
                       : sample_scalar_bilinear(p, x, y, false, 0u));
     cb = sample_scalar_bilinear(p, cx, cy, true, 0u) - 0.5f;
@@ -828,27 +832,30 @@ uint blend_pixel(uint source_value, uint destination_value, LayerBlendMode mode,
         float(blend_noise(seed, index)) <= alpha * 4294967295.0f ? 1.0f : 0.0f;
   return color_to_rgba(blend_over(source, destination, mode, alpha, false));
 }
-[shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void
-composite_layered_image_layer(uint3 id : SV_DispatchThreadID,
-                              uniform LayerCompositeParams params,
-                              uniform uint *output,
-                              uniform uint64_t output_count) {
-  uint i = id.x;
+void composite_layer_pixel(uint i, LayerCompositeParams params, uint *output,
+                           BufferIndex output_count) {
   if (i >= output_count)
     return;
   uint column = i % params.width, row = i / params.width;
   uint source =
-      params.source[uint64_t(row) * (params.source_pitch / 4u) + column];
+      params.source[BufferIndex(row) * (buffer_pitch(params.source_pitch) / 4u) + column];
   float clipping = 1.0f;
-  if (params.clipping_base != nullptr)
+  if (!buffer_is_null(params.clipping_base))
     clipping = color_from_rgba(
-                   params.clipping_base[uint64_t(row) *
-                                            (params.clipping_base_pitch / 4u) +
+                   params.clipping_base[BufferIndex(row) *
+                                            (buffer_pitch(params.clipping_base_pitch) / 4u) +
                                         column])
                    .a *
                clamp(params.clipping_base_opacity, 0.0f, 1.0f);
-  output[i] = blend_pixel(source, output[i], params.mode,
+  output[i] = blend_pixel(source, output[i], composite_blend_mode(params),
                           params.opacity * clipping, params.noise_seed, i);
+}
+[shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void
+composite_layered_image_layer(uint3 id : SV_DispatchThreadID,
+                              uniform LayerCompositeParams params,
+                              uniform uint *output,
+                              uniform BufferIndex output_count) {
+  composite_layer_pixel(id.x, params, output, output_count);
 } bool sample_layer(Nv12LayerParams p, Mat3 inverse, float canvas_x,
                     float canvas_y, out Color result) {
   result = color(0.0f, 0.0f, 0.0f, 0.0f);
@@ -859,7 +866,7 @@ composite_layered_image_layer(uint3 id : SV_DispatchThreadID,
         bottom = float(p.source_height) * (1.0f - p.crop[2]);
   if (source.x < left - p.padding[3] || source.y < top - p.padding[0] ||
       source.x >= right + p.padding[1] || source.y >= bottom + p.padding[2] ||
-      (p.address_mode == TextureAddressMode::Transparent &&
+      (layer_address_mode(p) == TextureAddressMode::Transparent &&
        (source.x < left || source.y < top || source.x >= right ||
         source.y >= bottom)))
     return false;
@@ -867,20 +874,20 @@ composite_layered_image_layer(uint3 id : SV_DispatchThreadID,
   // Vulkan materializes decoder surfaces with nv12_to_rgba before compositing.
   result = sample_rgba_layer(p, source.x, source.y);
 #else
-  result = p.kind == LayerKind::Nv12 ? sample_nv12_layer(p, source.x, source.y)
+  result = layer_kind(p) == LayerKind::Nv12 ? sample_nv12_layer(p, source.x, source.y)
                                      : sample_rgba_layer(p, source.x, source.y);
 #endif
   return true;
 }
-uint composite_pixel(Nv12LayerParams *layers, uint64_t layer_count,
-                     Mat3 *transforms, uint64_t transform_count, uint x, uint y,
+uint composite_pixel(Nv12LayerParams *layers, BufferIndex layer_count,
+                     Mat3 *transforms, BufferIndex transform_count, uint x, uint y,
                      uint background) {
   float canvas_x = float(x) + 0.5f, canvas_y = float(y) + 0.5f;
   uint pixel = background;
-  for (uint64_t index = 0; index < layer_count; ++index) {
+  for (BufferIndex index = 0; index < layer_count; ++index) {
     Nv12LayerParams p = layers[index];
     bool motion = p.motion_sample_count != 0u;
-    LayerBlendMode blend = p.blend_mode;
+    LayerBlendMode blend = layer_blend_mode(p);
 #if defined(SHRIMPLY_VULKAN)
     motion = motion && (COMPOSITE_OPTIONS & MOTION_SAMPLES) != 0u;
     if ((COMPOSITE_OPTIONS & ADVANCED_BLEND) == 0u)
@@ -923,15 +930,38 @@ uint composite_pixel(Nv12LayerParams *layers, uint64_t layer_count,
   }
   return pixel;
 }
+#if defined(SHRIMPLY_VULKAN)
+// The host verifies packed, canvas-sized, identity-mapped normal RGBA layers.
+// Keep the generic sampler's premultiplication, clamping and per-layer rounding.
+uint composite_aligned_rgba_pixel(uint i, Nv12LayerParams *layers,
+    BufferIndex layer_count, uint background) {
+  uint pixel = background;
+  for (BufferIndex index = 0; index < layer_count; ++index) {
+    Nv12LayerParams layer = layers[index];
+    Color p = color_premultiply(color_from_rgba(layer.rgba[i]));
+    Color source = finish_rgba_sample(float4(p.r, p.g, p.b, p.a));
+    pixel = color_to_rgba(blend_over(source, color_from_rgba(pixel),
+        LayerBlendMode::Normal, source.a * layer.opacity, true));
+  }
+  return pixel;
+}
+#endif
+
 [shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void
 composite_nv12_layers(uint3 id : SV_DispatchThreadID,
                       uniform Nv12LayerParams *layers,
-                      uniform uint64_t layer_count, uniform Mat3 *transforms,
-                      uniform uint64_t transform_count, uniform uint *output,
-                      uniform uint64_t output_count, uniform uint background) {
+                      uniform BufferIndex layer_count, uniform Mat3 *transforms,
+                      uniform BufferIndex transform_count, uniform uint *output,
+                      uniform BufferIndex output_count, uniform uint background) {
   uint i = id.x;
   if (i >= output_count)
     return;
+#if defined(SHRIMPLY_VULKAN)
+  if ((COMPOSITE_OPTIONS & ALIGNED_RGBA) != 0u) {
+    output[i] = composite_aligned_rgba_pixel(i, layers, layer_count, background);
+    return;
+  }
+#endif
   output[i] = background;
   if (layer_count == 0u)
     return;
@@ -942,7 +972,7 @@ composite_nv12_layers(uint3 id : SV_DispatchThreadID,
  [numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void tone_map_hdr(
      uint3 id : SV_DispatchThreadID, uniform Color *input,
      uniform Color *background, uniform uint *output,
-     uniform uint64_t output_count, uniform float levels) {
+     uniform BufferIndex output_count, uniform float levels) {
   uint i = id.x;
   if (i >= output_count)
     return;

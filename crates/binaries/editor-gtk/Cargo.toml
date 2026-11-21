@@ -48,7 +48,7 @@ shrimply-transcription = { workspace = true }
 shrimply-tts = { workspace = true }
 shrimply-components-gtk = { workspace = true }
 shrimply-visual-cuda = { workspace = true }
-shrimply-visual-modifiers = { workspace = true }
+shrimply-visual-modifiers = { workspace = true, default-features = true }
 tracing.workspace = true
 uuid.workspace = true
 

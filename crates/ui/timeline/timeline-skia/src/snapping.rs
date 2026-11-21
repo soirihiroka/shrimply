@@ -3,22 +3,22 @@ use hashbrown::HashSet;
 use crate::folded_sequence::FoldedDragKind;
 use crate::items::{
     ItemEdge, item_natural_end_edges_at_address, item_natural_resize_candidates_at_address,
-    item_natural_snap_targets_at_address,
+    item_natural_snap_targets_for_item,
 };
-use crate::project::{ItemAddress, Project, SequenceScopeId, Time};
+use crate::project::{ItemRef, Project, SequenceScopeId, Time, TrackAddress};
 use crate::timeline_operation::{SequenceTimeline, TimelineOperationContext};
 pub use shrimply_timeline_snap::SnapRepo;
-use shrimply_timeline_snap::{SnapSources, TLSnappable};
+use shrimply_timeline_snap::{SnapQuery, SnapSources, TLSnappable};
 
 enum TimelineSnappable<'a> {
     Globals {
         duration: Time,
         beats: Vec<Time>,
-        playhead: Time,
     },
     Item {
         project: &'a Project,
-        address: ItemAddress,
+        track: TrackAddress,
+        item: ItemRef<'a>,
     },
 }
 
@@ -28,17 +28,21 @@ impl TLSnappable for TimelineSnappable<'_> {
             Self::Globals {
                 duration,
                 mut beats,
-                playhead,
             } => {
-                beats.extend([Time::ZERO, duration, playhead]);
+                beats.extend([Time::ZERO, duration]);
                 beats
             }
-            Self::Item { project, address } => {
-                let mut targets = project
-                    .timeline_item_times(&address)
-                    .map(|(start, end)| vec![start, end])
-                    .unwrap_or_default();
-                targets.extend(item_natural_snap_targets_at_address(project, &address));
+            Self::Item {
+                project,
+                track,
+                item,
+            } => {
+                let (start, end) = item.times();
+                let mut targets = [start, end]
+                    .into_iter()
+                    .filter_map(|time| project.sequence_time_to_timeline(&track, time))
+                    .collect::<Vec<_>>();
+                targets.extend(item_natural_snap_targets_for_item(project, &track, &item));
                 targets
             }
         }
@@ -54,7 +58,32 @@ pub struct Request<'a> {
     pub distance: Option<Time>,
 }
 
-pub fn repository(project: &Project, request: Request<'_>) -> SnapRepo {
+#[derive(Default)]
+pub struct Cache {
+    revision: Option<u64>,
+    source_revision: u64,
+    scope: Option<SequenceScopeId>,
+    ignored: HashSet<uuid::Uuid>,
+    beats: Vec<Time>,
+}
+
+pub fn update(
+    project: &Project,
+    revision: u64,
+    cache: &mut Cache,
+    repository: &mut SnapRepo,
+    request: Request<'_>,
+) {
+    if request.distance.is_none() {
+        repository.update_query(SnapQuery {
+            candidates: Vec::new(),
+            offsets: Vec::new(),
+            distance: None,
+            dynamic_time: None,
+        });
+        return;
+    }
+
     let mut ignored = HashSet::new();
     let mut offsets = Vec::new();
     let mut candidates = Vec::new();
@@ -132,21 +161,82 @@ pub fn repository(project: &Project, request: Request<'_>) -> SnapRepo {
         SequenceScopeId::root()
     };
 
-    let mut snappables = vec![TimelineSnappable::Globals {
-        duration: project.duration(),
-        beats: request.beats,
-        playhead: request.playhead,
-    }];
-    for address in SequenceTimeline::new(scope).items(project) {
-        if !ignored.contains(&address.item_id()) {
-            snappables.push(TimelineSnappable::Item { project, address });
+    if cache.revision != Some(revision)
+        || cache.source_revision != shrimply_project_document::source_events::revision()
+        || cache.scope.as_ref() != Some(&scope)
+        || cache.ignored != ignored
+        || cache.beats != request.beats
+    {
+        cache.revision = Some(revision);
+        cache.source_revision = shrimply_project_document::source_events::revision();
+        cache.scope = Some(scope.clone());
+        cache.ignored = ignored;
+        cache.beats = request.beats;
+        let mut snappables = vec![TimelineSnappable::Globals {
+            duration: project.duration(),
+            beats: cache.beats.clone(),
+        }];
+        let mut nearest_sources = Vec::<Box<dyn Fn(Time) -> Option<Time>>>::new();
+        for track in SequenceTimeline::new(scope).tracks(project) {
+            if let Some(items) = project.track(&track) {
+                for item in items.items() {
+                    if !cache.ignored.contains(&item.id()) {
+                        if let ItemRef::Video(video) = &item
+                            && let Some(events) = shrimply_project_document::source_events::for_item(
+                                video,
+                                project.canvas_size,
+                            )
+                        {
+                            let timing = crate::project::GeneratedEventTiming::from(*video);
+                            // Sequence placement is affine; retain only the exact transform, not the project.
+                            if let (Some(origin), Some(one)) = (
+                                project.sequence_time_to_timeline(&track, Time::ZERO),
+                                project.sequence_time_to_timeline(&track, Time::from_seconds(1)),
+                            ) {
+                                let scale = one.signed_sub(origin).seconds;
+                                if scale != shrimply_math_core::Fraction::from(0) {
+                                    nearest_sources.push(Box::new(move |at| {
+                                        let local = Time {
+                                            seconds: (at.seconds - origin.seconds) / scale,
+                                        };
+                                        crate::project::generated_event_neighbors(
+                                            timing,
+                                            &events.index,
+                                            events.duration,
+                                            local,
+                                        )
+                                        .into_iter()
+                                        .flatten()
+                                        .map(|time| Time {
+                                            seconds: origin.seconds + time.seconds * scale,
+                                        })
+                                        .min_by_key(|target| (at.abs_diff(*target), *target))
+                                    }));
+                                }
+                            }
+                        }
+                        snappables.push(TimelineSnappable::Item {
+                            project,
+                            track: track.clone(),
+                            item,
+                        });
+                    }
+                }
+            }
         }
+        *repository = SnapRepo::new(SnapSources {
+            snappables,
+            candidates: Vec::new(),
+            offsets: Vec::new(),
+            frame_step: project.frame_step(),
+            distance: request.distance,
+        });
+        repository.set_nearest_sources(nearest_sources);
     }
-    SnapRepo::new(SnapSources {
-        snappables,
+    repository.update_query(SnapQuery {
         candidates,
         offsets,
-        frame_step: project.frame_step(),
         distance: request.distance,
-    })
+        dynamic_time: Some(request.playhead),
+    });
 }

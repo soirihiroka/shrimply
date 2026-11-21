@@ -3,8 +3,7 @@ use objc2::{AnyThread, MainThreadOnly, sel};
 use objc2_app_kit::{
     NSAutoresizingMaskOptions, NSBezelStyle, NSButton, NSColor, NSFont, NSFontAttributeName,
     NSForegroundColorAttributeName, NSImage, NSMenu, NSMenuItem, NSPopUpArrowPosition,
-    NSPopUpButton, NSPopUpButtonCell, NSScrollElasticity, NSScrollView, NSTextAlignment,
-    NSTextField, NSView,
+    NSPopUpButtonCell, NSScrollElasticity, NSScrollView, NSTextAlignment, NSTextField, NSView,
 };
 use objc2_foundation::{
     MainThreadMarker, NSMutableAttributedString, NSPoint, NSRect, NSSize, NSString, ns_string,
@@ -160,13 +159,13 @@ impl List {
             open.setToolTip(Some(&NSString::from_str(&project.path.to_string_lossy())));
             row.addSubview(&open);
 
-            let options = NSPopUpButton::initWithFrame_pullsDown(
-                NSPopUpButton::alloc(mtm),
+            let options = shrimply_components_appkit::menu::popup(
                 NSRect::new(
                     NSPoint::new(viewport.width - 38.0, 18.0),
                     NSSize::new(30.0, 28.0),
                 ),
                 true,
+                mtm,
             );
             options.setAutoresizingMask(NSAutoresizingMaskOptions::ViewMinXMargin);
             options.setBordered(false);

@@ -11,19 +11,14 @@ let dot_style: DotStyle = reflect({
 let repetitions: Number = reflect(2)
 
 fn make_dot(identity: String, appearance: DotStyle): Element {
-    return Circle(
-        id= identity,
-        radius= appearance.radius,
-        fill= appearance.fill,
-        position= Vec2(-30%, 0%),
-    )
+    return Box(id=identity, fill=appearance.fill, position=[-30%, 0%], width=2*(appearance.radius), height=2*(appearance.radius), radius="full", x_align=Align.Center, y_align=Align.Center)
 }
 
 let marker = make_dot("marker", dot_style)
-FadeIn(marker, duration=250ms)
+marker.fade_in(duration=250ms)
 repeat repetitions {
-    MoveTo(marker, Vec2(30%, 0%), duration=750ms, ease="smooth")
-    MoveTo(marker, Vec2(-30%, 0%), duration=750ms, ease="smooth")
+    marker.move_to([30%, 0%], duration=750ms, ease="smooth")
+    marker.move_to([-30%, 0%], duration=750ms, ease="smooth")
 }
 assert(always(inside_canvas(marker)))
 wait(500ms)

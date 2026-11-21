@@ -30,17 +30,47 @@ endif
 $(CUDA_DEV_TARGETS): override CUDA_IMAGE_FORMAT = cubin
 $(CUDA_DEV_TARGETS): override CUDA_TARGET := $(CUDA_NATIVE_TARGET)
 endif
+SPIRV_OPT ?= spirv-opt
+SPIRV_VAL ?= spirv-val
+export SPIRV_OPT SPIRV_VAL
 SOURCE_LINE_LIMIT ?= 2000
 OPTIX_ROOT ?= $(CURDIR)/external/optix-dev
 DNF ?= sudo dnf
 INSTALL ?= install
 PKG_CONFIG ?= $(if $(filter Windows_NT,$(HOST_OS)),pkg-config,/usr/bin/pkg-config)
 PKG_CONFIG_PATH ?= /usr/lib64/pkgconfig:/usr/lib/pkgconfig:/usr/share/pkgconfig
+ifeq ($(HOST_OS),Linux)
+LINUX_FFMPEG_CACHE := $(abspath $(CARGO_TARGET_DIR)/linux-ffmpeg)
+LINUX_FFMPEG_PREFIX = $(or $(SHRIMPLY_FFMPEG_PREFIX),$(LINUX_FFMPEG_CACHE)/install)
+# Use the resolved source-specific prefix so a gitlink update invalidates Rust bindings.
+FFMPEG_PREFIX = $(or $(realpath $(LINUX_FFMPEG_PREFIX)),$(LINUX_FFMPEG_PREFIX))
+FFMPEG_RUNTIME_ENV = PATH="$(FFMPEG_PREFIX)/bin:$(CUDA_HOME)/bin:$(PATH)" LD_LIBRARY_PATH="$(FFMPEG_PREFIX)/lib:/run/host/usr/local/libclang-deps:$${LD_LIBRARY_PATH}"
+HOST_MEDIA_ENV = $(FFMPEG_RUNTIME_ENV) FFMPEG_DIR="$(FFMPEG_PREFIX)" SHRIMPLY_FFMPEG_PREFIX="$(FFMPEG_PREFIX)" \
+    PKG_CONFIG_PATH="$(FFMPEG_PREFIX)/lib/pkgconfig:$(PKG_CONFIG_PATH)" LIBRARY_PATH="$(FFMPEG_PREFIX)/lib:$${LIBRARY_PATH}"
+else ifeq ($(HOST_OS),Darwin)
+FFMPEG_PREFIX = $(APPKIT_FFMPEG)/install
+FFMPEG_RUNTIME_ENV = PATH="$(FFMPEG_PREFIX)/bin:$(PATH)" FFMPEG_DIR="$(FFMPEG_PREFIX)"
+HOST_MEDIA_ENV = $(FFMPEG_RUNTIME_ENV) PKG_CONFIG_PATH="$(APPKIT_FFMPEG)/install/lib/pkgconfig:$$PKG_CONFIG_PATH"
+else ifeq ($(HOST_OS),Windows_NT)
+FFMPEG_PREFIX = $(FFMPEG_DIR)
+FFMPEG_RUNTIME_ENV = FFMPEG_DIR="$(FFMPEG_PREFIX)" PATH="$(FFMPEG_PREFIX)/bin:$(PATH)"
+HOST_MEDIA_ENV = $(FFMPEG_RUNTIME_ENV) INCLUDE="$(FFMPEG_DIR)/include;$$INCLUDE" LIB="$(FFMPEG_DIR)/lib;$$LIB"
+endif
 QT_QMAKE ?= $(if $(filter Windows_NT,$(HOST_OS)),qmake.exe,qmake6)
-BUILD_ENV = CUDA_HOME="$(CUDA_HOME)" CUDA_TOOLKIT_PATH="$(CUDA_TOOLKIT_PATH)" CUDA_IMAGE_FORMAT=$(CUDA_IMAGE_FORMAT) CUDA_TARGET=$(CUDA_TARGET) CUDA_PTX_TARGET=$(CUDA_PTX_TARGET) CUDA_HOST_CXX=$(CUDA_HOST_CXX) CUDA_ALLOW_UNSUPPORTED_COMPILER=$(CUDA_ALLOW_UNSUPPORTED_COMPILER) PKG_CONFIG="$(PKG_CONFIG)" PKG_CONFIG_PATH="$(PKG_CONFIG_PATH)" OPTIX_ROOT="$(OPTIX_ROOT)"
+BUILD_ENV = CUDA_HOME="$(CUDA_HOME)" CUDA_TOOLKIT_PATH="$(CUDA_TOOLKIT_PATH)" CUDA_IMAGE_FORMAT=$(CUDA_IMAGE_FORMAT) CUDA_TARGET=$(CUDA_TARGET) CUDA_PTX_TARGET=$(CUDA_PTX_TARGET) CUDA_HOST_CXX=$(CUDA_HOST_CXX) CUDA_ALLOW_UNSUPPORTED_COMPILER=$(CUDA_ALLOW_UNSUPPORTED_COMPILER) PKG_CONFIG="$(PKG_CONFIG)" OPTIX_ROOT="$(OPTIX_ROOT)"
+ifeq ($(HOST_OS),Linux)
+# Native dependencies can add /usr/lib64 ahead of ffmpeg-sys's link search path.
+# Give the project ABI precedence in the final linker command for both profiles.
+FFMPEG_LINK_FLAG = -Zpre-link-arg=-L$(FFMPEG_PREFIX)/lib
+BUILD_ENV += $(HOST_MEDIA_ENV) RUSTFLAGS="$(FFMPEG_LINK_FLAG) $(or $(RUSTFLAGS),-C link-arg=-fuse-ld=lld)"
+else
+BUILD_ENV += PKG_CONFIG_PATH="$(PKG_CONFIG_PATH)"
 ifneq ($(HOST_OS),Windows_NT)
 BUILD_ENV += PATH="$(CUDA_HOME)/bin:$(PATH)"
 BUILD_ENV += LD_LIBRARY_PATH="/run/host/usr/local/libclang-deps:$${LD_LIBRARY_PATH}"
+endif
+endif
+ifneq ($(HOST_OS),Windows_NT)
 BUILD_ENV += BINDGEN_EXTRA_CLANG_ARGS="$(if $(wildcard /run/host/usr/lib/llvm-18/lib/clang/18/include),-isystem /run/host/usr/lib/llvm-18/lib/clang/18/include)"
 endif
 RUST_LIBDIR := $(shell $(RUSTC) --print target-libdir)
@@ -49,7 +79,7 @@ DEV_RUSTFLAGS ?=
 else
 DEV_RUSTFLAGS ?= -C prefer-dynamic -C link-arg=-fuse-ld=lld -C link-arg=-Wl,-rpath,$(RUST_LIBDIR)
 endif
-DEV_BUILD_ENV = $(BUILD_ENV) RUSTFLAGS="$(DEV_RUSTFLAGS)"
+DEV_BUILD_ENV = $(BUILD_ENV) RUSTFLAGS="$(strip $(FFMPEG_LINK_FLAG) $(DEV_RUSTFLAGS))"
 
 APP_NAME := Shrimply
 BIN_NAME := shrimply
@@ -130,11 +160,24 @@ FEDORA_PACKAGES := \
 	gcc15-c++ \
 	lld \
 	ninja-build \
-	opencv-devel \
 	openssl-devel \
 	pkgconf-pkg-config \
 	gobject-introspection-devel \
-	ffmpeg-devel \
+	patchelf \
+	nasm \
+	nv-codec-headers \
+	libva-devel \
+	libdrm-devel \
+	vulkan-headers \
+	spirv-headers-devel \
+	gnutls-devel \
+	opus-devel \
+	lame-devel \
+	libvorbis-devel \
+	libdav1d-devel \
+	x264-devel \
+	x265-devel \
+	fdk-aac-devel \
 	rubberband-devel \
 	alsa-lib-devel \
 	gtk4-devel \
@@ -146,9 +189,25 @@ FEDORA_PACKAGES := \
 	poppler-glib-devel \
 	freetype-devel \
 	qt6-qtbase-devel \
-	qt6-qtdeclarative-devel
+	qt6-qtdeclarative-devel \
+	spirv-tools
 
 .PHONY: native-deps windows-ffmpeg windows-ffmpeg-verify windows-native-deps windows-build windows-dev windows-check windows-release windows-package qt-native-deps qt-desktop-file desktop-icon cuda-target-check cuda-artifacts dev dev-mac qt-build dev-qt dev-server docs docs-check run run-qt build release check intel-check components-check gtk-components-showcase qt-components-showcase server-python-check manim manim-python-check manim-parameter-check cargo-check fmt fmt-check lint test frame-rate-test video-lifecycle-test transparent-fill-frame-range-test transparent-fill-decoder-test transparent-fill-kernel-test transparent-fill-compositor-test transparent-fill-playback-test transparent-fill-e2e-fixture transparent-fill-e2e-test decode-ahead-benchmark paint-interpolation-test process-reporting-test crash-report clean deps-fedora deps-fedora-qt qt-release install install-qt uninstall uninstall-qt flatpak-gtk
+ifeq ($(HOST_OS),Linux)
+.PHONY: linux-ffmpeg
+linux-ffmpeg:
+ifeq ($(strip $(SHRIMPLY_FFMPEG_PREFIX)),)
+	uv run --no-project --python 3.13 python packaging/linux-ffmpeg.py "$(LINUX_FFMPEG_CACHE)"
+else
+	@test -f "$(FFMPEG_PREFIX)/include/libavcodec/avcodec.h" && test -f "$(FFMPEG_PREFIX)/lib/libavcodec.so" || { echo "Missing packaged FFmpeg under $(FFMPEG_PREFIX)" >&2; exit 1; }
+	@$(HOST_MEDIA_ENV) "$(FFMPEG_PREFIX)/bin/ffmpeg" -version | awk -v required="$$(cat external/ffmpeg/RELEASE)" 'NR == 1 { actual = $$3; sub(/^n/, "", actual) } END { if (actual != required || !required) { print "Expected project FFmpeg " required ", found " actual > "/dev/stderr"; exit 1 } }'
+endif
+native-deps sanim-check video-decoder-check android-host-check android-project-check android-project-bench video-decode-benchmark media-system-check: linux-ffmpeg
+else ifeq ($(HOST_OS),Darwin)
+sanim-check: appkit-ffmpeg
+else ifeq ($(HOST_OS),Windows_NT)
+sanim-check: windows-ffmpeg
+endif
 native-deps:
 	@$(PKG_CONFIG) --exists rubberband || { echo "Missing Rubber Band development files (pkg-config: rubberband)" >&2; exit 1; }
 	@$(PKG_CONFIG) --exists libpipewire-0.3 || { echo "Missing PipeWire development files (pkg-config: libpipewire-0.3)" >&2; exit 1; }
@@ -170,13 +229,7 @@ windows-native-deps: qt-native-deps
 	@test "$(HOST_OS)" = Windows_NT || { echo "Windows targets require native Windows" >&2; exit 1; }
 	@command -v cl.exe >/dev/null 2>&1 || { echo "Missing MSVC compiler (cl.exe)" >&2; exit 1; }
 	@command -v nvcc.exe >/dev/null 2>&1 || { echo "Missing CUDA compiler (nvcc.exe)" >&2; exit 1; }
-	@$(PKG_CONFIG) --exists libavcodec libavformat libavfilter libavdevice libswresample libswscale || { \
-		test -n "$(FFMPEG_DIR)" && \
-		test -f "$(FFMPEG_DIR)/include/libavutil/avutil.h" && \
-		test -f "$(FFMPEG_DIR)/lib/avutil.lib" && \
-		test -f "$(FFMPEG_DIR)/lib/avcodec.lib" && \
-		test -f "$(FFMPEG_DIR)/lib/avformat.lib" || \
-		{ echo "Missing FFmpeg development files (pkg-config metadata or FFMPEG_DIR with include/ and lib/)" >&2; exit 1; }; }
+	@powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File packaging/windows/verify-ffmpeg.ps1 -FfmpegRoot "$(FFMPEG_DIR)" -DevelopmentFilesOnly
 	@$(PKG_CONFIG) --exists poppler-glib pango pangocairo rubberband || { echo "Missing vcpkg application libraries" >&2; exit 1; }
 
 qt-native-deps:
@@ -213,6 +266,7 @@ project-mime:
 uninstall-desktop-assets:
 	@set -e; if test ! -e "$(DESTDIR)$(APPLICATIONSDIR)/dev.shrimply.Shrimply.desktop" && \
 		test ! -e "$(DESTDIR)$(APPLICATIONSDIR)/dev.shrimply.Shrimply.Qt.desktop"; then \
+		rm -rf "$(DESTDIR)$(MANIM_WORKER_RESOURCE_DIR)" "$(DESTDIR)$(MANIM_SOURCE_RESOURCE_DIR)" "$(DESTDIR)$(PREFIX)/lib/shrimply/ffmpeg"; \
 		rm -f "$(DESTDIR)$(MIMEDIR)/packages/dev.shrimply.Shrimply-mime.xml" \
 			"$(DESTDIR)$(MIME_ICONDIR)/dev.shrimply.Shrimply-project.svg" \
 			"$(DESTDIR)$(ICONDIR)/dev.shrimply.Shrimply.svg"; \
@@ -235,7 +289,12 @@ dev: native-deps cuda-artifacts
 	fi; \
 	exit $$status
 
-APPKIT_BUILD_ENV = RUSTFLAGS="-C prefer-dynamic -C link-arg=-Wl,-rpath,$(RUST_LIBDIR)" LIBRARY_PATH="$$(brew --prefix)/lib" PKG_CONFIG="$$(brew --prefix pkgconf)/bin/pkg-config" CLANG_PATH="$$(brew --prefix llvm@22)/bin/clang" LIBCLANG_PATH="$$(brew --prefix llvm@22)/lib"
+APPKIT_FFMPEG := $(abspath $(CARGO_TARGET_DIR)/macos-ffmpeg)
+.PHONY: appkit-ffmpeg
+appkit-ffmpeg:
+	MACOSX_DEPLOYMENT_TARGET=$(APPKIT_DEPLOYMENT_TARGET) uv run --no-project --python 3.13 python packaging/macos-ffmpeg.py "$(APPKIT_FFMPEG)"
+
+APPKIT_BUILD_ENV = $(HOST_MEDIA_ENV) RUSTFLAGS="-C prefer-dynamic -C link-arg=-Wl,-rpath,$(RUST_LIBDIR)" LIBRARY_PATH="$(APPKIT_FFMPEG)/install/lib:$$(brew --prefix)/lib" PKG_CONFIG="$$(brew --prefix pkgconf)/bin/pkg-config" CLANG_PATH="$$(brew --prefix llvm@22)/bin/clang" LIBCLANG_PATH="$$(brew --prefix llvm@22)/lib"
 
 .PHONY: appkit-icon appkit-build appkit-release appkit-check appkit-lint appkit-components-check appkit-components-showcase
 appkit-icon:
@@ -246,15 +305,19 @@ appkit-icon:
 		--output-partial-info-plist "$(APPKIT_ICON_DIR)/Info.plist" \
 		--output-format human-readable-text --warnings --notices
 
-appkit-build: appkit-icon
+appkit-build: appkit-ffmpeg appkit-icon
 	@test "$$(uname -s)" = Darwin || { echo "dev-mac requires macOS" >&2; exit 1; }
 	$(APPKIT_BUILD_ENV) $(CARGO) build -p $(APPKIT_LAUNCHER_PACKAGE) -p $(APPKIT_EDITOR_PACKAGE) --bins
-	mkdir -p "$(APPKIT_APP)/Contents/MacOS" "$(APPKIT_APP)/Contents/Resources"
+	mkdir -p "$(APPKIT_APP)/Contents/MacOS" "$(APPKIT_APP)/Contents/Resources/licenses"
 	cp $(CARGO_TARGET_DIR)/debug/$(APPKIT_BIN_NAME) "$(APPKIT_APP)/Contents/MacOS/$(APPKIT_BIN_NAME)"
+	cp "$(APPKIT_FFMPEG)/install/bin/ffmpeg" "$(APPKIT_APP)/Contents/MacOS/shrimply-ffmpeg"
 	cp packaging/macos/Info.plist "$(APPKIT_APP)/Contents/Info.plist"
 	cp "$(APPKIT_ICON_DIR)/Assets.car" "$(APPKIT_ICON_DIR)/Shrimply.icns" "$(APPKIT_APP)/Contents/Resources/"
+	cp vendor/vision/LICENSE "$(APPKIT_APP)/Contents/Resources/licenses/OpenCV-Vision.txt"
+	cp crates/math/color/src/css/LICENSE "$(APPKIT_APP)/Contents/Resources/licenses/GTK-Pango-Color.txt"
+	cp crates/math/color/src/css/NOTICE "$(APPKIT_APP)/Contents/Resources/licenses/GTK-Pango-Color-NOTICE.txt"
 
-appkit-release: appkit-icon
+appkit-release: appkit-ffmpeg appkit-icon
 	@test "$$(uname -s)" = Darwin || { echo "AppKit release requires macOS" >&2; exit 1; }
 	$(APPKIT_BUILD_ENV) RUSTFLAGS="" CARGO_TERM_COLOR=always MACOSX_DEPLOYMENT_TARGET=$(APPKIT_DEPLOYMENT_TARGET) $(CARGO) build --release -p $(APPKIT_LAUNCHER_PACKAGE) -p $(APPKIT_EDITOR_PACKAGE) --bins
 
@@ -262,16 +325,16 @@ appkit-check: appkit-build
 	$(APPKIT_BUILD_ENV) $(CARGO) check -p $(APPKIT_EDITOR_PACKAGE) -p $(APPKIT_LAUNCHER_PACKAGE) -p $(FRAMEGRAPH_CORE_PACKAGE) -p $(APPKIT_COMPONENT_METAL_PACKAGE) -p $(APPKIT_COMPONENTS_PACKAGE) -p $(APPKIT_COMPONENTS_DEMO_PACKAGE) --all-targets
 	$(MAKE) appkit-lint
 
-appkit-lint:
+appkit-lint: appkit-ffmpeg
 	@test "$$(uname -s)" = Darwin || { echo "AppKit lint requires macOS" >&2; exit 1; }
 	$(APPKIT_BUILD_ENV) $(CARGO) clippy -p $(APPKIT_EDITOR_PACKAGE) -p $(APPKIT_LAUNCHER_PACKAGE) -p $(FRAMEGRAPH_CORE_PACKAGE) -p $(APPKIT_COMPONENT_METAL_PACKAGE) -p $(APPKIT_COMPONENTS_PACKAGE) -p $(APPKIT_COMPONENTS_DEMO_PACKAGE) --all-targets -- -D warnings
 
-appkit-components-check:
+appkit-components-check: appkit-ffmpeg
 	@test "$$(uname -s)" = Darwin || { echo "AppKit components require macOS" >&2; exit 1; }
 	$(APPKIT_BUILD_ENV) $(CARGO) check -p $(FRAMEGRAPH_CORE_PACKAGE) -p $(APPKIT_COMPONENT_METAL_PACKAGE) -p $(APPKIT_COMPONENTS_PACKAGE) -p $(APPKIT_COMPONENTS_DEMO_PACKAGE) --all-targets
 	$(APPKIT_BUILD_ENV) $(CARGO) clippy -p $(FRAMEGRAPH_CORE_PACKAGE) -p $(APPKIT_COMPONENT_METAL_PACKAGE) -p $(APPKIT_COMPONENTS_PACKAGE) -p $(APPKIT_COMPONENTS_DEMO_PACKAGE) --all-targets -- -D warnings
 
-appkit-components-showcase:
+appkit-components-showcase: appkit-ffmpeg
 	@test "$$(uname -s)" = Darwin || { echo "AppKit components require macOS" >&2; exit 1; }
 	$(APPKIT_BUILD_ENV) $(CARGO) run -p $(APPKIT_COMPONENTS_DEMO_PACKAGE)
 
@@ -283,7 +346,7 @@ else
 endif
 
 dev-mac: appkit-build
-	RUST_LOG=$(RUST_LOG) "$(APPKIT_APP)/Contents/MacOS/$(APPKIT_BIN_NAME)"
+	$(HOST_MEDIA_ENV) RUST_LOG=$(RUST_LOG) "$(APPKIT_APP)/Contents/MacOS/$(APPKIT_BIN_NAME)"
 
 qt-build: native-deps qt-native-deps cuda-artifacts
 	$(DEV_BUILD_ENV) QMAKE=$(QT_QMAKE) CARGO_TERM_COLOR=always $(CARGO) build --target-dir "$(QT_TARGET_DIR)" -p $(QT_EDITOR_PACKAGE) -p $(QT_LAUNCHER_PACKAGE) --bins
@@ -343,7 +406,7 @@ windows-build: windows-native-deps cuda-artifacts
 	$(BUILD_ENV) QMAKE="$(QT_QMAKE)" CARGO_TERM_COLOR=always $(CARGO) build --target-dir "$(QT_TARGET_DIR)" -p $(QT_EDITOR_PACKAGE) -p $(QT_LAUNCHER_PACKAGE) --bins
 
 windows-dev: windows-build
-	$(BUILD_ENV) RUST_LOG="$(RUST_LOG)" $(QT_TARGET_DIR)/debug/$(QT_BIN_NAME).exe
+	$(BUILD_ENV) $(HOST_MEDIA_ENV) RUST_LOG="$(RUST_LOG)" $(QT_TARGET_DIR)/debug/$(QT_BIN_NAME).exe
 else
 windows-build windows-dev:
 	@echo "$@ requires Windows; current host: $(HOST_OS)" >&2
@@ -353,14 +416,17 @@ endif
 windows-check: override CUDA_IMAGE_FORMAT = ptx
 windows-check: override CUDA_PTX_TARGET = compute_50
 windows-check: windows-native-deps fmt-check source-size-check cuda-artifacts
-	$(BUILD_ENV) QMAKE=$(QT_QMAKE) $(CARGO) check -p $(QT_EDITOR_PACKAGE) -p $(QT_LAUNCHER_PACKAGE) --bins
+	$(BUILD_ENV) QMAKE=$(QT_QMAKE) $(CARGO) build -p $(QT_EDITOR_PACKAGE) -p $(QT_LAUNCHER_PACKAGE) --bins
 	$(BUILD_ENV) QMAKE=$(QT_QMAKE) $(CARGO) clippy -p $(QT_EDITOR_PACKAGE) -p $(QT_LAUNCHER_PACKAGE) --bins -- -D warnings
 
 ifeq ($(HOST_OS),Windows_NT)
-windows-release: SHELL := cmd.exe
-windows-release: .SHELLFLAGS := /d /c
-windows-package: SHELL := cmd.exe
-windows-package: .SHELLFLAGS := /d /c
+# GNU Make tracks Windows shell mode globally, so choose it once per invocation.
+ifneq ($(filter windows-release windows-package,$(MAKECMDGOALS)),)
+SHELL := cmd.exe
+.SHELLFLAGS := /d /c
+else
+SHELL := bash.exe
+endif
 endif
 
 windows-release: override CUDA_IMAGE_FORMAT = ptx
@@ -376,8 +442,12 @@ components-check: native-deps qt-native-deps
 	$(DEV_BUILD_ENV) QMAKE=$(QT_QMAKE) $(CARGO) check -p $(FRAMEGRAPH_CORE_PACKAGE) -p $(GTK_COMPONENTS_PACKAGE) -p $(QT_COMPONENTS_PACKAGE) -p $(GTK_COMPONENTS_DEMO_PACKAGE) -p $(QT_COMPONENTS_DEMO_PACKAGE) --all-targets
 	$(DEV_BUILD_ENV) QMAKE=$(QT_QMAKE) $(CARGO) clippy -p $(FRAMEGRAPH_CORE_PACKAGE) -p $(GTK_COMPONENTS_PACKAGE) -p $(QT_COMPONENTS_PACKAGE) -p $(GTK_COMPONENTS_DEMO_PACKAGE) -p $(QT_COMPONENTS_DEMO_PACKAGE) --all-targets -- -D warnings
 
-gtk-components-showcase: native-deps
-	$(DEV_BUILD_ENV) $(CARGO) run -p $(GTK_COMPONENTS_DEMO_PACKAGE)
+.PHONY: gtk-components-build
+gtk-components-build: native-deps
+	$(DEV_BUILD_ENV) $(CARGO) build -p $(GTK_COMPONENTS_DEMO_PACKAGE)
+
+gtk-components-showcase: gtk-components-build
+	$(BUILD_ENV) $(CARGO_TARGET_DIR)/debug/shrimply-gtk-components-demo
 
 qt-components-showcase: qt-native-deps
 	$(DEV_BUILD_ENV) QMAKE=$(QT_QMAKE) $(CARGO) run -p $(QT_COMPONENTS_DEMO_PACKAGE)
@@ -413,21 +483,40 @@ font-system-bench: native-deps
 
 .PHONY: sanim-check
 sanim-check:
-	$(MAKE) -C sanim check
+	$(FFMPEG_RUNTIME_ENV) $(MAKE) -C sanim check CARGO="$(CARGO)"
 
 .PHONY: sanim-integration-check
 sanim-integration-check: native-deps
 	$(DEV_BUILD_ENV) $(CARGO) test -p shrimply-visual-core -p shrimply-media-import sanim --lib
+
+.PHONY: sanim-events-check sanim-events-test sanim-events-bench
+check: sanim-events-test
+sanim-events-test: native-deps
+	$(DEV_BUILD_ENV) $(CARGO) test -p shrimply-math-core events::tests --lib
+	$(DEV_BUILD_ENV) $(CARGO) test -p shrimply-project-document -p shrimply-timeline-snap sanim_event --lib
+sanim-events-check: sanim-events-test
+	$(DEV_BUILD_ENV) $(CARGO) check -p shrimply-timeline-skia -p shrimply-visual-core -p shrimply-media-import
+	$(DEV_BUILD_ENV) $(CARGO) test -p shrimply-visual-core native_sanim_event_clocks --lib
+	$(MAKE) -C sanim event-boundaries-check
+sanim-events-bench: native-deps
+	$(DEV_BUILD_ENV) $(CARGO) test -p shrimply-math-core sanim_event_clock_benchmark --lib -- --ignored --nocapture
+	$(DEV_BUILD_ENV) $(CARGO) test -p shrimply-project-document sanim_event_lookup_benchmark --lib -- --ignored --nocapture
 
 .PHONY: sanim-reflection-bench
 sanim-reflection-bench: native-deps
 	$(DEV_BUILD_ENV) $(CARGO) test -p shrimply-visual-core -p shrimply-media-import native_sanim_reflection_benchmark --lib -- --ignored --nocapture
 
 .PHONY: sanim-inspector-check sanim-inspector-bench
-.PHONY: sanim-preview-inspector-check
+.PHONY: sanim-preview-inspector-check sanim-preview-inspector-bench
 sanim-preview-inspector-check: native-deps
 	$(DEV_BUILD_ENV) $(CARGO) check -p shrimply-preview-gtk --all-targets
-check: sanim-inspector-check
+	$(DEV_BUILD_ENV) $(CARGO) test -p shrimply-preview-gtk sanim_inspector --lib
+sanim-preview-inspector-bench: native-deps
+	$(DEV_BUILD_ENV) $(CARGO) test -p shrimply-preview-gtk sanim_inspector_geometry_fallback_benchmark --lib -- --ignored --nocapture
+check: inspector-check
+.PHONY: inspector-check
+inspector-check: native-deps
+	$(DEV_BUILD_ENV) $(CARGO) test -p shrimply-inspector-core -p shrimply-inspector-document --lib
 sanim-inspector-check: native-deps
 	$(DEV_BUILD_ENV) $(CARGO) test -p shrimply-inspector-core sanim_inspector --lib
 sanim-inspector-bench: native-deps
@@ -452,6 +541,7 @@ editing-api-check: native-deps cuda-artifacts editing-api-fmt
 	$(DEV_BUILD_ENV) $(CARGO) test -p shrimply-editing-api -p shrimply-editing-runtime -p shrimply-cli --lib
 
 source-size-check:
+	@command -v rg >/dev/null 2>&1 || { echo "Source size checks require ripgrep (rg)" >&2; exit 1; }
 	@oversized="$$(rg --files -g '!external/**' -g '!target/**' -g '!vcpkg_installed/**' | while IFS= read -r source_file; do \
 		case "$$source_file" in \
 			(*.rs|*.py|*.c|*.cc|*.cpp|*.cxx|*.h|*.hh|*.hpp|*.cu|*.cuh|*.wgsl|*.glsl|*.vert|*.frag|*.comp|*.slang|*.ts|*.tsx|*.js|*.jsx) \
@@ -462,10 +552,10 @@ source-size-check:
 	if [ -n "$$oversized" ]; then printf 'Source files exceed $(SOURCE_LINE_LIMIT) lines:\n%s\n' "$$oversized"; exit 1; fi
 
 server-python-check:
-	cd server && uv run --locked pyrefly check
+	uv run --directory server --locked pyrefly check
 
 manim:
-	cd crates/media/visual/manim/manim-bridge/python && uv run --python 3.14 python -m shrimply_manim $(ARGS)
+	uv run --directory crates/media/visual/manim/manim-bridge/python --python 3.14 python -m shrimply_manim $(ARGS)
 
 manim-python-check:
 	uv run --python 3.14 --project crates/media/visual/manim/manim-bridge/python pyrefly check --python-version 3.14 --search-path external/manim crates/media/visual/manim/manim-bridge/python/shrimply_manim
@@ -480,6 +570,10 @@ cargo-check: native-deps qt-native-deps
 	$(DEV_BUILD_ENV) QMAKE=$(QT_QMAKE) $(CARGO) check -p $(EDITOR_PACKAGE) -p $(LAUNCHER_PACKAGE) --bins
 	$(DEV_BUILD_ENV) QMAKE=$(QT_QMAKE) $(CARGO) check -p $(QT_EDITOR_PACKAGE) -p $(QT_LAUNCHER_PACKAGE) --bins
 	$(DEV_BUILD_ENV) $(CARGO) check -p shrimply-inspector-document --lib
+
+.PHONY: vision-check
+vision-check: native-deps
+	$(DEV_BUILD_ENV) $(CARGO) clippy -p shrimply-vision -p shrimply-affine-l1-stabilization -p shrimply-mesh-flow-stabilization --lib -- -D warnings
 
 intel-check: native-deps cuda-artifacts
 	$(DEV_BUILD_ENV) $(CARGO) check -p shrimply-gpu-cuda -p $(EDITOR_PACKAGE) -p shrimply-visual-cuda -p shrimply-render-vulkan -p shrimply-preview-render-vulkan -p shrimply-preview-runtime-cuda -p shrimply-export-cuda --all-targets
@@ -496,7 +590,7 @@ gpu-export-benchmark: native-deps cuda-artifacts
 	$(DEV_BUILD_ENV) $(CARGO) run --profile $(or $(PROFILE),dev) -p shrimply-export-cuda --example gpu_export -- "$(or $(PROJECT),$(VIDEO))" "$(OUTPUT)" "$(or $(FORMAT),h264)" "$(or $(FRAMES),120)" "$(or $(RATE_CONTROL),cqp)"
 
 gpu-playback-benchmark: native-deps cuda-artifacts
-	$(DEV_BUILD_ENV) $(CARGO) run --profile $(or $(PROFILE),dev) -p shrimply-visual-cuda --example gpu_playback -- "$(PROJECT)" "$(or $(FRAMES),120)" "$(or $(ACCURACY),playback)"
+	$(DEV_BUILD_ENV) $(CARGO) run --profile $(or $(PROFILE),dev) -p shrimply-visual-cuda --example gpu_playback -- "$(PROJECT)" "$(or $(FRAMES),120)"
 
 .PHONY: video-decode-benchmark
 video-decode-benchmark:
@@ -506,7 +600,7 @@ frame-rate-test: native-deps
 	$(DEV_BUILD_ENV) $(CARGO) test -p shrimply-math-core frame_rate_is_the_reciprocal_of_the_latest_render_cost
 
 video-lifecycle-test: native-deps
-	$(DEV_BUILD_ENV) $(CARGO) test -p shrimply-visual-cuda continuous_playback_coalesces_until_an_explicit_discontinuity
+	$(DEV_BUILD_ENV) $(CARGO) test -p shrimply-preview-render-core continuous_playback_coalesces_until_an_explicit_discontinuity
 
 transparent-fill-frame-range-test: native-deps
 	$(DEV_BUILD_ENV) $(CARGO) test -p shrimply-visual-cuda modifiers::transparent_fill::tests::partial_first_project_frame_uses_the_item_start_mask -- --exact --test-threads=1
@@ -600,14 +694,25 @@ deps-fedora:
 qt-release: native-deps qt-native-deps cuda-artifacts
 	$(DEV_BUILD_ENV) QMAKE=$(QT_QMAKE) CARGO_TERM_COLOR=always $(CARGO) build --target-dir "$(QT_TARGET_DIR)" --release -p $(QT_EDITOR_PACKAGE) -p $(QT_LAUNCHER_PACKAGE)
 
-install: release desktop-icon project-mime
+.PHONY: install-manim-worker
+install-manim-worker:
+	sh packaging/linux/install-manim-worker.sh "$(DESTDIR)$(PREFIX)"
+
+install: release desktop-icon project-mime install-manim-worker
 	$(INSTALL) -Dm755 $(CARGO_TARGET_DIR)/release/$(BIN_NAME) "$(DESTDIR)$(BINDIR)/$(BIN_NAME)"
 	$(INSTALL) -Dm755 $(CARGO_TARGET_DIR)/release/$(EDITOR_BIN_NAME) "$(DESTDIR)$(BINDIR)/$(EDITOR_BIN_NAME)"
-	sh packaging/linux/install-manim-worker.sh "$(DESTDIR)$(PREFIX)"
+ifeq ($(HOST_OS),Linux)
+ifneq ($(FFMPEG_PREFIX),$(abspath $(DESTDIR)$(PREFIX)))
+	sh packaging/linux/install-ffmpeg.sh "$(FFMPEG_PREFIX)" "$(DESTDIR)$(BINDIR)" "$(DESTDIR)$(PREFIX)/lib/shrimply/ffmpeg" "$(BIN_NAME)" "$(EDITOR_BIN_NAME)"
+endif
+endif
 	$(INSTALL) -Dm644 $(LIP_SYNC_MODEL) "$(DESTDIR)$(LIP_SYNC_RESOURCE_DIR)/pocketsphinx-ci.model"
 	$(INSTALL) -Dm644 vendor/pocketsphinx/LICENSE "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/PocketSphinx-code.txt"
 	$(INSTALL) -Dm644 vendor/pocketsphinx/MODEL-LICENSE "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/PocketSphinx-model.txt"
 	$(INSTALL) -Dm644 vendor/rhubarb-lip-sync/LICENSE "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/Rhubarb-Lip-Sync.txt"
+	$(INSTALL) -Dm644 vendor/vision/LICENSE "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/OpenCV-Vision.txt"
+	$(INSTALL) -Dm644 crates/math/color/src/css/LICENSE "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/GTK-Pango-Color.txt"
+	$(INSTALL) -Dm644 crates/math/color/src/css/NOTICE "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/GTK-Pango-Color-NOTICE.txt"
 	$(INSTALL) -d "$(DESTDIR)$(ICONS_RESOURCE_DIR)"
 	cp -a assets/icons/. "$(DESTDIR)$(ICONS_RESOURCE_DIR)/"
 	sed -e 's|^Exec=.*|Exec="$(BINDIR)/$(BIN_NAME)" %f|' -e 's|^TryExec=.*|TryExec=$(BINDIR)/$(BIN_NAME)|' $(DESKTOP_FILE) | $(INSTALL) -Dm644 /dev/stdin "$(DESTDIR)$(APPLICATIONSDIR)/dev.shrimply.Shrimply.desktop"
@@ -628,13 +733,21 @@ flatpak-gtk:
 		"$(FLATPAK_GTK_IMAGE)"
 	@echo "Flatpak bundle: $(FLATPAK_BUNDLE)"
 
-install-qt: qt-release desktop-icon project-mime
+install-qt: qt-release desktop-icon project-mime install-manim-worker
 	$(INSTALL) -Dm755 $(QT_TARGET_DIR)/release/$(QT_BIN_NAME) "$(DESTDIR)$(QT_BINDIR)/$(QT_BIN_NAME)"
 	$(INSTALL) -Dm755 $(QT_TARGET_DIR)/release/$(QT_EDITOR_BIN_NAME) "$(DESTDIR)$(QT_BINDIR)/$(QT_EDITOR_BIN_NAME)"
+ifeq ($(HOST_OS),Linux)
+ifneq ($(FFMPEG_PREFIX),$(abspath $(DESTDIR)$(PREFIX)))
+	sh packaging/linux/install-ffmpeg.sh "$(FFMPEG_PREFIX)" "$(DESTDIR)$(QT_BINDIR)" "$(DESTDIR)$(PREFIX)/lib/shrimply/ffmpeg" "$(QT_BIN_NAME)" "$(QT_EDITOR_BIN_NAME)"
+endif
+endif
 	$(INSTALL) -Dm644 $(QT_TARGET_DIR)/release/res/lip-sync/pocketsphinx-ci.model "$(DESTDIR)$(LIP_SYNC_RESOURCE_DIR)/pocketsphinx-ci.model"
 	$(INSTALL) -Dm644 vendor/pocketsphinx/LICENSE "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/PocketSphinx-code.txt"
 	$(INSTALL) -Dm644 vendor/pocketsphinx/MODEL-LICENSE "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/PocketSphinx-model.txt"
 	$(INSTALL) -Dm644 vendor/rhubarb-lip-sync/LICENSE "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/Rhubarb-Lip-Sync.txt"
+	$(INSTALL) -Dm644 vendor/vision/LICENSE "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/OpenCV-Vision.txt"
+	$(INSTALL) -Dm644 crates/math/color/src/css/LICENSE "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/GTK-Pango-Color.txt"
+	$(INSTALL) -Dm644 crates/math/color/src/css/NOTICE "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/GTK-Pango-Color-NOTICE.txt"
 	sed -e 's|^Exec=.*|Exec="$(QT_BINDIR)/$(QT_BIN_NAME)" %f|' -e 's|^TryExec=.*|TryExec=$(QT_BINDIR)/$(QT_BIN_NAME)|' $(QT_DESKTOP_FILE) | $(INSTALL) -Dm644 /dev/stdin "$(DESTDIR)$(APPLICATIONSDIR)/dev.shrimply.Shrimply.Qt.desktop"
 	@if test -z "$(DESTDIR)"; then \
 		command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database "$(APPLICATIONSDIR)" >/dev/null || true; \
@@ -643,18 +756,22 @@ install-qt: qt-release desktop-icon project-mime
 
 
 uninstall:
+	rm -f "$(DESTDIR)$(BINDIR)/shrimply-ffmpeg"
 	rm -f "$(DESTDIR)$(BINDIR)/$(BIN_NAME)"
 	rm -f "$(DESTDIR)$(BINDIR)/$(EDITOR_BIN_NAME)"
-	rm -rf "$(DESTDIR)$(MANIM_WORKER_RESOURCE_DIR)" "$(DESTDIR)$(MANIM_SOURCE_RESOURCE_DIR)"
 	rm -rf "$(DESTDIR)$(LIP_SYNC_RESOURCE_DIR)"
 	rm -f "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/PocketSphinx-code.txt"
 	rm -f "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/PocketSphinx-model.txt"
 	rm -f "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/Rhubarb-Lip-Sync.txt"
+	rm -f "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/OpenCV-Vision.txt"
+	rm -f "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/GTK-Pango-Color.txt"
+	rm -f "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/GTK-Pango-Color-NOTICE.txt"
 	rm -rf "$(DESTDIR)$(ICONS_RESOURCE_DIR)"
 	rm -f "$(DESTDIR)$(APPLICATIONSDIR)/dev.shrimply.Shrimply.desktop"
 	$(MAKE) uninstall-desktop-assets
 
 uninstall-qt:
+	rm -f "$(DESTDIR)$(QT_BINDIR)/shrimply-ffmpeg"
 	rm -f "$(DESTDIR)$(QT_BINDIR)/$(QT_BIN_NAME)"
 	rm -f "$(DESTDIR)$(QT_BINDIR)/$(QT_EDITOR_BIN_NAME)"
 	rm -f "$(DESTDIR)$(APPLICATIONSDIR)/dev.shrimply.Shrimply.Qt.desktop"
@@ -680,3 +797,150 @@ gtk-gpu-preferences-validation: native-deps cuda-artifacts
 .PHONY: cuda-peer-copy-validation
 cuda-peer-copy-validation:
 	$(DEV_BUILD_ENV) $(CARGO) run -p shrimply-gpu-cuda --example peer_copy -- "$(or $(SOURCE_GPU),0)" "$(or $(DESTINATION_GPU),0)"
+
+# Android's native graph intentionally excludes the desktop editor and media backends.
+ANDROID_SDK_ROOT ?= $(HOME)/Android/Sdk
+ANDROID_NDK_VERSION ?= 28.2.13676358
+ANDROID_NDK_HOME ?= $(ANDROID_SDK_ROOT)/ndk/$(ANDROID_NDK_VERSION)
+ANDROID_TOOLCHAIN := $(ANDROID_NDK_HOME)/toolchains/llvm/prebuilt/linux-x86_64
+ANDROID_ABI ?= arm64-v8a
+ANDROID_TARGET = $(if $(filter arm64-v8a,$(ANDROID_ABI)),aarch64-linux-android,x86_64-linux-android)
+ANDROID_CLANG = $(if $(filter arm64-v8a,$(ANDROID_ABI)),aarch64-linux-android,x86_64-linux-android)33-clang
+ANDROID_SERIAL ?=
+ANDROID_ADB = adb -s "$(ANDROID_SERIAL)"
+ANDROID_PROFILE ?= debug
+ANDROID_DEV_SIGN ?= false
+ANDROID_GRADLE ?= $(CURDIR)/android/gradlew
+# rust-skia's unversioned target otherwise hides newer bionic declarations.
+ANDROID_SKIA_CFLAGS = "--target=$(ANDROID_TARGET)33","$(if $(filter release,$(ANDROID_PROFILE)),-O3,-O0)","-I$(ANDROID_MEDIA_PREFIX)/include"
+ifeq ($(ANDROID_ABI),arm64-v8a)
+ANDROID_SKIA_CFLAGS += ,"-mno-outline-atomics"
+endif
+ANDROID_ENV = HOST_CC="$(CC)" HOST_CXX="$(CXX)" SKIA_GN_ARGS='ndk_api=33 skia_use_ndk_images=false skia_use_system_libjpeg_turbo=true extra_cflags=[] extra_cflags=[$(ANDROID_SKIA_CFLAGS)]' ANDROID_HOME="$(ANDROID_SDK_ROOT)" ANDROID_NDK_HOME="$(ANDROID_NDK_HOME)" ANDROID_NDK_ROOT="$(ANDROID_NDK_HOME)" ANDROID_NDK="$(ANDROID_NDK_HOME)" PATH="$(ANDROID_TOOLCHAIN)/bin:$(PATH)" CC="$(ANDROID_TOOLCHAIN)/bin/$(ANDROID_CLANG)" CXX="$(ANDROID_TOOLCHAIN)/bin/$(ANDROID_CLANG)++" AR="$(ANDROID_TOOLCHAIN)/bin/llvm-ar" RUSTFLAGS="-C linker=$(ANDROID_TOOLCHAIN)/bin/$(ANDROID_CLANG) -C link-arg=-Wl,-z,max-page-size=16384"
+.PHONY: android-native android-build android-install android-check android-benchmark android-host-check
+android-native: android-pdf-deps
+	@test "$(ANDROID_ABI)" = arm64-v8a -o "$(ANDROID_ABI)" = x86_64 || { echo "Unsupported Android ABI" >&2; exit 1; }
+	@test "$(ANDROID_PROFILE)" = debug -o "$(ANDROID_PROFILE)" = release || { echo "Use ANDROID_PROFILE=debug or release" >&2; exit 1; }
+	@test "$(ANDROID_PROFILE)" != release -o "$(ANDROID_ABI)" = arm64-v8a || { echo "Android releases require arm64-v8a" >&2; exit 1; }
+	$(RUSTUP) target add --toolchain $(RUST_TOOLCHAIN) $(ANDROID_TARGET)
+	$(ANDROID_ENV) $(ANDROID_MEDIA_ENV) PKG_CONFIG_ALL_STATIC=1 $(CARGO) build -p shrimply-editor-android --target $(ANDROID_TARGET) $(if $(filter release,$(ANDROID_PROFILE)),--release)
+	mkdir -p android/app/src/main/jniLibs/$(ANDROID_ABI)
+	cp $(CARGO_TARGET_DIR)/$(ANDROID_TARGET)/$(ANDROID_PROFILE)/libshrimply_android.so android/app/src/main/jniLibs/$(ANDROID_ABI)/
+	cp "$(ANDROID_TOOLCHAIN)/sysroot/usr/lib/$(ANDROID_TARGET)/libc++_shared.so" android/app/src/main/jniLibs/$(ANDROID_ABI)/
+
+android-build: android-native
+	@test -n "$(ANDROID_GRADLE)" || { echo "Set ANDROID_GRADLE to Gradle 9.8.0's executable" >&2; exit 1; }
+	ANDROID_HOME="$(ANDROID_SDK_ROOT)" "$(ANDROID_GRADLE)" -p android -PnativeAbi=$(ANDROID_ABI) -PdevSigning=$(ANDROID_DEV_SIGN) assemble$(if $(filter release,$(ANDROID_PROFILE)),Release,Debug)
+
+android-install: ANDROID_DEV_SIGN = true
+android-install: android-device-check android-build
+	$(ANDROID_ADB) install -r android/app/build/outputs/apk/$(ANDROID_PROFILE)/app-$(ANDROID_PROFILE)$(if $(and $(filter release,$(ANDROID_PROFILE)),$(filter-out true,$(ANDROID_DEV_SIGN))),-unsigned).apk
+
+android-host-check:
+	$(BUILD_ENV) $(CARGO) check -p shrimply-timeline-paint-skia -p shrimply-editor-android
+	$(BUILD_ENV) $(CARGO) clippy -p shrimply-timeline-paint-skia -p shrimply-editor-android -- -D warnings
+
+android-check: android-build
+	$(ANDROID_ENV) $(ANDROID_MEDIA_ENV) PKG_CONFIG_ALL_STATIC=1 $(CARGO) clippy -p shrimply-editor-android -p shrimply-timeline-paint-skia --target $(ANDROID_TARGET) $(if $(filter release,$(ANDROID_PROFILE)),--release) --no-deps -- -D warnings
+	ANDROID_HOME="$(ANDROID_SDK_ROOT)" "$(ANDROID_GRADLE)" -p android -PnativeAbi=$(ANDROID_ABI) lint$(if $(filter release,$(ANDROID_PROFILE)),Release,Debug)
+	python3 packaging/android-check.py android/app/build/outputs/apk/$(ANDROID_PROFILE)/app-$(ANDROID_PROFILE)$(if $(and $(filter release,$(ANDROID_PROFILE)),$(filter-out true,$(ANDROID_DEV_SIGN))),-unsigned).apk "$(ANDROID_TOOLCHAIN)/bin/llvm-readelf" "$(ANDROID_SDK_ROOT)"
+
+android-benchmark: android-device-check
+	ANDROID_SERIAL="$(ANDROID_SERIAL)" python3 packaging/android-benchmark.py $(or $(STRESS),false)
+
+.PHONY: android-pipeline-benchmark
+android-pipeline-benchmark: android-device-check
+	@test -n "$(PROJECT)" || { echo "Set PROJECT to a native project path on the Android device" >&2; exit 1; }
+	ANDROID_SERIAL="$(ANDROID_SERIAL)" python3 packaging/android-benchmark.py throughput "$(PROJECT)" "$(or $(SCENE),project)" "$(or $(FRAMES),600)"
+
+.PHONY: android-layout-check android-dependency-check
+android-layout-check:
+	ANDROID_HOME="$(ANDROID_SDK_ROOT)" "$(ANDROID_GRADLE)" -p android -PnativeAbi=$(ANDROID_ABI) compileDebugKotlin lintDebug
+
+android-dependency-check:
+	mkdir -p $(CARGO_TARGET_DIR)
+	@$(CARGO) tree -p shrimply-editor-android --target $(ANDROID_TARGET) --prefix none --edges normal > $(CARGO_TARGET_DIR)/android-dependencies.txt
+	@if rg '^(gtk4[^ ]*|gdk4[^ ]*|shrimply-visual-cuda|shrimply-preview-runtime-cuda|shrimply-editor-gtk) ' $(CARGO_TARGET_DIR)/android-dependencies.txt; then echo "Desktop dependency leaked into Android" >&2; exit 1; fi
+
+.PHONY: android-project-check
+ANDROID_PROJECT_TEST_ARGS = -p shrimply-project-document -p shrimply-timeline-edit -p shrimply-timeline-paint-skia -p shrimply-media-import -p shrimply-editor-android
+android-project-check:
+	$(BUILD_ENV) $(CARGO) test $(ANDROID_PROJECT_TEST_ARGS) --lib -- --nocapture
+	$(BUILD_ENV) $(CARGO) clippy $(ANDROID_PROJECT_TEST_ARGS) --all-targets -- -D warnings
+
+.PHONY: android-project-bench
+android-project-bench:
+	@test "$(ANDROID_PROFILE)" = debug || { echo "Android development benchmarks use debug builds; do not start a release build." >&2; exit 1; }
+	$(BUILD_ENV) $(CARGO) test $(ANDROID_PROJECT_TEST_ARGS) project::tests::project_edit_memory_benchmark --lib -- --ignored --nocapture
+	$(BUILD_ENV) $(CARGO) test $(ANDROID_PROJECT_TEST_ARGS) disjoint_viewport_lookup_benchmark --lib -- --ignored --nocapture
+
+android-check: android-dependency-check
+
+# Benchmark installs use the selected profile; debug is the default.
+.PHONY: android-benchmark-install
+android-benchmark-install: android-device-check
+	$(MAKE) android-build ANDROID_PROFILE=$(ANDROID_PROFILE) ANDROID_ABI=arm64-v8a ANDROID_DEV_SIGN=true
+	$(ANDROID_ADB) install -r android/app/build/outputs/apk/$(ANDROID_PROFILE)/app-$(ANDROID_PROFILE).apk
+
+.PHONY: android-device-check
+android-device-check:
+	@test -n "$(ANDROID_SERIAL)" || { echo "Set ANDROID_SERIAL to the intended device (wireless IP:port or USB serial)" >&2; exit 1; }
+
+# Reuse the desktop's media libraries, cross-compiled for Android. This target
+# does not change the host's packages or the desktop dependency search paths.
+.PHONY: android-media-deps
+android-media-deps:
+	python3 packaging/android-native.py --ndk "$(ANDROID_NDK_HOME)" --cache "$(CARGO_TARGET_DIR)/android-native" --abi $(ANDROID_ABI) --profile $(ANDROID_PROFILE) --jobs $(or $(CARGO_BUILD_JOBS),4)
+	ln -sfn "$(ANDROID_MEDIA_PREFIX)/lib/pkgconfig" "$(ANDROID_MEDIA_PREFIX)/../pkgconfig-$$(cat '$(ANDROID_MEDIA_PREFIX)/../build.sha256')"
+
+ANDROID_MEDIA_PREFIX = $(abspath $(CARGO_TARGET_DIR)/android-native/$(ANDROID_ABI)/$(ANDROID_PROFILE)/install)
+# ffmpeg-sys bundles static archives inside its rlib. A changed recipe must
+# change its watched pkg-config environment, rather than only relink the app.
+ANDROID_MEDIA_PKG_CONFIG = $(ANDROID_MEDIA_PREFIX)/../pkgconfig-$(shell cat "$(ANDROID_MEDIA_PREFIX)/../build.sha256" 2>/dev/null)
+ANDROID_MEDIA_ENV = SYSTEM_DEPS_LINK=static PKG_CONFIG_ALLOW_CROSS=1 PKG_CONFIG_LIBDIR="$(ANDROID_MEDIA_PKG_CONFIG)" PKG_CONFIG_PATH="$(ANDROID_MEDIA_PKG_CONFIG)" BINDGEN_EXTRA_CLANG_ARGS="--sysroot=$(ANDROID_TOOLCHAIN)/sysroot --target=$(ANDROID_TARGET)33"
+.PHONY: android-media-check
+android-media-check: android-media-deps
+	$(ANDROID_ENV) $(ANDROID_MEDIA_ENV) $(CARGO) check -p shrimply-video-decoder --target $(ANDROID_TARGET)
+
+.PHONY: android-text-deps
+android-text-deps: android-media-deps
+	python3 packaging/android-native.py --ndk "$(ANDROID_NDK_HOME)" --cache "$(CARGO_TARGET_DIR)/android-native" --abi $(ANDROID_ABI) --profile $(ANDROID_PROFILE) --jobs $(or $(CARGO_BUILD_JOBS),4) --text
+
+.PHONY: android-text-check
+android-text-check: android-text-deps
+	$(ANDROID_ENV) $(ANDROID_MEDIA_ENV) PKG_CONFIG_ALL_STATIC=1 $(CARGO) clippy -p shrimply-fonts --features fontconfig --target $(ANDROID_TARGET) --lib -- -D warnings
+
+.PHONY: android-visual-check
+android-visual-check: android-media-deps android-text-deps android-l1-deps
+	$(ANDROID_ENV) $(ANDROID_MEDIA_ENV) PKG_CONFIG_ALL_STATIC=1 $(CARGO) check -p shrimply-visual-core --target $(ANDROID_TARGET)
+
+.PHONY: android-pdf-deps android-preview-check
+android-pdf-deps: android-text-deps android-l1-deps
+	python3 packaging/android-native.py --ndk "$(ANDROID_NDK_HOME)" --cache "$(CARGO_TARGET_DIR)/android-native" --abi $(ANDROID_ABI) --profile $(ANDROID_PROFILE) --jobs $(or $(CARGO_BUILD_JOBS),4) --pdf
+
+.PHONY: android-l1-deps
+android-l1-deps:
+	python3 packaging/android-highs.py --ndk "$(ANDROID_NDK_HOME)" --cache "$(CARGO_TARGET_DIR)/android-native" --abi $(ANDROID_ABI) --profile $(ANDROID_PROFILE) --jobs $(or $(CARGO_BUILD_JOBS),4)
+
+android-preview-check: android-pdf-deps
+	$(ANDROID_ENV) $(ANDROID_MEDIA_ENV) PKG_CONFIG_ALL_STATIC=1 $(CARGO) check -p shrimply-preview-render-core -p shrimply-preview-render-vulkan --target $(ANDROID_TARGET)
+
+.PHONY: android-export-check
+android-export-check: android-pdf-deps
+	$(ANDROID_ENV) $(ANDROID_MEDIA_ENV) PKG_CONFIG_ALL_STATIC=1 $(CARGO) clippy -p shrimply-export-core --target $(ANDROID_TARGET) --lib --no-deps -- -D warnings
+
+.PHONY: android-render-check
+android-render-check:
+	$(ANDROID_ENV) $(CARGO) check -p shrimply-render-vulkan --features renderer --target $(ANDROID_TARGET)
+
+.PHONY: android-media-render-check
+android-media-render-check: android-media-deps
+	$(ANDROID_ENV) $(ANDROID_MEDIA_ENV) $(CARGO) check -p shrimply-render-vulkan --features android-media --target $(ANDROID_TARGET)
+
+.PHONY: android-audio-check
+android-audio-check: android-media-deps
+	$(ANDROID_ENV) $(ANDROID_MEDIA_ENV) $(CARGO) check -p shrimply-audio-engine --features ffmpeg-next/static --target $(ANDROID_TARGET)
+
+.PHONY: android-timeline-check
+android-timeline-check: android-media-deps android-l1-deps
+	$(ANDROID_ENV) $(ANDROID_MEDIA_ENV) $(CARGO) check -p shrimply-timeline-skia -p shrimply-video-decoder --no-default-features --target $(ANDROID_TARGET)

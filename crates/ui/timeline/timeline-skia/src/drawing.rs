@@ -3,9 +3,10 @@ use super::*;
 #[path = "drawing/items.rs"]
 mod clip_items;
 mod folded;
-mod icons;
+mod source_events;
+use shrimply_timeline_paint_skia::icons;
 mod previews;
-mod track_controls;
+use shrimply_timeline_paint_skia::track_controls;
 mod tracks;
 
 use clip_items::*;
@@ -95,7 +96,7 @@ pub fn draw_timeline(input: TimelineInput<'_, '_>) {
         vertical_scrollbar,
         software_cursor,
     } = input;
-    let timeline_x = timeline_x();
+    let timeline_x = timeline_x(view);
     let content_height = height.max(0.0);
     let visible_track_height = (height - RULER_HEIGHT).max(0.0);
     let track_clip = rect(
@@ -135,7 +136,7 @@ pub fn draw_timeline(input: TimelineInput<'_, '_>) {
             timeline_x,
             timeline_width,
             content_height,
-            frame_step_seconds,
+            frame_step_seconds: project.frame_step(),
             frame_rate: project.fps,
             hide_zero_label: timeline_empty,
             style: ruler::RulerStyle {
@@ -158,6 +159,7 @@ pub fn draw_timeline(input: TimelineInput<'_, '_>) {
     draw_track_label_pane(
         painter,
         project,
+        &items::track_rows(project),
         selected_tracks,
         track_control_draw,
         view,
@@ -461,19 +463,5 @@ fn draw_playhead(
     height: f64,
     color: Color,
 ) {
-    cursor::draw_playhead(
-        painter,
-        playhead_x,
-        frame_width,
-        height,
-        color,
-        cursor::PlayheadStyle {
-            ruler_height: RULER_HEIGHT,
-            frame_y: Some(RULER_HEIGHT - 4.0),
-            handle_width: PLAYHEAD_HANDLE_WIDTH,
-            handle_height: PLAYHEAD_HANDLE_HEIGHT,
-            handle_top: PLAYHEAD_HANDLE_TOP,
-            triangle_height: PLAYHEAD_HANDLE_TRIANGLE_HEIGHT,
-        },
-    );
+    shrimply_timeline_paint_skia::draw_playhead(painter, playhead_x, frame_width, height, color);
 }

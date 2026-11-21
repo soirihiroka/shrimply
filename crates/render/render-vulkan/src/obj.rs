@@ -15,6 +15,7 @@ struct SoftwareTexture {
 }
 
 #[repr(C)]
+#[derive(Clone, Copy)]
 struct OutputSize {
     width: u32,
     height: u32,
@@ -22,6 +23,7 @@ struct OutputSize {
     guides: u32,
 }
 #[repr(C)]
+#[derive(Clone, Copy)]
 struct SoftwareResources {
     scene_data: u64,
     output_size_data: OutputSize,
@@ -49,9 +51,37 @@ struct SoftwareResources {
     denoised_texture_data: u64,
     denoised_background_texture_data: u64,
     denoised_alpha_texture_data: u64,
+    transport_work_data: u64,
+    sample_work_data: u64,
+    accumulation_data: u64,
+    pass_count_data: u64,
+    wavefront_origin: [u32; 2],
+    wavefront_extent: [u32; 2],
 }
 include!(concat!(env!("OUT_DIR"), "/software_abi.rs"));
 include!(concat!(env!("OUT_DIR"), "/software_uniforms.rs"));
+include!(concat!(env!("OUT_DIR"), "/software_options.rs"));
+include!(concat!(env!("OUT_DIR"), "/software_scratch.rs"));
+
+// Keep per-ray state bounded independently of the canvas and reuse it across tiles.
+const MAX_OBJECT_SCRATCH_BYTES: usize = 64 * 1024 * 1024;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct SamplingKey {
+    anti_aliasing: u32,
+    path_tracing: u32,
+    quality: u32,
+    depth_of_field: bool,
+    transmission: bool,
+    light_sampling: u32,
+    options: u32,
+}
+
+pub(super) struct SamplingCache {
+    key: SamplingKey,
+    samples: u32,
+    transport_steps: u32,
+}
 
 pub(crate) struct Uploaded {
     identity: SceneIdentity,
@@ -129,10 +159,27 @@ impl Renderer {
         let denoising = plan.params.denoising != shrimply_scene_3d::DenoisingMethod::Off
             && plan.params.shading_model == shader::ShadingModel::Pbr;
         let oidn = denoising && match plan.params.denoising {
-            shrimply_scene_3d::DenoisingMethod::Auto => shrimply_denoise_oidn::vulkan_supported(self.device_uuid()),
+            #[cfg(target_os = "linux")]
+            shrimply_scene_3d::DenoisingMethod::Auto => {
+                shrimply_denoise_oidn::vulkan_supported(self.device_uuid())
+            }
+            #[cfg(target_os = "linux")]
             shrimply_scene_3d::DenoisingMethod::OpenImageDenoise => true,
-            shrimply_scene_3d::DenoisingMethod::Atrous | shrimply_scene_3d::DenoisingMethod::Off => false,
-            _ => return Err("Selected denoiser is unavailable on Intel Vulkan; select Auto, Open Image Denoise or À-trous".into()),
+            #[cfg(target_os = "android")]
+            shrimply_scene_3d::DenoisingMethod::Auto => false,
+            #[cfg(target_os = "android")]
+            shrimply_scene_3d::DenoisingMethod::OpenImageDenoise => {
+                return Err(
+                    "Open Image Denoise is unavailable on Android Vulkan; select Auto or À-trous"
+                        .into(),
+                );
+            }
+            shrimply_scene_3d::DenoisingMethod::Atrous
+            | shrimply_scene_3d::DenoisingMethod::Off => false,
+            _ => return Err(
+                "Selected denoiser is unavailable on this Vulkan device; select Auto or À-trous"
+                    .into(),
+            ),
         };
         let region_outline = plan.params.toon_outline_mode != shader::OutlineMode::Off
             && plan.params.toon_outline_method == shader::OutlineMethod::RegionBoundary;
@@ -205,8 +252,15 @@ impl Renderer {
             denoised_texture_data: filtered.address(),
             denoised_background_texture_data: filtered_background.address(),
             denoised_alpha_texture_data: alpha.address(),
+            transport_work_data: 0,
+            sample_work_data: 0,
+            accumulation_data: 0,
+            pass_count_data: 0,
+            wavefront_origin: [0; 2],
+            wavefront_extent: [0; 2],
         };
-        let state = self.upload(bytes(std::slice::from_ref(&state)))?;
+        let data = state;
+        let state = self.upload(bytes(std::slice::from_ref(&data)))?;
         let mut retained = [
             &uploaded.positions,
             &uploaded.normals,
@@ -240,13 +294,6 @@ impl Renderer {
             filtered_background.clone(),
             albedo.clone(),
         ]);
-        let mut kernels = vec!["obj_compute"];
-        if region_outline {
-            kernels.extend(["obj_outline_distance_compute", "obj_outline_compute"]);
-        }
-        const TRANSPORT: u32 = 1 << 2;
-        const GROUNDS: u32 = 1 << 3;
-        const GROUND_REFLECTIONS: u32 = 1 << 4;
         let transport = plan.params.path_tracing != shader::PathTracingMode::Off
             || plan.params.transmission > 0.0
             || plan
@@ -271,7 +318,25 @@ impl Renderer {
             } else {
                 0
             };
-        for name in kernels {
+        if self.device.word_storage {
+            self.object_wavefront(plan, data, &retained, specialization, submissions)?;
+        } else {
+            let mut args = self.arguments("obj_compute")?;
+            args.specialization = specialization;
+            args.set("data", &state.address().to_ne_bytes())?;
+            submissions.push(unsafe {
+                self.dispatch(
+                    args,
+                    retained.clone(),
+                    [plan.width as usize, plan.height as usize, 1],
+                )
+            }?);
+        }
+        for name in if region_outline {
+            &["obj_outline_distance_compute", "obj_outline_compute"][..]
+        } else {
+            &[][..]
+        } {
             let mut args = self.arguments(name)?;
             args.specialization = specialization;
             args.set("data", &state.address().to_ne_bytes())?;
@@ -284,9 +349,10 @@ impl Renderer {
             }?);
         }
         if denoising {
+            #[cfg(target_os = "linux")]
             if oidn {
                 self.denoise_oidn(
-                    crate::oidn::Guides {
+                    super::oidn::Guides {
                         colors: [
                             (&beauty, &filtered),
                             (&denoise_background, &filtered_background),
@@ -303,7 +369,8 @@ impl Renderer {
                     },
                     submissions,
                 )?;
-            } else {
+            }
+            if !oidn {
                 for (input, output) in [
                     (&beauty, &filtered),
                     (&denoise_background, &filtered_background),
@@ -318,6 +385,7 @@ impl Renderer {
                 }
             }
             let mut args = self.arguments("obj_denoise_composite_compute")?;
+            args.specialization = specialization;
             args.set("data", &state.address().to_ne_bytes())?;
             submissions.push(unsafe {
                 self.dispatch(
@@ -328,6 +396,178 @@ impl Renderer {
             }?);
         }
         Ok(output)
+    }
+
+    fn object_wavefront(
+        &mut self,
+        plan: &PreparedFrame,
+        mut data: SoftwareResources,
+        retained: &[Buffer],
+        options: u32,
+        submissions: &mut Vec<Submission>,
+    ) -> Result<(), String> {
+        let uniforms = &plan.uniforms;
+        let key = SamplingKey {
+            anti_aliasing: uniforms.toon.anti_aliasing as u32,
+            path_tracing: uniforms.pbr.path_tracing as u32,
+            quality: uniforms.pbr.render_quality as u32,
+            depth_of_field: uniforms.camera_lens[1] > 0.0,
+            transmission: uniforms.pbr.transmission > 0.0,
+            light_sampling: uniforms.pbr.light_sampling_quality as u32,
+            options,
+        };
+        if self
+            .object_sampling
+            .as_ref()
+            .is_none_or(|cache| cache.key != key)
+        {
+            let budget = self.allocate(2 * size_of::<u32>())?;
+            data.pass_count_data = budget.address();
+            let state = self.upload(bytes(std::slice::from_ref(&data)))?;
+            let mut resources = retained.to_vec();
+            resources.extend([budget.clone(), state.clone()]);
+            let mut args = self.arguments("obj_sample_budget_compute")?;
+            args.specialization = options;
+            args.set("data", &state.address().to_ne_bytes())?;
+            let _submission = unsafe { self.dispatch(args, resources, [1, 1, 1]) }?;
+            let bytes = self.readback(&budget)?;
+            let samples = u32::from_le_bytes(bytes[..4].try_into().expect("sample budget word"));
+            let transport_steps =
+                u32::from_le_bytes(bytes[4..8].try_into().expect("transport budget word"));
+            if samples == 0 || transport_steps == 0 {
+                return Err("GPU returned an empty object sampling budget".into());
+            }
+            self.object_sampling = Some(SamplingCache {
+                key,
+                samples,
+                transport_steps,
+            });
+        }
+        let budget = self
+            .object_sampling
+            .as_ref()
+            .expect("resolved sampling budget");
+        let samples = budget.samples;
+        let transport_steps = budget.transport_steps;
+        let bytes_per_ray = TRANSPORT_BYTES
+            .checked_add(SAMPLE_BYTES)
+            .and_then(|value| value.checked_add(ACCUMULATION_BYTES))
+            .ok_or("object scratch size overflow")?;
+        let scratch_limit =
+            MAX_OBJECT_SCRATCH_BYTES.min(self.device.limits.max_storage_buffer_range as usize);
+        let max_rays = scratch_limit / bytes_per_ray;
+        let tile =
+            shrimply_render_core::math::bounded_tile_extent((plan.width, plan.height), max_rays)
+                .ok_or("GPU cannot allocate object scratch")?;
+        let rays = tile.0 as usize * tile.1 as usize;
+        let transport = self.allocate(rays * TRANSPORT_BYTES)?;
+        let sample = self.allocate(rays * SAMPLE_BYTES)?;
+        let accumulation = self.allocate(rays * ACCUMULATION_BYTES)?;
+        data.transport_work_data = transport.address();
+        data.sample_work_data = sample.address();
+        data.accumulation_data = accumulation.address();
+        data.pass_count_data = 0;
+        let mut resources = retained.to_vec();
+        resources.extend([transport, sample, accumulation]);
+        let mut cycle = vec!["obj_surface_prepare_compute"];
+        if plan.params.shading_model != shader::ShadingModel::Depth {
+            cycle.extend([
+                "obj_surface_direct_compute",
+                "obj_surface_environment_compute",
+            ]);
+            if plan.params.shading_model == shader::ShadingModel::Pbr && options & TRANSPORT != 0 {
+                cycle.extend([
+                    "obj_surface_reservoir_compute",
+                    "obj_surface_visibility_compute",
+                ]);
+            }
+            if plan.params.shading_model == shader::ShadingModel::Toon {
+                cycle.push("obj_surface_toon_finish_compute");
+            }
+        }
+        cycle.push("obj_surface_finish_compute");
+        if options & TRANSPORT != 0 {
+            cycle.extend([
+                "obj_transport_scatter_compute",
+                "obj_transport_trace_compute",
+            ]);
+            if options & GROUNDS != 0 {
+                cycle.extend([
+                    "obj_ground_prepare_compute",
+                    "obj_ground_shadow_compute",
+                    "obj_ground_push_compute",
+                ]);
+                if options & GROUND_REFLECTIONS != 0 {
+                    cycle.push("obj_transport_trace_compute");
+                }
+            }
+            cycle.extend(["obj_transport_miss_compute", "obj_transport_unwind_compute"]);
+        } else {
+            cycle.extend([
+                "obj_transport_scatter_compute",
+                "obj_transport_unwind_compute",
+            ]);
+        }
+        let mut schedule = vec!["obj_sample_init_compute"];
+        for _ in 0..samples {
+            schedule.push("obj_sample_begin_compute");
+            for _ in 0..transport_steps {
+                schedule.extend_from_slice(&cycle);
+            }
+            schedule.push("obj_sample_primary_finish_compute");
+            if options & GROUNDS != 0 {
+                schedule.extend([
+                    "obj_sample_ground_begin_compute",
+                    "obj_ground_shadow_compute",
+                    "obj_sample_reflection_begin_compute",
+                ]);
+                if options & GROUND_REFLECTIONS != 0 {
+                    schedule.push("obj_transport_trace_compute");
+                    for _ in 0..transport_steps {
+                        schedule.extend_from_slice(&cycle);
+                    }
+                }
+                schedule.push("obj_sample_ground_finish_compute");
+            }
+            schedule.push("obj_sample_accumulate_compute");
+        }
+        schedule.push("obj_sample_finalize_compute");
+        let mut names = schedule.clone();
+        names.sort_unstable();
+        names.dedup();
+        for y in (0..plan.height).step_by(tile.1 as usize) {
+            for x in (0..plan.width).step_by(tile.0 as usize) {
+                data.wavefront_origin = [x, y];
+                data.wavefront_extent = [tile.0.min(plan.width - x), tile.1.min(plan.height - y)];
+                let state = self.upload(bytes(std::slice::from_ref(&data)))?;
+                let arguments = names
+                    .iter()
+                    .map(|name| {
+                        let mut args = self.arguments(name)?;
+                        args.specialization = options;
+                        args.set("data", &state.address().to_ne_bytes())?;
+                        Ok(args)
+                    })
+                    .collect::<Result<Vec<_>, String>>()?;
+                let stages = schedule.iter().map(|name| {
+                    &arguments[names.binary_search(name).expect("prepared object stage")]
+                });
+                let mut retained = resources.clone();
+                retained.push(state);
+                submissions.push(unsafe {
+                    self.dispatch_batch(
+                        stages,
+                        retained,
+                        [
+                            data.wavefront_extent[0] as usize,
+                            data.wavefront_extent[1] as usize,
+                            1,
+                        ],
+                    )
+                }?);
+            }
+        }
+        Ok(())
     }
 
     fn upload_object(&mut self, plan: &PreparedFrame) -> Result<(), String> {

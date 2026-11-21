@@ -1,59 +1,64 @@
 # The same persistent list API drives both the data and the animated views.
 let step = reflect(450ms, label="Operation Time", key="lists.step")
 
-fn caption(words: String, position: Vec2<Percent>, size: Length, tint: Color): Element {
-    return Text(words, position=position, font_size=size, fill=tint)
+fn caption(words: String, position: List<Percent,2>, size: Length, tint: Color): Element {
+    return Label(words, position=position, position_mode="absolute", x_align=Align.Center, y_align=Align.Center, font_size=size, fill=tint)
 }
 
 fn tile(value: Number, tint: Color): Element {
-    let face = Rect(width=84pt, height=84pt, radius=14pt, fill=tint)
-    let label = Text(str(value), font_size=34pt, fill=Color("light1"))
+    let face = Box(position_mode="absolute", width=84pt, height=84pt, radius=14pt, fill=tint, x_align=Align.Center, y_align=Align.Center)
+    let label = Label(str(value), position_mode="absolute", x_align=Align.Center, y_align=Align.Center, font_size=34pt, fill=Color("light1"))
     return Box(children=[face, label], width=84pt, height=84pt)
 }
 
 mut stack: List<Element> = []
 mut queue: List<Element> = []
-let stack_view = Box(flex_direction="row",children=stack, position=Vec2(-25%, 0%), x_align=Align.Center, y_align=Align.Center, width=460pt, height=100pt, gap=16pt, justify=Justify.Center, align=Align.Center, wrap=false)
-let queue_view = Box(flex_direction="row",children=queue, position=Vec2(25%, 0%), x_align=Align.Center, y_align=Align.Center, width=460pt, height=100pt, gap=16pt, justify=Justify.Center, align=Align.Center, wrap=false)
-add(stack_view)
-add(queue_view)
+mut planned_stack: List<Element> = []
+mut planned_queue: List<Element> = []
+let stack_view = Box(flex_direction="row",children=stack, position=[-25%, 0%], x_align=Align.Center, y_align=Align.Center, width=460pt, height=100pt, gap=16pt, justify=Justify.Center, align=Align.Center, wrap=false)
+let queue_view = Box(flex_direction="row",children=queue, position=[25%, 0%], x_align=Align.Center, y_align=Align.Center, width=460pt, height=100pt, gap=16pt, justify=Justify.Center, align=Align.Center, wrap=false)
+Animation(children=[stack_view,queue_view])
 
-let heading = caption("Stack & Queue", Vec2(0%, -36%), 38pt, Color("light1"))
-let subtitle = caption("Same arrivals. Different departures.", Vec2(0%, -27%), 19pt, Color("light4"))
-let stack_heading = caption("STACK", Vec2(-25%, -15%), 26pt, Color("blue3"))
-let queue_heading = caption("QUEUE", Vec2(25%, -15%), 26pt, Color("orange3"))
-let stack_rule = caption("Last in, first out", Vec2(-25%, 15%), 19pt, Color("light2"))
-let queue_rule = caption("First in, first out", Vec2(25%, 15%), 19pt, Color("light2"))
-let labels = Box(children=[heading, subtitle, stack_heading, queue_heading, stack_rule, queue_rule])
-let arrivals = caption("PUSH / ENQUEUE: 1, 2, 3", Vec2(0%, 31%), 22pt, Color("light2"))
-let departures = caption("POP from the right. DEQUEUE from the left.", Vec2(0%, 31%), 22pt, Color("light2"))
-let result = caption("Stack: 3, 2, 1       Queue: 1, 2, 3", Vec2(0%, 31%), 24pt, Color("light1"))
+let heading = caption("Stack & Queue", [0%, -36%], 38pt, Color("light1"))
+let subtitle = caption("Same arrivals. Different departures.", [0%, -27%], 19pt, Color("light4"))
+let stack_heading = caption("STACK", [-25%, -15%], 26pt, Color("blue3"))
+let queue_heading = caption("QUEUE", [25%, -15%], 26pt, Color("orange3"))
+let stack_rule = caption("Last in, first out", [-25%, 15%], 19pt, Color("light2"))
+let queue_rule = caption("First in, first out", [25%, 15%], 19pt, Color("light2"))
+let labels = Box(children=[heading, subtitle, stack_heading, queue_heading, stack_rule, queue_rule],width=100%,height=100%)
+let arrivals = caption("PUSH / ENQUEUE: 1, 2, 3", [0%, 31%], 22pt, Color("light2"))
+let departures = caption("POP from the right. DEQUEUE from the left.", [0%, 31%], 22pt, Color("light2"))
+let result = caption("Stack: 3, 2, 1       Queue: 1, 2, 3", [0%, 31%], 24pt, Color("light1"))
 
-FadeIn([labels, arrivals], duration=400ms)
+[labels, arrivals].fade_in(duration=400ms)
 
-fn offer(value: Number): Unit {
-    background {
-        stack = append(stack, tile(value, Color("blue3")), duration=step)
-    }
-    queue = append(queue, tile(value, Color("orange3")), duration=step)
+fn<mut, ref> offer(value: Number): Animation {
+    planned_stack = append(planned_stack,tile(value,Color("blue3")))
+    planned_queue = append(planned_queue,tile(value,Color("orange3")))
+    return <Animation>
+        {animate(stack,to=planned_stack,duration=step)}
+        {animate(queue,to=planned_queue,duration=step)}
+    </Animation>
 }
 
 for value in [1, 2, 3] {
     offer(value)
     wait(300ms)
 }
-assert(len(stack) == 3 and len(queue) == 3)
+assert(len(planned_stack) == 3 and len(planned_queue) == 3)
 wait(0.5s)
-background { FadeOut(arrivals, duration=300ms) }; FadeIn(departures, duration=300ms)
+Animation(children=[arrivals.fade_out(duration=300ms), departures.fade_in(duration=300ms)])
 
 repeat 3 {
-    background {
-        stack = pop(stack, duration=step)
-    }
-    queue = popleft(queue, duration=step)
+    planned_stack = pop(planned_stack)
+    planned_queue = popleft(planned_queue)
+    <Animation>
+        {animate(stack,to=planned_stack,duration=step)}
+        {animate(queue,to=planned_queue,duration=step)}
+    </Animation>
     wait(500ms)
 }
-assert(len(stack) == 0 and len(queue) == 0)
-background { FadeOut(departures, duration=300ms) }; FadeIn(result, duration=300ms)
+assert(len(planned_stack) == 0 and len(planned_queue) == 0)
+Animation(children=[departures.fade_out(duration=300ms), result.fade_in(duration=300ms)])
 wait(1.5s)
-FadeOut([labels, result], duration=400ms)
+[labels, result].fade_out(duration=400ms)

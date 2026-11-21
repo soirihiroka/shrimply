@@ -5,7 +5,7 @@ use std::sync::{
     mpsc::{self, TryRecvError},
 };
 
-use shrimply_editor_state::player_state::{self, ProjectChange};
+use shrimply_player_core::{self as player_state, ProjectChange};
 
 use crate::{
     external_content::OwnedFile,
@@ -36,6 +36,29 @@ pub struct Plan {
 }
 
 impl Plan {
+    pub fn description(&self) -> String {
+        let mut description = shrimply_i18n::text_args(
+            if self.jobs.len() == 1 {
+                "%{count} caption chunk will be generated with each caption's exact duration."
+            } else {
+                "%{count} caption chunks will be generated with each caption's exact duration."
+            },
+            &[("count", self.jobs.len().to_string())],
+        );
+        if self.skipped > 0 {
+            description.push(' ');
+            description.push_str(&shrimply_i18n::text_args(
+                if self.skipped == 1 {
+                    "%{count} empty or invalid chunk will be skipped."
+                } else {
+                    "%{count} empty or invalid chunks will be skipped."
+                },
+                &[("count", self.skipped.to_string())],
+            ));
+        }
+        description
+    }
+
     pub fn chunks(&self) -> usize {
         self.jobs.len()
     }
@@ -155,12 +178,7 @@ enum Message {
 pub fn models(server_url: &str) -> Result<Vec<shrimply_tts::TtsModel>, String> {
     let models = shrimply_tts::models(server_url)?
         .into_iter()
-        .filter(|model| {
-            model
-                .inputs
-                .iter()
-                .any(|input| input.purpose() == Some(shrimply_tts::InputPurpose::Duration))
-        })
+        .filter(shrimply_tts::is_caption_model)
         .collect::<Vec<_>>();
     if models.is_empty() {
         Err("The server does not provide a text-to-speech model with caption timing".into())

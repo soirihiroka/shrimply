@@ -11,7 +11,7 @@ pub fn render_and_encode(
     context: &JobContext<Progress>,
     backend: HevcBackend,
     alpha: RgbaAlpha,
-    mut render: impl FnMut(
+    render: impl FnMut(
         &Project,
         Time,
         &ItemAddress,
@@ -25,6 +25,36 @@ pub fn render_and_encode(
         request.settings.quality.qp(),
         backend,
     )?;
+    render_frames(&request, context, render, |frame, index| {
+        encoder.write(&frame, index, alpha)
+    })?;
+    encoder.finish()
+}
+
+pub fn render_and_store_images(
+    request: BakeRequest,
+    context: &JobContext<Progress>,
+    render: impl FnMut(&Project, Time, &ItemAddress) -> Result<Option<Vec<u8>>, String>,
+) -> Result<(), String> {
+    std::fs::create_dir(&request.output)
+        .map_err(|error| format!("could not create cache frames folder: {error}"))?;
+    render_frames(&request, context, render, |pixels, index| {
+        let png = shrimply_drawing_skia::media::encode_rgba_png(
+            i32::try_from(request.width).map_err(|_| "cache width is too large")?,
+            i32::try_from(request.height).map_err(|_| "cache height is too large")?,
+            &pixels,
+        )?;
+        std::fs::write(request.output.join(super::image_frame_name(index)), png)
+            .map_err(|error| format!("could not write cache frame {index}: {error}"))
+    })
+}
+
+fn render_frames<T>(
+    request: &BakeRequest,
+    context: &JobContext<Progress>,
+    mut render: impl FnMut(&Project, Time, &ItemAddress) -> Result<Option<T>, String>,
+    mut store: impl FnMut(T, u64) -> Result<(), String>,
+) -> Result<(), String> {
     for frame_index in 0..request.total_frames {
         let position = shrimply_math_core::time_from_frame(
             request.first_frame.saturating_add(frame_index),
@@ -43,7 +73,7 @@ pub fn render_and_encode(
         if context.is_cancelled() {
             return Err("visual cache bake cancelled".into());
         }
-        encoder.write(&frame, frame_index, alpha)?;
+        store(frame, frame_index)?;
         if !context.report(Progress {
             completed: frame_index + 1,
             total: request.total_frames,
@@ -51,5 +81,5 @@ pub fn render_and_encode(
             return Err("visual cache bake cancelled".into());
         }
     }
-    encoder.finish()
+    Ok(())
 }

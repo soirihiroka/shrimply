@@ -1,5 +1,5 @@
-use shrimply_editor_state::player_state::{self, ProjectChange};
 use shrimply_math_core::{fraction_ceil_i64, fraction_floor_i64, fraction_from_integer};
+use shrimply_player_core::{self as player_state, ProjectChange};
 
 use crate::{
     TrackKey,
@@ -10,6 +10,51 @@ use crate::{
 };
 
 const MIN_DB: f64 = -100.0;
+
+use shrimply_components_core::presentation::NumberField;
+
+pub const FIELDS: [NumberField; 5] = [
+    NumberField {
+        key: "threshold_db",
+        label: "Silence threshold",
+        minimum: "-90",
+        maximum: "0",
+        step: "1",
+        digits: 1,
+    },
+    NumberField {
+        key: "min_silence",
+        label: "Minimum silence",
+        minimum: "0",
+        maximum: "10",
+        step: "0.05",
+        digits: 2,
+    },
+    NumberField {
+        key: "gap_tolerance",
+        label: "Gap tolerance",
+        minimum: "0",
+        maximum: "5",
+        step: "0.01",
+        digits: 2,
+    },
+    NumberField {
+        key: "padding",
+        label: "Padding",
+        minimum: "0",
+        maximum: "2",
+        step: "0.01",
+        digits: 2,
+    },
+    NumberField {
+        key: "delete_chunks",
+        label: "Min chunk",
+        minimum: "0",
+        maximum: "10",
+        step: "0.05",
+        digits: 2,
+    },
+];
 
 #[derive(Clone, Copy)]
 pub struct Config {
@@ -33,6 +78,40 @@ impl Default for Config {
 }
 
 impl Config {
+    pub fn set_field(&mut self, key: &str, value: &str) -> Result<(), String> {
+        let mut next = *self;
+        if key == "threshold_db" {
+            next.threshold_db = value.parse().map_err(|_| "Invalid silence threshold")?;
+        } else {
+            let seconds: shrimply_math_core::Fraction =
+                value.parse().map_err(|_| "Invalid silence duration")?;
+            if !shrimply_math_core::fraction_is_finite(seconds) {
+                return Err("Silence duration must be finite".into());
+            }
+            let duration = Time { seconds };
+            match key {
+                "min_silence" => next.min_silence = duration,
+                "gap_tolerance" => next.gap_tolerance = duration,
+                "padding" => next.padding = duration,
+                "delete_chunks" => next.delete_chunks = duration,
+                _ => return Err("Unknown silence field".into()),
+            }
+        }
+        *self = next.validate()?;
+        Ok(())
+    }
+
+    pub fn field_value(self, key: &str) -> String {
+        match key {
+            "threshold_db" => self.threshold_db.to_string(),
+            "min_silence" => self.min_silence.seconds.to_string(),
+            "gap_tolerance" => self.gap_tolerance.seconds.to_string(),
+            "padding" => self.padding.seconds.to_string(),
+            "delete_chunks" => self.delete_chunks.seconds.to_string(),
+            _ => unreachable!("silence configuration field"),
+        }
+    }
+
     fn validate(self) -> Result<Self, String> {
         let within =
             |value: Time, maximum: i64| value >= Time::ZERO && value <= Time::from_seconds(maximum);

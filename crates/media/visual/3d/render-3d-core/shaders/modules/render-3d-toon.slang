@@ -329,6 +329,9 @@ public ToonDirectLighting integrate_toon_direct_lights<T : IToonShadowTracer>(
     ToonSettings settings,
     T tracer)
 {
+    SCENE_ARRAY_VIEW(SunLight, scene, sun_lights);
+    SCENE_ARRAY_VIEW(PointLight, scene, point_lights);
+
     ToonDirectLighting result = {
         0.0,
         0.0,
@@ -338,7 +341,7 @@ public ToonDirectLighting integrate_toon_direct_lights<T : IToonShadowTracer>(
     };
     for (uint light_index = 0; light_index < scene.sun_light_count; ++light_index)
     {
-        SunLight source = scene.sun_lights[light_index];
+        SunLight source = SCENE_ARRAY_AT(scene, sun_lights, light_index);
         float3 light = normalize(-source.direction_angular_radius.xyz);
         float visibility = tracer.visibility(
             world_position,
@@ -369,7 +372,7 @@ public ToonDirectLighting integrate_toon_direct_lights<T : IToonShadowTracer>(
     }
     for (uint light_index = 0; light_index < scene.point_light_count; ++light_index)
     {
-        PointLight source = scene.point_lights[light_index];
+        PointLight source = SCENE_ARRAY_AT(scene, point_lights, light_index);
         float3 delta = source.position_radius.xyz - world_position;
         float distance_squared = dot(delta, delta);
         float distance = sqrt(distance_squared);

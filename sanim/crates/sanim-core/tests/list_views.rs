@@ -7,9 +7,7 @@ use std::sync::Arc;
 fn tile(id: &str) -> Element {
     Element {
         id: id.into(),
-        geometry: Arc::new(Geometry::Rectangle {
-            width: 10.into(),
-            height: 10.into(),
+        geometry: Arc::new(Geometry::Box {
             children: Default::default(),
             radius: Default::default(),
         }),
@@ -21,7 +19,17 @@ fn tile(id: &str) -> Element {
         stroke: None,
         reveal: Default::default(),
         horizontal: Default::default(),
-        layout: Layout::default(),
+        layout: Layout {
+            width: Some(sanim_core::Number {
+                value: 10.into(),
+                unit: Unit::Length,
+            }),
+            height: Some(sanim_core::Number {
+                value: 10.into(),
+                unit: Unit::Length,
+            }),
+            ..Default::default()
+        },
     }
 }
 
@@ -258,7 +266,7 @@ fn dynamic_view_nesting_is_bounded_before_sampling_can_recurse() {
 }
 
 #[test]
-fn entry_and_exit_scaling_keep_rect_and_group_slot_centers_fixed() {
+fn entry_and_exit_scaling_keep_surface_and_container_slot_centers_fixed() {
     for grouped in [false, true] {
         let mut item = tile("fixed_center");
         if grouped {
@@ -286,11 +294,7 @@ fn entry_and_exit_scaling_keep_rect_and_group_slot_centers_fixed() {
         for time in [Fraction::new(1u64, 4u64), Fraction::new(1u64, 2u64)] {
             let partial = children(&animation, time, 100)[0].clone();
             let center = |element: &Element| {
-                let shift = if grouped {
-                    5. * sanim_core::math::to_f64(element.scale).unwrap()
-                } else {
-                    0.
-                };
+                let shift = 5. * sanim_core::math::to_f64(element.scale).unwrap();
                 [
                     element.position.values[0] + shift,
                     element.position.values[1] + shift,
@@ -478,12 +482,12 @@ fn removals_overlay_old_slots_while_survivors_reflow_and_seeks_are_stateless() {
             .collect::<Vec<_>>(),
         ["b", "c", "a"]
     );
-    assert_eq!(middle[0].position.values[0], 10.);
-    assert_eq!(middle[1].position.values[0], 20.);
+    assert_eq!(middle[0].position.values[0], 5.);
+    assert_eq!(middle[1].position.values[0], 15.);
     assert_eq!(middle[2].opacity, Fraction::new(1u64, 2u64));
     let after = children(&animation, 2.into(), 100);
     assert_eq!(after.len(), 2);
-    assert_eq!(after[0].position.values[0], 5.);
+    assert_eq!(after[0].position.values[0], 0.);
     assert_eq!(children(&animation, 0.into(), 100).len(), 3);
     assert_eq!(
         animation
@@ -513,8 +517,8 @@ fn insertion_reorder_empty_and_resize_use_stable_identity() {
     let middle = children(&animation, Fraction::new(1u64, 2u64), 100);
     assert_eq!(middle[0].id, "c");
     assert_eq!(middle[0].opacity, Fraction::new(1u64, 2u64));
-    assert_eq!(middle[1].position.values[0], 15.);
-    assert_eq!(middle[2].position.values[0], 15.);
+    assert_eq!(middle[1].position.values[0], 10.);
+    assert_eq!(middle[2].position.values[0], 10.);
     // Parent resizing must keep local destination slots rather than embedding pixels.
     let wide = children(&animation, Fraction::new(1u64, 2u64), 200);
     assert_eq!(middle, wide);
@@ -564,7 +568,7 @@ fn timed_lists_preserve_prefix_cache_and_reject_overlapping_or_redefined_items_t
     let move_item = sanim_core::Motion {
         element: future,
         property: sanim_core::Property::Position,
-        to: Value::Vec2(Vec2::zero(Unit::Length)),
+        to: Value::from_vector(vec![0., 0.], Unit::Length).unwrap(),
         from: None,
         reveal: None,
         horizontal: None,

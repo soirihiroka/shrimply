@@ -30,6 +30,7 @@ InspectorProperty {
     readonly property int graphComponent: editRouter.activeComponent
     signal graphLoaded()
     signal graphEditFinished()
+    property var graphLifecycleHandler: null
     signal graphPlaybackToggled()
     signal graphPlayheadChanged(int component, var numerator, var denominator)
     signal graphKeysMoved(int component, var oldTimes, var times, var values)
@@ -271,7 +272,15 @@ InspectorProperty {
                         root.thirdValue = graphValue
                 }
                 onTogglePlayback: root.graphPlaybackToggled()
-                onEditFinished: root.graphEditFinished()
+                onEditFinished: {
+                    if (root.graphLifecycleHandler) root.graphLifecycleHandler(1, false)
+                    else root.graphEditFinished()
+                }
+                onEditStarted: if (root.graphLifecycleHandler) root.graphLifecycleHandler(0, false)
+                onEditCancelled: if (root.graphLifecycleHandler) root.graphLifecycleHandler(2, false)
+                onHistoryRequested: function(redo) {
+                    if (root.graphLifecycleHandler) root.graphLifecycleHandler(3, redo)
+                }
                 onPlayheadChanged: function(component, numerator, denominator) {
                     root.graphPlayheadChanged(component, numerator, denominator)
                 }

@@ -16,23 +16,62 @@ impl Checker<'_> {
         };
         let builtin = prelude::builtin(name)
             .ok_or_else(|| self.error("S120", format!("unknown function '{name}'"), expr.span))?;
-        if builtin.call_schedules(args)
-            && let Some(function) = &self.function
-        {
-            self.effects.insert(function.clone());
-        }
-        if let Some(duration) = builtin.duration_argument(args) {
-            let ty = self.expression(
-                duration,
-                env,
-                Some(&Type::Numeric(Unit::Duration)),
-                variables,
-            )?;
-            self.expect(&Type::Numeric(Unit::Duration), &ty, duration.span)?;
-        }
-        if let Some(ease) = builtin.easing_argument(args) {
-            let ty = self.expression(ease, env, Some(&Type::String), variables)?;
-            self.expect(&Type::String, &ty, ease.span)?;
+        if matches!(builtin.execute, prelude::Execution::CellAnimation) {
+            let parameters = builtin
+                .parameters
+                .iter()
+                .map(|parameter| (parameter.name, parameter.ty.clone(), parameter.required))
+                .collect::<Vec<_>>();
+            let ordered = self.arguments(args, &parameters, expr.span)?;
+            let target = ordered[0].expect("animation target");
+            let ExprKind::Name(binding) = &target.kind else {
+                return Err(self.error("S140","animate target must be a mutable binding name, such as animate(phase, to=360deg, duration=2s)",target.span));
+            };
+            if self
+                .binding_scopes
+                .iter()
+                .rev()
+                .find_map(|scope| scope.get(binding))
+                .is_none_or(|binding| binding.kind != BindingKind::Mut)
+            {
+                return Err(self.error("S140",format!("animate target '{binding}' must be declared with mut; animate the input of a sig instead"),target.span));
+            }
+            let ty = self.expression(target, env, None, variables)?;
+            let to = ordered[1];
+            let curve = ordered[4];
+            if to.is_some() == curve.is_some() {
+                return Err(self.error(
+                    "S140",
+                    "animate requires exactly one of to=... or curve=...",
+                    expr.span,
+                ));
+            }
+            if to.is_some() && ordered[2].is_none() {
+                return Err(self.error("S140","animate(to=...) requires duration=...; keyframed curves can infer their duration",expr.span));
+            }
+            if curve.is_some() && ordered[3].is_some() {
+                return Err(self.error(
+                    "S140",
+                    "animate(curve=...) uses the keyframe handles; remove ease=",
+                    expr.span,
+                ));
+            }
+            if let Some(value) = to {
+                let actual = self.expression(value, env, Some(&ty), variables)?;
+                self.expect(&ty, &actual, value.span)?;
+            }
+            for (parameter, argument) in builtin.parameters.iter().zip(ordered).skip(2) {
+                if let Some(argument) = argument {
+                    let expected = if parameter.name == "curve" {
+                        Type::Curve(Box::new(ty.clone()))
+                    } else {
+                        parameter.ty.clone()
+                    };
+                    let actual = self.expression(argument, env, Some(&expected), variables)?;
+                    self.expect(&expected, &actual, argument.span)?;
+                }
+            }
+            return Ok(Type::Animation);
         }
         if crate::dataframe::definition(name).is_some() {
             if !types.is_empty() {
@@ -118,9 +157,6 @@ impl Checker<'_> {
             }
             let mut actuals = vec![];
             for (param, arg) in builtin.parameters.iter().zip(ordered) {
-                if param.name == "duration" {
-                    continue;
-                }
                 if let Some(arg) = arg {
                     let actual = self.expression(arg, env, Some(&param.ty), variables)?;
                     if param.name == "sql" && Type::String.accepts(&actual) {
@@ -219,9 +255,6 @@ impl Checker<'_> {
         let ordered = self.arguments(args, &parameters, expr.span)?;
         let mut actuals = vec![];
         for (parameter, value) in builtin.parameters.iter().zip(ordered.iter().copied()) {
-            if matches!(parameter.name, "duration" | "ease") {
-                continue;
-            }
             if let Some(value) = value {
                 let ty = self.expression(value, env, Some(&parameter.ty), variables)?;
                 if ty.contains_function() {
@@ -270,6 +303,20 @@ impl Checker<'_> {
         }
         let mut result = (builtin.check)(builtin, &actuals)
             .map_err(|e| self.error("S106", format!("{name}: {e}"), expr.span))?;
+        if matches!(builtin.execute, prelude::Execution::Assertion { .. }) {
+            let condition = ordered[0].expect("checked assertion condition");
+            let condition_type = self.copy_type(&actuals[0], condition.span)?;
+            self.result_types
+                .insert((condition.span.start, condition.span.end), condition_type);
+            if builtin
+                .capabilities_for_arguments(actuals.iter())
+                .contains(sanim_core::FnCapability::Mut)
+                && let Some(function) = &self.function
+            {
+                self.mutations.insert(function.clone());
+            }
+        }
+
         if name == "range" {
             let count = |name, default| {
                 let at = builtin

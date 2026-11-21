@@ -1,0 +1,162 @@
+name: CI checks
+
+on:
+  push:
+    branches: [android]
+  pull_request:
+    branches: [main, android]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-checks-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  TZ: UTC
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    env:
+      CARGO_BUILD_JOBS: "2"
+      CARGO_INCREMENTAL: "0"
+      CARGO_PROFILE_DEV_DEBUG: "0"
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          submodules: recursive
+      - name: Free space for native build dependencies
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+      - uses: cachix/install-nix-action@v30
+        with:
+          install_url: https://releases.nixos.org/nix/nix-2.35.2/install
+          extra_nix_config: |
+            accept-flake-config = true
+            extra-substituters = https://cache.nixos-cuda.org https://shrimply.cachix.org
+            extra-trusted-public-keys = cache.nixos-cuda.org:74DUi4Ye579gUqzH4ziL9IyiJBlDpMRn9MBN8oNan9M= shrimply.cachix.org-1:cAgdyBbGPgJZMWUP4PAQPVENeCYtGT7OPPkocvo+uuA=
+      - name: Check shared Rust, GTK, and Qt
+        run: nix develop --accept-flake-config --command make check
+
+  macos:
+    permissions:
+      actions: write
+      contents: write
+    uses: ./.github/workflows/macos.yml
+    with:
+      check_only: true
+
+  windows:
+    permissions:
+      contents: write
+    uses: ./.github/workflows/windows.yml
+    with:
+      check_only: true
+
+  android:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    env:
+      CARGO_BUILD_JOBS: "2"
+      CARGO_INCREMENTAL: "0"
+      GRADLE_OPTS: -Dorg.gradle.daemon=false -Dorg.gradle.jvmargs=-Xmx2g
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          submodules: recursive
+      - name: Free space for the Android build
+        run: sudo rm -rf /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL
+      - name: Install native build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            autoconf automake build-essential clang cmake curl gettext \
+            libclang-dev libglib2.0-dev-bin libtool ninja-build patch pkg-config ripgrep spirv-tools
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: 0.12.12
+          enable-cache: true
+      - name: Install Meson
+        run: |
+          uv tool install meson==1.11.2
+          echo "$(uv tool dir --bin)" >> "${GITHUB_PATH}"
+      - name: Install Rust and Android SDK components
+        run: |
+          rustup show
+          export JAVA_HOME="${JAVA_HOME_21_X64}"
+          echo "JAVA_HOME=${JAVA_HOME}" >> "${GITHUB_ENV}"
+          echo "${JAVA_HOME}/bin" >> "${GITHUB_PATH}"
+          "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37.0" "build-tools;37.0.0" "ndk;28.2.13676358"
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: android-release-v1-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'Makefile', 'rust-toolchain.toml', 'packaging/android-*.py', 'packaging/native_sources.py', 'packaging/*.patch', 'android/**/*.kts', 'android/gradle/wrapper/gradle-wrapper.properties', '.github/workflows/check.yml') }}
+          restore-keys: |
+            android-release-v1-${{ runner.os }}-
+      - name: Read the pinned FFmpeg commit
+        id: ffmpeg
+        run: echo "revision=$(git rev-parse :external/ffmpeg)" >> "${GITHUB_OUTPUT}"
+      - uses: actions/cache/restore@v6
+        id: android-native-cache
+        with:
+          path: |
+            target/android-native/arm64-v8a/release/install
+            target/android-native/arm64-v8a/release/*.sha256
+          key: android-native-v1-${{ runner.os }}-arm64-v8a-release-${{ steps.ffmpeg.outputs.revision }}-${{ hashFiles('Cargo.lock', 'Makefile', 'packaging/android-*.py', 'packaging/native_sources.py', 'packaging/*.patch') }}
+          restore-keys: android-native-v1-${{ runner.os }}-arm64-v8a-release-
+      - name: Build Android native dependencies
+        run: make android-pdf-deps ANDROID_PROFILE=release ANDROID_SDK_ROOT="${ANDROID_HOME}"
+      - uses: actions/cache/save@v6
+        if: steps.android-native-cache.outputs.cache-hit != 'true'
+        with:
+          path: |
+            target/android-native/arm64-v8a/release/install
+            target/android-native/arm64-v8a/release/*.sha256
+          key: ${{ steps.android-native-cache.outputs.cache-primary-key }}
+      - name: Build and check the release APK
+        run: make android-check ANDROID_PROFILE=release ANDROID_SDK_ROOT="${ANDROID_HOME}"
+      - name: Sign and verify the release APK
+        if: github.event_name != 'pull_request'
+        env:
+          ANDROID_RELEASE_KEYSTORE_BASE64: ${{ secrets.ANDROID_RELEASE_KEYSTORE_BASE64 }}
+          ANDROID_RELEASE_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_RELEASE_KEYSTORE_PASSWORD }}
+        run: |
+          : "${ANDROID_RELEASE_KEYSTORE_BASE64:?Missing Android release keystore}"
+          : "${ANDROID_RELEASE_KEYSTORE_PASSWORD:?Missing Android release keystore password}"
+          umask 077
+          keystore="${RUNNER_TEMP}/shrimply-android-release.p12"
+          trap 'rm -f "${keystore}"' EXIT
+          printf '%s' "${ANDROID_RELEASE_KEYSTORE_BASE64}" | base64 --decode > "${keystore}"
+          apk=android/app/build/outputs/apk/release/app-release.apk
+          "${ANDROID_HOME}/build-tools/37.0.0/apksigner" sign \
+            --ks "${keystore}" --ks-key-alias shrimply-release \
+            --ks-pass env:ANDROID_RELEASE_KEYSTORE_PASSWORD \
+            --key-pass env:ANDROID_RELEASE_KEYSTORE_PASSWORD \
+            --v4-signing-enabled false --out "${apk}" \
+            android/app/build/outputs/apk/release/app-release-unsigned.apk
+          "${ANDROID_HOME}/build-tools/37.0.0/apksigner" verify --verbose --print-certs "${apk}"
+          python3 packaging/android-check.py "${apk}" \
+            "${ANDROID_HOME}/ndk/28.2.13676358/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf" \
+            "${ANDROID_HOME}"
+      - name: Upload signed release APK
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v6
+        with:
+          name: shrimply-android-release
+          path: android/app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error
+      - name: Upload lint report
+        uses: actions/upload-artifact@v6
+        with:
+          name: android-lint
+          path: android/app/build/reports/lint-results-release.html
+          if-no-files-found: error

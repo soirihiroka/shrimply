@@ -54,20 +54,23 @@ impl Document {
             .map(|(offset, _)| *offset)
             .unwrap_or(self.text.len());
         let text = self.text[start..end].trim_end_matches(['\r', '\n']);
-        let mut units = 0;
-        for (offset, ch) in text.char_indices() {
-            if units == character {
-                return Ok(start + offset);
-            }
-            units += ch.len_utf16() as u64;
-            if units > character {
-                return Err("position splits a UTF-16 surrogate pair".into());
-            }
-        }
-        if units == character {
-            Ok(start + text.len())
-        } else {
+        let character = usize::try_from(character)
+            .ok()
+            .filter(|&character| character <= text.len())
+            .ok_or("position.character exceeds line")?;
+        let absolute = start - self.starts[line].1 + character;
+        let adjustment = self
+            .unicode
+            .partition_point(|(end, adjustment)| end - adjustment <= absolute)
+            .checked_sub(1)
+            .map_or(0, |index| self.unicode[index].1);
+        let offset = absolute + adjustment;
+        if offset > start + text.len() {
             Err("position.character exceeds line".into())
+        } else if !self.text.is_char_boundary(offset) {
+            Err("position splits a UTF-16 surrogate pair".into())
+        } else {
+            Ok(offset)
         }
     }
     pub fn position(&self, offset: usize) -> Value {
@@ -245,6 +248,97 @@ mod tests {
         assert_eq!(
             document.offset(&json!({"line":1,"character":2})).unwrap(),
             6
+        );
+    }
+    #[test]
+    fn indexed_offsets_match_utf16_boundaries_across_long_unicode_lines() {
+        let source = format!(
+            "{}\r\n{}\r{}",
+            "aé😊中".repeat(200),
+            "😊é".repeat(200),
+            "x😊".repeat(200)
+        );
+        let document = Document::new(source, 1);
+        for (line, text) in document
+            .text
+            .split(['\r', '\n'])
+            .filter(|text| !text.is_empty())
+            .enumerate()
+        {
+            let mut character = 0;
+            let start = document.starts[line].0;
+            for (offset, ch) in text.char_indices() {
+                assert_eq!(
+                    document
+                        .offset(&json!({"line":line,"character":character}))
+                        .unwrap(),
+                    start + offset
+                );
+                if ch.len_utf16() == 2 {
+                    assert!(
+                        document
+                            .offset(&json!({"line":line,"character":character + 1}))
+                            .is_err()
+                    );
+                }
+                character += ch.len_utf16();
+            }
+            assert_eq!(
+                document
+                    .offset(&json!({"line":line,"character":character}))
+                    .unwrap(),
+                start + text.len()
+            );
+            assert!(
+                document
+                    .offset(&json!({"line":line,"character":character + 1}))
+                    .is_err()
+            );
+        }
+    }
+    #[test]
+    #[ignore = "performance measurement: make xml-completion-bench"]
+    fn indexed_offset_benchmark() {
+        use std::{hint::black_box, time::Instant};
+        const REPETITIONS: usize = 20_000;
+        const REQUESTS: usize = 1_000;
+        let document = Document::new("aé😊中".repeat(REPETITIONS), 1);
+        let character = REPETITIONS * 5;
+        let position = json!({"line":0,"character":character});
+        let started = Instant::now();
+        for _ in 0..REQUESTS {
+            assert_eq!(
+                black_box(document.offset(black_box(&position)).unwrap()),
+                document.text.len()
+            );
+        }
+        let indexed = started.elapsed();
+        let started = Instant::now();
+        for _ in 0..REQUESTS {
+            let mut utf16 = 0;
+            let offset = black_box(&document.text)
+                .char_indices()
+                .find_map(|(offset, ch)| {
+                    if utf16 == character {
+                        return Some(offset);
+                    }
+                    utf16 += ch.len_utf16();
+                    None
+                })
+                .unwrap_or(document.text.len());
+            assert_eq!(black_box(offset), document.text.len());
+        }
+        let scan = started.elapsed();
+        println!(
+            "UTF16 bytes={} requests={REQUESTS} indexed_us={} scan_us={} speedup={:.1}x",
+            document.text.len(),
+            indexed.as_micros(),
+            scan.as_micros(),
+            scan.as_secs_f64() / indexed.as_secs_f64()
+        );
+        assert!(
+            indexed < scan,
+            "indexed conversion must improve long-line requests"
         );
     }
     #[test]

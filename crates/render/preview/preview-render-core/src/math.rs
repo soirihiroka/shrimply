@@ -1,5 +1,5 @@
 /// An opaque native video already covers the canvas without compositing changes.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 pub fn unmodified_video(
     plan: &crate::FramePlan,
 ) -> Option<&std::sync::Arc<shrimply_visual_frame::VideoFrame>> {
@@ -12,12 +12,7 @@ pub fn unmodified_video(
     };
     let parameters = layer.parameters;
     if !plan.external_layers.is_empty()
-        || !layer.effects.is_empty()
-        || !layer.transitions.is_empty()
-        || layer.motion_blur.is_some()
-        || layer.alpha_mask.is_some()
-        || layer.video_mask.is_some()
-        || layer.stabilization.is_some()
+        || layer.has_effects()
         || layer.morph_scene.is_some()
         || layer.render_size != (plan.width, plan.height)
         || layer.transform != Mat3::IDENTITY
@@ -41,5 +36,27 @@ pub fn unmodified_video(
         None
     } else {
         Some(video)
+    }
+}
+pub fn preview_sampling(
+    downsampling: bool,
+    upsample: shrimply_preferences_core::PreviewUpsampleMethod,
+    downsample: shrimply_preferences_core::PreviewDownsampleMethod,
+) -> skia_safe::SamplingOptions {
+    use shrimply_preferences_core::{PreviewDownsampleMethod, PreviewUpsampleMethod};
+    use skia_safe::{FilterMode, MipmapMode, SamplingOptions};
+    if downsampling {
+        match downsample {
+            PreviewDownsampleMethod::Nearest => FilterMode::Nearest.into(),
+            PreviewDownsampleMethod::Bilinear => FilterMode::Linear.into(),
+            PreviewDownsampleMethod::Trilinear => {
+                SamplingOptions::new(FilterMode::Linear, MipmapMode::Linear)
+            }
+        }
+    } else {
+        match upsample {
+            PreviewUpsampleMethod::Nearest => FilterMode::Nearest.into(),
+            PreviewUpsampleMethod::Bilinear => FilterMode::Linear.into(),
+        }
     }
 }

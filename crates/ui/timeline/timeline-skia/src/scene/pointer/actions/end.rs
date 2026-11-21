@@ -53,14 +53,7 @@ pub(in crate::scene::pointer) fn end_pointer_action(
     }
     match runtime.view.drag_mode {
         DragMode::Select => {
-            let end = Time::from_seconds_f64(
-                x_to_time(
-                    x,
-                    runtime.view.scroll_seconds,
-                    runtime.view.seconds_per_pixel,
-                )
-                .max(0.0),
-            );
+            let end = Time::from_seconds_f64(x_to_time(x, runtime.view).max(0.0));
             let end = runtime.snap_repository.snap(end).unwrap_or(end);
             let end_y = content_y(runtime.view, y);
             if let Some(mut selection) = runtime.view.selection {

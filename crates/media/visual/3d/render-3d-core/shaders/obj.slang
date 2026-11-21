@@ -1,4 +1,5 @@
 import render_3d_abi;
+import render_3d_budget;
 import render_3d_composite;
 import render_3d_environment;
 import render_3d_ground;

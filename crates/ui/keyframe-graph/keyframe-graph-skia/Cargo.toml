@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+shrimply-i18n.workspace = true
 shrimply-discrete-keyframe-graph-skia = { workspace = true }
 shrimply-cross-ui-theme = { workspace = true }
 shrimply-math-interpolation = { workspace = true }
@@ -11,6 +12,6 @@ shrimply-math-core = { workspace = true }
 shrimply-math-color = { workspace = true }
 shrimply-math-geometry = { workspace = true }
 glam.workspace = true
-skia-safe = { workspace = true, features = ["gl", "textlayout"] }
+skia-safe = { workspace = true, features = ["textlayout"] }
 shrimply-components-skia = { workspace = true }
 uuid = { workspace = true, features = ["v4", "serde"] }

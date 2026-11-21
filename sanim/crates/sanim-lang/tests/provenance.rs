@@ -13,9 +13,9 @@ fn constructor_locations_preserve_children_and_helper_call_chains() {
     let mut files = MemorySources::default();
     files.insert(
         "parts.sanim",
-        "fn shape():Element {\n    return <Rect width={40pt}><Label>hello</Label></Rect>\n}\n",
+        "fn shape():Element {\n    return <Box width={40pt} height={64pt} fill=\"light1\" x_align={Align.Center} y_align={Align.Center}><Label>hello</Label></Box>\n}\n",
     );
-    files.insert("main.sanim", "import \"parts.sanim\" as parts\nfn wrap():Element {\n    return parts.shape()\n}\nlet shape=wrap()\nlet group=Box(children=[shape])\nadd(group)\nwait(1s)\n");
+    files.insert("main.sanim", "import \"parts.sanim\" as parts\nfn wrap():Element {\n    return parts.shape()\n}\nlet shape=wrap()\nlet group=Box(children=[shape])\nAnimation(children=[group])\nwait(1s)\n");
     let prepared = prepare(&mut Engine::default(), &files);
     let Value::Element(shape) = &prepared.bindings["shape"] else {
         panic!("shape")
@@ -30,11 +30,21 @@ fn constructor_locations_preserve_children_and_helper_call_chains() {
     assert_eq!(origin.call_sites[1].span.line, 3);
     assert_eq!(
         prepared.source_line(&origin.creation),
-        Some("    return <Rect width={40pt}><Label>hello</Label></Rect>")
+        Some(
+            "    return <Box width={40pt} height={64pt} fill=\"light1\" x_align={Align.Center} y_align={Align.Center}><Label>hello</Label></Box>"
+        )
     );
     let child = &shape.geometry.children().unwrap()[0];
     let child_origin = &prepared.element_sources[&child.id];
-    assert_eq!(child_origin.creation.span.column, 31);
+    assert_eq!(
+        child_origin.creation.span.column,
+        prepared
+            .source_line(&child_origin.creation)
+            .unwrap()
+            .find("<Label>")
+            .unwrap()
+            + 1
+    );
     assert_eq!(child_origin.call_sites, origin.call_sites);
     let group_origin = &prepared.element_sources["group"];
     assert_eq!(group_origin.creation.source.as_ref(), "main.sanim");
@@ -45,7 +55,7 @@ fn constructor_locations_preserve_children_and_helper_call_chains() {
 #[test]
 fn native_generated_descendants_share_constructor_evidence() {
     let mut files = MemorySources::default();
-    files.insert("main.sanim", "let axis=Axis(scale=LinearScale(domain=Vec2(0,1),range=Vec2(0pt,200pt)),ticks=[0,0.5,1])\nadd(axis)\nwait(1s)\n");
+    files.insert("main.sanim", "let axis=Axis(scale=LinearScale(domain=[0, 1],range=[0pt, 200pt]),ticks=[0,0.5,1])\nAnimation(children=[axis])\nwait(1s)\n");
     let prepared = prepare(&mut Engine::default(), &files);
     let axis = prepared.animation.find("axis").unwrap();
     let origin = &prepared.element_sources["axis"];
@@ -62,13 +72,13 @@ fn native_generated_descendants_share_constructor_evidence() {
 #[test]
 fn checkpoint_reuse_keeps_shared_origins_but_source_lines_are_revision_bound() {
     let mut files = MemorySources::default();
-    let prefix = "let dot_shape=Circle(id=\"dot\") # original\nadd(dot_shape)\n";
+    let prefix = "let dot_shape=Box(id=\"dot\", width=2*(32pt), height=2*(32pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center) # original\nAnimation(children=[dot_shape])\n";
     files.insert("main.sanim", format!("{prefix}wait(1s)\n"));
     let mut engine = Engine::default();
     let original = prepare(&mut engine, &files);
     files.insert(
         "main.sanim",
-        "let dot_shape=Circle(id=\"dot\") # updated!\nadd(dot_shape)\nwait(2s)\n",
+        "let dot_shape=Box(id=\"dot\", width=2*(32pt), height=2*(32pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center) # updated!\nAnimation(children=[dot_shape])\nwait(2s)\n",
     );
     let current = prepare(&mut engine, &files);
     assert_eq!(current.statistics.restored_statements, 2);
@@ -76,11 +86,15 @@ fn checkpoint_reuse_keeps_shared_origins_but_source_lines_are_revision_bound() {
     assert!(Arc::ptr_eq(origin, &original.element_sources["dot"]));
     assert_eq!(
         current.source_line(&origin.creation),
-        Some("let dot_shape=Circle(id=\"dot\") # updated!")
+        Some(
+            "let dot_shape=Box(id=\"dot\", width=2*(32pt), height=2*(32pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center) # updated!"
+        )
     );
     assert_eq!(
         original.source_line(&origin.creation),
-        Some("let dot_shape=Circle(id=\"dot\") # original")
+        Some(
+            "let dot_shape=Box(id=\"dot\", width=2*(32pt), height=2*(32pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center) # original"
+        )
     );
     let fresh = prepare(&mut Engine::default(), &files);
     assert_eq!(current.element_sources, fresh.element_sources);
@@ -92,10 +106,10 @@ fn provenance_does_not_participate_in_visual_identity() {
     let mut files = MemorySources::default();
     files.insert(
         "main.sanim",
-        "let dot_shape=Circle(id=\"dot\")\nadd(dot_shape)\nwait(1s)\n",
+        "let dot_shape=Box(id=\"dot\", width=2*(32pt), height=2*(32pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nAnimation(children=[dot_shape])\nwait(1s)\n",
     );
     let before = prepare(&mut Engine::default(), &files);
-    files.insert("main.sanim", "# documentation moved the constructor\n\nlet dot_shape=Circle(id=\"dot\")\nadd(dot_shape)\nwait(1s)\n");
+    files.insert("main.sanim", "# documentation moved the constructor\n\nlet dot_shape=Box(id=\"dot\", width=2*(32pt), height=2*(32pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nAnimation(children=[dot_shape])\nwait(1s)\n");
     let after = prepare(&mut Engine::default(), &files);
     assert_eq!(before.animation, after.animation);
     assert_eq!(before.element_sources["dot"].creation.span.line, 1);
@@ -107,7 +121,7 @@ fn cached_constructor_values_restore_origins_after_viewport_changes() {
     let mut files = MemorySources::default();
     files.insert(
         "main.sanim",
-        "let marker=Box(children=[Circle(id=\"child\")])\nadd(marker)\nwait(1s)\n",
+        "let marker=Box(children=[Box(id=\"child\", width=2*(32pt), height=2*(32pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)])\nAnimation(children=[marker])\nwait(1s)\n",
     );
     let mut engine = Engine::default();
     let original = prepare(&mut engine, &files);
@@ -123,16 +137,16 @@ fn cached_constructor_values_restore_origins_after_viewport_changes() {
 #[test]
 fn cached_helper_constructor_rebinds_call_site_after_source_moves() {
     let mut files = MemorySources::default();
-    let helper = "fn make_shape():Element { return Circle(id=\"helper_shape\") }\n";
+    let helper = "fn make_shape():Element { return Box(id=\"helper_shape\", width=2*(32pt), height=2*(32pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center) }\n";
     files.insert(
         "main.sanim",
-        format!("{helper}let shape=make_shape()\nadd(shape)\nwait(1s)\n"),
+        format!("{helper}let shape=make_shape()\nAnimation(children=[shape])\nwait(1s)\n"),
     );
     let mut engine = Engine::default();
     let original = prepare(&mut engine, &files);
     files.insert(
         "main.sanim",
-        format!("{helper}# caller moved\nlet shape=make_shape()\nadd(shape)\nwait(1s)\n"),
+        format!("{helper}# caller moved\nlet shape=make_shape()\nAnimation(children=[shape])\nwait(1s)\n"),
     );
     let moved = prepare(&mut engine, &files);
     assert!(moved.statistics.reused_expressions > 0);
@@ -153,7 +167,7 @@ fn cached_helper_constructor_rebinds_call_site_after_source_moves() {
 #[test]
 fn delayed_signal_construction_retains_the_factory_call_site() {
     let mut files = MemorySources::default();
-    files.insert("main.sanim", "fn make_shape():sig Element {\n    return Circle(id=\"live_shape\")\n}\nlet shape=make_shape()\nadd(shape)\nwait(1s)\n");
+    files.insert("main.sanim", "fn<sig> make_shape():sig Element {\n    return Box(id=\"live_shape\", width=2*(32pt), height=2*(32pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\n}\nlet shape=make_shape()\nAnimation(children=[shape])\nwait(1s)\n");
     let prepared = prepare(&mut Engine::default(), &files);
     let origin = &prepared.element_sources["live_shape"];
     assert_eq!(origin.creation.span.line, 2);
@@ -166,15 +180,15 @@ fn imported_escaping_signal_updates_lineage_when_its_caller_moves() {
     let mut files = MemorySources::default();
     files.insert(
         "parts.sanim",
-        "fn make_shape():sig Element { return Circle(id=\"signal_shape\") }\n",
+        "fn<sig> make_shape():sig Element { return Box(id=\"signal_shape\", width=2*(32pt), height=2*(32pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center) }\n",
     );
     files.insert(
         "main.sanim",
-        "import \"parts.sanim\" as parts\nlet shape=parts.make_shape()\nadd(shape)\nwait(1s)\n",
+        "import \"parts.sanim\" as parts\nlet shape=parts.make_shape()\nAnimation(children=[shape])\nwait(1s)\n",
     );
     let mut engine = Engine::default();
     let before = prepare(&mut engine, &files);
-    files.insert("main.sanim", "import \"parts.sanim\" as parts\n# a comment moves the caller\nlet shape=parts.make_shape()\nadd(shape)\nwait(1s)\n");
+    files.insert("main.sanim", "import \"parts.sanim\" as parts\n# a comment moves the caller\nlet shape=parts.make_shape()\nAnimation(children=[shape])\nwait(1s)\n");
     let after = prepare(&mut engine, &files);
     assert_eq!(
         before.element_sources["signal_shape"].call_sites[0]
@@ -197,14 +211,16 @@ fn original_source_lines_support_unicode_and_all_parser_line_endings() {
         let mut files = MemorySources::default();
         files.insert(
             "main.sanim",
-            format!("# λ{newline}let shape=Circle(){newline}add(shape){newline}wait(1s){newline}"),
+            format!("# λ{newline}let shape=Box(width=2*(32pt), height=2*(32pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center){newline}Animation(children=[shape]){newline}wait(1s){newline}"),
         );
         let prepared = prepare(&mut Engine::default(), &files);
         let origin = &prepared.element_sources["shape"];
         assert_eq!(origin.creation.span.line, 2);
         assert_eq!(
             prepared.source_line(&origin.creation),
-            Some("let shape=Circle()")
+            Some(
+                "let shape=Box(width=2*(32pt), height=2*(32pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)"
+            )
         );
     }
 }
@@ -218,7 +234,7 @@ fn generated_code_glyphs_keep_their_constructor_owner_after_patch_and_fold() {
     def example():
         return 1
 </CodeView>
-add(view)
+Animation(children=[view])
 view.patch(src="example.py.patch",duration=500ms)
 view.range(name="example").fold(duration=200ms)
 "#,
@@ -260,11 +276,11 @@ fn provenance_lookup_and_reload_benchmark() {
     const LOOKUPS: usize = 100_000;
     const REVISIONS: usize = 10;
     let prefix = format!(
-        "for index in range({ELEMENTS}) {{\nlet shape=Circle(id=\"shape-{{index}}\")\nadd(shape)\n}}\n"
+        "for index in range({ELEMENTS}) {{\nlet shape=Box(id=\"shape-{{index}}\", width=2*(32pt), height=2*(32pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nAnimation(children=[shape])\n}}\n"
     );
     let separate: String = (0..ELEMENTS)
         .map(|index| {
-            format!("let shape_{index}=Circle(id=\"shape-{index}\")\nadd(shape_{index})\n")
+            format!("let shape_{index}=Box(id=\"shape-{index}\", width=2*(32pt), height=2*(32pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nAnimation(children=[shape_{index}])\n")
         })
         .collect();
     for (style, prefix) in [

@@ -15,6 +15,7 @@ cxx-qt-lib = { workspace = true, features = ["qt_full"] }
 shrimply-cross-ui-core = { workspace = true }
 shrimply-i18n-qt = { workspace = true }
 shrimply-application-qt = { workspace = true }
+shrimply-components-qt = { workspace = true }
 shrimply-process-reporting = { workspace = true }
 tracing.workspace = true
 

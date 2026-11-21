@@ -12,7 +12,10 @@ use crate::{
 #[derive(Default)]
 pub(crate) struct ActiveVisualCaches {
     project_path: std::path::PathBuf,
-    items: std::collections::HashSet<(shrimply_project_document::project::ItemAddress, uuid::Uuid)>,
+    items: std::collections::HashMap<
+        (shrimply_project_document::project::ItemAddress, uuid::Uuid),
+        CacheStatus,
+    >,
 }
 
 pub(super) fn presentation(
@@ -92,11 +95,12 @@ impl InspectorController {
             return false;
         }
         let mut finished = false;
-        active.items.retain(|(address, id)| {
-            let baking = matches!(
-                visual_cache_status(address, *id),
-                CacheStatus::Baking { .. }
-            );
+        let mut changed = false;
+        active.items.retain(|(address, id), previous| {
+            let status = visual_cache_status(address, *id);
+            changed |= *previous != status;
+            let baking = matches!(status, CacheStatus::Baking { .. });
+            *previous = status;
             finished |= !baking;
             baking
         });
@@ -104,7 +108,7 @@ impl InspectorController {
         if finished {
             self.refresh_visual_cache();
         }
-        finished
+        changed
     }
 
     pub fn set_visual_cache_quality(
@@ -183,7 +187,9 @@ impl InspectorController {
                 active.items.clear();
                 active.project_path = path;
             }
-            active.items.insert((address, id));
+            active
+                .items
+                .insert((address.clone(), id), visual_cache_status(&address, id));
         }
         self.refresh_visual_cache();
         Ok(())

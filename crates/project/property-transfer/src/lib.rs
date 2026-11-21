@@ -236,6 +236,7 @@ fn supports_speed(item: &VideoItem) -> bool {
         VideoItemContent::Media
             | VideoItemContent::Image
             | VideoItemContent::Gif
+            | VideoItemContent::AnimatedImage
             | VideoItemContent::Svg
             | VideoItemContent::Pdf(_)
             | VideoItemContent::Manim(_)
@@ -249,7 +250,7 @@ fn supports_speed(item: &VideoItem) -> bool {
 fn supports_frame_rate(item: &VideoItem) -> bool {
     !matches!(
         item.content,
-        VideoItemContent::Media | VideoItemContent::Gif
+        VideoItemContent::Media | VideoItemContent::Gif | VideoItemContent::AnimatedImage
     )
 }
 

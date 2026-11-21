@@ -1,3 +1,4 @@
+use std::cell::Cell;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex, RwLock};
@@ -12,6 +13,7 @@ use super::worker::{self, AudioCommand};
 
 pub(super) struct AudioRuntime {
     stream: cpal::Stream,
+    started: Cell<bool>,
     command_tx: Sender<AudioCommand>,
     worker: Option<thread::JoinHandle<()>>,
     pub(super) sample_rate: u32,
@@ -85,6 +87,7 @@ impl AudioRuntime {
             worker::spawn(project.clone(), sample_rate, output_state.clone());
         Ok(Self {
             stream,
+            started: Cell::new(false),
             command_tx,
             worker: Some(worker),
             sample_rate,
@@ -114,8 +117,15 @@ impl AudioRuntime {
                 return;
             }
         }
-        if let Err(error) = self.stream.play() {
-            output::fail_output(format!("Audio output failed: {error}"), &self.output);
+        // The stream stays running and emits silence while transport is paused.
+        // Native hosts need not accept another start request on a running stream.
+        if !self.started.get() {
+            match self.stream.play() {
+                Ok(()) => self.started.set(true),
+                Err(error) => {
+                    output::fail_output(format!("Audio output failed: {error}"), &self.output);
+                }
+            }
         }
     }
 }

@@ -22,6 +22,7 @@ pub enum VisualSource {
     Media,
     Image,
     Gif,
+    AnimatedImage,
     Svg,
     Pdf(Box<PdfItem>),
     Manim(Box<ManimItem>),
@@ -505,6 +506,7 @@ impl VisualItem {
             VisualSource::Media
                 | VisualSource::Image
                 | VisualSource::Gif
+                | VisualSource::AnimatedImage
                 | VisualSource::Svg
                 | VisualSource::Pdf(_)
                 | VisualSource::Blender(_)
@@ -520,6 +522,7 @@ impl VisualItem {
             VisualSource::Media
                 | VisualSource::Image
                 | VisualSource::Gif
+                | VisualSource::AnimatedImage
                 | VisualSource::Svg
                 | VisualSource::Pdf(_)
                 | VisualSource::Manim(_)

@@ -10,9 +10,13 @@ path = "src/main.rs"
 
 [dependencies]
 sanim-core.workspace = true
-sanim-lang.workspace = true
+sanim-lang = { workspace = true, features = ["native-text", "media"] }
 sanim-render.workspace = true
 sanim-runtime.workspace = true
 serde_json.workspace = true
 sanim-data.workspace = true
 tempfile.workspace = true
+sanim-voxel.workspace = true
+sanim-voxel-render.workspace = true
+png.workspace = true
+shrimply-math-color.workspace = true

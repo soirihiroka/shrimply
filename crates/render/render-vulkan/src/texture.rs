@@ -1,30 +1,49 @@
 use crate::device::Device;
 use ash::{vk, vk::Handle};
-use std::{
-    os::fd::{FromRawFd, OwnedFd},
-    sync::{Arc, Mutex},
-};
+#[cfg(target_os = "linux")]
+use std::os::fd::{FromRawFd, OwnedFd};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 #[derive(Clone)]
 pub struct Texture(Arc<Storage>);
 
+impl PartialEq for Texture {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+impl Eq for Texture {}
+
 struct Storage {
+    sampling: Mutex<()>,
     device: Arc<Device>,
     image: vk::Image,
     memory: vk::DeviceMemory,
+    #[cfg(target_os = "linux")]
     exports: Mutex<Vec<(vk::Semaphore, vk::Fence)>>,
     allocation_size: u64,
     width: u32,
     height: u32,
     levels: u32,
+    mipmapped: bool,
 }
 
 impl Texture {
-    pub(crate) fn new(device: Arc<Device>, width: u32, height: u32) -> Result<Self, String> {
+    pub(crate) fn new(
+        device: Arc<Device>,
+        width: u32,
+        height: u32,
+        mipmapped: bool,
+    ) -> Result<Self, String> {
         if width == 0 || height == 0 {
             return Err("Vulkan presentation dimensions must be positive".into());
         }
-        let levels = width.max(height).ilog2() + 1;
+        let levels = if mipmapped {
+            width.max(height).ilog2() + 1
+        } else {
+            1
+        };
+        #[cfg(target_os = "linux")]
         let mut external = vk::ExternalMemoryImageCreateInfo::default()
             .handle_types(vk::ExternalMemoryHandleTypeFlags::OPAQUE_FD);
         let info = vk::ImageCreateInfo::default()
@@ -39,18 +58,28 @@ impl Texture {
             .array_layers(1)
             .samples(vk::SampleCountFlags::TYPE_1)
             .tiling(vk::ImageTiling::OPTIMAL)
-            .usage(
+            .usage(if mipmapped {
                 vk::ImageUsageFlags::SAMPLED
                     | vk::ImageUsageFlags::STORAGE
                     | vk::ImageUsageFlags::COLOR_ATTACHMENT
                     | vk::ImageUsageFlags::TRANSFER_SRC
-                    | vk::ImageUsageFlags::TRANSFER_DST,
-            )
+                    | vk::ImageUsageFlags::TRANSFER_DST
+            } else {
+                // Skia requires both transfer capabilities for borrowed textures.
+                vk::ImageUsageFlags::SAMPLED
+                    | vk::ImageUsageFlags::TRANSFER_SRC
+                    | vk::ImageUsageFlags::TRANSFER_DST
+            })
             .sharing_mode(vk::SharingMode::EXCLUSIVE)
-            .initial_layout(vk::ImageLayout::UNDEFINED)
-            .push_next(&mut external);
+            .initial_layout(vk::ImageLayout::UNDEFINED);
+        #[cfg(target_os = "linux")]
+        let info = if mipmapped {
+            info.push_next(&mut external)
+        } else {
+            info
+        };
         let image = unsafe { device.raw.create_image(&info, None) }
-            .map_err(|e| format!("Create Intel presentation texture: {e:?}"))?;
+            .map_err(|e| format!("Create Vulkan presentation texture: {e:?}"))?;
         let requirements = unsafe { device.raw.get_image_memory_requirements(image) };
         let index = (0..device.memory.memory_type_count).find(|&index| {
             requirements.memory_type_bits & (1 << index) != 0
@@ -62,23 +91,29 @@ impl Texture {
             unsafe {
                 device.raw.destroy_image(image, None);
             }
-            return Err("Intel texture has no device-local memory type".into());
+            return Err("Vulkan texture has no device-local memory type".into());
         };
+        #[cfg(target_os = "linux")]
         let mut export = vk::ExportMemoryAllocateInfo::default()
             .handle_types(vk::ExternalMemoryHandleTypeFlags::OPAQUE_FD);
         let mut dedicated = vk::MemoryDedicatedAllocateInfo::default().image(image);
         let info = vk::MemoryAllocateInfo::default()
             .allocation_size(requirements.size)
             .memory_type_index(index)
-            .push_next(&mut export)
             .push_next(&mut dedicated);
+        #[cfg(target_os = "linux")]
+        let info = if mipmapped {
+            info.push_next(&mut export)
+        } else {
+            info
+        };
         let memory = match unsafe { device.raw.allocate_memory(&info, None) } {
             Ok(memory) => memory,
             Err(e) => {
                 unsafe {
                     device.raw.destroy_image(image, None);
                 }
-                return Err(format!("Allocate Intel presentation texture: {e:?}"));
+                return Err(format!("Allocate Vulkan presentation texture: {e:?}"));
             }
         };
         if let Err(e) = unsafe { device.raw.bind_image_memory(image, memory, 0) } {
@@ -86,18 +121,33 @@ impl Texture {
                 device.raw.destroy_image(image, None);
                 device.raw.free_memory(memory, None);
             }
-            return Err(format!("Bind Intel presentation texture: {e:?}"));
+            return Err(format!("Bind Vulkan presentation texture: {e:?}"));
         }
         Ok(Self(Arc::new(Storage {
+            sampling: Mutex::new(()),
             device,
             image,
             memory,
+            #[cfg(target_os = "linux")]
             exports: Mutex::new(Vec::new()),
             allocation_size: requirements.size,
             width,
             height,
             levels,
+            mipmapped,
         })))
+    }
+    pub(crate) fn bytes(&self) -> u64 {
+        self.0.allocation_size
+    }
+    pub(crate) fn cacheable(&self) -> bool {
+        // Linux releases every presentation image to EXTERNAL ownership, even
+        // frames dropped before GL import. Only fence-bearing Vulkan borrowers
+        // currently return ownership through their Rust allocation leases.
+        cfg!(target_os = "android") || !self.0.mipmapped
+    }
+    pub(crate) fn unused(&self) -> bool {
+        Arc::strong_count(&self.0) == 1 && self.cacheable()
     }
     pub fn id(&self) -> u64 {
         self.0.image.as_raw()
@@ -125,6 +175,18 @@ impl Texture {
     pub(crate) fn image(&self) -> vk::Image {
         self.0.image
     }
+    pub(crate) fn mipmapped(&self) -> bool {
+        self.0.mipmapped
+    }
+    /// A Skia draw can split into several submissions. Serialize the entire
+    /// layout/read/restore transaction only against other readers of this image.
+    pub(crate) fn sampling_lock(&self) -> MutexGuard<'_, ()> {
+        self.0
+            .sampling
+            .lock()
+            .expect("Vulkan texture sampling poisoned")
+    }
+    #[cfg(target_os = "linux")]
     pub fn export(&self) -> Result<(OwnedFd, u64, OwnedFd), String> {
         let memory =
             ash::khr::external_memory_fd::Device::new(&self.0.device.instance, &self.0.device.raw);
@@ -135,7 +197,7 @@ impl Texture {
                     .handle_type(vk::ExternalMemoryHandleTypeFlags::OPAQUE_FD),
             )
         }
-        .map_err(|e| format!("Export Intel texture memory: {e:?}"))?;
+        .map_err(|e| format!("Export Vulkan texture memory: {e:?}"))?;
         let memory = unsafe { OwnedFd::from_raw_fd(fd) };
         // Each GL import consumes one binary semaphore signal. A fresh signal
         // permits multiple preview surfaces and recreated OpenGL contexts.
@@ -147,7 +209,7 @@ impl Texture {
                 None,
             )
         }
-        .map_err(|e| format!("Create Intel presentation semaphore: {e:?}"))?;
+        .map_err(|e| format!("Create Vulkan presentation semaphore: {e:?}"))?;
         let fence = match unsafe {
             self.0
                 .device
@@ -159,7 +221,7 @@ impl Texture {
                 unsafe {
                     self.0.device.raw.destroy_semaphore(semaphore, None);
                 }
-                return Err(format!("Create Intel export fence: {error:?}"));
+                return Err(format!("Create Vulkan export fence: {error:?}"));
             }
         };
         if let Err(error) = self.0.device.submit(&[], fence, &[semaphore]) {
@@ -172,7 +234,7 @@ impl Texture {
         self.0
             .exports
             .lock()
-            .expect("Intel export mutex poisoned")
+            .expect("Vulkan export mutex poisoned")
             .push((semaphore, fence));
         let external = ash::khr::external_semaphore_fd::Device::new(
             &self.0.device.instance,
@@ -185,7 +247,7 @@ impl Texture {
                     .handle_type(vk::ExternalSemaphoreHandleTypeFlags::OPAQUE_FD),
             )
         }
-        .map_err(|e| format!("Export Intel texture semaphore: {e:?}"))?;
+        .map_err(|e| format!("Export Vulkan texture semaphore: {e:?}"))?;
         Ok((memory, self.0.allocation_size, unsafe {
             OwnedFd::from_raw_fd(fd)
         }))
@@ -194,8 +256,13 @@ impl Texture {
 
 impl Drop for Storage {
     fn drop(&mut self) {
-        let exports = self.exports.get_mut().expect("Intel export mutex poisoned");
-        for &(semaphore, fence) in exports.iter() {
+        #[cfg(target_os = "linux")]
+        for &(semaphore, fence) in self
+            .exports
+            .get_mut()
+            .expect("Vulkan export mutex poisoned")
+            .iter()
+        {
             unsafe {
                 if self
                     .device

@@ -1,6 +1,20 @@
 Development
 ===========
 
+CI checks
+---------
+
+The ``CI checks`` workflow runs on pushes to ``android``, pull requests into
+``main`` or ``android``, and manual dispatch. It checks Linux GTK/Qt, macOS
+AppKit, Windows Qt, and the Android release APK through the existing Makefile
+targets. The Android APK and lint report are available as workflow artifacts.
+Desktop builds use debug checks. Branch pushes and manual runs sign the Android
+release APK with the persistent release key in GitHub Actions secrets, verify
+its signature and 16 KiB alignment, and upload it as ``shrimply-android-release``.
+Pull requests validate the release build without access to signing credentials.
+CI does not publish to an app store. Rust debug symbols and incremental
+compilation are disabled for desktop checks to fit hosted runners.
+
 Requirements
 ------------
 
@@ -8,6 +22,7 @@ A source build needs about 70 GB free. The setup targets Fedora:
 
 .. code-block:: console
 
+   $ git submodule update --init --recursive
    $ make deps-fedora
    $ make dev
 
@@ -16,6 +31,10 @@ The Qt launcher is ``make dev-qt``. The dev log is ``target/shrimply-dev.log``.
 The build downloads Slang. You need ``curl``, ``tar``, and ``sha256sum``.
 To use a copy you already have, set ``SLANG_LIBRARY_DIR`` and
 ``SLANG_INCLUDE_DIR``.
+Portable Vulkan OBJ shaders also need SPIR-V Tools (``spirv-opt`` and
+``spirv-val``) at build time. Set ``SPIRV_OPT`` and ``SPIRV_VAL`` to use
+executables outside ``PATH``. Renderer and material code remains shared Slang;
+the tools prepare and validate its generated SPIR-V for portable GPU drivers.
 
 CUDA Toolkit 12.9. GTX 900 through RTX 50 should work; that range is not
 fully tested. The Linux GTK binary also includes an Intel backend for preview
@@ -29,7 +48,8 @@ Nix development environment
 ---------------------------
 
 The flake provides Rust, the CUDA toolkit, Slang, and the native dependencies
-for the GTK and Qt apps on ``x86_64-linux``.
+for the GTK and Qt apps on ``x86_64-linux``. It requires Nix 2.27 or newer
+to include the FFmpeg submodule.
 
 .. code-block:: console
 
@@ -60,8 +80,9 @@ Intel GPU preview on Linux GTK
 Install Mesa's Intel Vulkan and OpenGL drivers and Intel's VA-API media driver.
 FFmpeg must include Vulkan, VA-API, and DRM support. GTK's OpenGL context must
 use the same Intel GPU as the Vulkan renderer.
-Use FFmpeg 8 or newer for its Vulkan scalar-layout support. The Flatpak build
-compiles FFmpeg 9.0.2 from source with Vulkan, VA-API, DRM, NVDEC, and NVENC.
+The native and packaged builds use the FFmpeg revision recorded in
+``external/ffmpeg``. On Linux it includes Vulkan, VA-API, DRM, NVDEC, and NVENC.
+``make linux-ffmpeg`` builds the local libraries and command-line tools.
 
 The GTK binary automatically keeps CUDA on machines with an available NVIDIA
 device and selects Intel otherwise. Choose a specific device in Preferences,

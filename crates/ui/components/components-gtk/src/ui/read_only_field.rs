@@ -1,4 +1,4 @@
-use gtk::prelude::*;
+use adw::prelude::*;
 
 pub fn read_only_field(value: &str) -> gtk::Label {
     gtk::Label::builder()
@@ -65,4 +65,27 @@ impl ReadOnlyFieldBuilder {
         }
         row.upcast()
     }
+}
+
+const INLINE_VALUE_MAX_CHARS: usize = 24;
+
+pub fn property_row(title: &str, value: &str) -> adw::ActionRow {
+    let row = adw::ActionRow::builder()
+        .title(crate::i18n::text(title).as_ref())
+        .use_markup(false)
+        .build();
+    if value.chars().count() <= INLINE_VALUE_MAX_CHARS && !value.contains('\n') {
+        let value = gtk::Label::builder()
+            .label(value)
+            .selectable(true)
+            .xalign(1.0)
+            .valign(gtk::Align::Center)
+            .build();
+        row.add_suffix(&value);
+    } else {
+        row.set_subtitle(value);
+        row.set_subtitle_selectable(true);
+        row.set_subtitle_lines(0);
+    }
+    row
 }

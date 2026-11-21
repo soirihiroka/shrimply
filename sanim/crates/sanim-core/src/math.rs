@@ -1,7 +1,11 @@
 use fraction::{Fraction, Sign};
 use num_traits::{CheckedAdd, CheckedDiv, CheckedMul, CheckedSub, ToPrimitive, Zero};
 use serde::{Deserialize, Serialize};
+pub mod camera;
 pub mod chart;
+pub mod color;
+pub mod curve;
+pub mod cycle;
 pub mod domain;
 pub mod format;
 pub mod functions;
@@ -10,6 +14,9 @@ pub mod media;
 pub mod operations;
 pub mod paint;
 pub mod scroll;
+pub mod temporal;
+pub mod texture;
+pub mod voxel;
 
 const MAX_VISUAL_DENOMINATOR: u64 = 1_000_000;
 
@@ -186,13 +193,17 @@ impl Number {
         Ok(Self { value, unit })
     }
     pub fn usize(self) -> Result<usize, String> {
+        usize::try_from(self.u64()?).map_err(|_| "integer out of range".into())
+    }
+    /// Platform-independent indices for seeded procedural values.
+    pub fn u64(self) -> Result<u64, String> {
         if self.unit != Unit::Number
             || self.value < Fraction::zero()
             || self.value.fract() != Fraction::zero()
         {
             return Err("expected a nonnegative integer".into());
         }
-        self.value.to_usize().ok_or("integer out of range".into())
+        self.value.to_u64().ok_or("integer out of range".into())
     }
 }
 
@@ -560,7 +571,7 @@ pub fn frame_count(duration: Fraction, rate: Fraction) -> Result<u64, String> {
         .ok_or("video frame count overflow".into())
 }
 
-/// Every prepared animation has a finite, shared hard maximum of two hours.
+/// Finite scheduling calculations share a hard maximum of two hours.
 pub const MAX_TIMELINE_SECONDS: u64 = 2 * 60 * 60;
 pub fn timeline_end(start: Fraction, duration: Fraction) -> Result<Fraction, String> {
     if !finite(&start)

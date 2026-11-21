@@ -8,6 +8,8 @@ on:
       - ".github/workflows/macos.yml"
       - ".github/scripts/**"
       - "packaging/macos/**"
+      - "packaging/macos-ffmpeg.py"
+      - "packaging/native_sources.py"
       - ".cargo/**"
       - ".gitmodules"
       - "assets/**"
@@ -25,12 +27,22 @@ on:
       - "!**/*.rst"
       - "!**/docs/**"
   workflow_dispatch:
+    inputs:
+      check_only:
+        description: Run debug checks without packaging or publishing a release
+        type: boolean
+        default: false
+  workflow_call:
+    inputs:
+      check_only:
+        type: boolean
+        default: true
 
 permissions:
   contents: write
 
 concurrency:
-  group: macos-prerelease-${{ github.ref }}
+  group: macos-${{ inputs.check_only && 'check' || 'prerelease' }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -62,9 +74,9 @@ jobs:
             ffmpeg \
             librsvg \
             llvm@22 \
-            opencv \
             pkgconf \
             poppler \
+            ripgrep \
             rubberband \
             uv
 
@@ -104,22 +116,28 @@ jobs:
         shell: bash
         run: |
           native_versions="$(brew list --versions)"
-          native_hash="$(printf '%s\n' "${ImageOS}" "${ImageVersion}" "${native_versions}" \
+          native_hash="$(printf '%s\n' "${ImageOS}" "${ImageVersion}" "${native_versions}" "$(git -C external/ffmpeg rev-parse HEAD)" \
             | LC_ALL=C sort | shasum -a 256 | cut -d ' ' -f 1)"
-          echo "prefix=macos-application-v2-macos-26-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml') }}-${native_hash}" >> "${GITHUB_OUTPUT}"
+          echo "prefix=macos-application-v2${{ inputs.check_only && '-debug' || '' }}-macos-26-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml') }}-${native_hash}" >> "${GITHUB_OUTPUT}"
 
       - name: Restore macOS application cache
         id: application-cache
         uses: actions/cache/restore@v6
         with:
           path: |
-            target/release
+            target/${{ inputs.check_only && 'debug' || 'release' }}
             ${{ env.CARGO_HOME }}/registry
             ${{ env.CARGO_HOME }}/git
           key: ${{ steps.application-cache-key.outputs.prefix }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/**/Cargo.toml', 'external/**/Cargo.toml', '.cargo/config.toml', 'Makefile', '.github/workflows/macos.yml') }}-${{ github.sha }}
           restore-keys: |
             ${{ steps.application-cache-key.outputs.prefix }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/**/Cargo.toml', 'external/**/Cargo.toml', '.cargo/config.toml', 'Makefile', '.github/workflows/macos.yml') }}-
             ${{ steps.application-cache-key.outputs.prefix }}-
+
+      - name: Cache hardware-only FFmpeg
+        uses: actions/cache@v6
+        with:
+          path: target/macos-ffmpeg
+          key: ${{ steps.application-cache-key.outputs.prefix }}-ffmpeg-${{ hashFiles('packaging/native_sources.py', 'packaging/macos-ffmpeg.py', 'packaging/macos/ffmpeg-hardware.patch') }}
 
       - name: Cache PocketSphinx resources
         uses: actions/cache@v6
@@ -128,7 +146,16 @@ jobs:
           key: pocketsphinx-model-v1-${{ runner.os }}-${{ hashFiles('vendor/pocketsphinx/build.rs') }}
 
       - name: Build AppKit release
+        if: ${{ !inputs.check_only }}
         run: make appkit-release
+
+      - name: Check AppKit debug build
+        if: inputs.check_only
+        env:
+          CARGO_BUILD_JOBS: "2"
+          CARGO_INCREMENTAL: "0"
+          CARGO_PROFILE_DEV_DEBUG: "0"
+        run: make appkit-check fmt source-size-check
 
       - name: Save macOS application cache
         id: save-application-cache
@@ -136,13 +163,13 @@ jobs:
         uses: actions/cache/save@v6
         with:
           path: |
-            target/release
+            target/${{ inputs.check_only && 'debug' || 'release' }}
             ${{ env.CARGO_HOME }}/registry
             ${{ env.CARGO_HOME }}/git
           key: ${{ steps.application-cache.outputs.cache-primary-key }}
 
       - name: Prune old macOS application caches
-        if: github.ref == 'refs/heads/main' && steps.save-application-cache.outcome == 'success'
+        if: github.ref == 'refs/heads/main' && !inputs.check_only && steps.save-application-cache.outcome == 'success'
         env:
           GH_TOKEN: ${{ github.token }}
           CACHE_KEY: ${{ steps.application-cache.outputs.cache-primary-key }}
@@ -152,12 +179,17 @@ jobs:
             "macos-application-prebuilt-macos-26-${{ runner.arch }}-"
 
       - name: Assemble application bundle
+        if: ${{ !inputs.check_only }}
         shell: bash
         run: |
           contents="${MACOS_APP}/Contents"
-          mkdir -p "${contents}/Frameworks" "${contents}/MacOS" "${contents}/Resources"
+          mkdir -p "${contents}/Frameworks" "${contents}/MacOS" "${contents}/Resources/licenses"
           install -m 755 target/release/shrimply "${contents}/MacOS/shrimply"
+          install -m 755 target/macos-ffmpeg/install/bin/ffmpeg "${contents}/MacOS/shrimply-ffmpeg"
           install -m 644 packaging/macos/Info.plist "${contents}/Info.plist"
+          install -m 644 vendor/vision/LICENSE "${contents}/Resources/licenses/OpenCV-Vision.txt"
+          install -m 644 crates/math/color/src/css/LICENSE "${contents}/Resources/licenses/GTK-Pango-Color.txt"
+          install -m 644 crates/math/color/src/css/NOTICE "${contents}/Resources/licenses/GTK-Pango-Color-NOTICE.txt"
           install -m 755 "$(command -v uv)" "${contents}/MacOS/uv"
           python_project="crates/media/visual/manim/manim-bridge/python"
           bundled_project="${contents}/Resources/manim-worker"
@@ -177,6 +209,7 @@ jobs:
             --bundle-deps \
             --overwrite-dir \
             --fix-file "${contents}/MacOS/shrimply" \
+            --fix-file "${contents}/MacOS/shrimply-ffmpeg" \
             --fix-file "${contents}/MacOS/uv" \
             --dest-dir "${contents}/Frameworks" \
             --install-path '@executable_path/../Frameworks/' \
@@ -197,6 +230,7 @@ jobs:
           codesign --force --deep --sign - "${MACOS_APP}"
 
       - name: Verify application bundle
+        if: ${{ !inputs.check_only }}
         shell: bash
         run: |
           contents="${MACOS_APP}/Contents"
@@ -204,10 +238,15 @@ jobs:
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconName' "${contents}/Info.plist")" = "Shrimply"
           test -s "${contents}/Resources/Assets.car"
           test -s "${contents}/Resources/Shrimply.icns"
+          cmp vendor/vision/LICENSE "${contents}/Resources/licenses/OpenCV-Vision.txt"
+          cmp crates/math/color/src/css/LICENSE "${contents}/Resources/licenses/GTK-Pango-Color.txt"
+          cmp crates/math/color/src/css/NOTICE "${contents}/Resources/licenses/GTK-Pango-Color-NOTICE.txt"
           codesign --verify --deep --strict "${MACOS_APP}"
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "${contents}/Info.plist")" = "shrimply"
           test "$(lipo -archs "${contents}/MacOS/shrimply")" = "arm64"
           env PATH=/usr/bin:/bin "${contents}/MacOS/uv" --version
+          ffmpeg_version="$(env PATH=/usr/bin:/bin "${contents}/MacOS/shrimply-ffmpeg" -version)"
+          test "$(awk 'NR == 1 {print $3}' <<< "${ffmpeg_version}")" = "$(cat external/ffmpeg/RELEASE)"
           test -s "${contents}/Resources/manim-worker/pyproject.toml"
           test -s "${contents}/Resources/manim-worker/uv.lock"
           test ! -d "${contents}/Resources/manim-worker/.venv"
@@ -232,6 +271,7 @@ jobs:
           fi
 
       - name: Create and verify archive
+        if: ${{ !inputs.check_only }}
         run: |
           archive_name="$(basename "${MACOS_ARCHIVE}")"
           ditto -c -k --sequesterRsrc --keepParent "${MACOS_APP}" "${MACOS_ARCHIVE}"
@@ -244,11 +284,11 @@ jobs:
           unpacked="${RUNNER_TEMP}/shrimply-macos-verify"
           mkdir -p "${unpacked}"
           ditto -x -k "${MACOS_ARCHIVE}" "${unpacked}"
-          codesign --verify --deep --strict "${unpacked}/Shrimply.app"
+          codesign --verify --deep --strict --verbose=2 "${unpacked}/Shrimply.app"
           test -s "${MACOS_ARCHIVE}.sha256"
 
       - name: Publish prerelease
-        if: github.ref == 'refs/heads/main'
+        if: github.ref == 'refs/heads/main' && !inputs.check_only
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

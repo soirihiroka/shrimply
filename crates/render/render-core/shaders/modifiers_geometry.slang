@@ -5,7 +5,7 @@ import math;
 
 [shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void
 bulge_pinch(uniform uint *input, uniform uint w, uniform uint h,
-            uniform uint *out, uniform uint64_t out_len,
+            uniform uint *out, uniform BufferIndex out_len,
             uniform BulgePinchParams params, uint3 id : SV_DispatchThreadID) {
   uint i = linear_index(id);
   if (i >= out_len)
@@ -27,7 +27,7 @@ bulge_pinch(uniform uint *input, uniform uint w, uniform uint h,
 
     [shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void displacement_map(uniform uint *input, uniform uint w,
                                        uniform uint h, uniform uint *out,
-                                       uniform uint64_t out_len,
+                                       uniform BufferIndex out_len,
                                        uniform float amount,
                                        uniform float scale, uniform float phase,
                                        uint3 id : SV_DispatchThreadID) {
@@ -44,7 +44,7 @@ bulge_pinch(uniform uint *input, uniform uint w, uniform uint h,
 
 [shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void
 fisheye(uniform uint *input, uniform uint width, uniform uint height,
-        uniform uint *out, uniform uint64_t out_len, uniform float intensity,
+        uniform uint *out, uniform BufferIndex out_len, uniform float intensity,
         uniform Vec2 center_value, uint3 id : SV_DispatchThreadID) {
   uint i = linear_index(id);
   if (i >= out_len)
@@ -66,7 +66,7 @@ fisheye(uniform uint *input, uniform uint width, uniform uint height,
 
     [shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void kaleidoscope(uniform uint *input, uniform uint w,
                                    uniform uint h, uniform uint *out,
-                                   uniform uint64_t out_len,
+                                   uniform BufferIndex out_len,
                                    uniform KaleidoscopeParams params,
                                    uint3 id : SV_DispatchThreadID) {
   uint i = linear_index(id);
@@ -90,7 +90,7 @@ fisheye(uniform uint *input, uniform uint width, uniform uint height,
 
 [shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void lens_distortion(uniform uint *input, uniform uint w,
                                   uniform uint h, uniform uint *out,
-                                  uniform uint64_t out_len,
+                                  uniform BufferIndex out_len,
                                   uniform float distortion, uniform Vec2 center,
                                   uint3 id : SV_DispatchThreadID) {
   uint i = linear_index(id);
@@ -109,7 +109,7 @@ fisheye(uniform uint *input, uniform uint width, uniform uint height,
 
     [shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void mirror(uniform uint *input, uniform uint w,
                              uniform uint h, uniform uint *out,
-                             uniform uint64_t out_len, uniform uint horizontal,
+                             uniform BufferIndex out_len, uniform uint horizontal,
                              uniform uint vertical,
                              uint3 id : SV_DispatchThreadID) {
   uint i = linear_index(id);
@@ -122,7 +122,7 @@ fisheye(uniform uint *input, uniform uint width, uniform uint height,
 
 [shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void
 pixelate_mosaic(uniform uint *input, uniform uint width, uniform uint height,
-                uniform uint *out, uniform uint64_t out_len,
+                uniform uint *out, uniform BufferIndex out_len,
                 uniform uint block_width, uniform uint block_height,
                 uint3 id : SV_DispatchThreadID) {
   uint i = linear_index(id);
@@ -135,7 +135,7 @@ pixelate_mosaic(uniform uint *input, uniform uint width, uniform uint height,
 }
 
     [shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void twirl(uniform uint *input, uniform uint w, uniform uint h,
-                            uniform uint *out, uniform uint64_t out_len,
+                            uniform uint *out, uniform BufferIndex out_len,
                             uniform TwirlParams params,
                             uint3 id : SV_DispatchThreadID) {
   uint i = linear_index(id);
@@ -158,7 +158,7 @@ pixelate_mosaic(uniform uint *input, uniform uint width, uniform uint height,
 
 [shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void
 wave_ripple(uniform uint *input, uniform uint w, uniform uint h,
-            uniform uint *out, uniform uint64_t out_len,
+            uniform uint *out, uniform BufferIndex out_len,
             uniform WaveRippleParams params, uint3 id : SV_DispatchThreadID) {
   uint i = linear_index(id);
   if (i >= out_len)
@@ -175,7 +175,7 @@ wave_ripple(uniform uint *input, uniform uint w, uniform uint h,
 }
 
     [shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void corner_pin(uniform CornerPinParams params,
-                                 uniform uint *out, uniform uint64_t out_len,
+                                 uniform uint *out, uniform BufferIndex out_len,
                                  uint3 id : SV_DispatchThreadID) {
   uint i = linear_index(id);
   if (i >= out_len)

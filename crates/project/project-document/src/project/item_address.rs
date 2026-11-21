@@ -7,13 +7,7 @@ use super::{
     scaled_time_delta, unscaled_time_delta,
 };
 
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub enum ItemKind {
-    Comment,
-    Caption,
-    Video,
-    Audio,
-}
+pub use shrimply_project_types::TrackKind as ItemKind;
 
 /// The logical nesting of shared folded-sequence instances.
 ///
@@ -97,6 +91,17 @@ pub enum TrackRef<'a> {
     Caption(&'a CaptionTrack),
     Video(&'a VisualTrack),
     Audio(&'a AudioTrack),
+}
+
+impl TrackRef<'_> {
+    pub fn enabled(&self) -> bool {
+        match self {
+            Self::Comment(track) => track.enabled,
+            Self::Caption(track) => track.enabled,
+            Self::Video(track) => track.enabled,
+            Self::Audio(track) => track.enabled,
+        }
+    }
 }
 
 pub enum TrackMut<'a> {
@@ -257,6 +262,26 @@ impl ItemAddress {
     }
 }
 
+impl<'a> TrackRef<'a> {
+    /// Visit borrowed items once without resolving each stable ID again.
+    pub fn items(self) -> impl Iterator<Item = ItemRef<'a>> {
+        let (mut comments, mut captions, mut videos, mut audio) = (None, None, None, None);
+        match self {
+            Self::Comment(track) => comments = Some(track.items.as_slice()),
+            Self::Caption(track) => captions = Some(track.items.as_slice()),
+            Self::Video(track) => videos = Some(track.items.as_slice()),
+            Self::Audio(track) => audio = Some(track.items.as_slice()),
+        }
+        comments
+            .into_iter()
+            .flatten()
+            .map(ItemRef::Comment)
+            .chain(captions.into_iter().flatten().map(ItemRef::Caption))
+            .chain(videos.into_iter().flatten().map(ItemRef::Video))
+            .chain(audio.into_iter().flatten().map(ItemRef::Audio))
+    }
+}
+
 impl<'a> ItemRef<'a> {
     pub fn kind(&self) -> ItemKind {
         match self {
@@ -338,6 +363,15 @@ impl ProjectItem {
 }
 
 impl Project {
+    pub fn root_track_index(&self, kind: ItemKind, id: Uuid) -> Option<usize> {
+        match kind {
+            ItemKind::Comment => self.comment_tracks.iter().position(|track| track.id == id),
+            ItemKind::Caption => self.caption_tracks.iter().position(|track| track.id == id),
+            ItemKind::Video => self.video_tracks.iter().position(|track| track.id == id),
+            ItemKind::Audio => self.audio_tracks.iter().position(|track| track.id == id),
+        }
+    }
+
     pub fn track_scope(&self, address: &TrackAddress) -> Option<SequenceScopeId> {
         self.sequence_scope_for_path(address.kind(), address.sequence_path())
     }

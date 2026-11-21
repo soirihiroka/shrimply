@@ -3,7 +3,7 @@ use sanim_lang::{Engine, MemorySources};
 const BASE: &str = "def one():\n    return 1\n\ndef two():\n    return 2\n";
 fn files(script: &str) -> MemorySources {
     let mut files = MemorySources::default();
-    files.insert("main.sanim", script);
+    files.insert("main.sanim", format!("{}\nAnimation()", script));
     files.insert("test.py", BASE);
     files.insert("inside.patch", "--- a/test.py\n+++ b/test.py\n@@ -1,5 +1,5 @@\n def one():\n-    return 1\n+    return 3\n \n def two():\n     return 2\n");
     files.insert("outside.patch", "--- a/test.py\n+++ b/test.py\n@@ -1,5 +1,5 @@\n def one():\n     return 1\n \n def two():\n-    return 2\n+    return 3\n");
@@ -14,7 +14,7 @@ fn files(script: &str) -> MemorySources {
 fn a_range_edit_checks_actual_diff_changes_and_preserves_other_scopes() {
     let files = files(
         r#"let view=<CodeView src="test.py" />
-add(view)
+Animation(children=[view])
 let selected=view.range(name="one")
 selected.style(style=CodeStyle(background=Color("blue5")),duration=100ms)
 selected.edit(src="inside.patch",animation="morph",duration=400ms)
@@ -45,7 +45,7 @@ wait(1s)"#,
 fn a_range_patch_cannot_change_a_sibling_scope() {
     let files = files(
         r#"let view=<CodeView src="test.py" />
-add(view)
+Animation(children=[view])
 view.range(name="one").edit(src="outside.patch",duration=400ms)"#,
     );
     let error = Engine::default()
@@ -56,14 +56,18 @@ view.range(name="one").edit(src="outside.patch",duration=400ms)"#,
 
 #[test]
 fn regex_and_character_edits_use_the_same_unicode_range_representation() {
+    // Bound ranges capture their original snapshot. Separate views make this test
+    // compare character and regex selection over the same Unicode source.
     let files = files(
-        r#"let view=<CodeView lang="plain">éλz</CodeView>
-add(view)
+        r#"let contents=r"éλz"
+let view=CodeView(code=contents,lang="plain")
+let regex_view=CodeView(code=contents,lang="plain")
+Animation(children=[view,regex_view])
 let character=view.range(character=2)
 assert(character.start_column==2)
 assert(character.end_column==3)
 character.edit(code="Q",duration=200ms)
-view.range(regex="Q").edit(code="R",duration=200ms)
+regex_view.range(regex="λ").edit(code="R",duration=200ms)
 wait(1s)"#,
     );
     let prepared = Engine::default()
@@ -71,6 +75,13 @@ wait(1s)"#,
         .unwrap();
     assert_eq!(
         prepared.animation.code_views["view"].document.text.as_ref(),
+        "éQz"
+    );
+    assert_eq!(
+        prepared.animation.code_views["regex_view"]
+            .document
+            .text
+            .as_ref(),
         "éRz"
     );
 }
@@ -79,7 +90,7 @@ wait(1s)"#,
 fn an_old_selection_fails_cleanly_after_editing_its_source() {
     let files = files(
         r#"let view=<CodeView src="test.py" />
-add(view)
+Animation(children=[view])
 let selected=view.range(name="one")
 selected.edit(src="inside.patch",duration=100ms)
 selected.fold(duration=100ms)"#,
@@ -97,7 +108,7 @@ selected.fold(duration=100ms)"#,
 fn named_one_line_ranges_edit_one_sibling_without_touching_the_same_line_neighbor() {
     let files = files(
         r#"let view=<CodeView lang="javascript">function one() { return 1; } function two() { return 2; }</CodeView>
-add(view)
+Animation(children=[view])
 view.range(name="one").edit(code=r"function one() { return 3; }",duration=100ms)
 wait(1s)"#,
     );

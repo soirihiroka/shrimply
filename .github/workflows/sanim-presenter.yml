@@ -1,0 +1,132 @@
+name: Sanim Presenter
+
+on:
+  push:
+    tags:
+      - "sanim-presenter-v*"
+  pull_request:
+    paths:
+      - ".github/workflows/sanim-presenter.yml"
+      - ".cargo/**"
+      - "Cargo.toml"
+      - "crates/**"
+      - "rust-toolchain.toml"
+      - "sanim/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - runner: ubuntu-26.04
+            platform: linux-x86_64
+          - runner: macos-15
+            platform: macos-arm64
+    runs-on: ${{ matrix.runner }}
+    env:
+      CARGO_BUILD_JOBS: "2"
+      PACKAGE: sanim-presenter-${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake libclang-dev libgtk-4-dev libpango1.0-dev lld ninja-build pkg-config
+
+      - name: Install macOS build dependencies
+        if: runner.os == 'macOS'
+        run: brew install dylibbundler pango pkgconf
+
+      - name: Build presenter
+        run: |
+          rustup show
+          make -C sanim presenter-release
+
+      - name: Package and smoke-check Linux binary
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p "$RUNNER_TEMP/$PACKAGE" dist
+          install -m 755 sanim/target/release/sanim-presenter "$RUNNER_TEMP/$PACKAGE/"
+          install -m 644 LICENSE "$RUNNER_TEMP/$PACKAGE/"
+          tar -czf "dist/$PACKAGE.tar.gz" -C "$RUNNER_TEMP" "$PACKAGE"
+          mkdir "$RUNNER_TEMP/unpacked"
+          tar -xzf "dist/$PACKAGE.tar.gz" -C "$RUNNER_TEMP/unpacked"
+          binary="$RUNNER_TEMP/unpacked/$PACKAGE/sanim-presenter"
+          file "$binary" | grep -F 'x86-64'
+          ldd "$binary" | tee "$RUNNER_TEMP/linkage.txt"
+          if grep -Fq 'not found' "$RUNNER_TEMP/linkage.txt"; then exit 1; fi
+          "$binary" --help
+          "$binary" --version
+
+      - name: Package and smoke-check macOS binary
+        if: runner.os == 'macOS'
+        run: |
+          bundle="$RUNNER_TEMP/$PACKAGE"
+          mkdir -p "$bundle" dist
+          install -m 755 sanim/target/release/sanim-presenter "$bundle/"
+          install -m 644 LICENSE "$bundle/"
+          dylibbundler --bundle-deps --overwrite-dir \
+            --fix-file "$bundle/sanim-presenter" --dest-dir "$bundle/lib" \
+            --install-path '@executable_path/lib/'
+          find "$bundle/lib" -type f -print0 | while IFS= read -r -d '' library; do
+            codesign --force --sign - "$library"
+          done
+          codesign --force --sign - "$bundle/sanim-presenter"
+          ditto -c -k --keepParent "$bundle" "dist/$PACKAGE.zip"
+          ditto -x -k "dist/$PACKAGE.zip" "$RUNNER_TEMP/unpacked"
+          unpacked="$RUNNER_TEMP/unpacked/$PACKAGE"
+          binary="$unpacked/sanim-presenter"
+          test "$(lipo -archs "$binary")" = arm64
+          codesign --verify --strict "$binary"
+          {
+            otool -L "$binary"
+            find "$unpacked/lib" -type f -print0 | while IFS= read -r -d '' library; do
+              codesign --verify --strict "$library"
+              otool -L "$library"
+            done
+          } > "$RUNNER_TEMP/linkage.txt"
+          external="$(awk '$1 ~ /^\// && $1 !~ /^\/System\/Library\// && $1 !~ /^\/usr\/lib\// && $1 !~ /:$/ { print $1 }' "$RUNNER_TEMP/linkage.txt")"
+          if [[ -n "$external" ]]; then printf '%s\n' "$external" >&2; exit 1; fi
+          env PATH=/usr/bin:/bin "$binary" --help
+          env PATH=/usr/bin:/bin "$binary" --version
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: ${{ env.PACKAGE }}
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/sanim-presenter-v')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: sanim-presenter-*
+          path: dist
+          merge-multiple: true
+
+      - name: Publish presenter release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$RELEASE_TAG" \
+            --verify-tag --latest=false --generate-notes --title "$RELEASE_TAG" \
+            dist/sanim-presenter-linux-x86_64.tar.gz dist/sanim-presenter-macos-arm64.zip

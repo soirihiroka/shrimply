@@ -26,12 +26,9 @@
   libx11,
   lld,
   llvmPackages,
-  manimSrc,
   makeShellWrapper,
   ninja,
-  opencv,
   openssl,
-  optixSrc,
   pipewire,
   pkg-config,
   poppler_gi,
@@ -42,12 +39,13 @@
   rustPlatform,
   shrimply-slang,
   shrimply-oidn,
+  spirv-tools,
+  src,
   uv,
   vulkan-headers,
   vulkan-loader,
   vulkan-memory-allocator,
   vte-gtk4,
-  vtracerSrc,
   wrapGAppsHook4,
   zlib,
 }:
@@ -94,19 +92,9 @@ rustPlatform.buildRustPackage {
   pname = "shrimply";
   version = "0.1.0";
 
-  src = null;
+  inherit src;
+  SHRIMPLY_BUILD_GIT_HASH = src.rev or src.dirtyRev or "";
   cargoLock.lockFile = ../Cargo.lock;
-
-  postUnpack = ''
-    mkdir -p "$sourceRoot/external"
-    for dependency in manim optix-dev vtracer; do
-      rm -rf "$sourceRoot/external/$dependency"
-    done
-    cp -r ${manimSrc} "$sourceRoot/external/manim"
-    cp -r ${optixSrc} "$sourceRoot/external/optix-dev"
-    cp -r ${vtracerSrc} "$sourceRoot/external/vtracer"
-    chmod -R u+w "$sourceRoot/external"
-  '';
 
   nativeBuildInputs = [
     clang
@@ -118,6 +106,7 @@ rustPlatform.buildRustPackage {
     ninja
     pkg-config
     python3
+    spirv-tools
     (wrapGAppsHook4.override { makeWrapper = makeShellWrapper; })
   ];
 
@@ -139,7 +128,6 @@ rustPlatform.buildRustPackage {
     libpng
     libwebp
     libx11
-    opencv
     openssl
     pipewire
     poppler_gi
@@ -158,6 +146,7 @@ rustPlatform.buildRustPackage {
   CUDA_TOOLKIT_PATH = cudaToolkit;
   CLANGCC = "${clang}/bin/clang";
   CLANGCXX = "${clang}/bin/clang++";
+  SHRIMPLY_FFMPEG_PREFIX = ffmpeg;
   LIBCLANG_PATH = "${llvmPackages.libclang.lib}/lib";
   NIX_LDFLAGS = "-L${cudaStubs}/lib/stubs -L${shrimply-slang}/lib -lharfbuzz-subset -lwebpdemux -lwebpmux";
   PKG_CONFIG = "pkg-config";
@@ -197,6 +186,8 @@ rustPlatform.buildRustPackage {
       "$out/share/licenses/shrimply/PocketSphinx-model.txt"
     install -Dm644 vendor/rhubarb-lip-sync/LICENSE \
       "$out/share/licenses/shrimply/Rhubarb-Lip-Sync.txt"
+    install -Dm644 vendor/vision/LICENSE \
+      "$out/share/licenses/shrimply/OpenCV-Vision.txt"
 
     # components-gtk resolves bundled icons relative to the binary.
     install -d "$out/share/shrimply/icons"
@@ -227,7 +218,7 @@ rustPlatform.buildRustPackage {
           uv
         ]
       }
-      --prefix LD_LIBRARY_PATH : ${lib.makeLibraryPath [ gcc.cc.lib zlib libglvnd vulkan-loader shrimply-oidn ]}:/run/opengl-driver/lib
+      --prefix LD_LIBRARY_PATH : ${lib.makeLibraryPath [ ffmpeg gcc.cc.lib zlib libglvnd vulkan-loader shrimply-oidn ]}:/run/opengl-driver/lib
       --run 'export UV_PROJECT_ENVIRONMENT="''${UV_PROJECT_ENVIRONMENT:-''${XDG_CACHE_HOME:-$HOME/.cache}/shrimply/manim}"'
     )
   '';

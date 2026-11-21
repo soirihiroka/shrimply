@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [target.'cfg(target_os = "macos")'.dependencies]
+shrimply-i18n.workspace = true
 shrimply-trust-core.workspace = true
 shrimply-caption-export-core.workspace = true
 block2.workspace = true
@@ -27,7 +28,7 @@ objc2-quartz-core.workspace = true
 objc2-core-graphics.workspace = true
 objc2-core-media.workspace = true
 objc2-screen-capture-kit = { workspace = true, features = ["std", "SCContentSharingPicker", "SCRecordingOutput", "SCShareableContent", "SCStream", "block2", "objc2-core-foundation", "objc2-core-media"] }
-shrimply-timeline-skia = { workspace = true }
+shrimply-timeline-skia.workspace = true
 shrimply-tts = { workspace = true }
 shrimply-asset = { workspace = true }
 shrimply-cross-ui-core = { workspace = true }
@@ -38,6 +39,7 @@ shrimply-editor-state = { workspace = true }
 shrimply-math-core = { workspace = true }
 glam.workspace = true
 shrimply-preview-provider-skia = { workspace = true }
+shrimply-preview-render-core.workspace = true
 shrimply-playback-performance = { workspace = true }
 shrimply-project-evaluation = { workspace = true }
 shrimply-paint-edit-skia = { workspace = true }

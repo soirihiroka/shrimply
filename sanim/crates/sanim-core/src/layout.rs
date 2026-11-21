@@ -22,18 +22,53 @@ impl Animation {
         time: Fraction,
         width: Fraction,
         height: Fraction,
-        mut native: impl FnMut(&mut Element, Fraction) -> Result<(), String>,
+        native: impl FnMut(&mut Element, Fraction) -> Result<(), String>,
     ) -> Result<Vec<Element>, String> {
+        self.layout_with_reuse(time, width, height, native, |_, _| None)
+    }
+
+    /// Reuse already-resolved mounted roots whose time, viewport and native-content
+    /// dependencies the caller has proved equivalent. Misses share one sampler and
+    /// the same native measurement/layout path as an ordinary whole-scene sample.
+    pub fn layout_with_reuse(
+        &self,
+        time: Fraction,
+        width: Fraction,
+        height: Fraction,
+        mut native: impl FnMut(&mut Element, Fraction) -> Result<(), String>,
+        mut reuse: impl FnMut(usize, &crate::Layer) -> Option<Element>,
+    ) -> Result<Vec<Element>, String> {
+        if !crate::math::finite(&time) || time < Fraction::from(0) {
+            return Err("sample time must be finite and nonnegative".into());
+        }
         if width <= Fraction::from(0) || height <= Fraction::from(0) {
             return Err("viewport dimensions must be positive".into());
         }
         let width = to_f64(width)?;
         let height = to_f64(height)?;
-        let mut elements = self.sample(time)?;
-        for element in &mut elements {
+        let mut sampler = None;
+        let mut elements = Vec::new();
+        for (index, layer) in self.layers.iter().enumerate() {
+            if !layer.visible_at(time)? {
+                continue;
+            }
+            if let Some(element) = reuse(index, layer) {
+                elements.push(element);
+                continue;
+            }
+            if sampler.is_none() {
+                sampler = Some(self.reactive.sampler(time)?);
+            }
+            let mut element = layer.element.clone();
+            self.sample_in_place(
+                &mut element,
+                time,
+                sampler.as_mut().expect("frame sampler"),
+                &mut |_, _| Ok(()),
+            )?;
             let mut measured = Measurement::default();
             measure_boxes(
-                element,
+                &mut element,
                 width,
                 Some(height),
                 &mut measured,
@@ -42,12 +77,13 @@ impl Animation {
                 &Default::default(),
             )?;
             resolve_with_lists(
-                element,
+                &mut element,
                 width,
                 height,
                 Some((&self.list_views, time)),
                 &measured,
             )?;
+            elements.push(element);
         }
         Ok(elements)
     }
@@ -84,7 +120,10 @@ impl Measurement {
             element.layout.width = *width;
             element.layout.height = *height;
         }
-        if element.geometry.children().is_some()
+        if element
+            .geometry
+            .children()
+            .is_some_and(|children| !children.is_empty())
             && let Some(children) = Arc::make_mut(&mut element.geometry).children_mut()
         {
             for child in children {
@@ -144,9 +183,7 @@ fn measure_boxes(
     resolve_dimensions(element, parent_width, parent_height.unwrap_or(0.))?;
     let padding = to_f64(element.layout.padding)?;
     let physical = match element.geometry.as_ref() {
-        Geometry::Rectangle { width, height, .. } | Geometry::Media { width, height, .. } => {
-            Some([to_f64(*width)?, to_f64(*height)?])
-        }
+        Geometry::Media { width, height, .. } => Some([to_f64(*width)?, to_f64(*height)?]),
         _ => None,
     };
     let width = element
@@ -169,9 +206,16 @@ fn measure_boxes(
         .or(if is_box { None } else { parent_height });
     let available_width = (width - 2. * padding).max(0.);
     let available_height = height.map(|height| (height - 2. * padding).max(0.));
-    if element.geometry.children().is_some()
-        && let Some(children) = Arc::make_mut(&mut element.geometry).children_mut()
-    {
+    if let Some(children) = element.geometry.children() {
+        // Empty boxes still need measurement, but never copy their unchanged geometry.
+        let mut empty = imbl::Vector::new();
+        let children = if children.is_empty() {
+            &mut empty
+        } else {
+            Arc::make_mut(&mut element.geometry)
+                .children_mut()
+                .expect("container geometry")
+        };
         for child in children.iter_mut() {
             if element.layout.flex {
                 measured.remember(child);
@@ -327,31 +371,23 @@ fn resolve_with_lists(
             )?,
         )?;
     }
-    let rectangle = match element.geometry.as_ref() {
-        Geometry::Rectangle { width, height, .. } => Some((to_f64(*width)?, to_f64(*height)?)),
-        _ => None,
-    };
     if element
         .geometry
         .children()
         .is_some_and(|children| !children.is_empty())
         && let Some(children) = Arc::make_mut(&mut element.geometry).children_mut()
     {
-        let width = rectangle
-            .map(|size| size.0)
-            .or(element
-                .layout
-                .width
-                .map(|number| to_f64(number.value))
-                .transpose()?)
+        let width = element
+            .layout
+            .width
+            .map(|number| to_f64(number.value))
+            .transpose()?
             .unwrap_or(parent_width);
-        let height = rectangle
-            .map(|size| size.1)
-            .or(element
-                .layout
-                .height
-                .map(|number| to_f64(number.value))
-                .transpose()?)
+        let height = element
+            .layout
+            .height
+            .map(|number| to_f64(number.value))
+            .transpose()?
             .unwrap_or(parent_height);
         if let Some(direction) = element.layout.direction {
             let transition = lists
@@ -447,12 +483,6 @@ fn resolve_with_lists(
                 child.position.values[1] = calc("+", child.position.values[1], padding)?;
             }
         }
-        if rectangle.is_some() {
-            for child in children {
-                child.position.values[0] = calc("-", child.position.values[0], width / 2.)?;
-                child.position.values[1] = calc("-", child.position.values[1], height / 2.)?;
-            }
-        }
     }
     if !element.position.values[0].is_finite() || !element.position.values[1].is_finite() {
         return Err("layout arithmetic overflow".into());
@@ -482,12 +512,29 @@ fn frame_bounds(
                 .ok_or("flow child Box requires resolved dimensions")?
                 * scale;
         }
-        return Ok(([0.; 2], size));
+        let half_stroke = element
+            .stroke
+            .as_ref()
+            .map(|stroke| to_f64(stroke.width))
+            .transpose()?
+            .unwrap_or(0.)
+            * scale
+            / 2.;
+        if half_stroke < 0. {
+            return Err("stroke width must be nonnegative".into());
+        }
+        return Ok((
+            [-half_stroke; 2],
+            [
+                calc("+", size[0], half_stroke)?,
+                calc("+", size[1], half_stroke)?,
+            ],
+        ));
     }
     let rotation = if parent.is_none()
         && !matches!(
             element.geometry.as_ref(),
-            Geometry::Circle { .. } | Geometry::Rectangle { .. } | Geometry::Media { .. }
+            Geometry::Circle { .. } | Geometry::Media { .. }
         ) {
         element.rotation
     } else {
@@ -501,10 +548,7 @@ fn frame_bounds(
     } else {
         0.
     };
-    let dimensions = if matches!(
-        element.geometry.as_ref(),
-        Geometry::Rectangle { .. } | Geometry::Media { .. }
-    ) {
+    let dimensions = if matches!(element.geometry.as_ref(), Geometry::Media { .. }) {
         [None, None]
     } else {
         [element.layout.width, element.layout.height]
@@ -634,13 +678,11 @@ fn resolve_dimensions(
                     if axis == 0 { "width" } else { "height" }
                 ));
             }
-            if let Geometry::Rectangle { width, height, .. }
-            | Geometry::Media { width, height, .. } = element.geometry.as_ref()
-            {
+            if let Geometry::Media { width, height, .. } = element.geometry.as_ref() {
                 let current = if axis == 0 { *width } else { *height };
                 if current != number.value {
-                    let (Geometry::Rectangle { width, height, .. }
-                    | Geometry::Media { width, height, .. }) = Arc::make_mut(&mut element.geometry)
+                    let Geometry::Media { width, height, .. } =
+                        Arc::make_mut(&mut element.geometry)
                     else {
                         unreachable!()
                     };

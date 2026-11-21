@@ -2,17 +2,17 @@ use sanim_core::{Fraction, Viewport};
 use sanim_lang::{Engine, MemorySources};
 use sanim_render::{Options, Renderer};
 const SOURCE: &str = r#"bg(Color("transparent"))
-let first=Rect(width=20pt,height=20pt,fill=Color("blue3"),x_align=Align.Start,y_align=Align.Start)
-let last=Rect(width=20pt,height=20pt,position=Vec2(0pt,80pt),fill=Color("orange3"),x_align=Align.Start,y_align=Align.Start)
+let first=Box(width=20pt, height=20pt, fill=Color("blue3"), x_align=Align.Start, y_align=Align.Start)
+let last=Box(width=20pt, height=20pt, position=[0pt, 80pt], fill=Color("orange3"), x_align=Align.Start, y_align=Align.Start)
 let spacer=Box(width=20pt,height=3*20pt)
 let clip=Box(overflow="auto",width=100pt,height=60pt,children=[first,spacer,last])
-add(clip)
-clip.scroll_to(to=Vec2(0pt,40pt),duration=1s,ease="linear")
+Animation(children=[clip])
+clip.scroll_to(to=[0pt, 40pt],duration=1s,ease="linear")
 wait(1s)
 "#;
 fn animation(source: &str) -> sanim_core::Animation {
     let mut files = MemorySources::default();
-    files.insert("main.sanim", source);
+    files.insert("main.sanim", format!("{}\nAnimation()", source));
     Engine::new(Viewport {
         width: 200,
         height: 120,
@@ -66,7 +66,7 @@ fn offscreen_code_glyphs_do_not_prepare_native_paths() {
         .map(|index| format!("value_{index} = {index}\n"))
         .collect();
     let script = format!(
-        "let view=CodeView(code=r\"\"\"{text}\"\"\",lang=\"python\",width=140pt,height=60pt,font_size=12pt,line_height=18pt,line_numbers=false)\nadd(view)\nview.scroll_to(to=Vec2(0%,100%),duration=1s,ease=\"linear\")\nwait(1s)\n"
+        "let view=CodeView(code=r\"\"\"{text}\"\"\",lang=\"python\",width=140pt,height=60pt,font_size=12pt,line_height=18pt,line_numbers=false)\nAnimation(children=[view])\nview.scroll_to(to=[0%, 100%],duration=1s,ease=\"linear\")\nwait(1s)\n"
     );
     let mut renderer = Renderer::default();
     let scene = renderer.prepare(animation(&script)).unwrap();
@@ -88,11 +88,11 @@ fn offscreen_code_glyphs_do_not_prepare_native_paths() {
 
 #[test]
 fn percent_axis_targets_remain_relative_after_external_resize() {
-    let source = "let content=Box(width=20pt,height=420pt)\nlet view=Box(overflow=\"auto\",width=100pt,height=50%,children=[content])\nadd(view)\nview.scroll_to(y=100%,duration=1s,ease=\"linear\")\nwait(1s)";
+    let source = "let content=Box(width=20pt,height=420pt)\nlet view=Box(overflow=\"auto\",width=100pt,height=50%,children=[content])\nAnimation(children=[view])\nview.scroll_to(y=100%,duration=1s,ease=\"linear\")\nwait(1s)";
     let mut renderer = Renderer::default();
     let axis = renderer.prepare(animation(source)).unwrap();
     let vector = renderer
-        .prepare(animation(&source.replace("y=100%", "to=Vec2(0%,100%)")))
+        .prepare(animation(&source.replace("y=100%", "to=[0%, 100%]")))
         .unwrap();
     for height in [120, 240, 80] {
         let mut options = Options::for_animation(axis.animation());
@@ -110,7 +110,7 @@ fn percent_axis_targets_remain_relative_after_external_resize() {
 #[test]
 fn scroll_prefix_states_and_pictures_survive_a_suffix_reload() {
     let mut files = MemorySources::default();
-    files.insert("main.sanim", SOURCE);
+    files.insert("main.sanim", format!("{}\nAnimation()", SOURCE));
     let mut engine = Engine::new(Viewport {
         width: 200,
         height: 120,
@@ -144,7 +144,7 @@ fn scroll_benchmark() {
         .map(|index| format!("value_{index} = {index}\n"))
         .collect();
     let code = format!(
-        "let view=CodeView(code=r\"\"\"{source}\"\"\",lang=\"python\",width=140pt,height=60pt,font_size=12pt,line_height=18pt,line_numbers=false)\nadd(view)\nview.scroll_to(to=Vec2(0%,100%),duration=1s,ease=\"linear\")\nwait(1s)\n"
+        "let view=CodeView(code=r\"\"\"{source}\"\"\",lang=\"python\",width=140pt,height=60pt,font_size=12pt,line_height=18pt,line_numbers=false)\nAnimation(children=[view])\nview.scroll_to(to=[0%, 100%],duration=1s,ease=\"linear\")\nwait(1s)\n"
     );
     for (name, source) in [("shapes", SOURCE), ("1000 code rows", code.as_str())] {
         let mut renderer = Renderer::default();
@@ -182,8 +182,8 @@ fn a_zero_height_hidden_box_clips_every_child_pixel() {
     let scene = renderer
         .prepare(animation(
             r#"bg(Color("transparent"))
-let pane=<Box w-100 h-0 overflow-hidden><Rect width={20pt} height={20pt} fill="blue3"/></Box>
-add(pane)
+let pane=<Box w-100 h-0 overflow-hidden><Box width={20pt} height={20pt} fill="blue3" x_align={Align.Center} y_align={Align.Center}/></Box>
+Animation(children=[pane])
 wait(1s)"#,
         ))
         .unwrap();
@@ -195,7 +195,7 @@ wait(1s)"#,
 
 #[test]
 fn idle_scrollbar_has_no_rail_and_its_caps_survive_a_rounded_viewport() {
-    let scene=Renderer::default().prepare(animation("bg(Color(\"transparent\"))\nlet pane=<Box w-100 h-100 rounded-lg overflow-x-hidden overflow-y-scroll><Box w-100 h-500 /></Box>\nadd(pane)\nwait(1s)")).unwrap();
+    let scene=Renderer::default().prepare(animation("bg(Color(\"transparent\"))\nlet pane=<Box w-100 h-100 rounded-lg overflow-x-hidden overflow-y-scroll><Box w-100 h-500 /></Box>\nAnimation(children=[pane])\nwait(1s)")).unwrap();
     let mut renderer = Renderer::default();
     let mut options = Options::for_animation(scene.animation());
     options.encode_png = false;

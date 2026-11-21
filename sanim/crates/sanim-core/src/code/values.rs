@@ -8,6 +8,12 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+#[derive(Clone, Copy, Debug)]
+pub struct NativeCost {
+    pub work: usize,
+    pub bytes: usize,
+    pub output_bytes: usize,
+}
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Native {
     Color,
@@ -18,6 +24,14 @@ pub enum Native {
     CodeRange,
     CodeLines,
     CodeTheme,
+    VoxelBox,
+    VoxelPart,
+    SunLight,
+    PointLight,
+    Environment,
+    Camera(crate::voxel::camera::Op),
+    Perceptual(crate::math::color::Op),
+    Texture(crate::math::texture::Op),
 }
 impl Native {
     pub const CODE_VALUES: &'static [Self] = &[
@@ -29,19 +43,40 @@ impl Native {
         Self::CodeTheme,
     ];
     pub fn from_name(name: &str) -> Option<Self> {
-        match name {
-            "Color" => Some(Self::Color),
-            "Font" => Some(Self::Font),
-            _ => Self::CODE_VALUES
-                .iter()
-                .copied()
-                .find(|operation| operation.name() == name),
+        if let Some(operation) = crate::math::texture::Op::from_name(name) {
+            return Some(Self::Texture(operation));
         }
+        if let Some(operation) = crate::math::color::Op::from_name(name) {
+            return Some(Self::Perceptual(operation));
+        }
+        if let Some(operation) = crate::voxel::camera::Op::from_name(name) {
+            return Some(Self::Camera(operation));
+        }
+        [
+            Self::Color,
+            Self::Font,
+            Self::VoxelBox,
+            Self::VoxelPart,
+            Self::SunLight,
+            Self::PointLight,
+            Self::Environment,
+        ]
+        .into_iter()
+        .chain(Self::CODE_VALUES.iter().copied())
+        .find(|operation| operation.name() == name)
     }
     pub fn name(self) -> &'static str {
         match self {
+            Self::Texture(operation) => operation.name(),
+            Self::Perceptual(operation) => operation.name(),
+            Self::Camera(operation) => operation.name(),
             Self::Color => "Color",
             Self::Font => "Font",
+            Self::VoxelBox => "VoxelBox",
+            Self::VoxelPart => "VoxelPart",
+            Self::SunLight => "SunLight",
+            Self::PointLight => "PointLight",
+            Self::Environment => "Environment",
             Self::CodeStyle => "CodeStyle",
             Self::CodeRule => "CodeRule",
             Self::CodeSpan => "CodeSpan",
@@ -53,6 +88,13 @@ impl Native {
     pub fn signature(self) -> (Vec<(&'static str, Type, bool)>, Type) {
         let num = Type::Numeric(Unit::Number);
         match self {
+            Self::Texture(operation) => operation.signature(),
+            Self::Perceptual(operation) => operation.signature(),
+            Self::Camera(operation) => crate::voxel::camera::signature(operation),
+            Self::VoxelBox | Self::VoxelPart => crate::voxel::config::signature(self.name()),
+            Self::SunLight | Self::PointLight | Self::Environment => {
+                crate::voxel::lights::signature(self.name())
+            }
             Self::Color => (vec![("value", Type::String, false)], Type::Color),
             Self::Font => (
                 vec![
@@ -130,14 +172,58 @@ impl Native {
         }) {
             return Err(format!("{} has no '{name}' argument", self.name()));
         }
-        Ok(result)
+        if let Self::Camera(operation) = self {
+            crate::voxel::camera::checked_result(operation, actuals, result)
+        } else if let Self::Texture(operation) = self {
+            operation.check(actuals, result)
+        } else {
+            Ok(result)
+        }
+    }
+    /// Native constructors reserve their work before allocating immutable results.
+    fn work(self, args: &imbl::OrdMap<String, Value>) -> Result<usize, String> {
+        match self {
+            Self::Texture(_) => unreachable!("texture work is reserved by atomic evaluate"),
+            Self::Perceptual(operation) => Ok(operation.work()),
+            Self::Camera(operation) => crate::voxel::camera::work(operation, args),
+            _ => Ok(0),
+        }
+    }
+    /// Reserve the actual execution choice while a cached result remains pinned.
+    pub fn evaluate(
+        self,
+        args: &imbl::OrdMap<String, Value>,
+        mut reserve: impl FnMut(NativeCost) -> Result<(), String>,
+    ) -> Result<Value, String> {
+        if let Self::Texture(operation) = self {
+            return operation.evaluate(args, reserve);
+        }
+        reserve(NativeCost {
+            work: self.work(args)?,
+            bytes: 0,
+            output_bytes: 0,
+        })?;
+        self.execute(args)
     }
     pub fn execute(self, args: &imbl::OrdMap<String, Value>) -> Result<Value, String> {
+        if let Self::Texture(operation) = self {
+            return operation.execute(args);
+        }
+        if let Self::Perceptual(operation) = self {
+            return operation.execute(args);
+        }
+        if let Self::Camera(operation) = self {
+            return crate::voxel::camera::execute(operation, args);
+        }
         let required = |name: &str| {
             args.get(name)
                 .ok_or_else(|| format!("{} missing '{name}'", self.name()))
         };
         match self.name() {
+            "VoxelBox" | "VoxelPart" => crate::voxel::config::execute(self.name(), args),
+            "SunLight" | "PointLight" | "Environment" => {
+                crate::voxel::lights::execute(self.name(), args)
+            }
             "Color" => Ok(Value::Color(crate::Color::parse(
                 args.get("value")
                     .map(Value::string)

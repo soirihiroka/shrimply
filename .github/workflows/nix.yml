@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - ".github/workflows/nix.yml"
+      - "external/**"
       - "flake.nix"
       - "flake.lock"
       - "pkgs/**"
@@ -63,10 +64,13 @@ jobs:
 
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Install Nix
         uses: cachix/install-nix-action@v30
         with:
+          install_url: https://releases.nixos.org/nix/nix-2.35.2/install
           extra_nix_config: |
             accept-flake-config = true
             extra-substituters = https://cache.nixos-cuda.org https://shrimply.cachix.org

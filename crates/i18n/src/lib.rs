@@ -15,6 +15,12 @@ pub fn init_system_locale() {
             candidates.extend(value.split(':').map(str::to_string));
         }
     }
+    init_locales(&candidates);
+}
+
+/// Native hosts with no locale environment (including Android) supply their
+/// ordered language preferences to the same normalization and fallback logic.
+pub fn init_locales(candidates: &[String]) {
     let locale = candidates
         .iter()
         .map(|locale| normalize_locale(locale))

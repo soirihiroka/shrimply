@@ -7,6 +7,8 @@ on:
       - ".github/workflows/windows.yml"
       - ".github/scripts/publish-prerelease.sh"
       - "packaging/windows/**"
+      - "packaging/windows-ffmpeg.py"
+      - "packaging/native_sources.py"
       - ".cargo/**"
       - ".gitmodules"
       - "assets/**"
@@ -24,12 +26,22 @@ on:
       - "!**/*.rst"
       - "!**/docs/**"
   workflow_dispatch:
+    inputs:
+      check_only:
+        description: Run debug checks without packaging or publishing a release
+        type: boolean
+        default: false
+  workflow_call:
+    inputs:
+      check_only:
+        type: boolean
+        default: true
 
 permissions:
   contents: read
 
 concurrency:
-  group: windows-prerelease-${{ github.ref }}
+  group: windows-${{ inputs.check_only && 'check' || 'prerelease' }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -77,7 +89,9 @@ jobs:
         shell: powershell
         run: |
           $sdk = $env:WindowsSDKVersion.TrimEnd('\')
-          "key=$env:ImageOS-$env:ImageVersion-msvc-$env:VCToolsVersion-sdk-$sdk-x64" | Out-File -Append -Encoding utf8 $env:GITHUB_OUTPUT
+          $ffmpeg = git -C external/ffmpeg rev-parse HEAD
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "key=ffmpeg-$ffmpeg-$env:ImageOS-$env:ImageVersion-msvc-$env:VCToolsVersion-sdk-$sdk-x64" | Out-File -Append -Encoding utf8 $env:GITHUB_OUTPUT
 
       - name: Install host tools
         shell: powershell
@@ -162,7 +176,7 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: .ci/vcpkg/binary-cache/ffmpeg
-          key: windows-vcpkg-ffmpeg-v4-cuda-12.9.2-${{ steps.native-cache-abi.outputs.key }}-${{ hashFiles('packaging/windows/vcpkg/**', 'packaging/windows/build-ffmpeg.ps1') }}
+          key: windows-vcpkg-ffmpeg-v4-cuda-12.9.2-${{ steps.native-cache-abi.outputs.key }}-${{ hashFiles('packaging/windows/vcpkg/**', 'packaging/windows/build-ffmpeg.ps1', 'packaging/windows-ffmpeg.py', 'packaging/native_sources.py') }}
 
       - name: Install FFmpeg
         shell: powershell
@@ -182,41 +196,20 @@ jobs:
           path: .ci/vcpkg/binary-cache/ffmpeg
           key: ${{ steps.ffmpeg-cache.outputs.cache-primary-key }}
 
-      - name: Restore OpenCV cache
-        id: opencv-cache
-        uses: actions/cache/restore@v6
-        with:
-          path: .ci/vcpkg/binary-cache/opencv
-          key: windows-vcpkg-opencv-v4-cuda-12.9.2-${{ steps.native-cache-abi.outputs.key }}-${{ hashFiles('packaging/windows/vcpkg/**', 'packaging/windows/build-ffmpeg.ps1') }}
-
-      - name: Install OpenCV
-        shell: powershell
-        run: |
-          New-Item -ItemType Directory -Force .ci/vcpkg/binary-cache/opencv | Out-Null
-          $env:VCPKG_BINARY_SOURCES = "clear;files,$pwd\.ci\vcpkg\binary-cache\opencv,readwrite;files,$pwd\.ci\vcpkg\binary-cache\ffmpeg,read"
-          & .ci/vcpkg/vcpkg.exe install --triplet x64-windows --x-manifest-root packaging/windows/vcpkg/opencv --x-install-root "$env:VCPKG_INSTALLED_DIR"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-      - name: Save OpenCV cache
-        if: steps.opencv-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v6
-        with:
-          path: .ci/vcpkg/binary-cache/opencv
-          key: ${{ steps.opencv-cache.outputs.cache-primary-key }}
-
       - name: Restore remaining native library cache
         id: runtime-cache
         uses: actions/cache/restore@v6
         with:
           path: .ci/vcpkg/binary-cache/runtime
-          key: windows-vcpkg-runtime-v4-cuda-12.9.2-${{ steps.native-cache-abi.outputs.key }}-${{ hashFiles('packaging/windows/vcpkg/**', 'packaging/windows/build-ffmpeg.ps1') }}
+          key: windows-vcpkg-runtime-v4-cuda-12.9.2-${{ steps.native-cache-abi.outputs.key }}-${{ hashFiles('packaging/windows/vcpkg/**', 'packaging/windows/build-ffmpeg.ps1', 'packaging/windows-ffmpeg.py', 'packaging/native_sources.py') }}
 
       - name: Install remaining native libraries
         shell: powershell
         run: |
           New-Item -ItemType Directory -Force .ci/vcpkg/binary-cache/runtime | Out-Null
-          $env:VCPKG_BINARY_SOURCES = "clear;files,$pwd\.ci\vcpkg\binary-cache\runtime,readwrite;files,$pwd\.ci\vcpkg\binary-cache\ffmpeg,read;files,$pwd\.ci\vcpkg\binary-cache\opencv,read"
-          & .ci/vcpkg/vcpkg.exe install --triplet x64-windows --x-manifest-root packaging/windows/vcpkg/runtime --x-install-root "$env:VCPKG_INSTALLED_DIR"
+          $env:VCPKG_BINARY_SOURCES = "clear;files,$pwd\.ci\vcpkg\binary-cache\runtime,readwrite;files,$pwd\.ci\vcpkg\binary-cache\ffmpeg,read"
+          & packaging/windows/build-ffmpeg.ps1 -Manifest runtime `
+            -VcpkgRoot "$pwd\.ci\vcpkg" -InstalledDir "$env:VCPKG_INSTALLED_DIR"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Save remaining native library cache
@@ -256,10 +249,23 @@ jobs:
           "$env:VCPKG_INSTALLED_DIR\x64-windows\bin" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
 
       - name: Package portable application
+        if: ${{ !inputs.check_only }}
         shell: powershell
         run: make windows-package
 
+      - name: Check Windows debug build
+        if: inputs.check_only
+        shell: powershell
+        env:
+          CARGO_BUILD_JOBS: "2"
+          CARGO_INCREMENTAL: "0"
+          CARGO_PROFILE_DEV_DEBUG: "0"
+        run: |
+          $env:PATH += ";C:\Program Files\Git\bin;C:\Program Files\Git\usr\bin"
+          make windows-check
+
       - name: Upload portable ZIP
+        if: ${{ !inputs.check_only }}
         uses: actions/upload-artifact@v6
         with:
           name: shrimply-windows-x86_64
@@ -279,7 +285,7 @@ jobs:
           if-no-files-found: ignore
 
   publish:
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && !inputs.check_only
     needs: build
     runs-on: ubuntu-24.04
     permissions:

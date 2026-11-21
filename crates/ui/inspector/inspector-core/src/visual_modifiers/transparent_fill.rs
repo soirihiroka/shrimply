@@ -413,7 +413,7 @@ impl InspectorController {
             item: item.clone(),
             modifier_id,
         };
-        let revision = shrimply_editor_state::player_state::snapshot(&self.player_state).revision;
+        let revision = crate::model::player_snapshot(&self.player_state).revision;
         if let Some(cached) = self
             .transparent_fill_statuses
             .borrow()

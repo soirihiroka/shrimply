@@ -73,6 +73,7 @@ foreach ($name in $ffmpegDlls) {
 Copy-Item (Join-Path $vcpkgBin "*.dll") $stage
 
 if (!(Test-Path $ffmpeg)) { throw "Missing pinned FFmpeg executable: $ffmpeg" }
+Copy-Item $ffmpeg (Join-Path $stage "shrimply-ffmpeg.exe")
 $previousErrorActionPreference = $ErrorActionPreference
 try {
     $ErrorActionPreference = "Continue"
@@ -94,6 +95,13 @@ foreach ($license in @(
     $source = Join-Path $ffmpegRoot "share/$($license.Package)/copyright"
     if (!(Test-Path $source)) { throw "Missing license file: $source" }
     Copy-Item $source (Join-Path $licenses $license.Name)
+}
+foreach ($license in @(
+    @{ Source = "vendor/vision/LICENSE"; Name = "OpenCV-Vision.txt" },
+    @{ Source = "crates/math/color/src/css/LICENSE"; Name = "GTK-Pango-Color.txt" },
+    @{ Source = "crates/math/color/src/css/NOTICE"; Name = "GTK-Pango-Color-NOTICE.txt" }
+)) {
+    Copy-Item (Join-Path $root $license.Source) (Join-Path $licenses $license.Name)
 }
 [IO.File]::WriteAllText(
     (Join-Path $licenses "ffmpeg-build-configuration.txt"),

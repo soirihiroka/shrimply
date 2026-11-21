@@ -5,7 +5,7 @@ Parameters are immutable value snapshots unless marked ``sig`` or ``mut``.
 
 .. code-block:: text
 
-   fn twice(sig value: Number): sig Number {
+   fn<sig> twice(sig value: Number): sig Number {
        return value * 2
    }
 

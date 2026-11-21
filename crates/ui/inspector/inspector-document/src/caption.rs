@@ -38,8 +38,11 @@ pub(super) fn categories(value: &Value, details: &[InspectorDetail]) -> Vec<Insp
 fn text_item(caption: &CaptionItem) -> InspectorItem {
     let value = shrimply_inspector_core::caption::CaptionText::from(caption);
     let mut section = InspectorSection::default();
-    section
-        .add(InspectorControl::new(ControlKind::MultilineText, "/text", "Text").value(value.text));
+    section.add(
+        InspectorControl::new(ControlKind::MultilineText, "/text", "Text")
+            .value(value.text)
+            .live_commit(shrimply_inspector_core::caption::EDIT_COMMIT),
+    );
     section.add(selector(
         "/writing_direction",
         "Writing",
@@ -177,6 +180,7 @@ fn number(
             f64::from(presentation.maximum),
         )
         .width_characters(6)
+        .live_commit(shrimply_inspector_core::caption::EDIT_COMMIT)
 }
 
 fn selector<T: Copy + Eq>(
@@ -185,20 +189,28 @@ fn selector<T: Copy + Eq>(
     selected: T,
     choices: &[shrimply_inspector_core::caption::CaptionChoice<T>],
 ) -> InspectorControl {
-    shrimply_inspector_core::selector::selector(
+    shrimply_inspector_core::selector::step_selector(
         path,
         label,
         shrimply_inspector_core::caption::choice(choices, selected).key,
-        choices
-            .iter()
-            .map(|choice| (choice.key.to_string(), choice.label.to_string())),
+        choices.iter().map(|choice| {
+            (
+                choice.key.to_string(),
+                choice.label.to_string(),
+                choice.icon.map(|icon| icon.gtk.to_string()),
+            )
+        }),
     )
+    .live_commit(shrimply_inspector_core::caption::EDIT_COMMIT)
 }
 
 fn color(path: &str, label: &str, color: Color<u8>) -> InspectorControl {
-    InspectorControl::new(ControlKind::Color, path, label).components(
-        [color.r, color.g, color.b, color.a]
-            .map(|component| component.to_string())
-            .to_vec(),
-    )
+    InspectorControl::new(ControlKind::Color, path, label)
+        .components(
+            [color.r, color.g, color.b, color.a]
+                .map(|component| component.to_string())
+                .to_vec(),
+        )
+        .tooltip("Caption text color")
+        .live_commit(shrimply_inspector_core::caption::EDIT_COMMIT)
 }

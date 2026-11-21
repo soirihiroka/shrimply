@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- From Adwaita symbolic SVG; LGPL-3.0-or-later or CC-BY-SA-3.0. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="16dp" android:height="16dp" android:viewportWidth="16" android:viewportHeight="16">
+    <path android:fillColor="#FFFFFFFF" android:pathData="m 3.992188 1 c -1.660157 0 -3 1.339844 -3 3 v 8 c 0 1.660156 1.339843 3 3 3 h 8 c 1.660156 0 3 -1.339844 3 -3 v -8 c 0 -1.660156 -1.339844 -3 -3 -3 z m 0 6 h 8 v 2 h -8 z m 0 0" />
+</vector>

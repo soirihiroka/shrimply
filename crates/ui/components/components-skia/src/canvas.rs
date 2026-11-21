@@ -1,6 +1,7 @@
-use std::ptr::NonNull;
+use cached::{Cached, stores::LruCache};
+use std::{cell::RefCell, ptr::NonNull};
 
-use skia_safe::{Font, Paint, PathBuilder, Point, RRect, paint::Style as PaintStyle};
+use skia_safe::{Paint, PathBuilder, Point, RRect, TextBlob, paint::Style as PaintStyle};
 
 pub use shrimply_math_color::Color;
 pub use shrimply_math_geometry::{Rect, UVec2, Vec2, vec2};
@@ -58,6 +59,46 @@ impl FontId {
     pub fn proportional(size: f32) -> Self {
         Self { size }
     }
+}
+
+const MAX_TEXT_CACHE_ENTRIES: usize = 256;
+
+#[derive(Clone)]
+struct CachedText {
+    blob: TextBlob,
+    size: Vec2,
+    baseline: f32,
+}
+
+type TextCache = LruCache<(String, u32), CachedText>;
+
+fn text_layout(text: &str, font_id: FontId) -> CachedText {
+    thread_local! {
+        static TEXT: RefCell<(u64,TextCache)> = RefCell::new((0,
+            LruCache::builder().max_size(MAX_TEXT_CACHE_ENTRIES).build().expect("valid text cache size")));
+    }
+    let generation = crate::skia_font::font_generation();
+    TEXT.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        if cache.0 != generation {
+            cache.1.cache_clear();
+            cache.0 = generation;
+        }
+        cache
+            .1
+            .cache_get_or_set_with((text.to_owned(), font_id.size.to_bits()), || {
+                let font = crate::skia_font::font_with_families(&[], 400.0, font_id.size);
+                let (width, bounds) = font.measure_str(text, None);
+                let (_, metrics) = font.metrics();
+                CachedText {
+                    blob: TextBlob::from_str(text, &font)
+                        .expect("nonempty text must produce a glyph blob"),
+                    size: vec2(width, bounds.height().max(font_id.size.max(1.0))),
+                    baseline: -metrics.ascent,
+                }
+            })
+            .clone()
+    })
 }
 
 pub struct TimelinePainterInner {
@@ -172,25 +213,20 @@ impl TimelinePainterInner {
             return;
         }
 
-        let font = skia_font(font_id.clone());
-        let size = self.layout_no_wrap(text, font_id, color).size();
-        if size.x <= 0.0 {
+        let layout = text_layout(text, font_id);
+        if layout.size.x <= 0.0 {
             return;
         }
-
-        let (_, metrics) = font.metrics();
-        let baseline_offset = -metrics.ascent;
-        let anchored = align.anchor_size(pos, size);
+        let anchored = align.anchor_size(pos, layout.size);
         let mut paint = Paint::default();
         paint.set_anti_alias(true);
         paint.set_color(color);
         self.canvas().save();
         self.canvas()
             .rotate(rotation_degrees, Some((pos.x, pos.y).into()));
-        self.canvas().draw_str(
-            text,
-            (anchored.min.x, anchored.min.y + baseline_offset),
-            &font,
+        self.canvas().draw_text_blob(
+            &layout.blob,
+            (anchored.min.x, anchored.min.y + layout.baseline),
             &paint,
         );
         self.canvas().restore();
@@ -318,10 +354,8 @@ impl TimelinePainterInner {
             return TimelineTextLayout::zero();
         }
 
-        let fallback_height = font_id.size.max(1.0);
-        let font = skia_font(font_id);
-        let (width, bounds) = font.measure_str(text, None);
-        TimelineTextLayout::new(width, bounds.height().max(fallback_height))
+        let layout = text_layout(text, font_id);
+        TimelineTextLayout::new(layout.size.x, layout.size.y)
     }
 
     pub fn layout_system_text_no_wrap(
@@ -421,8 +455,4 @@ impl TimelineTextLayout {
 
 fn point(pos: Vec2) -> Point {
     Point::new(pos.x, pos.y)
-}
-
-fn skia_font(font_id: FontId) -> Font {
-    crate::skia_font::font_with_families(&[], 400.0, font_id.size)
 }

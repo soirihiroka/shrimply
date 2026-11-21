@@ -176,6 +176,8 @@ ApplicationWindow {
                     }
                 }
                 ModifierMenuButton {
+                    text: ComponentTranslations.text("Add modifier")
+                    searchPlaceholderText: ComponentTranslations.text("Search modifiers")
                     Layout.alignment: Qt.AlignHCenter
                     values: DemoLogic.modifierValues
                     labels: DemoLogic.modifierLabels

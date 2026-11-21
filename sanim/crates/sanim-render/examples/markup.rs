@@ -12,14 +12,14 @@ fn source(markup: bool) -> String {
         let y = (i / 10) * 34 - 153;
         names.push(format!("tile_{i}"));
         if markup {
-            writeln!(source,r#"let tile_{i}=<Rect id="tile-{i}" width={{56pt}} height={{28pt}} position={{Vec2({x}pt,{y}pt)}} pill fill={{gradient}}><Label id="label-{i}" font_size={{10pt}}>item {i}</Label></Rect>"#).unwrap();
+            writeln!(source,r#"let tile_{i}=<Box id="tile-{i}" width={{56pt}} height={{28pt}} position={{[{x}pt, {y}pt]}} pill fill={{gradient}} x_align={{Align.Center}} y_align={{Align.Center}}><Label id="label-{i}" font_size={{10pt}}>item {i}</Label></Box>"#).unwrap();
         } else {
-            writeln!(source,r#"let tile_{i}=Rect(id="tile-{i}",width=56pt,height=28pt,position=Vec2({x}pt,{y}pt),pill,fill=gradient,children=[Text("item {i}",id="label-{i}",font_size=10pt)])"#).unwrap();
+            writeln!(source,r#"let tile_{i}=Box(id="tile-{i}",width=56pt,height=28pt,position=[{x}pt, {y}pt],radius="full",fill=gradient,x_align=Align.Center,y_align=Align.Center,children=[Text("item {i}",id="label-{i}",font_size=10pt)])"#).unwrap();
         }
     }
     writeln!(
         source,
-        "let group=Box(children=[{}])\nMoveTo(group,to=Vec2(10pt,0pt),duration=1s,ease=\"linear\")",
+        "let group=Box(children=[{}])\ngroup.move_to(to=[10pt, 0pt], duration=1s, ease=\"linear\")",
         names.join(",")
     )
     .unwrap();
@@ -27,7 +27,7 @@ fn source(markup: bool) -> String {
 }
 fn prepare(markup: bool) -> sanim_lang::Prepared {
     let mut files = MemorySources::default();
-    files.insert("main.sanim", source(markup));
+    files.insert("main.sanim", format!("{}\nAnimation()", source(markup)));
     Engine::new(Viewport {
         width: 960,
         height: 540,

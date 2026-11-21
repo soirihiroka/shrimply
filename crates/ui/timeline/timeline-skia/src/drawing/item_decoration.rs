@@ -1,7 +1,5 @@
 use super::super::*;
 
-use super::*;
-
 #[allow(clippy::too_many_arguments)]
 pub(in crate::drawing) fn draw_item_transitions(
     painter: &TimelinePainter,
@@ -145,12 +143,11 @@ pub(in crate::drawing) fn draw_track_divider(
     y: f64,
     width: f64,
 ) {
-    if width <= 0.0 || TRACK_HEIGHT <= 1.0 {
-        return;
-    }
-    painter.rect_filled(
-        rect(x, y + TRACK_HEIGHT - 1.0, width, 1.0),
-        0,
+    shrimply_timeline_paint_skia::draw_track_divider(
+        painter,
+        x,
+        y,
+        width,
         crate::theme::current().sidebar_shade,
     );
 }
@@ -257,172 +254,4 @@ pub(in crate::drawing) fn draw_tiny_item_horizontal_edges(
     painter.line_segments(&segments, Stroke::new(ITEM_BORDER_STROKE_WIDTH, color));
 }
 
-pub(in crate::drawing) fn draw_natural_end_marker(
-    painter: &TimelinePainter,
-    marker: NaturalEndMarker,
-    x: f64,
-    y: f64,
-    view: TimelineViewState,
-    color: Color,
-) {
-    let Some(first_position) = marker.position else {
-        return;
-    };
-    let mut position = first_position;
-    if let Some(interval) = marker.repeat_interval {
-        if interval <= Time::ZERO {
-            return;
-        }
-        while position > marker.start {
-            let previous = Time {
-                seconds: position.seconds - interval.seconds,
-            };
-            if previous <= marker.start {
-                break;
-            }
-            position = previous;
-        }
-        while position <= marker.start {
-            position = position.saturating_add(interval);
-        }
-    } else if position <= marker.start {
-        return;
-    }
-    while position < marker.end {
-        let marker_x = time_to_x(position.as_secs_f64(), x, view);
-        painter.rect_filled(
-            rect(marker_x - 1.0, y + 3.0, 2.0, (TRACK_HEIGHT - 6.0).max(1.0)),
-            0,
-            color.alpha_multiply(0.9),
-        );
-        let Some(interval) = marker.repeat_interval else {
-            break;
-        };
-        position = position.saturating_add(interval);
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(in crate::drawing) fn draw_item_box(
-    painter: &TimelinePainter,
-    item_rect: Rect,
-    fill: Color,
-    selected: bool,
-    selected_border_color: Color,
-) {
-    if item_rect.width() <= 0.0 || item_rect.height() <= 0.0 {
-        return;
-    }
-
-    draw_item_fill(painter, item_rect, fill);
-    draw_item_border(painter, item_rect, selected, selected_border_color);
-}
-
-pub(in crate::drawing) fn draw_timed_item_box(painter: &TimelinePainter, item: TimedItemBox) {
-    if item.bounds.width() <= 0.0 || item.bounds.height() <= 0.0 {
-        return;
-    }
-
-    let real_span = marker_real_span(item.marker);
-    draw_item_fill(
-        painter,
-        item.bounds,
-        if real_span.is_some() {
-            item.fill.alpha_multiply(0.45)
-        } else {
-            item.fill
-        },
-    );
-    if let Some((real_start, real_end)) = real_span {
-        let (real_x, real_width) = item_rect(real_start, real_end, item.timeline_x, item.view);
-        draw_item_fill(
-            painter,
-            rect(
-                real_x,
-                f64::from(item.bounds.min.y),
-                real_width,
-                f64::from(item.bounds.height()),
-            ),
-            item.fill,
-        );
-    }
-    draw_item_border(
-        painter,
-        item.bounds,
-        item.selected,
-        item.selected_border_color,
-    );
-}
-
-pub(in crate::drawing) fn marker_real_span(marker: NaturalEndMarker) -> Option<(Time, Time)> {
-    let real_start = marker.real_start?;
-    let real_end = marker.real_end?;
-    let start = real_start.min(real_end).max(marker.start);
-    let end = real_start.max(real_end).min(marker.end);
-    (start < end).then_some((start, end))
-}
-
-pub(in crate::drawing) fn draw_item_fill(painter: &TimelinePainter, item_rect: Rect, fill: Color) {
-    painter.rect_filled(item_rect, 0, fill);
-}
-
-pub(in crate::drawing) fn draw_item_border(
-    painter: &TimelinePainter,
-    item_rect: Rect,
-    selected: bool,
-    selected_border_color: Color,
-) {
-    if item_rect.width() <= 0.0 || item_rect.height() <= 0.0 {
-        return;
-    }
-
-    let border_color = if selected {
-        selected_border_color
-    } else {
-        crate::theme::current().sidebar_border
-    };
-
-    let border = f64::from(ITEM_BORDER_STROKE_WIDTH)
-        .min(f64::from(item_rect.width()) * 0.5)
-        .min(f64::from(item_rect.height()) * 0.5);
-    painter.rect_filled(
-        rect(
-            f64::from(item_rect.min.x),
-            f64::from(item_rect.min.y),
-            border,
-            f64::from(item_rect.height()),
-        ),
-        0,
-        border_color,
-    );
-    painter.rect_filled(
-        rect(
-            f64::from(item_rect.max.x) - border,
-            f64::from(item_rect.min.y),
-            border,
-            f64::from(item_rect.height()),
-        ),
-        0,
-        border_color,
-    );
-    painter.rect_filled(
-        rect(
-            f64::from(item_rect.min.x) + border,
-            f64::from(item_rect.min.y),
-            (f64::from(item_rect.width()) - border * 2.0).max(0.0),
-            border,
-        ),
-        0,
-        border_color,
-    );
-    painter.rect_filled(
-        rect(
-            f64::from(item_rect.min.x) + border,
-            f64::from(item_rect.max.y) - border,
-            (f64::from(item_rect.width()) - border * 2.0).max(0.0),
-            border,
-        ),
-        0,
-        border_color,
-    );
-}
+pub use shrimply_timeline_paint_skia::{draw_natural_end_marker, draw_timed_item_box};

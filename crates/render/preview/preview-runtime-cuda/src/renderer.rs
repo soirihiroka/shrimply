@@ -177,6 +177,15 @@ impl VideoRenderer {
             if self.last_frame_key == Some(frame.storage_key) {
                 return Ok(());
             }
+            if self
+                .intel_import
+                .as_ref()
+                .is_some_and(|imported| imported.source == *display)
+            {
+                self.last_frame_key = Some(frame.storage_key);
+                self.mipmapped_frame_key = self.last_frame_key;
+                return Ok(());
+            }
             let imported = crate::intel_gl::ImportedTexture::new(&self.gl, display)?;
             if let Some(previous) = self.intel_import.replace(imported) {
                 previous.destroy(&self.gl);

@@ -1,35 +1,17 @@
-mod alpha_mask;
 mod audio;
-mod audio_cache;
-mod audio_generator;
-mod audio_modifiers;
-mod background;
 mod benchmarking;
-mod camera_source;
-mod caption;
-mod comment;
+mod control;
 pub(crate) use shrimply_inspector_core::font_cache;
 pub(crate) mod font_selector;
-mod gaussian_3d;
-mod generated;
 mod info;
 mod item;
-mod keyframe_editor;
 mod keyframe_graph;
 pub(crate) use shrimply_inspector_core::keyframe_model;
 mod list;
-pub(crate) mod modifiers;
-mod paint;
+mod progress;
 mod project;
 mod rhai_editor;
-mod scene_3d;
 mod section;
-mod selector;
-mod timeline_value;
-mod track;
-mod transform;
-mod transition;
-mod video;
 
 pub use shrimply_inspector_core::INSPECTOR_MIN_WIDTH;
 
@@ -65,10 +47,7 @@ use gtk::glib;
 use gtk::prelude::*;
 use shrimply_editor_state::preferences::SharedPreferences;
 use shrimply_inspector_core::InspectorTarget;
-use shrimply_project_document::project::{ItemAddress, ItemRef, Project, Time, VideoItem};
-
-use section::InspectorSection;
-use track::TrackInspection;
+use shrimply_project_document::project::{ItemAddress, Project, VideoItem};
 
 type KeyframeGraphViewStates =
     Rc<RefCell<HashMap<String, shrimply_components_gtk::ui::SharedFrameGraphState>>>;
@@ -82,10 +61,8 @@ struct InspectorState {
     fallback_focus: gtk::Widget,
     rebuild_pending: Rc<Cell<bool>>,
     list_state: Rc<RefCell<shrimply_inspector_core::list::InspectorListState>>,
-    volume: Rc<RefCell<shrimply_audio_engine::streaming::FrameAudioSampler>>,
     preferences: SharedPreferences,
     preview_focus: SharedPreviewFocus,
-    property_clipboard: shrimply_property_transfer::SharedClipboard,
     active_inspector: Rc<RefCell<Option<InspectorTarget>>>,
 }
 
@@ -95,11 +72,9 @@ pub(crate) struct InspectorContext {
     pub(crate) project: Rc<RefCell<Project>>,
     pub(crate) player_state: SharedPlayerState,
     pub(crate) selected_item: Option<InspectedItem>,
-    pub(crate) volume: Rc<RefCell<shrimply_audio_engine::streaming::FrameAudioSampler>>,
     pub(crate) preferences: SharedPreferences,
     pub(crate) preview_focus: SharedPreviewFocus,
     pub(crate) preview_item: Option<ItemAddress>,
-    pub(crate) property_clipboard: shrimply_property_transfer::SharedClipboard,
     keyframe_graph_views: KeyframeGraphViewStates,
     // Per-row inspector listeners must use this scope instead of GTK weak refs.
     // Removed widgets can stay alive through signal/controller cycles after rebuild.
@@ -111,19 +86,6 @@ pub(crate) struct InspectorContext {
 }
 
 impl InspectorContext {
-    pub(crate) fn audio_analysis_at(
-        &self,
-        position: Time,
-    ) -> shrimply_project_evaluation::FrameAudioAnalysis {
-        self.inspector_core.audio_analysis_at(position)
-    }
-
-    fn detached(&self) -> Self {
-        let mut context = self.clone();
-        context.listener_scope = Rc::new(());
-        context
-    }
-
     pub(crate) fn keyframe_graph_state(
         &self,
         scope: impl Into<String>,
@@ -143,27 +105,6 @@ impl InspectorContext {
     }
 }
 
-pub(crate) trait Inspectable {
-    fn title(&self) -> &'static str;
-    fn add_rows(&self, section: &InspectorSection, context: &InspectorContext);
-
-    fn default_action(&self, _context: &InspectorContext) -> Option<Box<dyn Fn() + 'static>> {
-        None
-    }
-
-    fn controls(&self, context: &InspectorContext) -> Vec<gtk::Widget> {
-        let section = InspectorSection::controls();
-        self.add_rows(&section, context);
-        vec![section.into_widget()]
-    }
-
-    fn inspect(&self, context: &InspectorContext) -> Vec<gtk::Widget> {
-        let section = InspectorSection::new(self.title(), self.default_action(context));
-        self.add_rows(&section, context);
-        vec![section.into_widget()]
-    }
-}
-
 pub fn new(
     project: Rc<RefCell<Project>>,
     player_state: SharedPlayerState,
@@ -180,12 +121,12 @@ pub fn new(
         player_state.clone(),
         selection_state.clone(),
     )
-    .with_default_text_font(default_font.clone());
+    .with_default_text_font(default_font.clone())
+    .with_property_clipboard(property_clipboard.clone());
     activate_project_google_fonts(&project.borrow(), &default_font, &core);
     let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
     let category_bar = gtk::Box::new(gtk::Orientation::Vertical, 0);
     category_bar.set_visible(false);
-    let volume = core.audio_sampler();
     let state = InspectorState {
         core,
         listener_scope: Rc::new(RefCell::new(Rc::new(()))),
@@ -193,10 +134,8 @@ pub fn new(
         fallback_focus,
         rebuild_pending: Rc::new(Cell::new(false)),
         list_state: Default::default(),
-        volume,
         preferences,
         preview_focus,
-        property_clipboard,
         active_inspector: Default::default(),
     };
     let scrolled = gtk::ScrolledWindow::builder()
@@ -204,7 +143,6 @@ pub fn new(
         .hexpand(true)
         .vexpand(true)
         .hscrollbar_policy(gtk::PolicyType::Never)
-        .min_content_width(INSPECTOR_MIN_WIDTH)
         .build();
     let layout = gtk::Box::new(gtk::Orientation::Vertical, 0);
     layout.append(&category_bar);
@@ -248,6 +186,38 @@ pub fn new(
             &project_player_state,
             &project_inspector_state,
         );
+    });
+
+    let poll_layout = layout.downgrade();
+    let poll_content = content.downgrade();
+    let poll_category_bar = category_bar.downgrade();
+    let poll_scrolled = scrolled.downgrade();
+    let poll_project = project.clone();
+    let poll_player_state = player_state.clone();
+    let poll_state = state.clone();
+    let mut pending_dependencies = false;
+    glib::timeout_add_local(shrimply_inspector_document::POLL_INTERVAL, move || {
+        let (Some(layout), Some(content), Some(category_bar), Some(scrolled)) = (
+            poll_layout.upgrade(),
+            poll_content.upgrade(),
+            poll_category_bar.upgrade(),
+            poll_scrolled.upgrade(),
+        ) else {
+            return glib::ControlFlow::Break;
+        };
+        pending_dependencies |= shrimply_inspector_document::poll(&poll_state.core);
+        if layout.is_mapped() && pending_dependencies {
+            pending_dependencies = false;
+            queue_rebuild(
+                &content,
+                &category_bar,
+                &scrolled,
+                &poll_project,
+                &poll_player_state,
+                &poll_state,
+            );
+        }
+        glib::ControlFlow::Continue
     });
 
     rebuild(
@@ -348,19 +318,30 @@ fn rebuild(
     let target = state.core.target();
     let scroll_value = state.list_state.borrow().scroll_position(&target);
     *state.active_inspector.borrow_mut() = Some(target.clone());
-    let (inspectable, selected_item, preview_item) =
-        resolve_target(project, &target, &state.preview_focus);
+    let selected_item = match &target {
+        InspectorTarget::Item(item) | InspectorTarget::Transition { item, .. } => {
+            Some(item.clone())
+        }
+        _ => None,
+    };
+    let preview_item = if let InspectorTarget::Item(item) = &target
+        && let Some(video) = project.borrow().video_item(item)
+    {
+        validate_preview_focus(&state.preview_focus, item, video);
+        Some(item.clone())
+    } else {
+        preview_focus::clear(&state.preview_focus);
+        None
+    };
 
     let context = InspectorContext {
         inspector_core: state.core.clone(),
         project: project.clone(),
         player_state: player_state.clone(),
         selected_item,
-        volume: state.volume.clone(),
         preferences: state.preferences.clone(),
         preview_focus: state.preview_focus.clone(),
         preview_item,
-        property_clipboard: state.property_clipboard.clone(),
         keyframe_graph_views: state.keyframe_graph_views.clone(),
         listener_scope: scoped_listeners,
         refresh: {
@@ -392,7 +373,14 @@ fn rebuild(
         list_state: state.list_state.clone(),
         category_bar: category_bar.clone(),
     };
-    for widget in inspectable.inspect(&context) {
+    let preferences = shrimply_editor_state::preferences::snapshot(&state.preferences);
+    let document = shrimply_inspector_document::document(
+        &state.core,
+        info::format_date,
+        &preferences.compute_server_url,
+        &preferences.last_tts_model,
+    );
+    for widget in list::render_document(document, &context, control::section) {
         content.append(&widget);
     }
     let scrolled = scrolled.clone();
@@ -419,78 +407,4 @@ fn validate_preview_focus(
     ) {
         preview_focus::clear(preview_focus);
     }
-}
-
-fn resolve_target(
-    project: &Rc<RefCell<Project>>,
-    target: &InspectorTarget,
-    preview_focus: &SharedPreviewFocus,
-) -> (
-    Box<dyn Inspectable>,
-    Option<ItemAddress>,
-    Option<ItemAddress>,
-) {
-    let mut preview_video = None;
-    let resolved = {
-        let project = project.borrow();
-        match target {
-            InspectorTarget::Transition { item, side } => {
-                transition::resolve(&project, item, *side)
-                    .map(|transition| {
-                        (
-                            Box::new(transition) as Box<dyn Inspectable>,
-                            Some(item.clone()),
-                            None,
-                        )
-                    })
-                    .unwrap_or_else(|| project_target(&project))
-            }
-            InspectorTarget::Item(address) => match project.item(address) {
-                Some(ItemRef::Comment(item)) => (
-                    Box::new(item.clone()) as Box<dyn Inspectable>,
-                    Some(address.clone()),
-                    None,
-                ),
-                Some(ItemRef::Caption(item)) => (
-                    Box::new(item.clone()) as Box<dyn Inspectable>,
-                    Some(address.clone()),
-                    None,
-                ),
-                Some(ItemRef::Video(item)) => {
-                    preview_video = Some((address.clone(), item.clone()));
-                    (
-                        Box::new(item.clone()) as Box<dyn Inspectable>,
-                        Some(address.clone()),
-                        Some(address.clone()),
-                    )
-                }
-                Some(ItemRef::Audio(item)) => (
-                    Box::new(item.clone()) as Box<dyn Inspectable>,
-                    Some(address.clone()),
-                    None,
-                ),
-                None => project_target(&project),
-            },
-            InspectorTarget::Track(address) => TrackInspection::resolve(&project, address.clone())
-                .map(|track| (Box::new(track) as Box<dyn Inspectable>, None, None))
-                .unwrap_or_else(|| project_target(&project)),
-            InspectorTarget::Project => project_target(&project),
-        }
-    };
-    if let Some((address, item)) = preview_video {
-        validate_preview_focus(preview_focus, &address, &item);
-    } else {
-        preview_focus::clear(preview_focus);
-    }
-    resolved
-}
-
-fn project_target(
-    project: &Project,
-) -> (
-    Box<dyn Inspectable>,
-    Option<ItemAddress>,
-    Option<ItemAddress>,
-) {
-    (Box::new(project.clone()), None, None)
 }

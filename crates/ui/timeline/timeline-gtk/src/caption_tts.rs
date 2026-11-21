@@ -26,20 +26,7 @@ pub(super) fn show_dialog(
         Rc::new(|_| {}),
         Rc::new(|| {}),
     );
-    let summary = format!(
-        "{} caption chunk{} will be generated with each caption's exact duration.{}",
-        plan.chunks(),
-        if plan.chunks() == 1 { "" } else { "s" },
-        if plan.skipped() == 0 {
-            String::new()
-        } else {
-            format!(
-                " {} empty or invalid chunk{} will be skipped.",
-                plan.skipped(),
-                if plan.skipped() == 1 { "" } else { "s" }
-            )
-        }
-    );
+    let summary = plan.description();
     let generate = adw::ButtonRow::builder()
         .title(tr!("Generate Speech").as_ref())
         .build();

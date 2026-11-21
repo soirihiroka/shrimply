@@ -1,6 +1,10 @@
 #[cfg(feature = "cuda")]
 use std::sync::atomic::{AtomicU64, Ordering};
 
+#[cfg(target_os = "android")]
+mod android;
+#[cfg(target_os = "android")]
+pub use android::initialize_java_vm;
 mod backend;
 #[cfg(feature = "cuda")]
 mod cuda;
@@ -9,6 +13,7 @@ mod lifecycle;
 mod math;
 #[cfg(feature = "cuda")]
 mod pool;
+mod rgb;
 mod session;
 #[cfg(feature = "cuda")]
 mod track;
@@ -18,6 +23,7 @@ pub use backend::{DecoderBackend, HardwareDevice};
 pub use lifecycle::is_decoder_startup_pressure;
 #[cfg(feature = "cuda")]
 pub use pool::{DecodeRequest, PendingDecode, VideoDecoderHandle, VideoDecoderPool};
+pub use rgb::RgbFrameConverter;
 pub use session::{
     DecodeControl, DecodeControls, DecodeMode, DecodeOutcome, DecodedVisual, NextFrame,
     VideoDecoderSession,
@@ -25,7 +31,6 @@ pub use session::{
 #[cfg(feature = "cuda")]
 pub use track::{VideoDecoderOwner, VideoPlane};
 
-#[cfg(feature = "cuda")]
 pub const DEFAULT_VIDEO_DECODER_POOL_SIZE: usize = 16;
 
 #[cfg(feature = "cuda")]

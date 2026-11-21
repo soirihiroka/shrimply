@@ -11,6 +11,9 @@ pub fn draw_expanded_video_tracks(
     parent_row: usize,
     content_height: f64,
 ) {
+    if input.project.expanded_sequence_paths.is_empty() {
+        return;
+    }
     let project = input.project;
     let selected_items = input.selected_nested_items;
     let folded_drag = input.folded_drag;
@@ -135,6 +138,7 @@ pub fn draw_expanded_video_tracks(
                 draw.view,
                 selected,
             );
+            super::source_events::draw(draw, project, item, &address, y);
             if !matches!(
                 item.content,
                 VideoItemContent::Obj(_) | VideoItemContent::Gaussian(_)
@@ -218,6 +222,9 @@ pub fn draw_expanded_audio_tracks(
     parent_row: usize,
     content_height: f64,
 ) {
+    if input.project.expanded_sequence_paths.is_empty() {
+        return;
+    }
     let project = input.project;
     let selected_items = input.selected_nested_items;
     let folded_drag = input.folded_drag;

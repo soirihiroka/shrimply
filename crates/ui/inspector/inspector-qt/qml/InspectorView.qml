@@ -392,9 +392,9 @@ Item {
                         : kind === InspectorBackend.Performance ? performanceControl
                         : kind === InspectorBackend.LayeredBoolean ? layeredBooleanControl
                         : kind === InspectorBackend.LayeredSelector ? layeredSelectorControl
-                        : kind === InspectorBackend.AudioCache ? audioCacheControl
-                        : kind === InspectorBackend.VisualCache ? visualCacheControl
-                        : kind === InspectorBackend.Analysis ? analysisControl
+                        : kind === InspectorBackend.AudioCache ? progressControl
+                        : kind === InspectorBackend.VisualCache ? progressControl
+                        : kind === InspectorBackend.Analysis ? progressControl
                         : kind === InspectorBackend.ModifierMenu ? audioModifierMenuControl
                         : kind === InspectorBackend.TtsEditor ? ttsEditorControl
                         : kind === InspectorBackend.BeatDetection ? beatDetectionControl
@@ -474,6 +474,9 @@ Item {
                     function commit() {
                         backend.commitControl(categoryIndex, itemIndex, index)
                     }
+                    function graphLifecycle(phase, redo) {
+                        backend.controlGraphLifecycle(categoryIndex, itemIndex, index, phase, redo)
+                    }
 
                     Component {
                         id: booleanControl
@@ -490,40 +493,15 @@ Item {
                     Component {
                         id: beatDetectionControl
                         SwitchRow {
-                            id: beatRow
-                            property int polls: 0
-                            property bool observedBusy: false
                             label: controlLoader.label
                             subtitle: root.refreshed(backend.controlSubtitle(
                                 controlLoader.categoryIndex,
                                 controlLoader.itemIndex, controlLoader.index))
                             active: controlLoader.value === "true"
-                            onActiveChanged: if (!active) {
-                                busy = false
-                                observedBusy = false
-                                polls = 0
-                            }
-                            onToggled: function(active) {
-                                polls = 0
-                                observedBusy = false
-                                controlLoader.edit(active)
-                            }
-                            Timer {
-                                interval: 33
-                                repeat: true
-                                running: beatRow.active
-                                    && (beatRow.busy || beatRow.polls < 60)
-                                onTriggered: {
-                                    const loading = backend.controlBusy(
-                                        controlLoader.categoryIndex,
-                                        controlLoader.itemIndex, controlLoader.index)
-                                    beatRow.busy = loading
-                                    beatRow.observedBusy = beatRow.observedBusy || loading
-                                    beatRow.polls += 1
-                                    if (beatRow.observedBusy && !loading)
-                                        beatRow.polls = 60
-                                }
-                            }
+                            busy: root.refreshed(backend.controlBusy(
+                                controlLoader.categoryIndex,
+                                controlLoader.itemIndex, controlLoader.index))
+                            onToggled: function(active) { controlLoader.edit(active) }
                         }
                     }
                     Component {
@@ -728,7 +706,7 @@ Item {
                                         controlLoader.itemIndex, controlLoader.index,
                                         oldTimes, times, values)
                             }
-                            onGraphEditFinished: controlLoader.commit()
+                            graphLifecycleHandler: controlLoader.graphLifecycle
                             onGraphKeysDeleted: function(component, times) {
                                 if (component === 0)
                                     backend.deleteControlGraphKeys(
@@ -1064,7 +1042,7 @@ Item {
                                         controlLoader.itemIndex, controlLoader.index,
                                         oldTimes, times, values)
                             }
-                            onGraphEditFinished: controlLoader.commit()
+                            graphLifecycleHandler: controlLoader.graphLifecycle
                             onGraphKeysDeleted: function(component, times) {
                                 if (component === 0)
                                     backend.deleteControlGraphKeys(
@@ -1372,7 +1350,7 @@ Item {
                                     controlLoader.itemIndex, controlLoader.index,
                                     oldTimes, times, values)
                             }
-                            onGraphEditFinished: controlLoader.commit()
+                            graphLifecycleHandler: controlLoader.graphLifecycle
                             onGraphKeysDeleted: function(component, times) {
                                 if (component !== 0)
                                     return
@@ -1528,7 +1506,7 @@ Item {
                                         controlLoader.itemIndex, controlLoader.index,
                                         oldTimes, times, values)
                             }
-                            onGraphEditFinished: controlLoader.commit()
+                            graphLifecycleHandler: controlLoader.graphLifecycle
                             onGraphKeysDeleted: function(component, times) {
                                 if (component === 0)
                                     backend.deleteControlGraphKeys(controlLoader.categoryIndex,
@@ -1695,7 +1673,7 @@ Item {
                                     propertyGraph.rollbackStepGraphMoves(
                                         component, oldTimes, times)
                             }
-                            onGraphEditFinished: controlLoader.commit()
+                            graphLifecycleHandler: controlLoader.graphLifecycle
                             onGraphKeysDeleted: function(component, times) {
                                 if (component !== 0)
                                     return
@@ -1883,7 +1861,7 @@ Item {
                                     propertyGraph.rollbackStepGraphMoves(
                                         component, oldTimes, times)
                             }
-                            onGraphEditFinished: controlLoader.commit()
+                            graphLifecycleHandler: controlLoader.graphLifecycle
                             onGraphKeysDeleted: function(component, times) {
                                 if (component !== 0)
                                     return
@@ -2146,7 +2124,7 @@ Item {
                                     controlLoader.itemIndex, controlLoader.index,
                                     oldTimes, times, values)
                             }
-                            onGraphEditFinished: controlLoader.commit()
+                            graphLifecycleHandler: controlLoader.graphLifecycle
                             onGraphKeysDeleted: function(component, times) {
                                 if (component !== 0)
                                     return
@@ -2330,178 +2308,76 @@ Item {
                         }
                     }
                     Component {
-                        id: audioCacheControl
+                        id: progressControl
                         RowLayout {
-                            SystemPalette { id: audioCachePalette }
+                            SystemPalette { id: progressPalette }
                             Layout.fillWidth: true
                             Item { Layout.fillWidth: true }
                             ProgressButton {
-                                readonly property real cacheProgress: controlLoader.component(0)
-                                readonly property bool baking:
-                                    controlLoader.component(1) > 0
-                                readonly property bool cancelHovered: baking && hovered
-                                highlighted: !baking
-                                text: cancelHovered ? qsTr("Cancel") : controlLoader.value
-                                progressState: !baking ? ProgressButton.Idle
-                                    : cacheProgress < 0 ? ProgressButton.Indeterminate
+                                id: progressButton
+                                readonly property var presentation: {
+                                    const revision = backend.documentRevision
+                                        + backend.cacheRevision + backend.analysisRevision
+                                    return revision >= 0 ? backend.controlProgressButton(
+                                        controlLoader.categoryIndex,
+                                        controlLoader.itemIndex, controlLoader.index, hovered) : ({})
+                                }
+                                enabled: presentation.sensitive === true
+                                highlighted: presentation.suggested === true
+                                text: presentation.label || ""
+                                progressState: presentation.active !== true ? ProgressButton.Idle
+                                    : presentation.progress < 0 ? ProgressButton.Indeterminate
                                     : ProgressButton.Progress
-                                progress: Math.max(0, cacheProgress)
-                                palette.button: cancelHovered
-                                    ? backend.destructiveBackground()
-                                    : audioCachePalette.button
-                                palette.buttonText: cancelHovered
-                                    ? backend.destructiveForeground()
-                                    : audioCachePalette.buttonText
-                                ToolTip.visible: hovered && controlLoader.tooltip().length > 0
-                                ToolTip.text: controlLoader.tooltip()
-                                onClicked: backend.triggerControlAction(
-                                    controlLoader.categoryIndex,
-                                    controlLoader.itemIndex, controlLoader.index)
-                            }
-                        }
-                    }
-                    Component {
-                        id: audioModifierMenuControl
-                        RowLayout {
-                            Layout.fillWidth: true
-                            Item { Layout.fillWidth: true }
-                            ModifierMenuButton {
-                                values: root.refreshed(backend.controlChoiceValues(
-                                    controlLoader.categoryIndex,
-                                    controlLoader.itemIndex, controlLoader.index))
-                                labels: root.refreshed(backend.controlChoiceLabels(
-                                    controlLoader.categoryIndex,
-                                    controlLoader.itemIndex, controlLoader.index))
-                                searchTerms: root.refreshed(
-                                    backend.controlChoiceSearchTerms(
-                                        controlLoader.categoryIndex,
-                                        controlLoader.itemIndex, controlLoader.index))
-                                onSelected: function(value) { controlLoader.edit(value) }
-                            }
-                            Button {
-                                visible: controlLoader.value === "true"
-                                flat: true
-                                icon.name: "edit-paste-symbolic"
-                                text: qsTr("Paste Modifier")
-                                display: AbstractButton.IconOnly
-                                ToolTip.visible: hovered
-                                ToolTip.text: text
-                                onClicked: controlLoader.edit("__paste__")
-                            }
-                            Item { Layout.fillWidth: true }
-                        }
-                    }
-                    Component {
-                        id: visualCacheControl
-                        RowLayout {
-                            SystemPalette { id: visualCachePalette }
-                            Layout.fillWidth: true
-                            Item { Layout.fillWidth: true }
-                            ProgressButton {
-                                readonly property real cacheProgress: controlLoader.component(0)
-                                readonly property bool baking:
-                                    controlLoader.component(1) > 0
-                                readonly property bool cancelHovered: baking && hovered
-                                highlighted: !baking
-                                text: cancelHovered ? qsTr("Cancel") : controlLoader.value
-                                progressState: !baking ? ProgressButton.Idle
-                                    : cacheProgress < 0 ? ProgressButton.Indeterminate
-                                    : ProgressButton.Progress
-                                progress: Math.max(0, cacheProgress)
-                                palette.button: cancelHovered
-                                    ? backend.destructiveBackground()
-                                    : visualCachePalette.button
-                                palette.buttonText: cancelHovered
-                                    ? backend.destructiveForeground()
-                                    : visualCachePalette.buttonText
-                                ToolTip.visible: hovered
-                                    && controlLoader.tooltip().length > 0
-                                ToolTip.text: controlLoader.tooltip()
-                                onClicked: backend.triggerControlAction(
-                                    controlLoader.categoryIndex,
-                                    controlLoader.itemIndex, controlLoader.index)
-                            }
-                        }
-                    }
-                    Component {
-                        id: analysisControl
-                        RowLayout {
-                            SystemPalette { id: analysisPalette }
-                            Layout.fillWidth: true
-                            Item { Layout.fillWidth: true }
-                            ProgressButton {
-                                id: analysisButton
-                                readonly property int statusRevision: backend.analysisRevision
-                                readonly property real analysisProgress: {
-                                    const revision = statusRevision
-                                    return revision >= 0 ? backend.controlComponent(
-                                        controlLoader.categoryIndex,
-                                        controlLoader.itemIndex, controlLoader.index, 0) : -1
-                                }
-                                readonly property bool analysisRunning: {
-                                    const revision = statusRevision
-                                    return revision >= 0 && backend.controlComponent(
-                                        controlLoader.categoryIndex,
-                                        controlLoader.itemIndex, controlLoader.index, 1) > 0
-                                }
-                                readonly property bool analysisCancelling: {
-                                    const revision = statusRevision
-                                    return revision >= 0 && backend.controlComponent(
-                                        controlLoader.categoryIndex,
-                                        controlLoader.itemIndex, controlLoader.index, 2) > 0
-                                }
-                                readonly property bool suggested: {
-                                    const revision = statusRevision
-                                    return revision >= 0 && backend.controlComponent(
-                                        controlLoader.categoryIndex,
-                                        controlLoader.itemIndex, controlLoader.index, 3) > 0
-                                }
-                                readonly property string analysisLabel: {
-                                    const revision = statusRevision
-                                    return revision >= 0 ? ComponentTranslations.text(
-                                        backend.controlValue(
-                                            controlLoader.categoryIndex,
-                                            controlLoader.itemIndex, controlLoader.index)) : ""
-                                }
-                                readonly property string analysisTooltip: {
-                                    const revision = statusRevision
-                                    return revision >= 0 ? backend.controlTooltip(
-                                        controlLoader.categoryIndex,
-                                        controlLoader.itemIndex, controlLoader.index) : ""
-                                }
-                                readonly property bool cancelHovered: analysisRunning && hovered
-                                enabled: {
-                                    const revision = statusRevision
-                                    return revision >= 0 && backend.controlSensitive(
-                                        controlLoader.categoryIndex,
-                                        controlLoader.itemIndex, controlLoader.index)
-                                }
-                                highlighted: suggested
-                                text: cancelHovered ? qsTr("Cancel") : analysisLabel
-                                progressState: !analysisRunning && !analysisCancelling
-                                    ? ProgressButton.Idle
-                                    : analysisProgress < 0 ? ProgressButton.Indeterminate
-                                    : ProgressButton.Progress
-                                progress: Math.max(0, analysisProgress)
-                                palette.button: cancelHovered
-                                    ? backend.destructiveBackground() : analysisPalette.button
-                                palette.buttonText: cancelHovered
-                                    ? backend.destructiveForeground() : analysisPalette.buttonText
-                                ToolTip.visible: hovered && analysisTooltip.length > 0
-                                ToolTip.text: analysisTooltip
+                                progress: presentation.active === true ? presentation.progress : 0
+                                palette.button: presentation.destructive === true
+                                    ? backend.destructiveBackground() : progressPalette.button
+                                palette.buttonText: presentation.destructive === true
+                                    ? backend.destructiveForeground() : progressPalette.buttonText
+                                ToolTip.visible: hovered && (presentation.tooltip || "").length > 0
+                                ToolTip.text: presentation.tooltip || ""
                                 onClicked: backend.triggerControlAction(
                                     controlLoader.categoryIndex,
                                     controlLoader.itemIndex, controlLoader.index)
                                 Timer {
                                     interval: 50
                                     repeat: true
-                                    running: analysisButton.analysisRunning
-                                        || analysisButton.analysisCancelling
+                                    running: controlLoader.kind === InspectorBackend.Analysis
+                                        && progressButton.presentation.active === true
                                     onTriggered: backend.pollAnalysisControl(
                                         controlLoader.categoryIndex,
                                         controlLoader.itemIndex, controlLoader.index)
                                 }
                             }
+                        }
+                    }
+                    Component {
+                        id: audioModifierMenuControl
+                        RowLayout {
+                            id: modifierMenuRow
+                            readonly property var presentation: root.refreshed(
+                                backend.controlModifierMenu(controlLoader.categoryIndex,
+                                    controlLoader.itemIndex, controlLoader.index))
+                            Layout.fillWidth: true
+                            Item { Layout.fillWidth: true }
+                            ModifierMenuButton {
+                                text: ComponentTranslations.text(controlLoader.label)
+                                searchPlaceholderText: controlLoader.tooltip()
+                                values: modifierMenuRow.presentation.values
+                                labels: modifierMenuRow.presentation.labels
+                                searchTerms: modifierMenuRow.presentation.searchTerms
+                                onSelected: function(value) { controlLoader.edit(value) }
+                            }
+                            Button {
+                                visible: modifierMenuRow.presentation.pasteVisible
+                                flat: true
+                                icon.name: "edit-paste-symbolic"
+                                text: modifierMenuRow.presentation.pasteLabel
+                                display: AbstractButton.IconOnly
+                                ToolTip.visible: hovered
+                                ToolTip.text: text
+                                onClicked: controlLoader.edit("__paste__")
+                            }
+                            Item { Layout.fillWidth: true }
                         }
                     }
                     Component {
@@ -2639,7 +2515,7 @@ Item {
                                     controlLoader.itemIndex, controlLoader.index,
                                     oldTimes, times, values)
                             }
-                            onGraphEditFinished: controlLoader.commit()
+                            graphLifecycleHandler: controlLoader.graphLifecycle
                             onGraphKeysDeleted: function(component, times) {
                                 if (component !== 0)
                                     return

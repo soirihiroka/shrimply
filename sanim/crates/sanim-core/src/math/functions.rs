@@ -87,7 +87,8 @@ pub fn function(name: &str) -> Option<&'static Function> {
     functions().find(|f| f.name == name)
 }
 
-pub(super) fn approximate(value: f64) -> Result<Fraction, String> {
+/// Bound an already-approximate spatial/math result, never a timeline value.
+pub fn approximate(value: f64) -> Result<Fraction, String> {
     approximate_to(value, 1_000_000_000)
 }
 

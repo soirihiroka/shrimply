@@ -43,6 +43,16 @@ impl CaptionFormat {
             Self::Txt => "txt",
         }
     }
+
+    pub fn mime_type(self) -> &'static str {
+        match self {
+            Self::Ytt => "application/xml",
+            Self::Ass => "text/x-ssa",
+            Self::Srt => "application/x-subrip",
+            Self::Vtt => "text/vtt",
+            Self::Txt => "text/plain",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

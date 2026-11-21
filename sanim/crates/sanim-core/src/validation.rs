@@ -112,11 +112,6 @@ fn validate(
         (Type::Fraction, Value::Fraction(value)) if !math::finite(value) => {
             return Err("fraction must be finite".into());
         }
-        (Type::Matrix4, Value::Matrix4(matrix))
-            if matrix.iter().flatten().any(|v| !v.is_finite()) =>
-        {
-            return Err("matrix entries must be finite".into());
-        }
         (Type::Numeric(_), Value::Number(n)) if !math::finite(&n.value) => {
             return Err("non-finite numeric input".into());
         }
@@ -127,11 +122,6 @@ fn validate(
                 .any(|v| !math::finite(v) || *v < Fraction::from(0) || *v > Fraction::from(1)) =>
         {
             return Err("color channels must be in [0, 1]".into());
-        }
-        (Type::Vector(..), vector @ (Value::Vec2(_) | Value::Vec3(_) | Value::Vec4(_)))
-            if vector.vector()?.0.iter().any(|v| !v.is_finite()) =>
-        {
-            return Err("vector components must be finite".into());
         }
         (Type::Enum { variants, .. }, Value::Variant { tag, fields, .. }) => {
             let types = variants.get(tag).ok_or("unknown enum variant")?;

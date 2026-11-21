@@ -141,6 +141,14 @@ impl qobject::InspectorBackend {
             }
             return;
         };
+        match self.as_mut().reconcile_graph_edit(&document) {
+            Ok(false) => {}
+            result => {
+                crate::mark_dirty();
+                self.as_mut().finish(result.map(drop));
+                return;
+            }
+        }
         if let Some(target) = self.document().map(|document| document.target.clone()) {
             self.as_mut()
                 .rust_mut()
@@ -247,7 +255,9 @@ impl qobject::InspectorBackend {
 
     pub fn category_icon(&self, category: i32) -> QString {
         self.category(category)
-            .map_or_else(QString::default, |category| QString::from(category.icon))
+            .map_or_else(QString::default, |category| {
+                QString::from(category.icon.symbolic_name())
+            })
     }
 
     pub fn activate_category(mut self: Pin<&mut Self>, category: i32) {
@@ -475,7 +485,7 @@ impl qobject::InspectorBackend {
         let action = self
             .card(category, item)
             .and_then(|item| item.button_toggle.as_ref())
-            .map(|toggle| boolean_action(toggle.activate.clone(), active));
+            .map(|toggle| toggle.activate.action(active));
         self.as_mut().perform(action);
     }
 
@@ -626,46 +636,124 @@ impl qobject::InspectorBackend {
     }
 
     pub fn control_tooltip(&self, category: i32, item: i32, control: i32) -> QString {
-        let control_index = control;
-        let target = self.document().map(|document| document.target.clone());
         self.control(category, item, control)
             .map_or_else(QString::default, |control| {
-                if control.kind == ControlKind::Analysis {
-                    return self
-                        .cached_analysis_control(category, item, control_index)
-                        .map_or_else(
-                            || shrimply_i18n_qt::text(&control.tooltip),
-                            analysis_tooltip,
-                        );
-                }
-                control.target_id.map_or_else(
-                    || shrimply_i18n_qt::text(&control.tooltip),
-                    |id| {
-                        if matches!(
-                            control.kind,
-                            ControlKind::AudioCache | ControlKind::VisualCache
-                        ) {
-                            QString::from(
-                                crate::tracked_cache_control(control.kind, id, target.as_ref())
-                                    .map_or_else(
-                                        || control.tooltip.clone(),
-                                        |status| status.tooltip,
-                                    ),
-                            )
-                        } else {
-                            shrimply_i18n_qt::text(&control.tooltip)
-                        }
-                    },
-                )
+                shrimply_i18n_qt::text(&control.tooltip)
             })
     }
 
+    pub fn control_progress_button(
+        &self,
+        category: i32,
+        item: i32,
+        control: i32,
+        hovered: bool,
+    ) -> QMap<QMapPair_QString_QVariant> {
+        let target = self.document().map(|document| &document.target);
+        let button = self.control(category, item, control).and_then(|model| {
+            let status = match model.kind {
+                ControlKind::Analysis => self
+                    .cached_analysis_control(category, item, control)
+                    .cloned()
+                    .or_else(|| model.analysis.clone()),
+                ControlKind::AudioCache | ControlKind::VisualCache => model
+                    .target_id
+                    .and_then(|id| crate::tracked_cache_control(model.kind, id, target))
+                    .map(|status| status.analysis())
+                    .or_else(|| model.analysis.clone()),
+                _ => None,
+            }?;
+            Some(status.button(hovered))
+        });
+        let progress = button.as_ref().and_then(|button| button.progress);
+        [
+            (
+                "label",
+                QVariant::from(&button.as_ref().map_or_else(QString::default, |button| {
+                    shrimply_i18n_qt::text(&button.label)
+                })),
+            ),
+            (
+                "tooltip",
+                QVariant::from(
+                    &button
+                        .as_ref()
+                        .map_or_else(QString::default, |button| analysis_tooltip(&button.tooltip)),
+                ),
+            ),
+            (
+                "sensitive",
+                QVariant::from(&button.as_ref().is_some_and(|button| button.sensitive)),
+            ),
+            (
+                "suggested",
+                QVariant::from(&button.as_ref().is_some_and(|button| button.suggested)),
+            ),
+            (
+                "destructive",
+                QVariant::from(&button.as_ref().is_some_and(|button| button.destructive)),
+            ),
+            (
+                "progress",
+                progress.map_or_else(QVariant::default, |value| QVariant::from(&value)),
+            ),
+            ("active", QVariant::from(&progress.is_some())),
+        ]
+        .into_iter()
+        .map(|(key, value)| (QString::from(key), value))
+        .collect()
+    }
+
+    pub fn control_modifier_menu(
+        &self,
+        category: i32,
+        item: i32,
+        control: i32,
+    ) -> QMap<QMapPair_QString_QVariant> {
+        let mut values = Vec::new();
+        let mut labels = Vec::new();
+        let mut search_terms = Vec::new();
+        let mut paste = None;
+        if let Some(control) = self.control(category, item, control) {
+            for (index, value) in control.values.iter().enumerate() {
+                let label = control
+                    .labels
+                    .get(index)
+                    .expect("shared modifier choices have labels");
+                if value == "__paste__" {
+                    paste = Some(shrimply_i18n_qt::text(label));
+                    continue;
+                }
+                values.push(QString::from(value));
+                labels.push(shrimply_i18n_qt::text(label));
+                search_terms.push(QString::from(
+                    control.search_terms.get(index).map_or("", String::as_str),
+                ));
+            }
+        }
+        let values: QStringList = values.into_iter().collect();
+        let labels: QStringList = labels.into_iter().collect();
+        let search_terms: QStringList = search_terms.into_iter().collect();
+        [
+            ("values", QVariant::from(&values)),
+            ("labels", QVariant::from(&labels)),
+            ("searchTerms", QVariant::from(&search_terms)),
+            ("pasteVisible", QVariant::from(&paste.is_some())),
+            ("pasteLabel", QVariant::from(&paste.unwrap_or_default())),
+        ]
+        .into_iter()
+        .map(|(key, value)| (QString::from(key), value))
+        .collect()
+    }
+
     pub fn control_value(&self, category: i32, item: i32, control: i32) -> QString {
-        let control_index = control;
         let target = self.document().map(|document| document.target.clone());
         self.control(category, item, control)
             .map_or_else(QString::default, |control| {
-                if control.kind == ControlKind::Fraction {
+                if let Some(artwork) = &control.artwork {
+                    QUrl::from_local_file(&QString::from(artwork.path().to_string_lossy().as_ref()))
+                        .to_qstring()
+                } else if control.kind == ControlKind::Fraction {
                     QString::from(fraction_value(control).to_string())
                 } else if control.kind == ControlKind::LayeredNumber {
                     let cached = self
@@ -689,24 +777,6 @@ impl qobject::InspectorBackend {
                         .map(|value| control.display_number(value))
                         .unwrap_or_else(|| control.value.parse::<f64>().unwrap_or_default());
                     QString::from(value.to_string())
-                } else if matches!(
-                    control.kind,
-                    ControlKind::AudioCache | ControlKind::VisualCache
-                ) {
-                    control
-                        .target_id
-                        .and_then(|id| {
-                            crate::tracked_cache_control(control.kind, id, target.as_ref())
-                        })
-                        .map_or_else(
-                            || shrimply_i18n_qt::text(&control.value),
-                            |status| shrimply_i18n_qt::text(status.label),
-                        )
-                } else if control.kind == ControlKind::Analysis {
-                    QString::from(
-                        self.cached_analysis_control(category, item, control_index)
-                            .map_or(control.value.as_str(), |status| status.label.as_str()),
-                    )
                 } else {
                     QString::from(control.value.as_str())
                 }
@@ -714,42 +784,9 @@ impl qobject::InspectorBackend {
     }
 
     pub fn control_component(&self, category: i32, item: i32, control: i32, component: i32) -> f64 {
-        let control_index = control;
         let target = self.document().map(|document| document.target.clone());
         self.control(category, item, control)
             .and_then(|control| {
-                if control.kind == ControlKind::Analysis && component >= 0 {
-                    let status = self.cached_analysis_control(category, item, control_index)?;
-                    return match component {
-                        0 => Some(status.progress),
-                        1 => Some(f64::from(u8::from(status.running))),
-                        2 => Some(f64::from(u8::from(status.cancelling))),
-                        3 => Some(f64::from(u8::from(status.suggested))),
-                        _ => None,
-                    };
-                }
-                if matches!(
-                    control.kind,
-                    ControlKind::AudioCache | ControlKind::VisualCache
-                ) {
-                    let status = control
-                        .target_id
-                        .and_then(|id| {
-                            crate::tracked_cache_control(control.kind, id, target.as_ref())
-                        })
-                        .and_then(|status| match component {
-                            0 => Some(status.progress),
-                            1 => Some(f64::from(u8::from(status.baking))),
-                            _ => None,
-                        });
-                    return status.or_else(|| {
-                        control
-                            .components
-                            .get(usize::try_from(component).ok()?)?
-                            .parse()
-                            .ok()
-                    });
-                }
                 if control.kind == ControlKind::LayeredVector2 {
                     let value = self
                         .rust()
@@ -892,10 +929,6 @@ impl qobject::InspectorBackend {
                         .map_or(control.busy, |status| status.active());
                 }
                 control.busy
-                    || control.kind == ControlKind::BeatDetection
-                        && control
-                            .target_id
-                            .is_some_and(shrimply_audio_engine::beat::is_loading)
             })
     }
 
@@ -1337,163 +1370,15 @@ impl qobject::InspectorBackend {
             };
             return output.into_iter().map(QString::from).collect();
         }
-        if control.kind == ControlKind::LayeredBoolean {
-            let Ok(output) = crate::bool_expression_output(&document.target, path) else {
-                return QStringList::default();
-            };
-            return [output.value.to_string(), output.error.unwrap_or_default()]
-                .into_iter()
-                .map(QString::from)
-                .collect();
-        }
-        if control.kind == ControlKind::LayeredSelector {
-            let Ok(output) =
-                crate::step_expression_output(&document.target, path, control.timeline_id)
-            else {
-                return QStringList::default();
-            };
-            return [output.value, output.error.unwrap_or_default()]
-                .into_iter()
-                .map(QString::from)
-                .collect();
-        }
-        if control.kind == ControlKind::LayeredVector2 {
-            let Ok(output) =
-                crate::vector2_expression_output(&document.target, path, control.timeline_id)
-            else {
-                return QStringList::default();
-            };
-            let digits = usize::try_from(control.number.digits).unwrap_or_default();
-            let first_prefix = control.prefixes.first().map_or("X", String::as_str);
-            let second_prefix = control.prefixes.get(1).map_or("Y", String::as_str);
-            return [
-                shrimply_inspector_core::timeline_value::vector::vec2::format_value(
-                    output.value,
-                    first_prefix,
-                    second_prefix,
-                    digits,
-                    control.number.unit,
-                ),
-                output.error.unwrap_or_default(),
-            ]
-            .into_iter()
-            .map(QString::from)
-            .collect();
-        }
-        if control.kind == ControlKind::LayeredVector3 {
-            let Some(timeline_id) = control.timeline_id else {
-                return QStringList::default();
-            };
-            let Ok(output) = crate::vector3_expression_output(&document.target, path, timeline_id)
-            else {
-                return QStringList::default();
-            };
-            let digits = usize::try_from(control.number.digits).unwrap_or_default();
-            let first_prefix = control.prefixes.first().map_or("X", String::as_str);
-            let second_prefix = control.prefixes.get(1).map_or("Y", String::as_str);
-            let third_prefix = control.prefixes.get(2).map_or("Z", String::as_str);
-            return [
-                shrimply_inspector_core::timeline_value::vector::vec3::format_value(
-                    output.value,
-                    [first_prefix, second_prefix, third_prefix],
-                    digits,
-                    control.number.unit,
-                ),
-                output.error.unwrap_or_default(),
-            ]
-            .into_iter()
-            .map(QString::from)
-            .collect();
-        }
-        if control.kind == ControlKind::LayeredColor {
-            let Some(timeline_id) = control.timeline_id else {
-                return QStringList::default();
-            };
-            let Ok(output) = crate::color_expression_output(&document.target, path, timeline_id)
-            else {
-                return QStringList::default();
-            };
-            return [
-                format!(
-                    "#{:02X}{:02X}{:02X}{:02X}",
-                    output.value.r, output.value.g, output.value.b, output.value.a,
-                ),
-                output.error.unwrap_or_default(),
-            ]
-            .into_iter()
-            .map(QString::from)
-            .collect();
-        }
-        if control.kind == ControlKind::LayeredText {
-            let Some(timeline_id) = control.timeline_id else {
-                return QStringList::default();
-            };
-            let Ok(output) = crate::text_expression_output(&document.target, path, timeline_id)
-            else {
-                return QStringList::default();
-            };
-            return [output.value, output.error.unwrap_or_default()]
-                .into_iter()
-                .map(QString::from)
-                .collect();
-        }
-        if control.kind == ControlKind::LayeredDrawing {
-            let Some(timeline_id) = control.timeline_id else {
-                return QStringList::default();
-            };
-            let Ok(output) = crate::paint_drawing_expression_output(&document.target, timeline_id)
-            else {
-                return QStringList::default();
-            };
-            return [output.value, output.error.unwrap_or_default()]
-                .into_iter()
-                .map(QString::from)
-                .collect();
-        }
-        if crate::graph_backend::background_integer(control) {
-            let Some(timeline_id) = control.timeline_id else {
-                return QStringList::default();
-            };
-            let Ok(output) =
-                crate::background_integer_expression_output(&document.target, path, timeline_id)
-            else {
-                return QStringList::default();
-            };
-            return [output.value.to_string(), output.error.unwrap_or_default()]
-                .into_iter()
-                .map(QString::from)
-                .collect();
-        }
-        let output = if control.audio_modifier {
-            control
-                .target_id
-                .zip(control.timeline_id)
-                .ok_or_else(|| "audio modifier expression target is unavailable".to_string())
-                .and_then(|(modifier_id, timeline_id)| {
-                    crate::audio_modifier_expression_output(
-                        &document.target,
-                        modifier_id,
-                        timeline_id,
-                    )
-                })
-        } else {
-            crate::scalar_expression_output(&document.target, path, control.timeline_id)
-        };
-        let Ok(output) = output else {
+        let Ok(output) = crate::with_controller(|controller| {
+            controller.control_expression_output(&document.target, control)
+        }) else {
             return QStringList::default();
         };
-        [
-            format!(
-                "{:.*}{}",
-                usize::try_from(control.number.digits).unwrap_or_default(),
-                control.display_number(f64::from(output.value)),
-                control.number.unit,
-            ),
-            output.error.unwrap_or_default(),
-        ]
-        .into_iter()
-        .map(QString::from)
-        .collect()
+        [output.value, output.error.unwrap_or_default()]
+            .into_iter()
+            .map(QString::from)
+            .collect()
     }
 
     pub fn expression_diagnostic(mut self: Pin<&mut Self>, source: &QString) -> QStringList {

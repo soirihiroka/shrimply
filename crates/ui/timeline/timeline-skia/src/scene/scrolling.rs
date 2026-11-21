@@ -32,7 +32,7 @@ impl Scene {
         (
             horizontal_scrollbar(
                 self.view,
-                timeline_width(width),
+                timeline_width(width, self.view),
                 height,
                 duration.as_secs_f64(),
                 slider::idle_state(),

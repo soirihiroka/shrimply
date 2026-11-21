@@ -29,20 +29,6 @@ pub(crate) fn identities(
                 value,
                 "reflection inputs are declared once with let/mut; assignments cannot create reflect(...) inputs",
             )?,
-            StatementKind::Animate {
-                value,
-                duration,
-                easing,
-                ..
-            } => {
-                for expr in std::iter::once(value)
-                    .chain(std::iter::once(duration))
-                    .chain(easing)
-                {
-                    reject(source, expr, PLACEMENT)?;
-                }
-            }
-            StatementKind::Background { body } => reject_block(source, body)?,
             StatementKind::Expr(value) => {
                 let name = semantic_name(value).unwrap_or_else(|| "input".into());
                 collect(source, value, &name, &mut identities, true)?;
@@ -56,15 +42,8 @@ pub(crate) fn identities(
                 collect(source, iterable, "iterable", &mut identities, false)?;
                 reject_block(source, body)?;
             }
-            StatementKind::Repeat {
-                count,
-                period,
-                body,
-            } => {
+            StatementKind::Repeat { count, body } => {
                 collect(source, count, "repeat.count", &mut identities, false)?;
-                if let Some(period) = period {
-                    collect(source, period, "repeat.period", &mut identities, false)?;
-                }
                 reject_block(source, body)?;
             }
             StatementKind::Match { value, cases } => {
@@ -294,9 +273,7 @@ fn descend(
 /// Generic constraints describe admissible types, not a concrete editor schema.
 pub(crate) fn concrete_schema(ty: &Type) -> bool {
     match ty {
-        Type::Unknown | Type::Variable(_) | Type::BoundedVariable(..) | Type::Vector(_, None) => {
-            false
-        }
+        Type::Unknown | Type::Variable(_) | Type::BoundedVariable(..) => false,
         Type::List(inner, _) | Type::Option(inner) | Type::Array(inner) => concrete_schema(inner),
         Type::Record(fields) => fields.values().all(concrete_schema),
         Type::Union(values) => values.iter().all(concrete_schema),

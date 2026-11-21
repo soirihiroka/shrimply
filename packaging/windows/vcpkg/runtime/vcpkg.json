@@ -20,11 +20,6 @@
         "swscale"
       ]
     },
-    {
-      "name": "opencv4",
-      "default-features": false,
-      "features": ["calib3d", "ffmpeg"]
-    },
     "pango",
     {
       "name": "poppler",

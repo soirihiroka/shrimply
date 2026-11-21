@@ -24,6 +24,7 @@ mod context_menu;
 mod context_video;
 pub(super) mod preview;
 mod screen_recording;
+mod touch;
 mod track_actions;
 
 pub enum Content {
@@ -56,6 +57,7 @@ pub struct CanvasState {
     screen_recording: RefCell<Option<screen_recording::ScreenRecording>>,
     drop_source: RefCell<Option<(std::path::PathBuf, super::media::ScopedUrl)>>,
     tools: RefCell<Vec<(super::timeline::Tool, Retained<objc2_app_kit::NSButton>)>>,
+    timeline_chrome: RefCell<Option<super::timeline::Chrome>>,
     paint_tools: RefCell<Vec<(PaintTool, Retained<objc2_app_kit::NSButton>)>>,
 }
 
@@ -358,6 +360,26 @@ define_class!(
             }
         }
 
+        #[unsafe(method(touchesBeganWithEvent:))]
+        fn touches_began(&self, event: &NSEvent) {
+            self.forward_touch(event, objc2_app_kit::NSTouchPhase::Began, shrimply_components_skia::input::TouchPhase::Begin);
+        }
+
+        #[unsafe(method(touchesMovedWithEvent:))]
+        fn touches_moved(&self, event: &NSEvent) {
+            self.forward_touch(event, objc2_app_kit::NSTouchPhase::Moved, shrimply_components_skia::input::TouchPhase::Move);
+        }
+
+        #[unsafe(method(touchesEndedWithEvent:))]
+        fn touches_ended(&self, event: &NSEvent) {
+            self.forward_touch(event, objc2_app_kit::NSTouchPhase::Ended, shrimply_components_skia::input::TouchPhase::End);
+        }
+
+        #[unsafe(method(touchesCancelledWithEvent:))]
+        fn touches_cancelled(&self, event: &NSEvent) {
+            self.forward_touch(event, objc2_app_kit::NSTouchPhase::Cancelled, shrimply_components_skia::input::TouchPhase::Cancel);
+        }
+
         #[unsafe(method(magnifyWithEvent:))]
         fn magnify(&self, event: &NSEvent) {
             if let Content::Timeline(scene) = &mut *self.ivars().content.borrow_mut() {
@@ -442,24 +464,15 @@ define_class!(
                 return;
             }
             let point = self.point(event);
-            let result = {
-                let mut content = self.ivars().content.borrow_mut();
-                if let Content::Timeline(scene) = &mut *content {
-                    let modifiers = event.modifierFlags();
-                    scene.pointer_up(
-                        point,
-                        modifiers.contains(NSEventModifierFlags::Command),
-                        modifiers.contains(NSEventModifierFlags::Shift),
-                    )
-                } else {
-                    Ok(None)
-                }
-            };
-            match result.and_then(|action| {
-                if let Some(action) = action { self.activate_track_button(action, point) } else { Ok(()) }
-            }) {
-                Ok(()) => {},
-                Err(error) => self.show_error(&error),
+            if let Content::Timeline(scene) = &mut *self.ivars().content.borrow_mut() {
+                let modifiers = event.modifierFlags();
+                scene.event(shrimply_timeline_skia::scene::Event::Release {
+                    point, button: shrimply_timeline_skia::scene::PointerButton::Primary,
+                    modifiers: shrimply_timeline_skia::scene::TimelineModifiers {
+                        ctrl: modifiers.contains(NSEventModifierFlags::Command),
+                        shift: modifiers.contains(NSEventModifierFlags::Shift),
+                    },
+                });
             }
             if let Content::Timeline(scene) = &*self.ivars().content.borrow() {
                 Self::set_timeline_cursor(scene.pointer_cursor());
@@ -608,6 +621,10 @@ impl CanvasView {
             });
             super::layout::set_toggle_selected(button, selected, super::layout::ToggleStyle::Solid);
         }
+    }
+
+    pub(super) fn register_timeline_chrome(&self, chrome: super::timeline::Chrome) {
+        self.ivars().timeline_chrome.replace(Some(chrome));
     }
 
     pub(super) fn register_tool(
@@ -1116,26 +1133,13 @@ impl CanvasView {
                             None,
                             false,
                         );
-                        use shrimply_editor_state::preferences::{
-                            PreviewDownsampleMethod, PreviewUpsampleMethod,
-                        };
-                        use skia_safe::{FilterMode, MipmapMode, SamplingOptions};
                         let downsampling = content.width() * (scale as f32) < frame.width as f32
                             || content.height() * (scale as f32) < frame.height as f32;
-                        let sampling = if downsampling {
-                            match prefs.preview_downsample_method {
-                                PreviewDownsampleMethod::Nearest => FilterMode::Nearest.into(),
-                                PreviewDownsampleMethod::Bilinear => FilterMode::Linear.into(),
-                                PreviewDownsampleMethod::Trilinear => {
-                                    SamplingOptions::new(FilterMode::Linear, MipmapMode::Linear)
-                                }
-                            }
-                        } else {
-                            match prefs.preview_upsample_method {
-                                PreviewUpsampleMethod::Nearest => FilterMode::Nearest.into(),
-                                PreviewUpsampleMethod::Bilinear => FilterMode::Linear.into(),
-                            }
-                        };
+                        let sampling = shrimply_preview_render_core::math::preview_sampling(
+                            downsampling,
+                            prefs.preview_upsample_method,
+                            prefs.preview_downsample_method,
+                        );
                         {
                             let _timing = shrimply_process_reporting::diagnostics::timing(
                                 "Preview paint / image and mipmaps",
@@ -1187,6 +1191,12 @@ impl CanvasView {
             });
         }
         drop(renderer);
+        if let Content::Timeline(scene) = &*self.ivars().content.borrow()
+            && let Some(chrome) = self.ivars().timeline_chrome.borrow().as_ref()
+        {
+            chrome.update(scene.tools_progress(), scene.audio_monitor_progress());
+        }
+        self.handle_timeline_requests()?;
         self.update_screen_recording()?;
         let (external_error, external_imports, caption_speech_updates, transcription_updates) = {
             let mut content = self.ivars().content.borrow_mut();
@@ -1305,6 +1315,7 @@ pub fn new(
     let view = CanvasView::alloc(mtm).set_ivars(CanvasState {
         surface_dirty: Rc::new(Cell::new(true)),
         tools: RefCell::new(Vec::new()),
+        timeline_chrome: RefCell::new(None),
         paint_tools: RefCell::new(Vec::new()),
         tracking_area: RefCell::new(None),
         menu_choice: Cell::new(None),
@@ -1332,10 +1343,12 @@ pub fn new(
     // Layer-hosting views are presented by the display link; drawRect is not invoked for a CAMetalLayer.
     view.setLayer(Some(view.ivars().renderer.borrow().layer()));
     view.setWantsLayer(true);
+    view.setLayerContentsPlacement(objc2_app_kit::NSViewLayerContentsPlacement::TopLeft);
     if matches!(*view.ivars().content.borrow(), Content::Preview(_)) {
         view.connect_preview_redraw();
     }
     if matches!(*view.ivars().content.borrow(), Content::Timeline(_)) {
+        view.setAllowedTouchTypes(objc2_app_kit::NSTouchTypeMask::Direct);
         let mask_type = NSString::from_str(MASK_PASTEBOARD_TYPE);
         view.registerForDraggedTypes(&NSArray::from_slice(&[
             unsafe { NSPasteboardTypeFileURL },

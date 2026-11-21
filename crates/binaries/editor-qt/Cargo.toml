@@ -20,6 +20,7 @@ shrimply-i18n-qt = { workspace = true }
 shrimply-inspector-qt = { workspace = true }
 shrimply-math-core = { workspace = true }
 shrimply-preview-qt = { workspace = true }
+shrimply-preview-render-core.workspace = true
 shrimply-preview-runtime-cuda = { workspace = true }
 shrimply-preferences-qt = { workspace = true }
 shrimply-project-document = { workspace = true, default-features = true }

@@ -17,6 +17,9 @@ enum class Target
     Metal,
     Host,
     Vulkan,
+    VulkanPortable,
+    VulkanWordStorage,
+    SpirvPortable,
 };
 
 struct CompileRequest
@@ -29,6 +32,7 @@ struct CompileRequest
     const char* abi_path;
     const char* const* entries;
     size_t entry_count;
+    uint32_t precise_math;
 };
 
 static constexpr const char* CUDA_CAPABILITY = "cuda_sm_8_0";
@@ -218,7 +222,10 @@ static bool reflect_type(
 static int compile(const CompileRequest& request)
 {
     const bool cuda = request.target == Target::Cuda;
-    const bool spirv = request.target == Target::Spirv || request.target == Target::Vulkan;
+    const bool word_storage = request.target == Target::VulkanWordStorage;
+    const bool vulkan = request.target == Target::Vulkan || request.target == Target::VulkanPortable || word_storage;
+    const bool portable_spirv = request.target == Target::SpirvPortable;
+    const bool spirv = request.target == Target::Spirv || portable_spirv || vulkan;
 
     Slang::ComPtr<slang::IGlobalSession> global_session;
     if (SLANG_FAILED(slang::createGlobalSession(global_session.writeRef())))
@@ -233,8 +240,12 @@ static int compile(const CompileRequest& request)
         entry.value.intValue0 = value;
         options.push_back(entry);
     };
-    option(slang::CompilerOptionName::Optimization, SLANG_OPTIMIZATION_LEVEL_HIGH);
-    if (request.target == Target::Vulkan)
+    // Older Vulkan compilers reject aggressively inlined physical-pointer loops.
+    // Preserve function boundaries in the word-storage compatibility path; the
+    // device driver still optimizes the resulting native GPU instructions.
+    option(slang::CompilerOptionName::Optimization,
+        word_storage ? SLANG_OPTIMIZATION_LEVEL_NONE : SLANG_OPTIMIZATION_LEVEL_HIGH);
+    if (vulkan)
     {
         option(slang::CompilerOptionName::GLSLForceScalarLayout, 1);
         option(slang::CompilerOptionName::VulkanUseEntryPointName, 1);
@@ -251,7 +262,10 @@ static int compile(const CompileRequest& request)
     switch (request.target)
     {
     case Target::Spirv:
-    case Target::Vulkan: target.format = SLANG_SPIRV; break;
+    case Target::SpirvPortable:
+    case Target::Vulkan:
+    case Target::VulkanPortable:
+    case Target::VulkanWordStorage: target.format = SLANG_SPIRV; break;
     case Target::Cuda: target.format = SLANG_CUDA_SOURCE; break;
     case Target::Metal: target.format = SLANG_METAL; break;
     case Target::Host: target.format = SLANG_CPP_SOURCE; break;
@@ -259,10 +273,10 @@ static int compile(const CompileRequest& request)
     target.flags = SLANG_TARGET_FLAG_GENERATE_WHOLE_PROGRAM;
     target.compilerOptionEntries = options.data();
     target.compilerOptionEntryCount = static_cast<uint32_t>(options.size());
-    if (cuda)
+    if (cuda || request.precise_math)
         target.floatingPointMode = SLANG_FLOATING_POINT_MODE_PRECISE;
     if (spirv)
-        target.profile = global_session->findProfile(SPIRV_PROFILE);
+        target.profile = global_session->findProfile(word_storage || portable_spirv ? "spirv_1_3" : SPIRV_PROFILE);
     slang::SessionDesc description = {};
     description.defaultMatrixLayoutMode = cuda || request.target == Target::Host
         ? SLANG_MATRIX_LAYOUT_ROW_MAJOR : SLANG_MATRIX_LAYOUT_COLUMN_MAJOR;
@@ -270,13 +284,15 @@ static int compile(const CompileRequest& request)
     description.searchPaths = search_paths;
     description.targetCount = 1;
     description.targets = &target;
-    // Slang's SPIR-V emitter cannot lower UIntPtr. Vulkan device addresses
-    // use a 64-bit ABI, matching the host pitches on supported Linux targets.
-    const slang::PreprocessorMacroDesc vulkan_macros[] = {{"SHRIMPLY_VULKAN", "1"}};
-    if (request.target == Target::Vulkan)
+    // Physical pointers remain native device addresses. The portable variant
+    // uses 32-bit buffer indices on GPUs without shaderInt64.
+    const slang::PreprocessorMacroDesc vulkan_macros[] = {
+        {"SHRIMPLY_VULKAN", "1"}, {"SHRIMPLY_PORTABLE_INDICES", "1"},
+        {"SHRIMPLY_WORD_STORAGE", "1"}};
+    if (vulkan)
     {
         description.preprocessorMacros = vulkan_macros;
-        description.preprocessorMacroCount = std::size(vulkan_macros);
+        description.preprocessorMacroCount = word_storage ? 3 : request.target == Target::VulkanPortable ? 2 : 1;
     }
     Slang::ComPtr<slang::ISession> session;
     if (SLANG_FAILED(global_session->createSession(description, session.writeRef())))

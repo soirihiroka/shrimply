@@ -19,7 +19,6 @@
   llvmPackages,
   mkShell,
   ninja,
-  opencv,
   openssl,
   pkg-config,
   pipewire,
@@ -31,6 +30,7 @@
   rustToolchain,
   shrimply-slang,
   shrimply-oidn,
+  spirv-tools,
   uv,
   vte-gtk4,
   vulkan-headers,
@@ -66,7 +66,6 @@ mkShell {
     libglvnd
     lld
     ninja
-    opencv
     openssl
     pkg-config
     pipewire
@@ -76,6 +75,7 @@ mkShell {
     ripgrep
     rubberband
     shrimply-slang
+    spirv-tools
     uv
     vte-gtk4
     vulkan-headers
@@ -87,6 +87,7 @@ mkShell {
   CUDA_HOME = cudaToolkit;
   CUDA_HOST_CXX = "g++";
   CUDA_TOOLKIT_PATH = cudaToolkit;
+  SHRIMPLY_FFMPEG_PREFIX = ffmpeg;
   LIBCLANG_PATH = "${llvmPackages.libclang.lib}/lib";
   NIX_CC_USE_RESPONSE_FILE = "1";
   NIX_LDFLAGS = "-L${cudaStubs}/lib/stubs -L${shrimply-slang}/lib";
@@ -103,7 +104,6 @@ mkShell {
       lib.makeLibraryPath [
         gcc.cc.lib
         zlib
-        opencv
         shrimply-slang
         shrimply-oidn
         qtEnv

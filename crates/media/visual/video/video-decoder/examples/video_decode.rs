@@ -46,7 +46,7 @@ fn main() -> Result<(), String> {
         );
     }
     ffmpeg::init().map_err(|error| error.to_string())?;
-    let input = ffmpeg::format::input(&path).map_err(|error| error.to_string())?;
+    let input = shrimply_media_info::demux::open(&path).map_err(|error| error.to_string())?;
     let stream = input
         .streams()
         .find(|stream| {

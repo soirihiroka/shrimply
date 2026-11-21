@@ -24,11 +24,14 @@ impl ProxyFrameSource for Sam2ProxyFrameSource {
         }
         self.compositor.sam2_proxy = None;
         self.compositor.scene.request_frame();
+        self.compositor.scene.set_strict_sources(true);
         let plan = self.compositor.prepare(
             request.project,
             request.timeline_position,
             CompositeAccuracy::FULLY_ACCURATE,
-        )?;
+        );
+        self.compositor.scene.set_strict_sources(false);
+        let plan = plan?;
         shrimply_manim_state::validate_render_updates(self.compositor.take_manim_updates())?;
         let Some(plan) = plan else {
             return Ok(ProxyFrameStatus::Pending);
@@ -42,7 +45,7 @@ impl ProxyFrameSource for Sam2ProxyFrameSource {
             .compositor
             .sam2_proxy
             .take()
-            .ok_or("SAM2 modifier did not capture an Intel proxy frame")?;
+            .ok_or("SAM2 modifier did not capture an Vulkan proxy frame")?;
         Ok(ProxyFrameStatus::Ready(
             self.compositor.renderer.readback(&proxy)?,
         ))

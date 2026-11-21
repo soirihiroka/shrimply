@@ -7,8 +7,7 @@ use super::{CategoryIcon, InspectorCategory, InspectorListItem, detail_item};
 pub(super) fn categories(track: &TrackPresentation) -> Vec<InspectorCategory> {
     let mut controls = vec![
         InspectorControl::new(ControlKind::Boolean, "/enabled", "Enabled")
-            .value(track.enabled.to_string())
-            .subtitle("Include this track in playback and export"),
+            .value(track.enabled.to_string()),
     ];
     if track.kind == ItemKind::Caption {
         controls.push(shrimply_inspector_core::selector::optional_selector(

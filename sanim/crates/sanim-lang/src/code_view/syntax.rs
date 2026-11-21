@@ -55,18 +55,33 @@ fn parse_sanim(mut document: Document) -> Result<Document, String> {
         scopes: &mut Vec<Scope>,
     ) {
         let mut names = BTreeMap::<String, usize>::new();
-        for statement in statements {
-            let (label, bodies): (String, Vec<&[Statement]>) = match &statement.kind {
-                StatementKind::Function { name, body, .. } => {
-                    (format!("function:{name}"), vec![body])
+        for (index, statement) in statements.iter().enumerate() {
+            statement.visit_own_expressions(&mut |expr| {
+                if let crate::ast::ExprKind::Function(declaration) = &expr.kind {
+                    walk(
+                        std::slice::from_ref(declaration),
+                        line_ends,
+                        &format!("{parent}/statement:{index}"),
+                        depth,
+                        scopes,
+                    );
                 }
-                StatementKind::Background { body } => ("background".into(), vec![body]),
-                StatementKind::If { yes, no, .. } => ("if".into(), vec![yes, no]),
-                StatementKind::For { body, .. } => ("for".into(), vec![body]),
-                StatementKind::Repeat { body, period, .. } => (
-                    if period.is_some() { "timer" } else { "repeat" }.into(),
+            });
+            let (label, bodies): (String, Vec<&[Statement]>) = match &statement.kind {
+                StatementKind::Function { name, body, .. } => (
+                    format!(
+                        "function:{}",
+                        if name.starts_with('$') {
+                            "anonymous"
+                        } else {
+                            name
+                        }
+                    ),
                     vec![body],
                 ),
+                StatementKind::If { yes, no, .. } => ("if".into(), vec![yes, no]),
+                StatementKind::For { body, .. } => ("for".into(), vec![body]),
+                StatementKind::Repeat { body, .. } => ("repeat".into(), vec![body]),
                 StatementKind::Match { cases, .. } => (
                     "match".into(),
                     cases.iter().map(|case| case.body.as_slice()).collect(),

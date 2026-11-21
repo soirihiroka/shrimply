@@ -24,6 +24,7 @@ pub struct TrackDrawInput<'a> {
     view: TimelineViewState,
     timeline_x: f64,
     timeline_width: f64,
+    visible_times: (Time, Time),
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -77,6 +78,7 @@ pub fn draw_tracks(
         view,
         timeline_x,
         timeline_width,
+        visible_times: crate::math::visible_item_times(view, timeline_width),
     };
     let (first_visible_row, last_visible_row) = visible_row_range(view, content_height);
     comment::draw(input, first_visible_row, last_visible_row);

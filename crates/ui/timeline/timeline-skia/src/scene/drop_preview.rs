@@ -25,11 +25,7 @@ impl Scene {
             return None;
         }
         let (kind, track_index, _) = items::track_at_y(&project, y + self.view.scroll_y)?;
-        let start = Time::from_seconds_f64(x_to_time(
-            x,
-            self.view.scroll_seconds,
-            self.view.seconds_per_pixel,
-        ));
+        let start = Time::from_seconds_f64(x_to_time(x, self.view));
         let start = self.snap_repository.snap(start).unwrap_or(start);
         let mut end = start
             .saturating_add(self.default_visual_duration)
@@ -98,7 +94,7 @@ impl Scene {
     }
 
     pub(crate) fn drop_surface_target(&self, point: Vec2) -> bool {
-        f64::from(point.x) >= timeline_x()
+        f64::from(point.x) >= timeline_x(self.view)
             && self.pointer_in_viewport(point)
             && self.scrollbar_at(point).is_none()
     }
@@ -106,8 +102,9 @@ impl Scene {
     pub fn update_drop_preview(&mut self, path: PathBuf, point: Vec2) -> bool {
         self.media_refresh.redraw.set(true);
         self.text_drop_preview = None;
+        let file_kind = import::file_kind(&path);
         if !self.external_drop_target(point)
-            || matches!(import::file_kind(&path), None | Some(import::FileKind::Vtt))
+            || matches!(file_kind, None | Some(import::FileKind::Vtt))
         {
             self.clear_drop_preview();
             return false;
@@ -121,8 +118,11 @@ impl Scene {
             let duration = preferences::snapshot(&self.preferences).default_visual_duration;
             self.drop_preview = Some(DropPreview {
                 inspection: (!matches!(
-                    import::file_kind(&path),
-                    Some(import::FileKind::Python | import::FileKind::Blender)
+                    file_kind,
+                    Some(import::FileKind::RemuxToMp4)
+                        | Some(import::FileKind::Visual(
+                            import::VisualMediaKind::Manim | import::VisualMediaKind::Blender
+                        ))
                 ))
                 .then(|| import::request_inspection(path.clone(), project.canvas_size, duration)),
                 path,
@@ -183,22 +183,9 @@ impl Scene {
                     return false;
                 };
                 let (visual_kind, video_streams, audio_streams) = match file_kind {
-                    import::FileKind::Mp4
-                    | import::FileKind::Mov
-                    | import::FileKind::Mkv
-                    | import::FileKind::WebM => (Some(import::VisualMediaKind::Video), 1, 1),
-                    import::FileKind::Image => (Some(import::VisualMediaKind::Image), 1, 0),
-                    import::FileKind::Gif => (Some(import::VisualMediaKind::Gif), 1, 0),
-                    import::FileKind::Svg => (Some(import::VisualMediaKind::Svg), 1, 0),
-                    import::FileKind::Pdf => (Some(import::VisualMediaKind::Pdf), 1, 0),
-                    import::FileKind::Python => (Some(import::VisualMediaKind::Manim), 1, 0),
-                    import::FileKind::Sanim => (Some(import::VisualMediaKind::Sanim), 1, 0),
-                    import::FileKind::Blender => (Some(import::VisualMediaKind::Blender), 1, 0),
-                    import::FileKind::LayeredImage => {
-                        (Some(import::VisualMediaKind::LayeredImage), 1, 0)
-                    }
-                    import::FileKind::Obj => (Some(import::VisualMediaKind::Obj), 1, 0),
-                    import::FileKind::Ply => (Some(import::VisualMediaKind::Gaussian), 1, 0),
+                    import::FileKind::Visual(import::VisualMediaKind::Video)
+                    | import::FileKind::RemuxToMp4 => (Some(import::VisualMediaKind::Video), 1, 1),
+                    import::FileKind::Visual(kind) => (Some(kind), 1, 0),
                     import::FileKind::Audio => (None, 0, 1),
                     import::FileKind::Vtt => return false,
                 };

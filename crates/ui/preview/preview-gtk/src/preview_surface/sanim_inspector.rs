@@ -205,32 +205,53 @@ pub(super) fn inspect(surface: ProviderDispatch<'_>, point: GlamVec2) {
         if position < item.start || position >= item.end {
             return;
         }
-        // Pointer dispatch has already prepared the provider. Reuse its resolved
-        // geometry and evaluation instead of preparing the project twice per click.
-        let Some(provider) = controller.core.provider.as_ref().filter(|provider| {
-            provider.project_revision == selected.revision
+        // Reuse editing geometry when available. A focused modifier such as
+        // Rasterize need not have an editing provider to inspect its Sanim source.
+        let viewport = surface_viewport(surface.area, &project, &state);
+        let provider = controller.core.provider.as_ref().filter(|provider| {
+            !controller.core.context_invalidated
+                && provider.project_revision == selected.revision
                 && provider.context.item_id == selected.item
                 && provider.context.timeline_position == selected.position
-        }) else {
-            return;
+                && provider.context.viewport == viewport
+        });
+        let fallback;
+        let (evaluation, geometry, viewport) = if let Some(provider) = provider {
+            let prepared = &provider.context;
+            (&prepared.evaluation, prepared.geometry, prepared.viewport)
+        } else {
+            fallback = shrimply_preview_runtime_cuda::provider::prepare_geometry(
+                &project,
+                &address,
+                selected.position,
+                &state.audio_analysis,
+                &state.expression_cache,
+                viewport,
+                Some(&controller.core.extensions),
+            );
+            let Some(prepared) = fallback.as_ref() else {
+                let (_, content) = inspector.open(surface.area, point);
+                message(
+                    &content,
+                    &tr!("This Sanim clip has no inspectable geometry at the current time."),
+                );
+                return;
+            };
+            (&prepared.evaluation, prepared.geometry, viewport)
         };
-        let prepared = &provider.context;
         {
             let mut cache = state.expression_cache.borrow_mut();
-            if !crate::transform_eval::resolve_bool(
-                &item.visibility,
-                &prepared.evaluation,
-                &mut cache,
-            ) || crate::transform_eval::resolve_scalar(
-                &item.compositing.opacity,
-                &prepared.evaluation,
-                &mut cache,
-            ) <= 0.0
+            if !crate::transform_eval::resolve_bool(&item.visibility, evaluation, &mut cache)
+                || crate::transform_eval::resolve_scalar(
+                    &item.compositing.opacity,
+                    evaluation,
+                    &mut cache,
+                ) <= 0.0
             {
                 return;
             }
         }
-        let matrix = prepared.viewport.canvas_to_screen * prepared.geometry.local_to_canvas;
+        let matrix = viewport.canvas_to_screen * geometry.local_to_canvas;
         let Some(inverse) = crate::math::inverse_affine(matrix) else {
             return;
         };
@@ -425,4 +446,121 @@ fn location_row(content: &gtk::Box, heading: &str, location: &inspection::Locati
     copy_line.connect_clicked(move |button| button.display().clipboard().set_text(&line));
     group.append(&copy_line);
     content.append(&group);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::project::{
+        CanvasSize, SanimItem, VideoItem, VideoItemContent, VideoTrack, VisualModifier,
+    };
+    use shrimply_preview_provider_skia::{PreviewTarget, PreviewViewport};
+
+    fn scene() -> (
+        Project,
+        crate::project::ItemAddress,
+        PreviewViewport,
+        uuid::Uuid,
+    ) {
+        let canvas = CanvasSize {
+            width: 100,
+            height: 100,
+        };
+        let mut item = VideoItem::shape_item(canvas, Time::ZERO, Time { seconds: 1.into() });
+        item.content = VideoItemContent::Sanim(Box::<SanimItem>::default());
+        item.modifiers = vec![VisualModifier::new(
+            crate::modifiers::ModifierEffect::Rasterize(Default::default()),
+        )];
+        let modifier = item.modifiers[0].id;
+        let track = VideoTrack {
+            items: vec![item],
+            ..Default::default()
+        };
+        let address = crate::project::ItemAddress::Video {
+            sequence_path: vec![],
+            track_id: track.id,
+            item_id: track.items[0].id,
+        };
+        let project = Project {
+            canvas_size: canvas,
+            video_tracks: vec![track],
+            ..Default::default()
+        };
+        let viewport = PreviewViewport::new(
+            GlamVec2::splat(100.0),
+            Rect::from_min_size(GlamVec2::ZERO, GlamVec2::splat(200.0)),
+        );
+        (project, address, viewport, modifier)
+    }
+
+    #[test]
+    fn sanim_inspector_geometry_survives_a_focused_rasterize_without_an_editing_provider() {
+        let (project, address, viewport, modifier) = scene();
+        let expressions = RefCell::new(TransformExpressionCache::default());
+        let prepared = shrimply_preview_runtime_cuda::provider::prepare_geometry(
+            &project,
+            &address,
+            Time::ZERO,
+            &FrameAudioAnalysis::default(),
+            &expressions,
+            viewport,
+            None,
+        )
+        .expect("Sanim source geometry is independent of its modifier editing provider");
+        let context = prepared.context(Time::ZERO, &expressions, viewport);
+        let item = project.video_item(&address).unwrap();
+        let target = PreviewTarget::new(modifier, crate::modifiers::MODIFIER_PREVIEW_FACET);
+        assert!(item.owns_preview_target(target));
+        assert!(item.preview_provider(target, &context).is_none());
+        assert!(
+            item.preview_provider(item.default_preview_target(), &context)
+                .is_some()
+        );
+        let matrix = viewport.canvas_to_screen * prepared.geometry.local_to_canvas;
+        let point = GlamVec2::splat(50.0);
+        let inverse = crate::math::inverse_affine(matrix).unwrap();
+        assert!(
+            (inverse.transform_point2(matrix.transform_point2(point)) - point).length()
+                < f32::EPSILON
+        );
+    }
+
+    #[test]
+    #[ignore = "manual benchmark: make sanim-preview-inspector-bench"]
+    fn sanim_inspector_geometry_fallback_benchmark() {
+        const CLICKS: u32 = 1000;
+        for clips in [1, 1000] {
+            let (mut project, address, viewport, _) = scene();
+            let prototype = project.video_tracks[0].items[0].clone();
+            for _ in 1..clips {
+                let mut sibling = prototype.clone();
+                sibling.id = uuid::Uuid::new_v4();
+                sibling.modifiers.clear();
+                Project::regenerate_video_property_ids(&mut sibling);
+                project.video_tracks[0].items.push(sibling);
+            }
+            let expressions = RefCell::new(TransformExpressionCache::default());
+            let audio = FrameAudioAnalysis::default();
+            let started = std::time::Instant::now();
+            for _ in 0..CLICKS {
+                std::hint::black_box(
+                    shrimply_preview_runtime_cuda::provider::prepare_geometry(
+                        &project,
+                        &address,
+                        Time::ZERO,
+                        &audio,
+                        &expressions,
+                        viewport,
+                        None,
+                    )
+                    .unwrap(),
+                );
+            }
+            let elapsed = started.elapsed();
+            eprintln!(
+                "Sanim inspector canonical geometry fallback ({clips} clips): {CLICKS} clicks in {elapsed:?}; {:?}/click (debug/release dependent)",
+                elapsed / CLICKS
+            );
+        }
+    }
 }

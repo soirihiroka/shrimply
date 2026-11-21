@@ -1,11 +1,13 @@
 use adw::prelude::*;
+use gtk::gio;
 use shrimply_components_gtk::{desktop_open, tr};
 use shrimply_trust_core::{Entry, Kind, Review};
 
 pub fn page() -> adw::PreferencesPage {
     let page = adw::PreferencesPage::builder()
-        .title(tr!("Trust").as_ref())
-        .icon_name("security-high-symbolic")
+        .title(tr!(crate::store::PreferencePage::Trust.title()).as_ref())
+        .icon_name(crate::store::PreferencePage::Trust.icon())
+        .name(crate::store::PreferencePage::Trust.id())
         .build();
     let group = adw::PreferencesGroup::builder()
         .title(tr!("Trusted sources").as_ref())
@@ -63,103 +65,93 @@ fn rebuild_rows(list: &gtk::ListBox) {
 }
 
 fn source_menu(row: &adw::ActionRow, list: &gtk::ListBox, entry: Entry) -> gtk::MenuButton {
-    let popover = gtk::Popover::new();
-    let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    let info = gtk::Button::with_label(tr!("Info").as_ref());
-    info.add_css_class("flat");
-    let info_popover = popover.downgrade();
+    let model = gio::Menu::new();
+    model.append(Some(tr!("Info").as_ref()), Some("source.info"));
+    model.append(
+        Some(tr!("Show in File Manager").as_ref()),
+        Some("source.show"),
+    );
+    model.append(Some(tr!("Remove").as_ref()), Some("source.remove"));
+    let actions = gio::SimpleActionGroup::new();
     let info_row = row.downgrade();
     let info_entry = entry.clone();
-    info.connect_clicked(move |_| {
-        if let Some(popover) = info_popover.upgrade() {
-            popover.popdown();
-        }
-        let Some(row) = info_row.upgrade() else {
-            return;
-        };
-        let scope = match info_entry.kind {
-            Kind::File => tr!("File trust includes future edits and replacements."),
-            Kind::Folder => {
-                tr!("Folder trust includes all current and future files and subfolders.")
-            }
-        };
-        let dialog = adw::AlertDialog::builder()
-            .heading(tr!("Trusted source"))
-            .body(format!(
-                "{}\n\n{scope}\n\n{}",
-                info_entry.path.display(),
-                tr!("Removing trust stops affected workers.")
-            ))
-            .body_use_markup(false)
-            .build();
-        dialog.add_response("close", tr!("Close").as_ref());
-        dialog.present(Some(&row));
-    });
-    content.append(&info);
+    actions.add_action(&shrimply_components_gtk::ui::menu_action(
+        "info",
+        None,
+        move || {
+            let row = info_row.upgrade()?;
+            let presentation = info_entry.presentation();
+            let dialog = adw::AlertDialog::builder()
+                .heading(presentation.title)
+                .body(presentation.body)
+                .body_use_markup(false)
+                .build();
+            dialog.add_response("close", &presentation.close_label);
+            dialog.present(Some(&row));
+            None
+        },
+    ));
 
-    let show = gtk::Button::with_label(tr!("Show in File Manager").as_ref());
-    show.add_css_class("flat");
-    let show_popover = popover.downgrade();
     let show_row = row.downgrade();
     let path = entry.path.clone();
-    show.connect_clicked(move |_| {
-        if let Some(popover) = show_popover.upgrade() {
-            popover.popdown();
-        }
-        let Some(row) = show_row.upgrade() else {
-            return;
-        };
-        if let Err(error) = desktop_open::show_path_in_folder(row.upcast_ref(), path.clone()) {
-            let dialog =
-                adw::AlertDialog::new(Some(tr!("Could not show source").as_ref()), Some(&error));
-            dialog.add_response("close", tr!("Close").as_ref());
-            dialog.present(Some(&row));
-        }
-    });
-    content.append(&show);
-
-    let remove = gtk::Button::with_label(tr!("Remove").as_ref());
-    remove.add_css_class("flat");
-    remove.add_css_class("destructive-action");
-    let remove_popover = popover.downgrade();
-    let remove_row = row.downgrade();
-    let list = list.downgrade();
-    remove.connect_clicked(move |_| {
-        if let Some(popover) = remove_popover.upgrade() {
-            popover.popdown();
-        }
-        let (Some(list), Some(row)) = (list.upgrade(), remove_row.upgrade()) else {
-            return;
-        };
-        match shrimply_trust_core::remove(&entry) {
-            Ok(()) => list.remove(&row),
-            Err(error) => {
+    actions.add_action(&shrimply_components_gtk::ui::menu_action(
+        "show",
+        None,
+        move || {
+            let row = show_row.upgrade()?;
+            if let Err(error) = desktop_open::show_path_in_folder(row.upcast_ref(), path.clone()) {
                 let dialog = adw::AlertDialog::new(
-                    Some(tr!("Could not remove trust").as_ref()),
+                    Some(tr!("Could not show source").as_ref()),
                     Some(&error),
                 );
                 dialog.add_response("close", tr!("Close").as_ref());
                 dialog.present(Some(&row));
             }
-        }
-    });
-    content.append(&remove);
-    popover.set_child(Some(&content));
+            None
+        },
+    ));
 
-    gtk::MenuButton::builder()
+    let remove_row = row.downgrade();
+    let list = list.downgrade();
+    actions.add_action(&shrimply_components_gtk::ui::menu_action(
+        "remove",
+        None,
+        move || {
+            let (Some(list), Some(row)) = (list.upgrade(), remove_row.upgrade()) else {
+                return None;
+            };
+            match shrimply_trust_core::remove(&entry) {
+                Ok(()) => list.remove(&row),
+                Err(error) => {
+                    let dialog = adw::AlertDialog::new(
+                        Some(tr!("Could not remove trust").as_ref()),
+                        Some(&error),
+                    );
+                    dialog.add_response("close", tr!("Close").as_ref());
+                    dialog.present(Some(&row));
+                }
+            }
+            None
+        },
+    ));
+
+    let menu = gtk::MenuButton::builder()
         .icon_name("view-more-symbolic")
         .has_frame(false)
         .css_classes(["flat"])
         .tooltip_text(tr!("Source menu"))
         .valign(gtk::Align::Center)
-        .popover(&popover)
-        .build()
+        .menu_model(&model)
+        .build();
+    menu.insert_action_group("source", Some(&actions));
+    shrimply_components_gtk::ui::adaptive_menu(&menu, "source", &actions);
+    menu
 }
 
 fn choose_source(parent: &adw::ButtonRow, list: &gtk::ListBox) {
     let dialog = adw::AlertDialog::new(
         Some(tr!("Add trusted source").as_ref()),
-        Some(shrimply_trust_core::EXPLANATION),
+        Some(tr!(shrimply_trust_core::EXPLANATION).as_ref()),
     );
     dialog.add_response("cancel", tr!("Cancel").as_ref());
     dialog.add_response("file", tr!("Choose File").as_ref());

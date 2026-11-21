@@ -1,4 +1,6 @@
+use crate::InspectorRuntime;
 use shrimply_project_document::project::{ItemAddress, Time};
+use shrimply_property_model::timeline_value::{Interpolation, TimelineBase, TimelineValue};
 
 pub use shrimply_keyframe_graph_skia::*;
 
@@ -134,6 +136,49 @@ impl ScalarGraph {
     }
 }
 
+pub fn scalar_graph(
+    timeline: &TimelineValue<f32>,
+    runtime: InspectorRuntime,
+    display: fn(f32) -> f64,
+) -> Option<ScalarGraph> {
+    if !matches!(timeline.base, TimelineBase::Keyframes(_)) {
+        return None;
+    }
+    let static_value = display(timeline.value_at(runtime.local_time.unwrap_or(Time::ZERO)));
+    let KeyframeGraph::RawValue {
+        points, segments, ..
+    } = crate::keyframe_model::scalar_graph(timeline, static_value, display)
+    else {
+        unreachable!("scalar timeline must produce a raw keyframe graph")
+    };
+    Some(ScalarGraph {
+        points: points
+            .into_iter()
+            .map(|point| GraphPoint {
+                time: point.time,
+                value: point.value,
+            })
+            .collect(),
+        segments: segments
+            .into_iter()
+            .map(|segment| GraphSegment {
+                owner_id: segment.owner_id,
+                start: segment.start,
+                end: segment.end,
+                start_value: segment.start_value,
+                end_value: segment.end_value,
+                interpolation: Interpolation::KEYFRAME
+                    .iter()
+                    .position(|candidate| *candidate == segment.interpolation)
+                    .expect("scalar keyframe interpolation must be available"),
+            })
+            .collect(),
+        range: runtime.keyframe_range.unwrap_or((Time::ZERO, Time::ZERO)),
+        frame_step: runtime.frame_step,
+        playhead: runtime.keyframe_playhead.unwrap_or(Time::ZERO),
+    })
+}
+
 impl InspectorController {
     pub fn control_graph_source(
         &self,
@@ -152,6 +197,87 @@ impl InspectorController {
         target: &InspectorTarget,
         control: &InspectorControl,
     ) -> Result<Option<ScalarGraph>, String> {
+        let path = control.timeline_path.as_deref().unwrap_or(&control.path);
+        if control.background_integer() {
+            return self.background_integer_graph(
+                target,
+                path,
+                control
+                    .timeline_id
+                    .ok_or("integer control has no timeline ID")?,
+            );
+        }
+        if path.starts_with("/content/generator/") {
+            let id = control
+                .timeline_id
+                .ok_or("background control has no timeline ID")?;
+            if control.kind == ControlKind::LayeredSelector {
+                return self.background_step_graph(target, path, id);
+            }
+            let InspectorTarget::Item(address) = target else {
+                return Err("background control requires an item".into());
+            };
+            let project = self.project.borrow();
+            let item = project
+                .video_item(address)
+                .ok_or("background item is unavailable")?;
+            let generator =
+                crate::background::generator(item).ok_or("background control target changed")?;
+            let runtime = crate::model::target_runtime(&project, &self.player_state, target);
+            let graph = match control.kind {
+                ControlKind::LayeredNumber => generator.number(id).map(|timeline| {
+                    let mut graph = scalar_graph(timeline, runtime, f64::from);
+                    if let Some(graph) = &mut graph {
+                        graph.map_control_values(control);
+                    }
+                    graph
+                }),
+                ControlKind::LayeredVector2 => generator
+                    .number2(id)
+                    .map(|timeline| crate::transform::vector_speed_graph(timeline, runtime)),
+                ControlKind::LayeredColor => generator
+                    .color(id)
+                    .map(|timeline| crate::timeline_color::speed_graph(timeline, runtime)),
+                ControlKind::LayeredBoolean => generator
+                    .boolean(id)
+                    .map(|timeline| crate::selector::step_graph(timeline, runtime)),
+                _ => return Err("background control has no keyframe graph".into()),
+            };
+            return graph
+                .ok_or_else(|| "background timeline changed while the inspector was open".into());
+        }
+        if control.kind == ControlKind::LayeredNumber
+            && (control.audio_modifier || !path.starts_with("/modifiers/"))
+        {
+            let (value, runtime) = self.control_graph_source(target)?;
+            let timeline = if control.audio_modifier {
+                self.audio_modifier_timeline(
+                    target,
+                    control
+                        .target_id
+                        .ok_or("audio modifier owner is unavailable")?,
+                    control
+                        .timeline_id
+                        .ok_or("audio modifier timeline is unavailable")?,
+                )?
+            } else {
+                serde_json::from_value(
+                    value
+                        .pointer(path)
+                        .cloned()
+                        .ok_or("inspector timeline is unavailable")?,
+                )
+                .map_err(|error| format!("invalid scalar timeline: {error}"))?
+            };
+            if Some(timeline.id) != control.timeline_id {
+                return Err("timeline changed while the inspector was open".into());
+            }
+            let mut graph = scalar_graph(&timeline, runtime, f64::from);
+            if let Some(graph) = &mut graph {
+                graph.map_control_values(control);
+            }
+            return Ok(graph);
+        }
         if control.kind == ControlKind::LayeredDrawing {
             if control.path != crate::paint::DRAWING_PATH
                 || control.timeline_path.as_deref() != Some(crate::paint::DRAWING_PATH)
@@ -176,7 +302,31 @@ impl InspectorController {
         if let Some(graph) = crate::generated::control_graph(self, target, control) {
             return graph;
         }
-        self.visual_modifier_control_graph(target, control)
+        if path.starts_with("/modifiers/") {
+            return self.visual_modifier_control_graph(target, control);
+        }
+        // Reuse the canonical GTK presentation for built-in and generated video
+        // controls. Its typed builders already define boolean/enum/color graphs.
+        let snapshot = self.snapshot();
+        if &snapshot.target != target {
+            return Err("Inspector selection changed".into());
+        }
+        let video = snapshot
+            .video
+            .ok_or("Control has no video keyframe graph")?;
+        video
+            .visual
+            .iter()
+            .chain(&video.playback)
+            .flat_map(|card| &card.section.controls)
+            .find(|candidate| {
+                candidate.path == control.path
+                    && candidate.kind == control.kind
+                    && candidate.timeline_id == control.timeline_id
+                    && candidate.target_id == control.target_id
+            })
+            .map(|candidate| candidate.scalar_graph.clone())
+            .ok_or_else(|| "Keyframe control is no longer available".into())
     }
 
     pub fn visual_modifier_control_graph(

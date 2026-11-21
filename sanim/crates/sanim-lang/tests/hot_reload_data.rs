@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 fn program(color: &str, revision: usize) -> String {
     format!(
-        "let tint=Color(\"{color}\")\ntype Row={{value:Number}}\ntype Total={{total:Number}}\nlet rows=read<List<Row>>(\"rows.json\")\nlet totals=query<Total>(\"SELECT sum(value) AS total FROM rows\",tables={{rows=rows}})\nfor total in totals{{assert(total.total>=0)}}\nlet marker=Circle(fill=tint)\nadd(marker)\nwait(3s)\n# revision {revision}"
+        "let tint=Color(\"{color}\")\ntype Row={{value:Number}}\ntype Total={{total:Number}}\nlet rows=read<List<Row>>(\"rows.json\")\nlet totals=query<Total>(\"SELECT sum(value) AS total FROM rows\",tables={{rows=rows}})\nfor total in totals{{assert(total.total>=0)}}\nlet marker=Box(fill=tint, width=2*(32pt), height=2*(32pt), radius=\"full\", x_align=Align.Center, y_align=Align.Center)\nAnimation(children=[marker])\nwait(3s)\n# revision {revision}"
     )
 }
 fn total(prepared: &sanim_lang::Prepared) -> Fraction {
@@ -28,7 +28,10 @@ fn unrelated_visual_edits_reuse_data_and_sql_in_both_preparation_modes() {
     for preparation in [Preparation::Full, Preparation::Demand] {
         let mut files = MemorySources::default();
         files.insert("rows.json", &data);
-        files.insert("main.sanim", program("blue3", 0));
+        files.insert(
+            "main.sanim",
+            format!("{}\nAnimation()", program("blue3", 0)),
+        );
         let mut engine = Engine::default();
         engine.preparation = preparation;
         let cold = engine
@@ -49,7 +52,10 @@ fn unrelated_visual_edits_reuse_data_and_sql_in_both_preparation_modes() {
             } else {
                 "orange3"
             };
-            files.insert("main.sanim", program(color, revision));
+            files.insert(
+                "main.sanim",
+                format!("{}\nAnimation()", program(color, revision)),
+            );
             let hot = engine
                 .prepare("main.sanim", &files, &BTreeMap::new())
                 .unwrap();
@@ -83,7 +89,10 @@ fn unrelated_visual_edits_reuse_data_and_sql_in_both_preparation_modes() {
 #[test]
 fn changed_data_invalidates_query_keys_and_failed_data_preserves_last_good() {
     let mut files = MemorySources::default();
-    files.insert("main.sanim", program("blue3", 0));
+    files.insert(
+        "main.sanim",
+        format!("{}\nAnimation()", program("blue3", 0)),
+    );
     files.insert("rows.json", "[{\"value\":1}]");
     let mut session = Session::new("main.sanim");
     assert!(matches!(session.poll(&files), Reload::Updated { .. }));

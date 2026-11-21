@@ -1,9 +1,10 @@
 use core::pin::Pin;
 use cxx_qt::CxxQtType;
-use cxx_qt_lib::{QString, QUrl};
+use cxx_qt_lib::{QString, QStringList, QUrl};
 use shrimply_cross_ui_core::editor::{EditorSession, LoadEvent, ProjectLoader};
 use shrimply_editor_state::player_state;
 use shrimply_math_core::{Fraction, frame_count, frame_index, time_from_signed_frame};
+use shrimply_preview_render_core::playback::toolbar as preview_toolbar;
 use shrimply_project_document::project::{self, CanvasSize};
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, TryRecvError};
@@ -25,6 +26,8 @@ pub mod qobject {
 
         include!("cxx-qt-lib/qstring.h");
         type QString = cxx_qt_lib::QString;
+        include!("cxx-qt-lib/qstringlist.h");
+        type QStringList = cxx_qt_lib::QStringList;
         include!("cxx-qt-lib/qurl.h");
         type QUrl = cxx_qt_lib::QUrl;
     }
@@ -36,6 +39,11 @@ pub mod qobject {
         #[qproperty(QString, loading_text, cxx_name = "loadingText")]
         #[qproperty(QString, project_title, cxx_name = "projectTitle")]
         #[qproperty(bool, playing)]
+        #[qproperty(bool, preview_controls_visible, cxx_name = "previewControlsVisible")]
+        #[qproperty(bool, inspector_visible, cxx_name = "inspectorVisible")]
+        #[qproperty(bool, timeline_visible, cxx_name = "timelineVisible")]
+        #[qproperty(f32, inspector_width, cxx_name = "inspectorWidth")]
+        #[qproperty(f32, timeline_fraction, cxx_name = "timelineFraction")]
         #[qproperty(i64, position_frame, cxx_name = "positionFrame")]
         #[qproperty(i64, duration_frame, cxx_name = "durationFrame")]
         #[qproperty(QString, time_label, cxx_name = "timeLabel")]
@@ -44,6 +52,36 @@ pub mod qobject {
         #[qproperty(QString, fixed_font_family, cxx_name = "fixedFontFamily")]
         type EditorBackend = super::EditorBackendRust;
 
+        #[qinvokable]
+        #[cxx_name = "toggleInspector"]
+        fn toggle_inspector(self: Pin<&mut EditorBackend>);
+        #[qinvokable]
+        #[cxx_name = "toggleTimeline"]
+        fn toggle_timeline(self: Pin<&mut EditorBackend>);
+        #[qinvokable]
+        #[cxx_name = "saveInspectorWidth"]
+        fn save_inspector_width(self: Pin<&mut EditorBackend>, width: f32);
+        #[qinvokable]
+        #[cxx_name = "saveTimelineFraction"]
+        fn save_timeline_fraction(self: Pin<&mut EditorBackend>, leading: f32, trailing: f32);
+        #[qinvokable]
+        #[cxx_name = "previewContextLabels"]
+        fn preview_context_labels(self: &EditorBackend) -> QStringList;
+        #[qinvokable]
+        #[cxx_name = "previewContextChecked"]
+        fn preview_context_checked(self: &EditorBackend, index: i32) -> i32;
+        #[qinvokable]
+        #[cxx_name = "activatePreviewContext"]
+        fn activate_preview_context(self: Pin<&mut EditorBackend>, index: i32) -> i32;
+        #[qinvokable]
+        #[cxx_name = "showPreviewImageSaveDialog"]
+        fn show_preview_image_save_dialog(self: Pin<&mut EditorBackend>) -> QUrl;
+        #[qinvokable]
+        #[cxx_name = "reportPreviewImageError"]
+        fn report_preview_image_error(self: Pin<&mut EditorBackend>, error: &QString);
+        #[qinvokable]
+        #[cxx_name = "previewContextBottomSheet"]
+        fn preview_context_bottom_sheet(self: &EditorBackend, touch: bool) -> bool;
         #[qinvokable]
         fn begin(self: Pin<&mut EditorBackend>);
         #[qinvokable]
@@ -120,6 +158,22 @@ pub mod qobject {
         fn undo(self: Pin<&mut EditorBackend>);
         #[qinvokable]
         fn redo(self: Pin<&mut EditorBackend>);
+        #[qinvokable]
+        #[cxx_name = "splitPaneExtent"]
+        fn split_pane_extent(self: &EditorBackend, total: f32, divider: f32, fraction: f32) -> f32;
+        #[qinvokable]
+        #[cxx_name = "inspectorOverlay"]
+        fn inspector_overlay(
+            self: Pin<&mut EditorBackend>,
+            width: f64,
+            inspector_width: f64,
+        ) -> bool;
+        #[qinvokable]
+        #[cxx_name = "transportStacked"]
+        fn transport_stacked(self: Pin<&mut EditorBackend>, width: f64) -> bool;
+        #[qinvokable]
+        #[cxx_name = "previewMinimumWidth"]
+        fn preview_minimum_width(self: Pin<&mut EditorBackend>) -> f64;
         #[qinvokable]
         fn translate(self: Pin<&mut EditorBackend>, text: &QString) -> QString;
         #[qinvokable]
@@ -262,6 +316,11 @@ pub struct EditorBackendRust {
     loading_text: QString,
     project_title: QString,
     playing: bool,
+    preview_controls_visible: bool,
+    inspector_visible: bool,
+    timeline_visible: bool,
+    inspector_width: f32,
+    timeline_fraction: f32,
     position_frame: i64,
     duration_frame: i64,
     time_label: QString,
@@ -289,6 +348,7 @@ impl cxx_qt::Initialize for qobject::EditorBackend {
 
 impl Default for EditorBackendRust {
     fn default() -> Self {
+        let layout = shrimply_editor_state::preferences::EditorLayout::default();
         Self {
             ready: false,
             loading_text: QString::from(if cfg!(windows) {
@@ -298,6 +358,11 @@ impl Default for EditorBackendRust {
             }),
             project_title: QString::from("Shrimply"),
             playing: false,
+            preview_controls_visible: true,
+            inspector_visible: layout.inspector_visible,
+            timeline_visible: layout.timeline_visible,
+            inspector_width: layout.inspector_width,
+            timeline_fraction: layout.timeline_fraction,
             position_frame: 0,
             duration_frame: 0,
             time_label: QString::default(),
@@ -666,6 +731,18 @@ impl qobject::EditorBackend {
 
     pub fn redo(self: Pin<&mut Self>) {
         self.history_action(project::redo);
+    }
+
+    pub fn inspector_overlay(self: Pin<&mut Self>, width: f64, inspector_width: f64) -> bool {
+        shrimply_components_qt::layout::inspector_overlay(width as f32, inspector_width as f32)
+    }
+
+    pub fn transport_stacked(self: Pin<&mut Self>, width: f64) -> bool {
+        shrimply_components_qt::layout::transport_stacked(width as f32)
+    }
+
+    pub fn preview_minimum_width(self: Pin<&mut Self>) -> f64 {
+        f64::from(shrimply_components_qt::layout::MIN_PREVIEW_WIDTH)
     }
 
     pub fn translate(self: Pin<&mut Self>, text: &QString) -> QString {
@@ -1067,6 +1144,131 @@ impl qobject::EditorBackend {
         }
     }
 
+    pub fn preview_context_labels(&self) -> QStringList {
+        self.session
+            .as_deref()
+            .map(|session| {
+                preview_toolbar::context_menu(&session.preferences, true)
+                    .into_iter()
+                    .map(|item| QString::from(item.label))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    pub fn preview_context_checked(&self, index: i32) -> i32 {
+        self.session
+            .as_deref()
+            .and_then(|session| {
+                preview_toolbar::context_menu(&session.preferences, true)
+                    .get(usize::try_from(index).ok()?)
+                    .and_then(|item| item.checked)
+            })
+            .map_or(-1, i32::from)
+    }
+
+    pub fn activate_preview_context(mut self: Pin<&mut Self>, index: i32) -> i32 {
+        let request = self.session.as_deref().and_then(|session| {
+            preview_toolbar::context_menu(&session.preferences, true)
+                .get(usize::try_from(index).expect("preview menu index is nonnegative"))
+                .and_then(|item| item.action.activate(&session.preferences))
+        });
+        self.as_mut().update_player_properties();
+        match request {
+            Some(preview_toolbar::ContextRequest::CopyImage) => 1,
+            Some(preview_toolbar::ContextRequest::SaveImage) => 2,
+            None => 0,
+        }
+    }
+
+    pub fn show_preview_image_save_dialog(self: Pin<&mut Self>) -> QUrl {
+        let session = self
+            .session
+            .as_deref()
+            .expect("preview requires an editor session");
+        let title = preview_toolbar::context_menu(&session.preferences, true)
+            .into_iter()
+            .find(|item| item.action == preview_toolbar::ContextAction::SaveImage)
+            .expect("preview save service has a shared title")
+            .label;
+        let path = shrimply_editor_state::preferences::preview_image_folder(&session.preferences)
+            .unwrap_or_default()
+            .join("preview.png");
+        let preferences = session.preferences.clone();
+        let destination = self.show_file_save_dialog(
+            &QString::from(path.to_string_lossy().as_ref()),
+            &QString::from(title),
+            &shrimply_i18n_qt::text("PNG image (*.png)"),
+            &QString::from("png"),
+        );
+        if let Some(path) = local_path(&destination)
+            && let Some(folder) = path.parent()
+        {
+            shrimply_editor_state::preferences::set_preview_image_folder(&preferences, folder);
+        }
+        destination
+    }
+
+    pub fn report_preview_image_error(self: Pin<&mut Self>, error: &QString) {
+        let error = error.to_string();
+        self.emit_error(
+            "Could not save preview image",
+            if error.is_empty() {
+                "Could not capture the preview image."
+            } else {
+                &error
+            },
+        );
+    }
+
+    pub fn preview_context_bottom_sheet(&self, touch: bool) -> bool {
+        shrimply_components_qt::layout::menu_uses_bottom_sheet(if touch {
+            "touch"
+        } else {
+            "pointer"
+        })
+    }
+
+    fn toggle_inspector(self: Pin<&mut Self>) {
+        self.update_editor_layout(|layout| layout.inspector_visible = !layout.inspector_visible);
+    }
+
+    fn toggle_timeline(self: Pin<&mut Self>) {
+        self.update_editor_layout(|layout| layout.timeline_visible = !layout.timeline_visible);
+    }
+
+    fn save_inspector_width(self: Pin<&mut Self>, width: f32) {
+        self.update_editor_layout(|layout| layout.inspector_width = width);
+    }
+
+    fn save_timeline_fraction(self: Pin<&mut Self>, leading: f32, trailing: f32) {
+        if let Some(fraction) = shrimply_components_qt::math::split_pane_fraction(leading, trailing)
+        {
+            self.update_editor_layout(|layout| layout.timeline_fraction = fraction);
+        }
+    }
+
+    fn split_pane_extent(&self, total: f32, divider: f32, fraction: f32) -> f32 {
+        shrimply_components_qt::math::split_pane_extent(total, divider, fraction)
+    }
+
+    fn update_editor_layout(
+        mut self: Pin<&mut Self>,
+        update: impl FnOnce(&mut shrimply_editor_state::preferences::EditorLayout),
+    ) {
+        let this = self.as_ref();
+        let Some(session) = this.rust().session.as_deref() else {
+            return;
+        };
+        let result =
+            shrimply_editor_state::preferences::update_editor_layout(&session.preferences, update);
+        if let Err(error) = result {
+            self.as_mut()
+                .emit_error("Could not save preferences", &error);
+        }
+        self.update_player_properties();
+    }
+
     fn update_player_properties(mut self: Pin<&mut Self>) {
         let this = self.as_ref();
         let Some(session) = this.rust().session.as_deref() else {
@@ -1074,6 +1276,9 @@ impl qobject::EditorBackend {
         };
         let snapshot = player_state::snapshot(&session.player_state);
         let playing = snapshot.playing;
+        let preferences = shrimply_editor_state::preferences::snapshot(&session.preferences);
+        let preview_controls_visible = preferences.preview_controls_visible;
+        let layout = preferences.editor_layout;
         let position_frame = frame_index(snapshot.position, snapshot.frame_rate).unwrap_or(0);
         let duration_frame = frame_count(snapshot.duration, snapshot.frame_rate)
             .and_then(|frame| i64::try_from(frame).ok())
@@ -1087,6 +1292,14 @@ impl qobject::EditorBackend {
             shrimply_preview_runtime_cuda::playback_speed_label(snapshot.playback_speed),
         );
         self.as_mut().set_playing(playing);
+        self.as_mut()
+            .set_preview_controls_visible(preview_controls_visible);
+        self.as_mut()
+            .set_inspector_visible(layout.inspector_visible);
+        self.as_mut().set_timeline_visible(layout.timeline_visible);
+        self.as_mut().set_inspector_width(layout.inspector_width);
+        self.as_mut()
+            .set_timeline_fraction(layout.timeline_fraction);
         self.as_mut().set_position_frame(position_frame);
         self.as_mut().set_duration_frame(duration_frame);
         self.as_mut().set_time_label(time_label);

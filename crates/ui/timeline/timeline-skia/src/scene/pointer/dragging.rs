@@ -74,7 +74,7 @@ fn finish_nested(runtime: &mut Scene, finish: &DragFinish<'_>) -> bool {
     if !finish.moved {
         return true;
     }
-    let kind = crate::folded_sequence::track_kind(&drag.key);
+    let kind = drag.key.kind();
     let mut project = finish.project.borrow_mut();
     let waveform_signature = items::audio_waveform_cache_signature(&project);
     let selected = crate::dragging::finish_nested(

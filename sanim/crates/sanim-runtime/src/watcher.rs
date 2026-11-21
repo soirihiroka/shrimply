@@ -6,7 +6,7 @@ use sanim_lang::{FileSources, Sources};
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
-    sync::{Arc, Mutex, OnceLock, mpsc},
+    sync::{Arc, Mutex, OnceLock},
 };
 
 pub(crate) struct WatchedSources {
@@ -167,7 +167,7 @@ impl WatchedSources {
     pub fn new(
         root: PathBuf,
         entry: &str,
-        commands: mpsc::SyncSender<Command>,
+        changed: impl Fn(Command) + Send + Sync + 'static,
     ) -> Result<Self, String> {
         let state = Arc::new(Mutex::new(WatchState::new()));
         state.lock().expect("Sanim watch state poisoned").register(
@@ -225,7 +225,7 @@ impl WatchedSources {
                     Command::WatchError(error.to_string())
                 }
             };
-            let _ = commands.try_send(command);
+            changed(command);
         })
         .map_err(|e| format!("Sanim file watcher: {e}"))?;
         let sources = Self {
@@ -462,6 +462,7 @@ mod tests {
     use super::*;
     use std::{
         sync::atomic::{AtomicU64, Ordering},
+        sync::mpsc,
         time::{Duration, Instant},
     };
     struct Files(PathBuf);
@@ -548,7 +549,10 @@ mod tests {
         )
         .unwrap();
         let (sender, receiver) = mpsc::sync_channel(128);
-        let sources = WatchedSources::new(files.0.clone(), "main.sanim", sender).unwrap();
+        let sources = WatchedSources::new(files.0.clone(), "main.sanim", move |event| {
+            let _ = sender.try_send(event);
+        })
+        .unwrap();
         let mut session = Session::new("main.sanim");
         let completed = Arc::new(AtomicUsize::new(0));
         session.engine.set_progress_observer(Some(Arc::new({
@@ -686,7 +690,10 @@ mod tests {
         const BYTES: usize = 32 * 1024 * 1024;
         std::fs::write(files.0.join("payload.txt"), vec![b'x'; BYTES]).unwrap();
         let (sender, receiver) = mpsc::sync_channel(128);
-        let sources = WatchedSources::new(files.0.clone(), "main.sanim", sender).unwrap();
+        let sources = WatchedSources::new(files.0.clone(), "main.sanim", move |event| {
+            let _ = sender.try_send(event);
+        })
+        .unwrap();
         sources.read_snapshot("main.sanim").unwrap();
         let first = sources.read_snapshot("payload.txt").unwrap();
         let before = sources.hashed_bytes.load(Ordering::Relaxed);
@@ -738,7 +745,10 @@ mod tests {
             )
             .unwrap();
             let (sender, receiver) = mpsc::sync_channel(128);
-            let sources = WatchedSources::new(files.0.clone(), "main.sanim", sender).unwrap();
+            let sources = WatchedSources::new(files.0.clone(), "main.sanim", move |event| {
+                let _ = sender.try_send(event);
+            })
+            .unwrap();
             let mut session = Session::new("main.sanim");
             session.engine.limits.max_source_bytes = LARGE_BYTES + 1024;
             assert!(matches!(

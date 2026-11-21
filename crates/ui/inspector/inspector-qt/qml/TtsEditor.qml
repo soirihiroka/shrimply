@@ -33,9 +33,9 @@ ColumnLayout {
     }
 
     ControlRow {
-        label: qsTr("Model")
+        label: backend.label("model")
         Dropdown {
-            enabled: backend.ready && !backend.generating
+            enabled: backend.modelEnabled
             value: {
                 const revision = backend.revision
                 return revision >= 0 ? backend.modelValue() : ""
@@ -73,7 +73,7 @@ ColumnLayout {
                 const revision = backend.revision
                 return revision >= 0 ? backend.controlValue(index) : ""
             }
-            enabled: !backend.generating
+            enabled: backend.inputsEnabled
             Layout.fillWidth: true
             sourceComponent: kind === 0 ? singleTextControl
                 : kind === 1 ? multilineTextControl
@@ -144,30 +144,30 @@ ColumnLayout {
                         spacing: 6
                         Label {
                             text: controlLoader.value.length > 0
-                                ? controlLoader.value : qsTr("Choose an audio file")
+                                ? controlLoader.value : backend.label("audio_empty")
                             elide: Text.ElideMiddle
                             opacity: controlLoader.value.length > 0 ? 1 : 0.56
                             Layout.fillWidth: true
                         }
                         Button {
-                            text: qsTr("Choose…")
+                            text: backend.label("audio_choose")
                             onClicked: backend.chooseControlAudio(controlLoader.index)
                         }
                         Button {
                             icon.name: "pan-down-symbolic"
                             display: AbstractButton.IconOnly
                             ToolTip.visible: hovered
-                            ToolTip.text: qsTr("Reference audio actions")
+                            ToolTip.text: backend.label("audio_actions")
                             onClicked: audioActions.popup()
                             Menu {
                                 id: audioActions
                                 MenuItem {
-                                    text: qsTr("Clear")
+                                    text: backend.label("audio_clear")
                                     enabled: controlLoader.value.length > 0
                                     onTriggered: backend.clearControlAudio(controlLoader.index)
                                 }
                                 MenuItem {
-                                    text: qsTr("Show in Folder")
+                                    text: backend.label("audio_reveal")
                                     enabled: controlLoader.value.length > 0
                                     onTriggered: backend.showControlAudio(controlLoader.index)
                                 }
@@ -222,7 +222,7 @@ ColumnLayout {
                             icon.name: "list-add-symbolic"
                             display: AbstractButton.IconOnly
                             ToolTip.visible: hovered
-                            ToolTip.text: qsTr("Add row")
+                            ToolTip.text: backend.label("add_row")
                             onClicked: backend.addTableRow(controlLoader.index)
                         }
                     }
@@ -268,7 +268,7 @@ ColumnLayout {
                                 icon.name: "list-remove-symbolic"
                                 display: AbstractButton.IconOnly
                                 ToolTip.visible: hovered
-                                ToolTip.text: qsTr("Remove row")
+                                ToolTip.text: backend.label("remove_row")
                                 onClicked: backend.removeTableRow(
                                     controlLoader.index, tableRow.rowIndex)
                             }
@@ -299,13 +299,8 @@ ColumnLayout {
             HoverHandler { id: statusHover }
         }
         Button {
-            visible: backend.generating
-            text: qsTr("Cancel")
-            onClicked: backend.cancel()
-        }
-        Button {
-            visible: !backend.generating
-            enabled: backend.ready
+            visible: backend.generateVisible
+            enabled: backend.generateEnabled
             highlighted: true
             text: backend.generateLabel
             onClicked: backend.generate()

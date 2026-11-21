@@ -10,8 +10,13 @@
 #include <QHoverEvent>
 #include <QIcon>
 #include <QImage>
+#include <QImageWriter>
+#include <QQuickItemGrabResult>
 #include <QMouseEvent>
+#include <QTouchEvent>
+#include <QPointingDevice>
 #include <QKeyEvent>
+#include <QFocusEvent>
 #include <QPointer>
 #include <QOpenGLFramebufferObject>
 #include <QOpenGLFramebufferObjectFormat>
@@ -29,6 +34,9 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <vector>
+#include <optional>
+#include <utility>
 
 struct ShrimplyPaletteColor {
     float red;
@@ -58,13 +66,22 @@ extern "C" void shrimply_qt_set_platform_palette(const ShrimplyPlatformPalette *
 extern "C" bool shrimply_qt_render_timeline(std::uint32_t width, std::uint32_t height,
                                              float scale, float red, float green,
                                              float blue, float alpha, bool dark,
-                                             std::uintptr_t native_window);
+                                             std::uintptr_t native_window, bool force_redraw);
 extern "C" bool shrimply_qt_render_preview(std::uint32_t width, std::uint32_t height,
                                             float scale, float red, float green,
                                             float blue, float alpha, bool dark,
                                             bool fullscreen);
 extern "C" bool shrimply_qt_render_audio_meter(std::uint32_t width, std::uint32_t height,
                                                 float scale, bool dark);
+struct ShrimplyTouchPoint {
+    std::int32_t id;
+    float x;
+    float y;
+    std::uint32_t phase;
+};
+static_assert(sizeof(ShrimplyTouchPoint) == 16);
+extern "C" void shrimply_qt_timeline_touch(const ShrimplyTouchPoint *points, std::size_t count);
+extern "C" void shrimply_qt_timeline_cancel_input();
 extern "C" void shrimply_qt_timeline_pointer_move(float x, float y, bool control, bool shift);
 extern "C" std::uint8_t shrimply_qt_timeline_pointer_cursor();
 extern "C" void shrimply_qt_timeline_pointer_leave();
@@ -73,7 +90,9 @@ extern "C" void shrimply_qt_timeline_pointer_press(std::uint8_t button, float x,
 extern "C" void shrimply_qt_timeline_pointer_release(std::uint8_t button, float x, float y,
                                                        bool control, bool shift);
 extern "C" void shrimply_qt_timeline_scroll(float dx, float dy, bool control, bool shift);
+extern "C" bool shrimply_qt_timeline_take_context_menu(float *position);
 extern "C" bool shrimply_qt_timeline_take_track_add_menu();
+extern "C" bool shrimply_qt_timeline_track_add_menu_bottom_sheet();
 extern "C" bool shrimply_qt_timeline_take_error();
 extern "C" float shrimply_qt_timeline_track_add_menu_x();
 extern "C" float shrimply_qt_timeline_track_add_menu_y();
@@ -100,6 +119,9 @@ extern "C" std::size_t shrimply_qt_timeline_context_menu_label(std::size_t index
 extern "C" std::size_t shrimply_qt_timeline_context_menu_count();
 extern "C" std::uint8_t shrimply_qt_timeline_context_menu_kind(std::size_t index);
 extern "C" bool shrimply_qt_timeline_context_menu_enabled(std::size_t index);
+extern "C" std::int8_t shrimply_qt_timeline_context_menu_checked(std::size_t index);
+extern "C" double shrimply_qt_timeline_tools_progress();
+extern "C" double shrimply_qt_timeline_audio_monitor_progress();
 extern "C" double shrimply_qt_timeline_context_menu_value(std::size_t index);
 extern "C" double shrimply_qt_timeline_context_menu_minimum(std::size_t index);
 extern "C" double shrimply_qt_timeline_context_menu_maximum(std::size_t index);
@@ -142,6 +164,9 @@ extern "C" bool shrimply_qt_timeline_begin_pointer_lock(void *display, void *sur
 #endif
 extern "C" void shrimply_qt_timeline_relative_motion(float x, float y);
 extern "C" void shrimply_qt_timeline_end_pointer_lock(bool control, bool shift);
+extern "C" bool shrimply_qt_preview_keyboard(float width, float height, std::uint32_t key,
+    const std::uint8_t *text, std::size_t length, bool pressed, bool repeat,
+    bool control, bool shift, bool alt, bool meta);
 extern "C" void shrimply_qt_preview_pointer_move(float width, float height, float x, float y,
                                                     bool control, bool shift, bool alt);
 extern "C" std::uint8_t shrimply_qt_preview_pointer_cursor();
@@ -248,6 +273,7 @@ QString timeline_clipboard_marker() {
 class TimelineRenderer final : public QQuickFramebufferObject::Renderer {
 public:
     QOpenGLFramebufferObject *createFramebufferObject(const QSize &size) override {
+        surface_invalidated_ = true;
         return make_fbo(size);
     }
 
@@ -261,6 +287,9 @@ public:
 
     void render() override {
         const QSize size = framebufferObject()->size();
+        const qint64 palette_key = QGuiApplication::palette().cacheKey();
+        const bool force_redraw = std::exchange(surface_invalidated_, false) || palette_key != palette_key_;
+        palette_key_ = palette_key;
         const ShrimplyPlatformPalette palette = platform_palette();
         shrimply_qt_set_platform_palette(&palette);
         if (!shrimply_qt_render_timeline(
@@ -268,8 +297,28 @@ public:
                 static_cast<std::uint32_t>(size.height()), scale_,
                 palette.accent_bg.red, palette.accent_bg.green,
                 palette.accent_bg.blue, palette.accent_bg.alpha,
-                dark_palette(), native_window_)) {
+                dark_palette(), native_window_, force_redraw)) {
             qFatal("Shrimply could not render the timeline with OpenGL");
+        }
+        const std::pair progress{shrimply_qt_timeline_tools_progress(), shrimply_qt_timeline_audio_monitor_progress()};
+        if (progress_ != progress) {
+            progress_ = progress;
+            const QPointer<shrimply::TimelineSurface> surface = surface_;
+            QMetaObject::invokeMethod(surface_, [surface, progress]() {
+                if (surface) surface->setTimelineLayoutProgress(progress.first, progress.second);
+            }, Qt::QueuedConnection);
+        }
+        float context_position[3];
+        if (shrimply_qt_timeline_take_context_menu(context_position)) {
+            const QPointF point(context_position[0], context_position[1]);
+            const bool bottom_sheet = context_position[2] != 0;
+            const QPointer<shrimply::TimelineSurface> surface = surface_;
+            QMetaObject::invokeMethod(surface_, [surface, point, bottom_sheet]() {
+                if (surface) {
+                    emit surface->contextMenuItemsChanged();
+                    emit surface->contextMenuRequested(point.x(), point.y(), bottom_sheet);
+                }
+            }, Qt::QueuedConnection);
         }
         if (shrimply_qt_timeline_take_track_add_menu()) {
             const QPointer<shrimply::TimelineSurface> surface = surface_;
@@ -315,6 +364,9 @@ public:
 
 private:
     QPointer<shrimply::TimelineSurface> surface_;
+    std::optional<std::pair<double, double>> progress_;
+    bool surface_invalidated_ = true;
+    qint64 palette_key_ = 0;
     float scale_ = 1.0f;
     std::uintptr_t native_window_ = 0;
 };
@@ -448,6 +500,23 @@ void update_preview_cursor(QQuickItem *item) {
     }
 }
 
+bool preview_keyboard(shrimply::PreviewSurface *surface, QKeyEvent *event, bool pressed) {
+    const QByteArray text = event->text().toUtf8();
+    const auto modifiers = event->modifiers();
+    const bool handled = shrimply_qt_preview_keyboard(surface->width(), surface->height(), event->key(),
+        reinterpret_cast<const std::uint8_t *>(text.constData()), text.size(),
+        pressed, event->isAutoRepeat(), modifiers.testFlag(Qt::ControlModifier),
+        modifiers.testFlag(Qt::ShiftModifier), modifiers.testFlag(Qt::AltModifier),
+        modifiers.testFlag(Qt::MetaModifier));
+    if (handled) {
+        update_preview_cursor(surface);
+        emit surface->paintToolChanged();
+        event->accept();
+        surface->update();
+    }
+    return handled;
+}
+
 } // namespace
 
 namespace shrimply {
@@ -482,10 +551,18 @@ TimelineSurface::TimelineSurface(QQuickItem *parent) : QQuickFramebufferObject(p
     setMirrorVertically(true);
     setAcceptedMouseButtons(Qt::LeftButton | Qt::MiddleButton | Qt::RightButton);
     setAcceptHoverEvents(true);
+    setAcceptTouchEvents(true);
 }
 
 QQuickFramebufferObject::Renderer *TimelineSurface::createRenderer() const {
     return new TimelineRenderer();
+}
+
+void TimelineSurface::setTimelineLayoutProgress(qreal tools, qreal monitor) {
+    if (tools_progress_ == tools && audio_monitor_progress_ == monitor) return;
+    tools_progress_ = tools;
+    audio_monitor_progress_ = monitor;
+    emit timelineLayoutChanged();
 }
 
 bool TimelineSurface::magnetEnabled() const {
@@ -579,6 +656,9 @@ QVariantList TimelineSurface::contextMenuItems() const {
                     QString::fromUtf8(reinterpret_cast<const char *>(buffer)));
         item.insert(QStringLiteral("enabled"),
                     shrimply_qt_timeline_context_menu_enabled(index));
+        const std::int8_t checked = shrimply_qt_timeline_context_menu_checked(index);
+        item.insert(QStringLiteral("checkable"), checked >= 0);
+        item.insert(QStringLiteral("checked"), checked == 1);
         item.insert(QStringLiteral("value"), shrimply_qt_timeline_context_menu_value(index));
         item.insert(QStringLiteral("minimum"), shrimply_qt_timeline_context_menu_minimum(index));
         item.insert(QStringLiteral("maximum"), shrimply_qt_timeline_context_menu_maximum(index));
@@ -612,7 +692,8 @@ QVariantList TimelineSurface::trackAddMenuItems() const {
 void TimelineSurface::presentTrackAddMenu() {
     emit trackAddMenuItemsChanged();
     emit trackAddMenuRequested(shrimply_qt_timeline_track_add_menu_x(),
-                               shrimply_qt_timeline_track_add_menu_y());
+                               shrimply_qt_timeline_track_add_menu_y(),
+                               shrimply_qt_timeline_track_add_menu_bottom_sheet());
 }
 
 void TimelineSurface::presentTimelineError() {
@@ -774,13 +855,43 @@ void TimelineSurface::hoverLeaveEvent(QHoverEvent *event) {
     update();
 }
 
+void TimelineSurface::touchEvent(QTouchEvent *event) {
+    // Indirect trackpads retain Qt's native mouse/wheel path.
+    if (event->pointingDevice()->type() != QInputDevice::DeviceType::TouchScreen) {
+        event->ignore();
+        return;
+    }
+    if (event->type() == QEvent::TouchCancel) {
+        shrimply_qt_timeline_cancel_input();
+    } else {
+        if (event->type() == QEvent::TouchBegin) forceActiveFocus(Qt::MouseFocusReason);
+        std::vector<ShrimplyTouchPoint> points;
+        points.reserve(event->points().size());
+        for (const auto &point : event->points()) {
+            const std::uint32_t phase = point.state() == QEventPoint::State::Pressed ? 0
+                : point.state() == QEventPoint::State::Released ? 2 : 1;
+            points.push_back({ point.id(), static_cast<float>(point.position().x()),
+                static_cast<float>(point.position().y()), phase });
+        }
+        shrimply_qt_timeline_touch(points.data(), points.size());
+    }
+    // Accepting the real contacts prevents a second emulated mouse gesture.
+    event->accept();
+    update();
+}
+
+void TimelineSurface::touchUngrabEvent() {
+    shrimply_qt_timeline_cancel_input();
+    update();
+}
+
 void TimelineSurface::mousePressEvent(QMouseEvent *event) {
     forceActiveFocus(Qt::MouseFocusReason);
     if (event->button() == Qt::RightButton) {
         if (shrimply_qt_timeline_prepare_context_menu(event->position().x(),
                                                        event->position().y()) > 0) {
             emit contextMenuItemsChanged();
-            emit contextMenuRequested(event->position().x(), event->position().y());
+            emit contextMenuRequested(event->position().x(), event->position().y(), false);
             update();
         }
         event->accept();
@@ -891,6 +1002,7 @@ PreviewSurface::PreviewSurface(QQuickItem *parent) : QQuickFramebufferObject(par
     setMirrorVertically(true);
     setAcceptedMouseButtons(Qt::LeftButton | Qt::MiddleButton);
     setAcceptHoverEvents(true);
+    setActiveFocusOnTab(true);
 }
 
 QQuickFramebufferObject::Renderer *PreviewSurface::createRenderer() const {
@@ -964,6 +1076,36 @@ void PreviewSurface::selectTransformTool() {
     shrimply_qt_preview_select_transform_tool();
     emit paintToolChanged();
     update();
+}
+
+void PreviewSurface::cancelPointerInput() {
+    mouseUngrabEvent();
+}
+
+void PreviewSurface::captureContextImage(bool save) {
+    const auto grab = grabToImage();
+    if (!grab) {
+        emit previewImageCaptureFailed(QString());
+        return;
+    }
+    connect(grab.data(), &QQuickItemGrabResult::ready, this, [this, grab, save]() {
+        const QImage image = grab->image();
+        if (image.isNull()) {
+            emit previewImageCaptureFailed(QString());
+        } else if (save) {
+            captured_image_ = image;
+            emit previewImageSaveRequested();
+        } else {
+            QGuiApplication::clipboard()->setImage(image);
+        }
+    }, Qt::SingleShotConnection);
+}
+
+void PreviewSurface::saveCapturedImage(const QUrl &destination) {
+    QImage image = std::exchange(captured_image_, QImage());
+    if (destination.isEmpty()) return;
+    QImageWriter writer(destination.toLocalFile(), "png");
+    if (!writer.write(image)) emit previewImageCaptureFailed(writer.errorString());
 }
 
 void PreviewSurface::hoverMoveEvent(QHoverEvent *event) {
@@ -1061,6 +1203,19 @@ void PreviewSurface::wheelEvent(QWheelEvent *event) {
     update_preview_cursor(this);
     event->accept();
     update();
+}
+
+void PreviewSurface::keyPressEvent(QKeyEvent *event) {
+    if (!preview_keyboard(this, event, true)) QQuickFramebufferObject::keyPressEvent(event);
+}
+
+void PreviewSurface::keyReleaseEvent(QKeyEvent *event) {
+    if (!preview_keyboard(this, event, false)) QQuickFramebufferObject::keyReleaseEvent(event);
+}
+
+void PreviewSurface::focusOutEvent(QFocusEvent *event) {
+    cancelPointerInput();
+    QQuickFramebufferObject::focusOutEvent(event);
 }
 
 void PreviewSurface::mouseUngrabEvent() {

@@ -2261,6 +2261,23 @@ id = "Delay"
 pl = "Opóźnienie"
 ar = "التأخير"
 
+["Delete keyframe at playhead"]
+en = "Delete keyframe at playhead"
+es = "Eliminar fotograma clave en el cabezal"
+fr = "Supprimer l’image clé à la tête de lecture"
+de = "Keyframe am Abspielkopf löschen"
+ja = "再生位置のキーフレームを削除"
+zh-CN = "删除播放头位置的关键帧"
+zh-TW = "刪除播放磁頭位置的關鍵影格"
+ko = "재생 헤드 위치의 키프레임 삭제"
+ru = "Удалить ключевой кадр на позиции курсора воспроизведения"
+pt = "Excluir quadro-chave no indicador de reprodução"
+tr = "Oynatma imlecindeki anahtar kareyi sil"
+it = "Elimina keyframe alla testina di riproduzione"
+id = "Hapus keyframe di playhead"
+pl = "Usuń klatkę kluczową w miejscu głowicy odtwarzania"
+ar = "حذف إطار رئيسي عند رأس التشغيل"
+
 ["Delete selected keyframe"]
 en = "Delete selected keyframe"
 es = "Eliminar fotograma clave seleccionado"

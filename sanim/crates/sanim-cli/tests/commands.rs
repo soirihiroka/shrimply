@@ -93,7 +93,7 @@ fn lint_is_static_and_exposes_unused_expensive_work() {
 #[test]
 fn profile_measures_requested_frames_and_warm_cache_reuse() {
     let (output, bytes) = run(
-        "add(Circle(radius=4pt))\nwait(1s)",
+        "Animation(children=[Box(width=2*(4pt), height=2*(4pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)])\nwait(1s)",
         &["profile", "--json", "--samples", "5"],
     );
     assert!(
@@ -109,6 +109,24 @@ fn profile_measures_requested_frames_and_warm_cache_reuse() {
     assert_eq!(passes[1]["states_computed"], 0);
     assert_eq!(passes[1]["geometries_prepared"], 0);
     assert_eq!(passes[1]["recording_cache_hits"], 5);
+}
+
+#[test]
+fn native_work_limit_is_exposed_independently_through_cli() {
+    let source = "let terrain=VoxelGrid(size=[16,16,16]).heightmap(Density(value=8),Color(\"green3\"))\nAnimation()";
+    let (limited, _) = run(source, &["check", "--json", "--max-native-work", "10"]);
+    assert_eq!(limited.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&limited.stderr).contains("native work"),
+        "{}",
+        String::from_utf8_lossy(&limited.stderr)
+    );
+    let (allowed, _) = run(source, &["check", "--json", "--max-native-work", "1000"]);
+    assert!(
+        allowed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&allowed.stderr)
+    );
 }
 
 #[test]
@@ -161,7 +179,7 @@ fn malformed_profile_and_duplicate_options_have_argument_exit_status() {
 #[test]
 fn render_writes_actual_png() {
     let (output, png) = run(
-        "add(Circle(radius= 4pt))\n",
+        "Animation(children=[Box(width=2*(4pt), height=2*(4pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)])\n",
         &["render", "--output", "OUTPUT"],
     );
     assert!(
@@ -170,6 +188,35 @@ fn render_writes_actual_png() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert_eq!(&png[..8], b"\x89PNG\r\n\x1a\n");
+}
+#[test]
+fn standalone_render_supports_native_texture_drawing() {
+    let (output, png) = run(
+        r#"
+let source=Texture(size=[32,32])
+let painted=source.draw(<Box width={12pt} height={12pt} fill="red" x_align={Align.Center} y_align={Align.Center}/>)
+let image=<Image src={painted} width={32pt} height={32pt} x_align={Align.Center} y_align={Align.Center}/>
+Animation(children=[image])
+wait(1s)
+"#,
+        &["render", "--output", "OUTPUT"],
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let mut reader = png::Decoder::new(std::io::Cursor::new(png))
+        .read_info()
+        .unwrap();
+    let mut rgba = vec![0; reader.output_buffer_size().unwrap()];
+    let info = reader.next_frame(&mut rgba).unwrap();
+    assert_eq!((info.width, info.height), (32, 32));
+    assert_eq!(info.color_type, png::ColorType::Rgba);
+    assert_eq!(
+        &rgba[(16 * 32 + 16) * 4..(16 * 32 + 16) * 4 + 4],
+        [255, 0, 0, 255]
+    );
 }
 #[test]
 fn reflected_override_is_validated() {
@@ -199,7 +246,7 @@ fn invalid_override_fails() {
 #[test]
 fn bounded_watch_produces_initial_revision() {
     let (output, png) = run(
-        "add(Circle(radius= 2pt))\n",
+        "Animation(children=[Box(width=2*(2pt), height=2*(2pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)])\n",
         &["watch", "--output", "OUTPUT", "--cycles", "1"],
     );
     assert!(
@@ -239,24 +286,24 @@ fn unknown_option_fails() {
 }
 #[test]
 fn file_root_blocks_escape() {
-    let (output, _) = run("let data = read<String>(\"../outside.json\")\n", &["check"]);
-    assert!(!output.status.success());
-    assert!(
-        String::from_utf8(output.stderr)
-            .unwrap()
-            .contains("escapes")
+    let (output, _) = run(
+        "let data = read<String>(\"../outside.json\")\nassert(data!=\"\")\nAnimation()\n",
+        &["check"],
     );
+    assert!(!output.status.success());
+    let diagnostic = String::from_utf8(output.stderr).unwrap();
+    assert!(diagnostic.contains("escapes"), "{diagnostic}");
 }
 #[test]
 fn script_filename_with_spaces() {
-    let (output, _) = run("let label = \"hello world\"\n", &["inspect"]);
+    let (output, _) = run("let label = \"hello world\"\nAnimation()\n", &["inspect"]);
     assert!(output.status.success());
 }
 
 #[test]
 fn video_renders_complete_independent_h264_stream() {
     let (output, mp4) = run(
-        "let marker=Circle(radius=4pt,fill=Color(\"red\"))\nMoveTo(marker, Vec2(25%,0%), duration=300ms, ease=\"linear\")\n",
+        "let marker=Box(fill=Color(\"red\"), width=2*(4pt), height=2*(4pt), radius=\"full\", x_align=Align.Center, y_align=Align.Center)\nmarker.move_to([25%, 0%], duration=300ms, ease=\"linear\")\n",
         &["video", "--output", "OUTPUT"],
     );
     assert!(
@@ -293,7 +340,7 @@ fn video_reports_missing_encoder_and_rejects_invalid_dimensions() {
 
 #[test]
 fn cli_duration_reports_exact_time_without_rendering() {
-    let (output, bytes) = run("repeat 100000{wait(1ms)}", &["duration", "--json"]);
+    let (output, bytes) = run("wait(1ms).repeat(100000)", &["duration", "--json"]);
     assert!(
         output.status.success(),
         "{}",
@@ -373,7 +420,7 @@ fn event_watch_reports_repeated_failure_after_recovery_to_same_good_source() {
     }
     let dir = tempfile::tempdir().unwrap();
     let source = dir.path().join("main.sanim");
-    let good = "add(Circle(radius=2pt))\nwait(1s)\n";
+    let good = "Animation(children=[Box(width=2*(2pt), height=2*(2pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)])\nwait(1s)\n";
     std::fs::write(&source, good).unwrap();
     let mut child = Command::new(env!("CARGO_BIN_EXE_sanim"))
         .arg("watch")
@@ -533,4 +580,64 @@ fn formatter_supports_stdin_and_validates_its_options() {
         .output()
         .unwrap();
     assert_eq!(output.status.code(), Some(2));
+}
+
+#[test]
+fn indefinite_sources_report_extent_and_require_an_export_length() {
+    let (output, _) = run(
+        r#"return Animation(children=[wait(100ms),wait(forever)],flow="sequence")"#,
+        &["duration", "--json"],
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["indefinite"], true);
+    assert_eq!(json["seconds"], "1/10");
+    let (output, _) = run("return wait(forever)", &["video", "--output", "OUTPUT"]);
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("--duration 10s"));
+    let (output, png) = run(
+        "return wait(forever)",
+        &["render", "--time", "60s", "--output", "OUTPUT"],
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!png.is_empty());
+}
+
+#[test]
+fn inspect_exports_compiled_ir_without_expanding_unused_builder_dags() {
+    use std::time::{Duration, Instant};
+    let mut source = String::from("let p0=wait(1ms)\n");
+    for depth in 1..=16 {
+        source.push_str(&format!(
+            "let p{depth}=Animation(children=[p{},p{}])\n",
+            depth - 1,
+            depth - 1
+        ));
+    }
+    source.push_str("wait(1s)\n");
+    let started = Instant::now();
+    let (output, _) = run(&source, &["inspect"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        output.stdout.len() < 65536,
+        "inspect output follows the compiled scene, not unused builder DAG occurrences"
+    );
+    assert!(started.elapsed() < Duration::from_secs(5));
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(value.get("animation").is_some());
+    assert!(value.get("symbols").is_some());
+    assert!(value.get("plan").is_none());
+    assert!(value.get("bindings").is_none());
 }

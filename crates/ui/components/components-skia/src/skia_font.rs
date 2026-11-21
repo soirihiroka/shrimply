@@ -1,8 +1,63 @@
-use std::cell::RefCell;
+use std::{
+    cell::RefCell,
+    sync::{
+        Arc, OnceLock,
+        atomic::{AtomicU64, Ordering},
+    },
+};
 
 use hashbrown::HashMap;
 use skia_safe::font_style::{Slant, Weight, Width};
 use skia_safe::{Font, FontHinting, FontMgr, FontStyle, Typeface, font};
+
+struct SystemFonts {
+    generation: u64,
+    manager: FontMgr,
+    requested: HashMap<(String, i32), Option<Typeface>>,
+    defaults: HashMap<i32, Option<Typeface>>,
+    families: Option<Vec<String>>,
+}
+
+thread_local! {static FONTS: RefCell<Option<SystemFonts>> = const {RefCell::new(None)};}
+
+pub(crate) fn font_generation() -> u64 {
+    static GENERATION: AtomicU64 = AtomicU64::new(0);
+    static CHANGES: OnceLock<shrimply_fonts::FontChange> = OnceLock::new();
+    CHANGES.get_or_init(|| {
+        shrimply_fonts::subscribe(Arc::new(|| {
+            GENERATION
+                .fetch_update(Ordering::AcqRel, Ordering::Acquire, |value| {
+                    value.checked_add(1)
+                })
+                .expect("font generation overflow");
+        }))
+    });
+    GENERATION.load(Ordering::Acquire)
+}
+
+fn with_fonts<R>(access: impl FnOnce(&mut SystemFonts) -> R) -> R {
+    let generation = font_generation();
+    FONTS.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        if slot
+            .as_ref()
+            .is_none_or(|fonts| fonts.generation != generation)
+        {
+            *slot = Some(SystemFonts {
+                generation,
+                manager: FontMgr::new(),
+                requested: HashMap::new(),
+                defaults: HashMap::new(),
+                families: None,
+            });
+        }
+        access(slot.as_mut().expect("system font manager initialized"))
+    })
+}
+
+pub(crate) fn font_manager() -> FontMgr {
+    with_fonts(|fonts| fonts.manager.clone())
+}
 
 pub fn font_with_families(families: &[String], weight: f32, size: f32) -> Font {
     let size = size.max(1.0);
@@ -19,16 +74,17 @@ pub fn font_with_families(families: &[String], weight: f32, size: f32) -> Font {
 }
 
 pub fn family_names() -> Vec<String> {
-    thread_local! {
-        static FAMILY_NAMES: Vec<String> = {
-            let mut families: Vec<String> = FontMgr::new().family_names().collect();
-            families.sort();
-            families.dedup();
-            families
-        };
-    }
-
-    FAMILY_NAMES.with(Clone::clone)
+    with_fonts(|fonts| {
+        fonts
+            .families
+            .get_or_insert_with(|| {
+                let mut families: Vec<String> = fonts.manager.family_names().collect();
+                families.sort();
+                families.dedup();
+                families
+            })
+            .clone()
+    })
 }
 
 fn configured_font(mut font: Font) -> Font {
@@ -53,24 +109,16 @@ fn requested_typeface_for_family(family: &str, weight: i32) -> Option<Typeface> 
     if family.is_empty() {
         return None;
     }
-    thread_local! {
-        static REQUESTED_TYPEFACES: RefCell<HashMap<(String, i32), Option<Typeface>>> =
-            RefCell::new(HashMap::new());
-    }
-
-    REQUESTED_TYPEFACES.with(|typefaces| {
-        let key = (family.to_string(), weight);
-        if let Some(typeface) = typefaces.borrow().get(&key) {
-            return typeface.clone();
-        }
-        let typeface = resolve_requested_typeface(family, weight);
-        typefaces.borrow_mut().insert(key, typeface.clone());
-        typeface
+    with_fonts(|fonts| {
+        fonts
+            .requested
+            .entry((family.to_string(), weight))
+            .or_insert_with(|| resolve_requested_typeface(&fonts.manager, family, weight))
+            .clone()
     })
 }
 
-fn resolve_requested_typeface(family: &str, weight: i32) -> Option<Typeface> {
-    let manager = FontMgr::new();
+fn resolve_requested_typeface(manager: &FontMgr, family: &str, weight: i32) -> Option<Typeface> {
     let style = font_style(weight);
     manager
         .match_family_style(family, style)
@@ -78,23 +126,16 @@ fn resolve_requested_typeface(family: &str, weight: i32) -> Option<Typeface> {
 }
 
 fn default_typeface(weight: i32) -> Option<Typeface> {
-    thread_local! {
-        static DEFAULT_TYPEFACES: RefCell<HashMap<i32, Option<Typeface>>> =
-            RefCell::new(HashMap::new());
-    }
-
-    DEFAULT_TYPEFACES.with(|typefaces| {
-        if let Some(typeface) = typefaces.borrow().get(&weight) {
-            return typeface.clone();
-        }
-        let typeface = resolve_default_typeface(weight);
-        typefaces.borrow_mut().insert(weight, typeface.clone());
-        typeface
+    with_fonts(|fonts| {
+        fonts
+            .defaults
+            .entry(weight)
+            .or_insert_with(|| resolve_default_typeface(&fonts.manager, weight))
+            .clone()
     })
 }
 
-fn resolve_default_typeface(weight: i32) -> Option<Typeface> {
-    let manager = FontMgr::new();
+fn resolve_default_typeface(manager: &FontMgr, weight: i32) -> Option<Typeface> {
     let style = font_style(weight);
     for family in [
         "Cantarell",

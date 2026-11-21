@@ -4,15 +4,10 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-async-channel.workspace = true
 gtk.workspace = true
-shrimply-audio-engine = { workspace = true }
 shrimply-math-core = { workspace = true }
-shrimply-project-document = { workspace = true, default-features = true }
-shrimply-compute-client = { workspace = true }
 shrimply-editor-state = { workspace = true }
 shrimply-tts = { workspace = true }
 shrimply-components-gtk = { workspace = true }
 shrimply-inspector-core = { workspace = true, default-features = true }
 tracing.workspace = true
-uuid = { workspace = true, features = ["v4"] }

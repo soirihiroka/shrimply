@@ -33,7 +33,9 @@ pub fn draw_import_preview(
             {
                 import::VisualMediaKind::Video => Icon("video-camera-symbolic"),
                 import::VisualMediaKind::Image => Icon("image-symbolic"),
-                import::VisualMediaKind::Gif => Icon("container3-symbolic"),
+                import::VisualMediaKind::Gif | import::VisualMediaKind::AnimatedImage => {
+                    Icon("container3-symbolic")
+                }
                 import::VisualMediaKind::Svg => Icon("boxy-svg-symbolic"),
                 import::VisualMediaKind::Pdf => Icon("rich-text-symbolic"),
                 import::VisualMediaKind::Manim => Icon("manim-symbolic"),

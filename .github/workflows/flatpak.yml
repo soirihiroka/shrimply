@@ -185,6 +185,7 @@ jobs:
         run: |
           {
             sed '/^  - name: shrimply-gtk$/,$d' dev.shrimply.Shrimply.yml
+            git rev-parse :external/ffmpeg
             printf '%s\n' "${{ hashFiles('packaging/flatpak/*.patch') }}"
           } \
             | sha256sum \

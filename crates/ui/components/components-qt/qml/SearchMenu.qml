@@ -5,7 +5,7 @@ import dev.shrimply.components
 import QtQuick.Controls
 import QtQuick.Layouts
 
-Menu {
+AdaptiveMenu {
     id: root
     property var labels: []
     property var searchTerms: labels
@@ -20,11 +20,10 @@ Menu {
         labels, searchTerms, search.text)
     signal activated(int index)
 
-    width: 280
+    preferredWidth: 280
     padding: 6
     focus: true
-    popupType: Popup.Window
-    closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutsideParent
+    closePolicy: Popup.CloseOnEscape | (bottomSheet ? Popup.CloseOnPressOutside : Popup.CloseOnPressOutsideParent)
 
     function choose(row) {
         if (row < 0 || row >= matchingIndices.length)

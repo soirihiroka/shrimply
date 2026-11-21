@@ -1,3 +1,5 @@
+pub mod benchmark;
+pub mod capture;
 mod decode;
 pub use decode::DecodedImage;
 mod generated;
@@ -5,6 +7,9 @@ mod items;
 mod layers;
 pub mod math;
 mod media;
+pub use shrimply_drawing_skia::media::rgba_pixels;
+pub mod playback;
+pub mod worker;
 
 pub use shrimply_project_evaluation::FrameAudioAnalysis;
 
@@ -36,6 +41,17 @@ pub struct Layer {
     pub stabilization: Option<shrimply_visual_core::stabilization::StabilizationWarp>,
 }
 
+impl Layer {
+    pub fn has_effects(&self) -> bool {
+        !self.effects.is_empty()
+            || !self.transitions.is_empty()
+            || self.motion_blur.is_some()
+            || self.alpha_mask.is_some()
+            || self.video_mask.is_some()
+            || self.stabilization.is_some()
+    }
+}
+
 pub struct VideoMask {
     pub image: DecodedImage,
     pub size: (u32, u32),
@@ -46,7 +62,7 @@ pub enum Source {
     Generated(Box<shrimply_visual_core::generated::GeneratedFrame>),
     Group(Vec<Layer>),
     Image(Image),
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "android"))]
     Video(std::sync::Arc<shrimply_visual_frame::VideoFrame>),
     Background(Box<shrimply_render_core::background_spirv::BackgroundUniforms>),
     Manim(ManimFrame),
@@ -138,7 +154,8 @@ pub struct Scene {
         std::rc::Rc<std::cell::RefCell<shrimply_paint_skia::PaintCache>>,
     >,
     media: media::Media,
-    expressions: TransformExpressionCache,
+    /// Evaluation and vector drawing share one engine and compiled-expression lifetime.
+    pub expressions: TransformExpressionCache,
     previous_time: Option<Time>,
     playing: bool,
     scrubbing: bool,
@@ -184,6 +201,7 @@ impl Scene {
         std::mem::take(&mut self.sanim_errors)
     }
     pub fn set_source_waker(&mut self, wake: Option<shrimply_visual_core::generated::SourceWake>) {
+        self.media.set_source_waker(wake.clone());
         for source in self.sanim.values_mut() {
             source.set_waker(wake.clone());
         }
@@ -233,9 +251,10 @@ impl Scene {
             || self.scrubbing && self.requested_accuracy != CompositeAccuracy::FULLY_ACCURATE
     }
 
-    pub fn set_interaction(&mut self, playing: bool, scrubbing: bool) {
-        self.playing = playing;
-        self.scrubbing = scrubbing;
+    pub fn set_interaction(&mut self, accuracy: CompositeAccuracy) {
+        self.playing = accuracy.continuous_playback();
+        self.scrubbing = !accuracy.time_accurate();
+        self.requested_accuracy = accuracy;
     }
 
     /// Request another frame without discarding decoder or source caches.
@@ -310,7 +329,7 @@ impl Scene {
             .moved_at
             .is_none_or(|moved| now.duration_since(moved) >= FINAL_PREVIEW_DELAY);
         let accuracy = if self.playing {
-            CompositeAccuracy::CONTINUOUS_TIME_ACCURATE
+            self.requested_accuracy
         } else if !self.scrubbing || settled {
             CompositeAccuracy::FULLY_ACCURATE
         } else {

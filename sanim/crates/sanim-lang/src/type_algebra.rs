@@ -152,46 +152,36 @@ pub(crate) fn member(ty: Type, name: &str) -> Result<Type, String> {
         Type::Dict | Type::Data => Err(format!(
             "dictionary values use brackets: write value[\"{name}\"] instead of value.{name}"
         )),
-        Type::Record(fields) => fields.get(name).cloned().ok_or_else(|| {
-            format!(
-                "unknown field '{name}'; available fields: {}",
-                fields.keys().cloned().collect::<Vec<_>>().join(", ")
-            )
-        }),
-        Type::Vector(n, Some(unit))
-            if ["x", "y", "z", "w"]
-                .iter()
-                .take(n)
-                .any(|field| *field == name) =>
-        {
-            Ok(Type::Numeric(unit))
-        }
+        Type::Record(fields) => Type::Record(fields).record_field(name),
         Type::Fraction if matches!(name, "numerator" | "denominator") => {
             Ok(Type::Numeric(Unit::Number))
         }
-        Type::Matrix4 if name == "rows" => Ok(Type::List(
-            Box::new(Type::List(
-                Box::new(Type::Numeric(Unit::Number)),
-                sanim_core::ListLength::Unknown,
-            )),
-            sanim_core::ListLength::Unknown,
-        )),
         Type::Element
             if sanim_core::code::view::INPUTS
                 .iter()
+                .chain(sanim_core::voxel::INPUTS)
                 .any(|(input, _)| *input == name) =>
         {
             let property = sanim_core::code::view::INPUTS
                 .iter()
+                .chain(sanim_core::voxel::INPUTS)
                 .find(|(input, _)| *input == name)
                 .expect("checked native code input")
                 .1;
-            Ok(sanim_core::code::view::input_type(property).expect("typed native code input"))
+            Ok(sanim_core::code::view::input_type(property)
+                .or_else(|| sanim_core::voxel::input_type(property))
+                .expect("typed native input"))
         }
         Type::Element => match name {
             "position" | "scroll" => Type::union([
-                Type::Vector(2, Some(Unit::Length)),
-                Type::Vector(2, Some(Unit::Percent)),
+                Type::List(
+                    Box::new(Type::Numeric(Unit::Length)),
+                    sanim_core::ListLength::Exact(2),
+                ),
+                Type::List(
+                    Box::new(Type::Numeric(Unit::Percent)),
+                    sanim_core::ListLength::Exact(2),
+                ),
             ]),
             "opacity" | "scale" => Ok(Type::Numeric(Unit::Number)),
             "rotation" => Ok(Type::Numeric(Unit::Angle)),

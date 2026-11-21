@@ -16,6 +16,64 @@ pub fn inverse_affine(matrix: glam::Mat3) -> Option<glam::Mat3> {
     let determinant = matrix.determinant();
     (determinant.is_finite() && determinant.abs() > f32::EPSILON).then(|| matrix.inverse())
 }
+
+/// The generic sampler reduces exactly to one source texel for these layers.
+pub fn aligned_rgba_layer(p: &crate::Nv12LayerParams, width: u32, height: u32) -> bool {
+    matches!(
+        p.kind,
+        crate::LayerKind::Rgba | crate::LayerKind::RgbaOpaque
+    ) && p.inverse == Mat3::IDENTITY
+        && p.crop == [0.0; 4]
+        && p.padding == [0.0; 4]
+        && p.source_width == width
+        && p.source_height == height
+        && (width as usize).checked_mul(size_of::<u32>()) == Some(p.rgba_pitch)
+        && p.motion_sample_count == 0
+        && p.motion_transform_count == 0
+        && p.address_mode == crate::TextureAddressMode::Transparent
+        && p.sample_method == crate::VideoSampleMethod::Nearest
+        && matches!(
+            p.blend_mode,
+            crate::LayerBlendMode::Normal | crate::LayerBlendMode::PassThrough
+        )
+}
+
+/// Ordinary image quads; custom addressing, filters and motion keep the general sampler.
+pub fn rgba_quad(p: &crate::Nv12LayerParams) -> Option<(Mat3, [f32; 4])> {
+    use crate::{LayerBlendMode, LayerKind, TextureAddressMode, VideoSampleMethod};
+    if p.source_width == 0
+        || p.source_height == 0
+        || p.motion_sample_count != 0
+        || p.motion_transform_count != 0
+        || p.padding != [0.; 4]
+        || p.address_mode != TextureAddressMode::Transparent
+        || !matches!(
+            p.blend_mode,
+            LayerBlendMode::Normal | LayerBlendMode::PassThrough
+        )
+        || !(p.sample_method == VideoSampleMethod::Nearest
+            || p.kind == LayerKind::RgbaOpaque
+                && p.crop == [0.; 4]
+                && matches!(
+                    p.sample_method,
+                    VideoSampleMethod::Bilinear | VideoSampleMethod::Bicubic
+                ))
+        || p.crop.iter().any(|edge| !edge.is_finite())
+    {
+        return None;
+    }
+    let width = p.source_width as f32;
+    let height = p.source_height as f32;
+    // Intersect sample_layer's geometric crop with address_index's texel centers.
+    let axis = |size: f32, start: f32, end: f32| {
+        let first = (start - 0.5).ceil().clamp(0., size - 1.);
+        let last = (end - 0.5).floor().clamp(first, size - 1.);
+        (start.max(first), end.min(last + 1.))
+    };
+    let (left, right) = axis(width, width * p.crop[3], width * (1. - p.crop[1]));
+    let (top, bottom) = axis(height, height * p.crop[0], height * (1. - p.crop[2]));
+    Some((inverse_affine(p.inverse)?, [left, top, right, bottom]))
+}
 type SepticControls<T> = SVector<T, 8>;
 
 #[inline(always)]
@@ -923,4 +981,14 @@ pub unsafe fn gaussian_vertical_rgba(
         alpha,
     )
     .to_rgba_u32()
+}
+
+/// A nonempty rectangular tile whose pixel count fits the supplied allocation budget.
+pub fn bounded_tile_extent(size: (u32, u32), max_pixels: usize) -> Option<(u32, u32)> {
+    if size.0 == 0 || size.1 == 0 || max_pixels == 0 {
+        return None;
+    }
+    let width = (size.0 as usize).min(max_pixels);
+    let height = (size.1 as usize).min(max_pixels / width);
+    Some((width as u32, height as u32))
 }

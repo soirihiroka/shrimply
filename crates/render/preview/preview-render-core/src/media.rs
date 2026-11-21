@@ -1,10 +1,11 @@
 use crate::decode;
+use shrimply_drawing_skia::media::{MAX_SOURCE_BYTES, animation::Animation, rgba_pixels};
 use shrimply_math_core::Time;
 use shrimply_preview_provider_skia::accuracy::CompositeAccuracy;
 use shrimply_project_document::project::{
     Asset, AssetSnapshot, ItemAddress, VideoItem, VideoItemContent,
 };
-use skia_safe::{AlphaType, ColorType, Data, Image, ImageInfo, image::CachingHint};
+use skia_safe::{Data, Image};
 use std::{
     collections::HashMap,
     sync::{
@@ -29,6 +30,7 @@ struct Source {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Kind {
     Video,
+    Animation,
     Image,
     Svg,
     Pdf(u32),
@@ -64,7 +66,8 @@ impl Request {
         plane: Plane,
     ) -> Option<Self> {
         let kind = match item.content {
-            VideoItemContent::Media | VideoItemContent::Gif => Kind::Video,
+            VideoItemContent::Media => Kind::Video,
+            VideoItemContent::Gif | VideoItemContent::AnimatedImage => Kind::Animation,
             VideoItemContent::Image => Kind::Image,
             VideoItemContent::Svg => Kind::Svg,
             VideoItemContent::Pdf(ref pdf) => Kind::Pdf(pdf.page),
@@ -134,6 +137,7 @@ struct Slots {
     completed: Option<Completed>,
     stop: bool,
     working: bool,
+    source_waker: Option<shrimply_visual_core::generated::SourceWake>,
 }
 #[derive(Default)]
 struct Shared {
@@ -176,6 +180,14 @@ impl Default for Media {
 }
 
 impl Media {
+    pub fn set_source_waker(&mut self, wake: Option<shrimply_visual_core::generated::SourceWake>) {
+        self.shared
+            .slots
+            .lock()
+            .expect("preview media slots poisoned")
+            .source_waker = wake;
+    }
+
     pub fn set_decoder_limit(&mut self, maximum: usize) {
         assert!(maximum > 0, "video decoder limit must be positive");
         if self.decoder_limit == Some(maximum) {
@@ -274,11 +286,24 @@ impl Media {
                 // Playback can show the last completed frame. A precise seek,
                 // capture, or export must wait for this exact request.
                 !request.accuracy.time_accurate()
-                    || request.accuracy.continuous_playback()
+                    || (request.accuracy.continuous_playback()
+                        && !request.accuracy.content_accurate())
                     || completed == request
             })
         });
         if changed {
+            if !requests.is_empty()
+                && requests
+                    .iter()
+                    .all(|request| request.accuracy.continuous_playback())
+            {
+                shrimply_profiling::increment("Video media / Playback batches requested");
+                if slots.pending.is_some() {
+                    shrimply_profiling::increment(
+                        "Video media / Pending playback batches replaced",
+                    );
+                }
+            }
             slots.pending = Some(Batch {
                 epoch,
                 generation,
@@ -321,6 +346,7 @@ struct Cached {
     source: Source,
     snapshot: AssetSnapshot,
     decoder: Option<decode::Decoder>,
+    animation: Option<Animation>,
     last_used: Instant,
     frame: Option<(Time, CompositeAccuracy, Result<Frame, String>)>,
 }
@@ -378,14 +404,29 @@ fn worker(shared: Arc<Shared>) {
         });
         let mut slots = shared.slots.lock().expect("preview media slots poisoned");
         slots.working = false;
-        if shared.epoch.load(Ordering::Relaxed) == epoch
+        let wake = if shared.epoch.load(Ordering::Relaxed) == epoch
             && shared.generation.load(Ordering::Relaxed) == batch.generation
         {
+            if slots.completed.is_some()
+                && batch
+                    .requests
+                    .iter()
+                    .any(|request| request.accuracy.continuous_playback())
+            {
+                shrimply_profiling::increment("Video media / Completed playback batches replaced");
+            }
             slots.completed = Some(Completed {
                 epoch,
                 generation: batch.generation,
                 frames: result.map(|()| frames),
             });
+            slots.source_waker.clone()
+        } else {
+            None
+        };
+        drop(slots);
+        if let Some(wake) = wake {
+            wake();
         }
     }
 }
@@ -427,13 +468,15 @@ fn load(
             source: source.clone(),
             snapshot,
             decoder: None,
+            animation: None,
             last_used: Instant::now(),
             frame: None,
         });
     }
     let entry = cache.get(&request.id).expect("preview cache inserted");
     if let Some((time, accuracy, frame)) = &entry.frame
-        && (source.kind != Kind::Video || (*time == request.time && *accuracy == request.accuracy))
+        && (!matches!(source.kind, Kind::Video | Kind::Animation)
+            || (*time == request.time && *accuracy == request.accuracy))
     {
         return frame.clone();
     }
@@ -476,8 +519,24 @@ fn load(
                     presentation_time,
                 })
             }
+            Kind::Animation => {
+                if entry.animation.is_none() {
+                    entry.animation = Some(Animation::open(
+                        &entry.snapshot.read_bounded(MAX_SOURCE_BYTES)?,
+                    )?);
+                }
+                let (position, image) = entry
+                    .animation
+                    .as_mut()
+                    .expect("animated image decoder inserted")
+                    .frame_at(request.time)?;
+                Frame::Image(ImageFrame {
+                    image: decode::DecodedImage::Raster(image),
+                    presentation_time: Some(position),
+                })
+            }
             Kind::Image => {
-                let bytes = entry.snapshot.read()?;
+                let bytes = entry.snapshot.read_bounded(MAX_SOURCE_BYTES)?;
                 let prepared = shrimply_drawing_skia::media::prepare(Arc::new(bytes))?;
                 let image = prepared
                     .bitmap()
@@ -567,25 +626,6 @@ fn load(
         entry.frame = Some((request.time, request.accuracy, result.clone()));
     }
     result
-}
-
-fn rgba_pixels(image: &Image) -> Result<Vec<u8>, String> {
-    let width = usize::try_from(image.width()).map_err(|_| "Image width is negative")?;
-    let height = usize::try_from(image.height()).map_err(|_| "Image height is negative")?;
-    let row_bytes = width
-        .checked_mul(size_of::<u32>())
-        .ok_or("Image row size overflow")?;
-    let mut pixels = vec![0; row_bytes.checked_mul(height).ok_or("Image size overflow")?];
-    let info = ImageInfo::new(
-        image.dimensions(),
-        ColorType::RGBA8888,
-        AlphaType::Unpremul,
-        None,
-    );
-    if !image.read_pixels(&info, &mut pixels, row_bytes, (0, 0), CachingHint::Allow) {
-        return Err("Could not read image pixels for Vectorize".into());
-    }
-    Ok(pixels)
 }
 
 fn transparent_mask_image() -> Result<Image, String> {

@@ -8,3 +8,7 @@
 [submodule "external/vtracer"]
 	path = external/vtracer
 	url = https://github.com/visioncortex/vtracer.git
+[submodule "external/ffmpeg"]
+	path = external/ffmpeg
+	url = https://github.com/FFmpeg/FFmpeg.git
+	shallow = true

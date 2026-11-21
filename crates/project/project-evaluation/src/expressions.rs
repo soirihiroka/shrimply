@@ -1,6 +1,6 @@
 use std::{
     any::TypeId,
-    cell::RefCell,
+    cell::{LazyCell, RefCell},
     panic::{AssertUnwindSafe, catch_unwind},
     rc::Rc,
     time::{Duration, Instant},
@@ -84,7 +84,7 @@ impl Drop for ExpressionStateReset {
 const EXPRESSION_HELPERS: &str = include_str!("expression_helpers.rhai");
 
 pub struct TransformExpressionCache {
-    engine: Rc<Engine>,
+    engine: LazyCell<Rc<Engine>>,
     entries: HashMap<ExpressionCacheKey, CachedExpression>,
     sources: HashMap<Uuid, Rc<str>>,
 }
@@ -120,7 +120,7 @@ struct ReadyExpression {
 impl Default for TransformExpressionCache {
     fn default() -> Self {
         Self {
-            engine: Rc::new(expression_engine()),
+            engine: LazyCell::new(|| Rc::new(expression_engine())),
             entries: HashMap::new(),
             sources: HashMap::new(),
         }

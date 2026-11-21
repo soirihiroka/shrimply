@@ -11,6 +11,10 @@ impl InspectorController {
         path: &str,
         text: &str,
     ) -> Result<(), String> {
+        if *target == InspectorTarget::Project && path == "/tags" {
+            self.set_project_tags(&text.lines().map(str::to_owned).collect::<Vec<_>>());
+            return Ok(());
+        }
         if path == "/enabled"
             && let InspectorTarget::Track(address) = target
         {

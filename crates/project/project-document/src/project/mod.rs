@@ -34,6 +34,7 @@ mod item_address;
 mod lifecycle;
 mod ownership;
 mod paint;
+#[cfg(feature = "preview")]
 mod preview;
 mod tags;
 mod timing;
@@ -55,12 +56,14 @@ pub use generated::{
 };
 #[cfg(feature = "editor")]
 pub use history::{
-    CommitStatus, PreparedProject, ProjectPreparation, activate_project, can_redo, can_undo,
-    change_history_saved, commit_coalesced_edit, commit_edit, commit_edit_checked,
-    commit_edit_saved, connect_commit_status, create_new_project_file, create_project_file,
-    finish_coalesced_edit, history_destination, load_project_snapshot, poll_commit_status,
-    prepare_project, prepare_project_with_frame_grid_repair, redo, save, save_as, save_view_state,
-    serialize_project_json, shutdown_history, undo,
+    CommitStatus, PreparedProject, ProjectPreparation, activate_project, adopt_project_snapshot,
+    can_redo, can_undo, change_history_saved, commit_coalesced_edit, commit_edit,
+    commit_edit_checked, commit_edit_saved, connect_commit_status, create_new_project_file,
+    create_project_file, finish_coalesced_edit, flush_history, history_destination,
+    history_revision, load_project_snapshot, load_project_snapshot_with_fingerprint,
+    poll_commit_status, prepare_project, prepare_project_with_frame_grid_repair, redo, save,
+    save_as, save_view_state, saved_project_fingerprint, serialize_project_json, shutdown_history,
+    undo, with_provisional_edit,
 };
 pub use item_address::{
     ItemAddress, ItemKind, ItemMut, ItemRef, ProjectItem, SequenceScopeId, TrackAddress, TrackMut,
@@ -72,8 +75,10 @@ pub use ownership::{
     clear_project_file_locks, current_project_lock_owner, normalized_project_path,
     project_lock_owner, release_project_lock, terminate_project_process,
 };
+#[cfg(feature = "preview")]
 pub use preview::{
-    COMPOSITING_ALPHA_MASK_PREVIEW_FACET, ITEM_PREVIEW_FACET, MODIFIER_ALPHA_MASK_PREVIEW_FACET,
+    COMPOSITING_ALPHA_MASK_PREVIEW_FACET, DEFAULT_PAINT_ERASER_SCALE, ITEM_PREVIEW_FACET,
+    MODIFIER_ALPHA_MASK_PREVIEW_FACET, PAINT_PREVIEW_STATE, PaintPreviewState,
     SHAPE_APPEARANCE_PREVIEW_FACET, SHAPE_CONTENT_PREVIEW_FACET, TEXT_APPEARANCE_PREVIEW_FACET,
     TRACKED_CAMERA_PREVIEW, TrackedCameraPreview,
 };
@@ -90,13 +95,16 @@ pub use shrimply_paint_model::{
     PaintTransform, ResolvedPaintFillOptions, ResolvedPaintStrokeEndOptions,
     ResolvedPaintStrokeOptions, ResolvedPaintTextureOptions,
 };
-pub use shrimply_path_core::{active_project_path, project_directory, set_active_project_path};
+pub use shrimply_path_core::{
+    active_project_path, project_directory, recording_directory, set_active_project_path,
+};
 pub use shrimply_project_types::{
     AudioClipTransitionCurve, COMMON_FRAME_RATES, CanvasSize, DEFAULT_CANVAS_SIZE,
-    DEFAULT_PROJECT_FPS, FrameRate, MAX_CANVAS_DIMENSION, MIN_CANVAS_DIMENSION, PROJECT_PRESETS,
-    ProjectPreset, TransitionSide, clamp_item_end_to_next_start,
+    DEFAULT_PROJECT_FPS, FrameRate, ItemKey, MAX_CANVAS_DIMENSION, MIN_CANVAS_DIMENSION,
+    PROJECT_PRESETS, ProjectPreset, TrackGap, TrackKey, TrackKind, TransitionSide,
+    clamp_item_end_to_next_start, frame_rate_choices,
 };
-pub use tags::normalize_tags;
+pub use tags::{TagEdit, edit_tags, normalize_tags};
 pub use timing::*;
 
 pub const PROJECT_FORMAT_VERSION: u32 = 32;
@@ -175,7 +183,7 @@ impl Default for Project {
     }
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct PreviewGuides {
     #[serde(default)]
     pub vertical: Vec<f32>,
@@ -1332,6 +1340,7 @@ impl VideoItem {
             VideoItemContent::Media
             | VideoItemContent::Image
             | VideoItemContent::Gif
+            | VideoItemContent::AnimatedImage
             | VideoItemContent::Pdf(_)
             | VideoItemContent::Blender(_)
             | VideoItemContent::LayeredImage(_)
@@ -1584,6 +1593,7 @@ fn ensure_video_property_ids(item: &mut VideoItem, seen: &mut HashSet<Uuid>) {
         VideoItemContent::Media
         | VideoItemContent::Image
         | VideoItemContent::Gif
+        | VideoItemContent::AnimatedImage
         | VideoItemContent::Svg
         | VideoItemContent::Pdf(_)
         | VideoItemContent::Manim(_)

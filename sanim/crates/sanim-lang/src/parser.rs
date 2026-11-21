@@ -12,7 +12,7 @@ macro_rules! keywords {
         }
     };
 }
-keywords! { Let=>"let",Mut=>"mut",Sig=>"sig",Reflect=>"reflect",Background=>"background",Animate=>"animate",Fn=>"fn",Type=>"type",Enum=>"enum",Import=>"import",As=>"as",If=>"if",Else=>"else",For=>"for",In=>"in",Return=>"return",Match=>"match",Case=>"case",And=>"and",Or=>"or",Not=>"not",Repeat=>"repeat",Every=>"every",Timer=>"timer",True=>"true",False=>"false",None=>"None" }
+keywords! { Let=>"let",Mut=>"mut",Sig=>"sig",Reflect=>"reflect",Ref=>"ref",Fn=>"fn",Type=>"type",Enum=>"enum",Import=>"import",As=>"as",If=>"if",Else=>"else",For=>"for",In=>"in",Return=>"return",Match=>"match",Case=>"case",And=>"and",Or=>"or",Not=>"not",Repeat=>"repeat",True=>"true",False=>"false",None=>"None" }
 
 /// Parse source directly into the AST. No token list or intermediate syntax tree.
 pub fn parse(source: &str, text: &str, max_steps: usize) -> Result<Module, Diagnostic> {
@@ -63,7 +63,12 @@ pub struct PendingCall {
 #[derive(Clone, Debug)]
 pub struct MarkupOpening {
     pub name: String,
+    pub name_span: Span,
+    pub parent: Option<usize>,
     pub span: Span,
+    pub element_span: Span,
+    pub closing: Option<Span>,
+    pub self_closing: bool,
     pub attributes: Vec<MarkupAttribute>,
 }
 #[derive(Clone, Debug)]
@@ -74,6 +79,28 @@ pub struct MarkupAttribute {
     pub utility: bool,
 }
 
+/// Exact type-use locations emitted by the grammar only for editor analysis.
+#[derive(Clone, Debug)]
+pub struct TypeReference {
+    pub name: String,
+    pub span: Span,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DeclarationKind {
+    TypeParameter,
+    EnumVariant(std::sync::Arc<str>),
+}
+
+/// Declarations without a standalone AST node, emitted only for editor analysis.
+#[derive(Clone, Debug)]
+pub struct Declaration {
+    pub name: String,
+    pub span: Span,
+    pub scope: Span,
+    pub kind: DeclarationKind,
+}
+
 /// Completed declarations and the unfinished call context, without executing or
 /// fabricating values. Editors can keep useful help while a call is incomplete.
 #[derive(Clone, Debug)]
@@ -82,6 +109,8 @@ pub struct Recovery {
     pub diagnostic: Option<Diagnostic>,
     pub pending_calls: Vec<PendingCall>,
     pub markup: Vec<MarkupOpening>,
+    pub type_references: Vec<TypeReference>,
+    pub declarations: Vec<Declaration>,
     pub prefix_end: usize,
 }
 
@@ -105,6 +134,8 @@ fn parse_recovering_highlighted(
 ) -> (Recovery, Vec<sanim_core::code::Highlight>) {
     let mut parser = Parser::new(source, text, max_steps, true);
     parser.highlights = highlighted.then(Vec::new);
+    parser.type_references = highlighted.then(Vec::new);
+    parser.declarations = highlighted.then(Vec::new);
     parser.trivia();
     let result = parser.statements(false);
     let (mut module, error) = match result {
@@ -132,6 +163,9 @@ fn parse_recovering_highlighted(
     }
     let mut markup = parser.markup.take().unwrap_or_default();
     for opening in &mut markup {
+        if opening.element_span.end == usize::MAX {
+            opening.element_span.end = text.len();
+        }
         if opening.span.end == usize::MAX {
             opening.span.end = parser.offset;
         }
@@ -152,9 +186,16 @@ fn parse_recovering_highlighted(
     (
         Recovery {
             module,
-            diagnostic: parser.failure.or(error),
+            diagnostic: parser.failure.or_else(|| {
+                error
+                    .into_iter()
+                    .chain(parser.markup_diagnostic)
+                    .min_by_key(|error| error.span.start)
+            }),
             pending_calls,
             markup,
+            type_references: parser.type_references.take().unwrap_or_default(),
+            declarations: parser.declarations.take().unwrap_or_default(),
             prefix_end,
         },
         highlights,
@@ -171,6 +212,9 @@ struct Mark {
     comments: usize,
     highlights: usize,
     markup: usize,
+    markup_diagnostic: Option<Diagnostic>,
+    type_references: usize,
+    declarations: usize,
 }
 struct Parser<'a> {
     source: &'a str,
@@ -185,6 +229,10 @@ struct Parser<'a> {
     recovered: Option<Module>,
     pending_calls: Option<Vec<PendingCall>>,
     markup: Option<Vec<MarkupOpening>>,
+    markup_stack: Vec<usize>,
+    markup_diagnostic: Option<Diagnostic>,
+    type_references: Option<Vec<TypeReference>>,
+    declarations: Option<Vec<Declaration>>,
     formatting: Option<crate::formatter::Sink>,
     comments: Vec<Span>,
     highlights: Option<Vec<sanim_core::code::Highlight>>,
@@ -204,6 +252,10 @@ impl<'a> Parser<'a> {
             recovered: None,
             pending_calls: recovery.then(Vec::new),
             markup: recovery.then(Vec::new),
+            markup_stack: Vec::new(),
+            markup_diagnostic: None,
+            type_references: None,
+            declarations: None,
             formatting: None,
             comments: vec![],
             highlights: None,
@@ -231,6 +283,9 @@ impl Parser<'_> {
             comments: self.comments.len(),
             highlights: self.highlights.as_ref().map_or(0, Vec::len),
             markup: self.markup.as_ref().map_or(0, Vec::len),
+            markup_diagnostic: self.markup_diagnostic.clone(),
+            type_references: self.type_references.as_ref().map_or(0, Vec::len),
+            declarations: self.declarations.as_ref().map_or(0, Vec::len),
             formatting: self
                 .formatting
                 .as_ref()
@@ -243,8 +298,15 @@ impl Parser<'_> {
         self.column = mark.column;
         self.delimiters = mark.delimiters;
         self.comments.truncate(mark.comments);
+        self.markup_diagnostic = mark.markup_diagnostic;
         if let Some(markup) = &mut self.markup {
             markup.truncate(mark.markup);
+        }
+        if let Some(references) = &mut self.type_references {
+            references.truncate(mark.type_references);
+        }
+        if let Some(declarations) = &mut self.declarations {
+            declarations.truncate(mark.declarations);
         }
         if let Some(highlights) = &mut self.highlights {
             highlights.truncate(mark.highlights);
@@ -732,11 +794,23 @@ impl Parser<'_> {
         self.depth -= 1;
         out
     }
-    fn generics(&mut self) -> Result<Vec<GenericParameter<TypeExpr>>, Diagnostic> {
+    fn generics(&mut self, scope: Span) -> Result<Vec<GenericParameter<TypeExpr>>, Diagnostic> {
         let mut names = vec![];
         if self.eat("<") {
             loop {
-                let name = self.name()?;
+                let mut location = None;
+                let name = self.declared_name(&mut location)?;
+                if let Some(declarations) = &mut self.declarations {
+                    declarations.push(Declaration {
+                        name: name.clone(),
+                        span: location.expect("parsed generic identifier"),
+                        scope: Span {
+                            end: self.text.len(),
+                            ..scope
+                        },
+                        kind: DeclarationKind::TypeParameter,
+                    });
+                }
                 let constraint = if self.eat(":") {
                     Some(self.ty()?)
                 } else {
@@ -915,20 +989,8 @@ impl Parser<'_> {
             return Err(self.error("parser work limit exceeded"));
         }
         let span = self.span();
+        let declaration_start = self.declarations.as_ref().map_or(0, Vec::len);
         let mut name_span = None;
-        let duration = if self.eat("@") {
-            self.expect("duration")?;
-            self.expect("(")?;
-            let expression = self.expr(0)?;
-            self.expect(")")?;
-            self.skip_lines();
-            if !self.is(Keyword::Fn.text()) {
-                return Err(self.error("@duration(...) must immediately precede a function clause"));
-            }
-            Some(expression)
-        } else {
-            None
-        };
         let binding = if self.eat(Keyword::Let.text()) {
             Some(BindingKind::Let)
         } else if self.eat(Keyword::Mut.text()) {
@@ -954,78 +1016,19 @@ impl Parser<'_> {
                 annotation,
                 value,
             }
-        } else if self.eat(Keyword::Background.text()) {
-            if self.is("(") {
-                return Err(self.error(
-                    "background requires a job block; use bg(color) to set the background color",
-                ));
-            }
-            StatementKind::Background {
-                body: self.block()?,
-            }
-        } else if self.eat(Keyword::Animate.text()) {
-            self.expect("(")?;
-            let mut args = self.arguments(None)?.into_iter();
-            let Some((
-                None,
-                Expr {
-                    kind: ExprKind::Name(name),
-                    ..
-                },
-            )) = args.next()
-            else {
-                return Err(Diagnostic::new(
-                    "S002",
-                    "animate requires a mutable binding name as its first argument, for example animate(phase, to=360deg, duration=2s)",
-                    self.source,
-                    span,
-                ));
-            };
-            let mut value = None;
-            let mut duration = None;
-            let mut easing = None;
-            for (label, arg) in args {
-                let slot = match label.as_deref() {
-                    Some("to") => &mut value,
-                    Some("duration") => &mut duration,
-                    Some("ease") => &mut easing,
-                    _ => {
-                        return Err(Diagnostic::new(
-                            "S002",
-                            "animate options are to=, duration=, and optional ease=; to and duration are required",
-                            self.source,
-                            arg.span,
-                        ));
-                    }
-                };
-                if slot.replace(arg).is_some() {
-                    return Err(self.error("animate option was supplied more than once"));
-                }
-            }
-            let (Some(value), Some(duration)) = (value, duration) else {
-                return Err(Diagnostic::new(
-                    "S002",
-                    "animate requires both to= and duration=, for example animate(phase, to=360deg, duration=2s)",
-                    self.source,
-                    span,
-                ));
-            };
-            self.newline()?;
-            StatementKind::Animate {
-                name,
-                value,
-                duration,
-                easing,
-            }
         } else if self.eat(Keyword::Type.text()) {
             let name = self.declared_name(&mut name_span)?;
-            let generics = self.generics()?;
+            let generics = self.generics(span)?;
             self.expect("=")?;
             let ty = self.ty()?;
             self.newline()?;
             StatementKind::Alias { name, generics, ty }
         } else if self.eat(Keyword::Enum.text()) {
             let name = self.declared_name(&mut name_span)?;
+            let qualifier = self
+                .declarations
+                .as_ref()
+                .map(|_| std::sync::Arc::<str>::from(name.as_str()));
             self.expect("{")?;
             let mut variants = vec![];
             while !self.eat("}") {
@@ -1033,7 +1036,21 @@ impl Parser<'_> {
                 if self.eat("}") {
                     break;
                 }
-                let variant = self.name()?;
+                let mut location = None;
+                let variant = self.declared_name(&mut location)?;
+                if let Some(declarations) = &mut self.declarations {
+                    declarations.push(Declaration {
+                        name: variant.clone(),
+                        span: location.expect("parsed enum variant identifier"),
+                        scope: Span {
+                            end: self.text.len(),
+                            ..Default::default()
+                        },
+                        kind: DeclarationKind::EnumVariant(
+                            qualifier.as_ref().expect("enabled editor metadata").clone(),
+                        ),
+                    });
+                }
                 let mut fields = vec![];
                 if self.eat("(") && !self.eat(")") {
                     loop {
@@ -1053,56 +1070,18 @@ impl Parser<'_> {
             }
             self.newline()?;
             StatementKind::Enum { name, variants }
-        } else if self.eat(Keyword::Fn.text()) {
+        } else if self.is(Keyword::Fn.text()) && {
+            let mark = self.mark();
+            self.eat(Keyword::Fn.text());
+            self.function_capabilities()?;
+            let named = self.name_start();
+            self.restore(mark);
+            named
+        } {
+            self.expect(Keyword::Fn.text())?;
+            let capabilities = self.function_capabilities()?;
             let name = self.declared_name(&mut name_span)?;
-            let generics = self.generics()?;
-            self.expect("(")?;
-            let mut parameters = vec![];
-            if !self.eat(")") {
-                loop {
-                    let kind = if self.eat(Keyword::Sig.text()) {
-                        BindingKind::Sig
-                    } else if self.eat(Keyword::Mut.text()) {
-                        BindingKind::Mut
-                    } else {
-                        BindingKind::Let
-                    };
-                    let mut location = None;
-                    let name = self.declared_name(&mut location)?;
-                    self.expect(":")?;
-                    let ty = self.ty()?;
-                    let default = if self.eat("=") {
-                        Some(self.expr(0)?)
-                    } else {
-                        None
-                    };
-                    parameters.push(Parameter {
-                        kind,
-                        name,
-                        name_span: location.expect("parsed parameter identifier"),
-                        ty,
-                        default,
-                    });
-                    if !self.eat(",") {
-                        break;
-                    }
-                    if self.is(")") {
-                        break;
-                    }
-                }
-                self.expect(")")?;
-            }
-            self.expect(":")?;
-            let result = self.ty()?;
-            let body = self.block()?;
-            StatementKind::Function {
-                name,
-                duration,
-                generics,
-                parameters,
-                result,
-                body,
-            }
+            self.function_kind(name, capabilities, span)?
         } else if self.eat(Keyword::Import.text()) {
             let path = self.string()?;
             self.expect(Keyword::As.text())?;
@@ -1133,24 +1112,10 @@ impl Parser<'_> {
                 iterable,
                 body,
             }
-        } else if self.is(Keyword::Repeat.text()) || self.is(Keyword::Timer.text()) {
-            let timer = self.eat(Keyword::Timer.text());
-            if !timer {
-                self.expect(Keyword::Repeat.text())?;
-            }
+        } else if self.eat(Keyword::Repeat.text()) {
             let count = self.expr(0)?;
-            let period = if timer {
-                self.expect(Keyword::Every.text())?;
-                Some(self.expr(0)?)
-            } else {
-                None
-            };
             let body = self.block()?;
-            StatementKind::Repeat {
-                count,
-                period,
-                body,
-            }
+            StatementKind::Repeat { count, body }
         } else if self.eat(Keyword::Match.text()) {
             let value = self.expr(0)?;
             self.expect("{")?;
@@ -1229,6 +1194,15 @@ impl Parser<'_> {
         };
         let mut span = span;
         span.end = self.offset;
+        if let Some(declarations) = &mut self.declarations {
+            for declaration in &mut declarations[declaration_start..] {
+                if declaration.kind == DeclarationKind::TypeParameter
+                    && declaration.scope.start == span.start
+                {
+                    declaration.scope.end = span.end;
+                }
+            }
+        }
         Ok(Statement {
             kind,
             span,
@@ -1243,7 +1217,25 @@ impl Parser<'_> {
         if self.depth > 64 {
             return Err(self.error("type nesting limit exceeded"));
         }
-        let mut out = if self.eat(Keyword::Sig.text()) {
+        let mut out = if self.eat(Keyword::Fn.text()) {
+            let capabilities = self.function_capabilities()?;
+            let parameters = self.function_parameters()?;
+            if parameters
+                .iter()
+                .any(|parameter| parameter.default.is_some())
+            {
+                return Err(self.error("function type parameters do not define default values; put defaults on the function value"));
+            }
+            self.expect(":")?;
+            TypeExpr::Function(
+                capabilities,
+                parameters
+                    .into_iter()
+                    .map(|parameter| (parameter.kind, parameter.name, parameter.ty))
+                    .collect(),
+                Box::new(self.ty()?),
+            )
+        } else if self.eat(Keyword::Sig.text()) {
             TypeExpr::Signal(Box::new(self.type_expression(3)?))
         } else if self
             .rest()
@@ -1295,11 +1287,23 @@ impl Parser<'_> {
             TypeExpr::Record(fields)
         } else {
             let type_start = self.offset;
+            let mut type_span = self.span();
             let mut name = self.name()?;
+            type_span.end = type_start + name.len();
             self.highlight(type_start, type_start + name.len(), "type");
             while self.eat(".") {
                 name.push('.');
-                name.push_str(&self.name()?);
+                let start = self.offset;
+                let part = self.name()?;
+                type_span.end = start + part.len();
+                self.highlight(start, type_span.end, "type");
+                name.push_str(&part);
+            }
+            if let Some(references) = &mut self.type_references {
+                references.push(TypeReference {
+                    name: name.clone(),
+                    span: type_span,
+                });
             }
             let mut args = vec![];
             if self.is("<") && !self.numeric_refinement_ahead() && self.eat("<") {
@@ -1546,6 +1550,92 @@ impl Parser<'_> {
         }
         Ok(left)
     }
+    fn function_parameters(&mut self) -> Result<Vec<Parameter>, Diagnostic> {
+        self.expect("(")?;
+        let mut parameters = vec![];
+        if !self.eat(")") {
+            loop {
+                let kind = if self.eat(Keyword::Sig.text()) {
+                    BindingKind::Sig
+                } else if self.eat(Keyword::Mut.text()) {
+                    BindingKind::Mut
+                } else {
+                    BindingKind::Let
+                };
+                let mut location = None;
+                let name = self.declared_name(&mut location)?;
+                self.expect(":")?;
+                let ty = self.ty()?;
+                let default = if self.eat("=") {
+                    Some(self.expr(0)?)
+                } else {
+                    None
+                };
+                parameters.push(Parameter {
+                    kind,
+                    name,
+                    name_span: location.expect("parsed parameter identifier"),
+                    ty,
+                    default,
+                });
+                if !self.eat(",") {
+                    break;
+                }
+                if self.is(")") {
+                    break;
+                }
+            }
+            self.expect(")")?;
+        }
+        Ok(parameters)
+    }
+    fn function_capabilities(&mut self) -> Result<sanim_core::FnCapabilities, Diagnostic> {
+        let mark = self.mark();
+        let mut capabilities = sanim_core::FnCapabilities::default();
+        if !self.eat("<") {
+            return Ok(capabilities);
+        }
+        if !sanim_core::FnCapability::ALL
+            .into_iter()
+            .any(|capability| self.is(capability.name()))
+        {
+            self.restore(mark);
+            return Ok(capabilities);
+        }
+        loop {
+            let capability = sanim_core::FnCapability::ALL.into_iter().find(|capability| self.is(capability.name()))
+                .ok_or_else(|| self.error("expected function capability mut, sig or ref; put generic type arguments in a separate <T> group"))?;
+            self.expect(capability.name())?;
+            if !capabilities.insert(capability) {
+                return Err(self.error("duplicate function capability"));
+            }
+            if !self.eat(",") {
+                break;
+            }
+        }
+        self.expect(">")?;
+        Ok(capabilities)
+    }
+    fn function_kind(
+        &mut self,
+        name: String,
+        capabilities: sanim_core::FnCapabilities,
+        span: Span,
+    ) -> Result<StatementKind, Diagnostic> {
+        let generics = self.generics(span)?;
+        let parameters = self.function_parameters()?;
+        self.expect(":")?;
+        let result = self.ty()?;
+        let body = self.block()?;
+        Ok(StatementKind::Function {
+            capabilities,
+            name,
+            generics,
+            parameters,
+            result,
+            body,
+        })
+    }
     fn atom(&mut self) -> Result<Expr, Diagnostic> {
         let mut span = self.span();
         let kind = if self
@@ -1577,6 +1667,17 @@ impl Parser<'_> {
             return Ok(expression);
         } else if self.quoted() {
             return self.string_expression();
+        } else if self.eat(Keyword::Fn.text()) {
+            let capabilities = self.function_capabilities()?;
+            let kind = self.function_kind(format!("$fn{}", span.start), capabilities, span)?;
+            ExprKind::Function(Box::new(Statement {
+                kind,
+                span: Span {
+                    end: self.offset,
+                    ..span
+                },
+                name_span: None,
+            }))
         } else if self.eat(Keyword::Reflect.text()) {
             if !self.eat("(") {
                 return Err(Diagnostic::new(

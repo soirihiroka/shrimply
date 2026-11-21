@@ -1,20 +1,20 @@
-//! One timeline contract for native calls, user calls, and duration-only evaluation.
+//! Native animation defaults and canonical checked-call argument lookup.
 use crate::{
     ast::{Expr, ExprKind},
     prelude::Builtin,
 };
-use sanim_core::{Fraction, Number, TimelineEffect, Unit, Value};
+use sanim_core::{Fraction, Unit, Value};
 
 #[derive(Clone, Copy, Debug)]
 pub struct Timing {
     pub default: Fraction,
-    pub parameter: usize,
+    pub easing: sanim_core::Easing,
 }
 impl Default for Timing {
     fn default() -> Self {
         Self {
             default: Fraction::from(0),
-            parameter: 0,
+            easing: Default::default(),
         }
     }
 }
@@ -41,76 +41,6 @@ impl Timing {
         self.validate(duration)
     }
 }
-impl Builtin {
-    pub(crate) fn duration_argument<'a, T>(
-        &self,
-        args: &'a [(Option<String>, T)],
-    ) -> Option<&'a T> {
-        self.duration_argument_after(args, 0)
-    }
-    fn duration_argument_after<'a, T>(
-        &self,
-        args: &'a [(Option<String>, T)],
-        implicit: usize,
-    ) -> Option<&'a T> {
-        if let Some((_, value)) = args
-            .iter()
-            .find(|(name, _)| name.as_deref() == Some("duration"))
-        {
-            return Some(value);
-        }
-        let parameter = self.timing.parameter.checked_sub(implicit)?;
-        if args.len() <= parameter {
-            return None;
-        }
-        args.iter()
-            .filter(|(name, _)| name.is_none())
-            .nth(parameter)
-            .map(|(_, value)| value)
-    }
-    pub(crate) fn easing_argument<'a, T>(&self, args: &'a [(Option<String>, T)]) -> Option<&'a T> {
-        self.easing_argument_after(args, 0)
-    }
-    fn easing_argument_after<'a, T>(
-        &self,
-        args: &'a [(Option<String>, T)],
-        implicit: usize,
-    ) -> Option<&'a T> {
-        if let Some((_, value)) = args
-            .iter()
-            .find(|(name, _)| name.as_deref() == Some("ease"))
-        {
-            return Some(value);
-        }
-        let index = self
-            .parameters
-            .iter()
-            .position(|p| p.name == "ease")?
-            .checked_sub(implicit)?;
-        args.iter()
-            .filter(|(name, _)| name.is_none())
-            .nth(index)
-            .map(|(_, value)| value)
-    }
-    pub(crate) fn call_schedules(&self, args: &[(Option<String>, Expr)]) -> bool {
-        self.call_schedules_after(args, 0)
-    }
-    pub(crate) fn call_schedules_after(
-        &self,
-        args: &[(Option<String>, Expr)],
-        implicit: usize,
-    ) -> bool {
-        self.schedule
-            || self
-                .duration_argument_after(args, implicit)
-                .is_some_and(|expr| !known_zero(expr))
-    }
-    /// The generic signature depends on its duration argument; omitted arguments resolve to default.
-    pub fn timeline_duration(&self) -> TimelineEffect {
-        TimelineEffect::Unknown
-    }
-}
-
 /// A checked native call, including the implicit receiver of relationship methods.
 /// Builtin registration determines method eligibility; there is no second name list.
 pub(crate) struct BuiltinCall<'a> {
@@ -136,18 +66,17 @@ impl<'a> BuiltinCall<'a> {
                     .map(|(_, value)| value)
             })
     }
-    pub(crate) fn easing_argument(&self) -> Option<&'a Expr> {
-        self.builtin
-            .easing_argument_after(self.args, usize::from(self.receiver.is_some()))
-    }
-
-    pub fn duration_argument(&self) -> Option<&'a Expr> {
-        self.builtin
-            .duration_argument_after(self.args, usize::from(self.receiver.is_some()))
-    }
-    pub fn schedules(&self) -> bool {
-        self.builtin
-            .call_schedules_after(self.args, usize::from(self.receiver.is_some()))
+    pub(crate) fn capabilities(
+        &self,
+        scope: &impl crate::checker::TypeScope,
+    ) -> sanim_core::FnCapabilities {
+        let actuals = (0..self.builtin.parameters.len()).map(|index| match self.argument(index) {
+            None => &sanim_core::Type::Unit,
+            Some(argument) => {
+                crate::analysis::lookup(argument, scope).unwrap_or(&sanim_core::Type::Unknown)
+            }
+        });
+        self.builtin.capabilities_for_arguments(actuals)
     }
 }
 pub(crate) fn builtin_call<'a>(
@@ -172,15 +101,6 @@ pub(crate) fn builtin_call<'a>(
         args,
     })
 }
-pub(crate) fn known_zero(expr: &Expr) -> bool {
-    matches!(&expr.kind, ExprKind::Number(text) if Number::parse(text).is_ok_and(|n| n.unit == Unit::Duration && n.value == Fraction::from(0)))
-}
-pub(crate) fn envelope<T>(args: &[(Option<String>, T)]) -> Option<&T> {
-    args.iter()
-        .find(|(name, _)| name.as_deref() == Some("duration"))
-        .map(|(_, value)| value)
-}
-
 /// Shared optional easing control. It affects value interpolation, never time arithmetic.
 pub(crate) fn easing(value: Option<&Value>) -> Result<sanim_core::Easing, String> {
     value
@@ -189,9 +109,4 @@ pub(crate) fn easing(value: Option<&Value>) -> Result<sanim_core::Easing, String
         .map(sanim_core::Easing::parse)
         .transpose()
         .map(|value| value.unwrap_or_default())
-}
-pub(crate) fn ease_argument<T>(args: &[(Option<String>, T)]) -> Option<&T> {
-    args.iter()
-        .find(|(name, _)| name.as_deref() == Some("ease"))
-        .map(|(_, value)| value)
 }

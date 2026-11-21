@@ -1,0 +1,87 @@
+# Original pixel-art materials, generated entirely by Sanim's native field sampler.
+# Texture fields use texel coordinates: x across, y down, z=0.
+type Pattern = "grain" | "planks" | "bricks" | "bark" | "rings" | "leaves" | "water"
+fn block(base: Color, pattern: Pattern = "grain", seed: Number = 0): Texture {
+    let x = Density(axis = "x")
+    let y = Density(axis = "y")
+    let grain = Noise(seed = seed, kind = "value", axes = "xy", scale = 0.8).remap(-1, 1, 0.25, 0.85)
+    mut field = grain
+    mut mask = Density(value = 1)
+    if pattern == "planks" or pattern == "bricks" {
+        mut period = 8
+        mut width = 8
+        if pattern == "planks" {
+            period = 4
+            width = 16
+        }
+        let stagger = y.divide(period).floor().mod(2).multiply(width / 2)
+        let seams = (y.mod(period).smoothstep(min = 0.5, max = 1.1)
+            .min(x.add(stagger).mod(width).smoothstep(min = 0.5, max = 1.1)))
+        field = grain.multiply(seams)
+    }
+    if pattern == "bark" {
+        field = grain.multiply(x.mod(4).smoothstep(min = 0.5, max = 1.2).remap(0, 1, 0.1, 1))
+    }
+    if pattern == "rings" {
+        field = Distance(center = [8, 8, 0], axes = "xy").floor().mod(3).divide(3).multiply(0.6).add(grain.multiply(0.4))
+    }
+    if pattern == "leaves" {
+        mask = Noise(seed = seed + 77, kind = "value", axes = "xy", scale = 0.6).add(0.3)
+    }
+    if pattern == "water" {
+        field = x.multiply(1.1).add(y.multiply(0.65)).sin().multiply(0.13).add(grain.multiply(0.7))
+    }
+    return Texture(size = [16, 16], field = field, colors = [base.mix(Color("black"), 0.34), base,
+            base.mix(Color("white"), 0.11)], mask = mask)
+}
+
+let grass_top = block(Color("#719449"), seed = 11)
+let dirt = block(Color("#795137"), seed = 13)
+let stone = block(Color("#83877C"), seed = 17)
+let stone_bricks = block(Color("#8B8D7E"), pattern = "bricks", seed = 19)
+let cobblestone = block(Color("#7F8473"), pattern = "bricks", seed = 23)
+let oak_planks = block(Color("#B28651"), pattern = "planks", seed = 29)
+let oak_log = block(Color("#715338"), pattern = "bark", seed = 31)
+let oak_log_top = block(Color("#A57D4D"), pattern = "rings", seed = 37)
+let dark_oak_planks = block(Color("#414A4B"), pattern = "planks", seed = 41)
+let oak_leaves = block(Color("#5B843F"), pattern = "leaves", seed = 43)
+let spruce_leaves = block(Color("#3C6853"), pattern = "leaves", seed = 47)
+let water = block(Color("#488C9A"), pattern = "water", seed = 53)
+let waterfall = Texture(size = [16, 16],
+    field = Noise(seed = 57, axes = "xy", scale = 3, octaves = 3).scale([0.6, 2.5, 1]).remap(-1, 1, 0,
+        1),
+    colors = [Color("#73AEB8"), Color("#BBDDD9"), Color("#E6F0E2")])
+let hay = block(Color("#C1A55D"), pattern = "planks", seed = 59)
+let sand = block(Color("#CDBD96"), seed = 61)
+
+let side_band = (Density(value = 3).add(Noise(seed = 67, axes = "xy", scale = 2).multiply(1.1))
+    .subtract(Density(axis = "y")).smoothstep(min =-0.3, max = 0.4))
+let grass_side = Texture(size = [16, 16], field = side_band, colors = [Color("#795137"), Color("#719449")])
+let glass_border = (Density(axis = "x").subtract(8).abs().subtract(6.5)
+    .max(Density(axis = "y").subtract(8).abs().subtract(6.5))
+    .max(Density(value = 0.55).subtract(Density(axis = "x").subtract(Density(axis = "y")).abs())))
+let glass = Texture(size = [16, 16], field = Density(value = 0), colors = [Color("#C1DBD9")], mask = glass_border)
+
+let blade_x = Density(axis = "x")
+let blade_y = Density(axis = "y")
+let blade_a = (Density(value = 1.1).subtract(blade_x.subtract(4).add(blade_y.divide(6)).abs())
+    .min(blade_y.subtract(3)))
+let blade_b = (Density(value = 1.1).subtract(blade_x.subtract(9).subtract(blade_y.divide(7)).abs())
+    .min(blade_y.subtract(1)))
+let blade_c = Density(value = 1).subtract(blade_x.subtract(13).abs()).min(blade_y.subtract(5))
+let short_grass = Texture(size = [16, 16], field = blade_y.remap(0, 16, 1, 0),
+    colors = [Color("#608744"), Color("#9FB568")], mask = blade_a.max(blade_b).max(blade_c))
+
+fn flower(petals: Color): Texture {
+    let x = Density(axis = "x")
+    let y = Density(axis = "y")
+    let distance = Distance(center = [8, 5.5, 0], axes = "xy")
+    let bloom = Density(value = 3.5).subtract(distance)
+    let stem = Density(value = 1.1).subtract(x.subtract(8).abs()).min(y.subtract(6))
+    let center = Density(value = 1.4).subtract(distance).smoothstep(min = 0, max = 0.4)
+    let field = bloom.smoothstep(min = 0, max = 0.5).multiply(0.5).add(center.multiply(0.5))
+    return Texture(size = [16, 16], field = field, colors = [Color("#638A45"), petals, Color("#E8B347")],
+        mask = bloom.max(stem))
+}
+let wildflower_white = flower(Color("#E5DFC4"))
+let wildflower_gold = flower(Color("#E7C56C"))

@@ -6,14 +6,25 @@ pub(in crate::scene) fn activate_track_button(
     selection_state: &SharedSelectionState,
     (key, action): TrackButtonId,
 ) {
+    let position = player_state::current_time(&runtime.player);
     match action {
         TrackLabelAction::Toggle => runtime.pending_track_toggle = Some(key),
-        TrackLabelAction::AudioRecord => runtime.pending_audio_record = Some(key),
-        TrackLabelAction::VideoRecord => runtime.pending_video_record = Some(key),
+        TrackLabelAction::AudioRecord => {
+            runtime.pending_audio_record = Some(TrackRecordingRequest { key, position })
+        }
+        TrackLabelAction::VideoRecord => {
+            runtime.pending_video_record = Some(TrackRecordingRequest { key, position })
+        }
         TrackLabelAction::Add => {
             let selected_tracks = selected_timeline_tracks(selection_state);
             runtime.pending_track_add_menu = Some(TrackAddMenuRequest {
                 key,
+                touch: runtime.pointer_touch,
+                point: runtime
+                    .pointer_release_pos
+                    .or(runtime.pointer_pos)
+                    .unwrap_or(Vec2::ZERO),
+                position,
                 import_targets: if selected_tracks.contains(&key) {
                     selected_tracks
                 } else {

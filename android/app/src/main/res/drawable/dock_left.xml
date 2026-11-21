@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- From the bundled Adwaita symbolic SVG; LGPL-3.0-or-later or CC-BY-SA-3.0. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="16dp" android:height="16dp" android:viewportWidth="16" android:viewportHeight="16">
+    <path android:fillColor="#FFFFFFFF" android:fillAlpha="1" android:pathData="m 3 0.992188 c -1.644531 0 -3 1.355468 -3 3 v 8 c 0 1.644531 1.355469 3 3 3 h 10 c 1.644531 0 3 -1.355469 3 -3 v -8 c 0 -1.644532 -1.355469 -3 -3 -3 z m 0 2 h 3 v 10 h -3 c -0.570312 0 -1 -0.429688 -1 -1 v -8 c 0 -0.570313 0.429688 -1 1 -1 z m 4 0 h 6 c 0.570312 0 1 0.429687 1 1 v 8 c 0 0.570312 -0.429688 1 -1 1 h -6 z m 0 0" />
+    <path android:fillColor="#FFFFFFFF" android:fillAlpha="0.34902" android:pathData="m 3 2.992188 h 3 v 10 h -3 c -0.570312 0 -1 -0.429688 -1 -1 v -8 c 0 -0.570313 0.429688 -1 1 -1 z m 0 0" />
+</vector>

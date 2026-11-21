@@ -61,6 +61,32 @@ pub struct Placement {
     pub collision: DragCollisionMode,
 }
 
+/// Stable track address and exact snapped time captured when an external drop occurs.
+pub struct Destination {
+    target: Target,
+    start: Time,
+    collision: DragCollisionMode,
+}
+
+pub fn destination(project: &Project, placement: Placement) -> Result<Destination, String> {
+    let track = match placement.target {
+        NewItemTarget::Automatic => None,
+        NewItemTarget::AtY(y) => {
+            let rows = crate::items::track_rows(project);
+            let row = crate::math::track_row_at_y(y).and_then(|index| rows.get(index));
+            if row.is_some_and(|row| row.root_key.is_none()) {
+                return Err("Import into an expanded nested track is not supported yet. Drop onto a top-level track.".into());
+            }
+            row.map(|row| row.address.clone())
+        }
+    };
+    Ok(Destination {
+        target: Target::Timeline(track),
+        start: placement.start,
+        collision: placement.collision,
+    })
+}
+
 struct Inspection {
     path: PathBuf,
     subscription: Subscription<import::InspectionKey, (), import::MediaInfo>,
@@ -131,12 +157,10 @@ pub struct ImportQueue {
 
 impl Phase {
     fn new(paths: Vec<PathBuf>, canvas_size: CanvasSize, default_duration: Time) -> Self {
-        if paths.iter().any(|path| {
-            matches!(
-                import::file_kind(path),
-                Some(import::FileKind::Mkv | import::FileKind::WebM)
-            )
-        }) {
+        if paths
+            .iter()
+            .any(|path| import::file_kind(path) == Some(import::FileKind::RemuxToMp4))
+        {
             Self::Pending {
                 sources: paths,
                 canvas_size,
@@ -263,23 +287,35 @@ impl ImportQueue {
         placement: Placement,
         default_duration: Time,
     ) -> Result<ImportStart, String> {
-        crate::external_content::external_files_need_remux(&paths)?;
-        let track = match placement.target {
-            NewItemTarget::Automatic => None,
-            NewItemTarget::AtY(y) => {
-                let rows = crate::items::track_rows(project);
-                let row = crate::math::track_row_at_y(y).and_then(|index| rows.get(index));
-                if row.is_some_and(|row| row.root_key.is_none()) {
-                    return Err("Import into an expanded nested track is not supported yet. Drop onto a top-level track.".into());
-                }
-                row.map(|row| row.address.clone())
-            }
-        };
+        let destination = destination(project, placement)?;
+        self.enqueue_captured(batch, paths, project, destination, default_duration)
+    }
+
+    pub fn enqueue_destination(
+        &mut self,
+        paths: Vec<PathBuf>,
+        project: &Project,
+        destination: Destination,
+        default_duration: Time,
+    ) -> Result<ImportStart, String> {
+        let batch = self.reserve_batch();
+        self.enqueue_captured(batch, paths, project, destination, default_duration)
+    }
+
+    fn enqueue_captured(
+        &mut self,
+        batch: BatchId,
+        paths: Vec<PathBuf>,
+        project: &Project,
+        destination: Destination,
+        default_duration: Time,
+    ) -> Result<ImportStart, String> {
+        crate::external_content::validate_dropped_files(&paths)?;
         let pending = PendingBatch {
             batch,
-            target: Target::Timeline(track),
-            start: placement.start,
-            collision: placement.collision,
+            target: destination.target,
+            start: destination.start,
+            collision: destination.collision,
             phase: Phase::new(paths, project.canvas_size, default_duration),
         };
         Ok(self.push(pending))
@@ -380,10 +416,7 @@ impl ImportQueue {
                         if worker_cancellation.is_cancelled() {
                             return Err("Media import was cancelled".into());
                         }
-                        if matches!(
-                            import::file_kind(&path),
-                            Some(import::FileKind::Mkv | import::FileKind::WebM)
-                        ) {
+                        if import::file_kind(&path) == Some(import::FileKind::RemuxToMp4) {
                             let source = Asset::new(path.clone()).snapshot()?;
                             let output = import::remux_to_mp4(&path, worker_cancellation.clone())?;
                             source.verify_current()?;
@@ -491,6 +524,18 @@ impl ImportQueue {
 
     pub fn is_empty(&self) -> bool {
         self.pending.is_empty() && self.completed.is_empty()
+    }
+
+    /// Temporary provider/download copies keep only sources referenced by the commit.
+    /// External originals retain their separate, user-confirmed deletion request.
+    pub(crate) fn finish_owned_sources(&mut self, files: Vec<OwnedFile>, paths: &[PathBuf]) {
+        self.source_deletions
+            .retain(|request| !files.iter().any(|file| file.path() == request.source()));
+        for file in files {
+            if paths.iter().any(|path| path == file.path()) {
+                file.keep();
+            }
+        }
     }
 
     pub fn take_source_deletion(&mut self) -> Option<SourceDeletion> {

@@ -1,40 +1,5 @@
-use ffmpeg_next::{self as ffmpeg, sys};
 use shrimply_gpu_cuda::sys as cuda_sys;
-use std::{ffi::CString, ptr};
-
-pub(crate) fn create_cuda_device_context() -> Result<*mut sys::AVBufferRef, String> {
-    unsafe {
-        let mut hw_device_ctx = ptr::null_mut();
-        let device = CString::new(shrimply_gpu_cuda::selected_device().to_string())
-            .map_err(|error| error.to_string())?;
-        let mut options = ptr::null_mut();
-        let option_key = CString::new("primary_ctx").map_err(|error| error.to_string())?;
-        let option_value = CString::new("1").map_err(|error| error.to_string())?;
-        let option_result =
-            sys::av_dict_set(&mut options, option_key.as_ptr(), option_value.as_ptr(), 0);
-        if option_result < 0 {
-            return Err(format!(
-                "could not configure FFmpeg CUDA primary context: {}",
-                ffmpeg::Error::from(option_result),
-            ));
-        }
-        let result = sys::av_hwdevice_ctx_create(
-            &mut hw_device_ctx,
-            sys::AVHWDeviceType::AV_HWDEVICE_TYPE_CUDA,
-            device.as_ptr(),
-            options,
-            0,
-        );
-        sys::av_dict_free(&mut options);
-        if result < 0 {
-            return Err(format!(
-                "could not create FFmpeg CUDA device context: {}",
-                ffmpeg::Error::from(result),
-            ));
-        }
-        Ok(hw_device_ctx)
-    }
-}
+use std::ptr;
 
 pub(crate) fn cuda_memory_info() -> Result<(usize, usize), String> {
     unsafe {

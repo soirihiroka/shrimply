@@ -10,7 +10,7 @@ pub fn dragged_group_for_hit(
     collision_mode: DragCollisionMode,
 ) -> Option<DraggedGroup> {
     let (hit_start, _) = item_times(project, hit)?;
-    let pointer_seconds = x_to_time(x, view.scroll_seconds, view.seconds_per_pixel);
+    let pointer_seconds = x_to_time(x, view);
     let mut group_items: Vec<_> = selected_items
         .iter()
         .copied()
@@ -59,8 +59,7 @@ pub fn update_dragged_group(
 ) {
     let previous_position = drag_position(group);
     let y = y + view.scroll_y;
-    let pointer_seconds = x_to_time(x, view.scroll_seconds, view.seconds_per_pixel)
-        - group.pointer_offset.as_secs_f64();
+    let pointer_seconds = x_to_time(x, view) - group.pointer_offset.as_secs_f64();
     let target = Time::from_seconds_f64(pointer_seconds);
     let target = snap_repository.snap(target).unwrap_or(target);
     let earliest_start = group
@@ -191,9 +190,20 @@ pub fn resolve_new_track_drag(project: &Project, group: &mut DraggedGroup) {
 }
 
 pub fn item_natural_end_edges_at_address(project: &Project, address: &ItemAddress) -> Vec<Time> {
+    let Some(item) = project.item(address) else {
+        return Vec::new();
+    };
+    let track = address.track();
+    item_natural_end_edges(&item)
+        .into_iter()
+        .filter_map(|time| project.sequence_time_to_timeline(&track, time))
+        .collect()
+}
+
+fn item_natural_end_edges(item: &ItemRef<'_>) -> Vec<Time> {
     let mut local = Vec::new();
-    match project.item(address) {
-        Some(ItemRef::Video(item)) => {
+    match item {
+        ItemRef::Video(item) => {
             let first = if item.repeats_keyframes() {
                 generated_item_natural_end_position(item)
             } else {
@@ -214,7 +224,7 @@ pub fn item_natural_end_edges_at_address(project: &Project, address: &ItemAddres
                 video_natural_end_interval(item),
             );
         }
-        Some(ItemRef::Audio(item)) => push_natural_end_times(
+        ItemRef::Audio(item) => push_natural_end_times(
             &mut local,
             item.start,
             item.end,
@@ -232,17 +242,13 @@ pub fn item_natural_end_edges_at_address(project: &Project, address: &ItemAddres
                 item.repeat_strategy,
             ),
         ),
-        Some(ItemRef::Comment(_)) | Some(ItemRef::Caption(_)) | None => {}
+        ItemRef::Comment(_) | ItemRef::Caption(_) => {}
     }
-    let track = address.track();
     local
-        .into_iter()
-        .filter_map(|time| project.sequence_time_to_timeline(&track, time))
-        .collect()
 }
 
-fn item_natural_span_at_address(project: &Project, address: &ItemAddress) -> Option<(Time, Time)> {
-    let (start, end) = match project.item(address)? {
+fn item_natural_span(item: &ItemRef<'_>) -> Option<(Time, Time)> {
+    let (start, end) = match item {
         ItemRef::Video(item) if item.repeats_keyframes() => generated_item_natural_span(item)?,
         ItemRef::Video(item) => media_real_span(
             item.start,
@@ -261,18 +267,37 @@ fn item_natural_span_at_address(project: &Project, address: &ItemAddress) -> Opt
         ItemRef::Comment(_) => return None,
         ItemRef::Caption(_) => return None,
     };
+    Some((start, end))
+}
+
+fn item_natural_span_at_address(project: &Project, address: &ItemAddress) -> Option<(Time, Time)> {
+    let item = project.item(address)?;
+    let (start, end) = item_natural_span(&item)?;
     let track = address.track();
     let start = project.sequence_time_to_timeline(&track, start)?;
     let end = project.sequence_time_to_timeline(&track, end)?;
     Some((start.min(end), start.max(end)))
 }
 
-pub fn item_natural_snap_targets_at_address(project: &Project, address: &ItemAddress) -> Vec<Time> {
-    let mut targets = item_natural_end_edges_at_address(project, address);
-    if let Some((start, end)) = item_natural_span_at_address(project, address) {
+pub fn item_natural_snap_targets_for_item(
+    project: &Project,
+    track: &crate::project::TrackAddress,
+    item: &ItemRef<'_>,
+) -> Vec<Time> {
+    let mut targets = item_natural_end_edges(item);
+    if let Some((start, end)) = item_natural_span(item) {
         targets.extend([start, end]);
     }
     targets
+        .into_iter()
+        .filter_map(|time| project.sequence_time_to_timeline(track, time))
+        .collect()
+}
+
+pub fn item_natural_snap_targets_at_address(project: &Project, address: &ItemAddress) -> Vec<Time> {
+    project.item(address).map_or_else(Vec::new, |item| {
+        item_natural_snap_targets_for_item(project, &address.track(), &item)
+    })
 }
 
 pub fn item_natural_resize_candidates_at_address(

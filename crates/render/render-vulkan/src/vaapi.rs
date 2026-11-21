@@ -1,32 +1,8 @@
 use crate::{Buffer, Renderer, Submission, device::Device};
 use ash::{vk, vk::Handle};
 use ffmpeg_next::{self as ffmpeg, sys};
-use shrimply_visual_frame::{GpuFrame, VideoFrame};
+use shrimply_visual_frame::VideoFrame;
 use std::{ptr, rc::Rc, sync::Arc};
-
-pub struct ImportedFrame {
-    // Wait for GPU readers before releasing the native decoder surface.
-    pub submission: Submission,
-    pub output: Buffer,
-    source: Arc<VideoFrame>,
-}
-
-impl GpuFrame for ImportedFrame {
-    type Context = Renderer;
-
-    fn import(renderer: &mut Renderer, source: Arc<VideoFrame>) -> Result<Self, String> {
-        let (output, submission) = renderer.import_video(&source)?;
-        Ok(Self {
-            source,
-            output,
-            submission,
-        })
-    }
-
-    fn source(&self) -> &Arc<VideoFrame> {
-        &self.source
-    }
-}
 
 struct FrameLock {
     context: *mut sys::AVHWFramesContext,
@@ -417,7 +393,10 @@ impl Renderer {
     }
 
     /// Import the VA-API surface through DRM PRIME; pixels stay on the GPU.
-    fn import_video(&mut self, source: &Arc<VideoFrame>) -> Result<(Buffer, Submission), String> {
+    pub(super) fn import_video(
+        &mut self,
+        source: &Arc<VideoFrame>,
+    ) -> Result<(Buffer, Submission), String> {
         let color = shrimply_visual_frame::math::video_color(source.native())?;
         let coefficients = color.coefficients.map(i32::to_ne_bytes);
         let chroma_offset = color.chroma_offset.map(f32::to_ne_bytes);

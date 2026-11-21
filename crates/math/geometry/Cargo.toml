@@ -5,6 +5,7 @@ edition = "2024"
 
 [features]
 skia = ["dep:skia-safe"]
+svg = ["skia", "skia-safe/svg"]
 
 [dependencies]
 glam = { workspace = true, features = ["serde"] }

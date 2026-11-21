@@ -9,7 +9,7 @@ fn files(text: &str) -> MemorySources {
         include_bytes!("../../../examples/assets/DejaVuSansCondensed-subset.ttf"),
     );
     files.insert("points.csv", "x,y\n0.8,1\n1.0,2\n1.2,3\n");
-    files.insert("main.sanim", text);
+    files.insert("main.sanim", format!("{}\nAnimation()", text));
     files
 }
 fn prepare(text: &str) -> sanim_lang::Prepared {
@@ -18,8 +18,8 @@ fn prepare(text: &str) -> sanim_lang::Prepared {
         .unwrap_or_else(|e| panic!("{e}"))
 }
 const SCALES: &str = r#"
-let xs=LinearScale(domain=Vec2(0.78,1.28),range=Vec2(-275.4pt,308.8125pt))
-let ys=LinearScale(domain=Vec2(0,4),range=Vec2(200pt,-200pt))
+let xs=LinearScale(domain=[0.78, 1.28],range=[-275.4pt, 308.8125pt])
+let ys=LinearScale(domain=[0, 4],range=[200pt, -200pt])
 "#;
 #[test]
 fn scales_grid_axis_scatter_and_boxplot_share_the_same_coordinates() {
@@ -29,13 +29,13 @@ let font=read<Font>("font.ttf")
 type Sample={{x:Number,y:Number}}
 let data=read<List<Sample>>("points.csv")
 let dots=Scatter(id="dots",data=data,x_scale=xs,y_scale=ys,keys=["a","b","c"])
-let grid=Grid(id="grid",scale=xs,ticks=[0.8,1.0,1.2],spans=[Vec2(-100pt,100pt)],highlight=[1.0])
+let grid=Grid(id="grid",scale=xs,ticks=[0.8,1.0,1.2],spans=[[-100pt, 100pt]],highlight=[1.0])
 let axis=Axis(id="axis",scale=xs,ticks=[0.8,1.0,1.2],format="percent",font=font)
 let interval_box=BoxPlot(id="box",summary={{low=0.8,q1=0.9,middle=1.0,q3=1.1,high=1.2}},scale=xs,height=16pt)
-add(dots)
-add(grid)
-add(axis)
-ExpandX(interval_box,duration=400ms,ease="smootherstep")
+Animation(children=[dots])
+Animation(children=[grid])
+Animation(children=[axis])
+interval_box.expand_x(duration=400ms, ease="smootherstep")
 "#
     ));
     let full = p
@@ -84,11 +84,11 @@ fn native_quantiles_match_linear_interpolation_and_do_not_modify_samples() {
 fn native_charts_fail_with_actionable_messages() {
     for (script, message) in [
         (
-            "let bad=LinearScale(domain=Vec2(1,1),range=Vec2(0pt,100pt))",
+            "let bad=LinearScale(domain=[1, 1],range=[0pt, 100pt])",
             "domain must increase",
         ),
         (
-            "let bad=LinearScale(domain=Vec2(0,1),range=Vec2(0pt,0pt))",
+            "let bad=LinearScale(domain=[0, 1],range=[0pt, 0pt])",
             "nonzero length",
         ),
         (
@@ -96,11 +96,11 @@ fn native_charts_fail_with_actionable_messages() {
             "low <= q1",
         ),
         (
-            "let bad=Grid(scale=xs,ticks=[1.0,0.8],spans=[Vec2(0pt,100pt)])",
+            "let bad=Grid(scale=xs,ticks=[1.0,0.8],spans=[[0pt, 100pt]])",
             "strictly increasing",
         ),
         (
-            "let bad=Grid(scale=xs,ticks=[0.7],spans=[Vec2(0pt,100pt)])",
+            "let bad=Grid(scale=xs,ticks=[0.7],spans=[[0pt, 100pt]])",
             "outside domain",
         ),
         (
@@ -146,10 +146,10 @@ fn asymmetric_chart_medians_keep_world_coordinates_and_pivots_for_every_anchor()
         let prepared = prepare(&format!(
             r#"{SCALES}
 let mapped=scale_value(xs,0.95)
-let markers=Scatter(data=[{{x=0.95,y=2}}],x_scale=xs,y_scale=ys,x_align=Align.{anchor},y_align=Align.{anchor},position=Vec2(7pt,11pt))
-let interval=BoxPlot(summary={{low=0.8,q1=0.9,middle=0.95,q3=1.1,high=1.2}},scale=xs,x_align=Align.{anchor},y_align=Align.{anchor},position=Vec2(7pt,11pt))
-add(markers)
-ExpandX(interval,duration=400ms,ease="linear")
+let markers=Scatter(data=[{{x=0.95,y=2}}],x_scale=xs,y_scale=ys,x_align=Align.{anchor},y_align=Align.{anchor},position=[7pt, 11pt])
+let interval=BoxPlot(summary={{low=0.8,q1=0.9,middle=0.95,q3=1.1,high=1.2}},scale=xs,x_align=Align.{anchor},y_align=Align.{anchor},position=[7pt, 11pt])
+Animation(children=[markers])
+interval.expand_x(duration=400ms, ease="linear")
 "#
         ));
         let mapped =

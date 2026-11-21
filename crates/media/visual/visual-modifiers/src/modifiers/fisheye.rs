@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use super::{KeyframeSpan, ModifierModel, combine, ensure_timeline_value_ids, timeline_value_span};
+#[cfg(feature = "preview")]
 use shrimply_preview_provider_skia::{
     Cursor, CursorUpdate, PointerEvent, PreviewBuilder, PreviewContext, PreviewEditOutcome,
     PreviewEditSink, PreviewProvider, PreviewRefresh, PreviewResponse, PreviewTarget,
@@ -16,6 +17,7 @@ pub struct FisheyeModifier {
     pub center: TimelineValue<glam::Vec2>,
 }
 
+#[cfg(feature = "preview")]
 struct FisheyePreview {
     target: PreviewTarget,
     original: FisheyeModifier,
@@ -25,7 +27,9 @@ struct FisheyePreview {
     active: bool,
     changed: bool,
 }
+#[cfg(feature = "preview")]
 impl FisheyeModifier {
+    #[cfg(feature = "preview")]
     pub(crate) fn preview_provider(
         &self,
         target: PreviewTarget,
@@ -46,6 +50,7 @@ impl FisheyeModifier {
         }))
     }
 }
+#[cfg(feature = "preview")]
 impl PreviewProvider for FisheyePreview {
     fn on_draw(
         &mut self,
@@ -119,6 +124,7 @@ impl PreviewProvider for FisheyePreview {
         }
     }
 }
+#[cfg(feature = "preview")]
 fn point_edit(changed: bool, commit: bool) -> PreviewResponse {
     if !changed {
         return PreviewResponse::handled();

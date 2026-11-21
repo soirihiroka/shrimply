@@ -6,11 +6,13 @@ impl Checker<'_> {
         &mut self,
         module: &Module,
         env: &mut Environment,
+        outer_variables: &BTreeMap<String, Type>,
     ) -> Result<BTreeMap<usize, usize>, Diagnostic> {
         let mut function_clauses = BTreeMap::new();
         let mut declared_functions = BTreeSet::new();
         for statement in &module.statements {
             if let StatementKind::Function {
+                capabilities,
                 name,
                 generics,
                 parameters,
@@ -22,7 +24,8 @@ impl Checker<'_> {
                     self.fresh(name, env, statement.span)?;
                 }
                 let resolved = self.generic_parameters(generics, env, statement.span)?;
-                let variables = generic_variables(&resolved);
+                let mut variables = outer_variables.clone();
+                variables.extend(generic_variables(&resolved));
                 let mut seen = BTreeSet::new();
                 let mut params = vec![];
                 for parameter in parameters {
@@ -48,10 +51,8 @@ impl Checker<'_> {
                 }
                 let result = self.resolve(result, &variables, 0, statement.span)?;
                 let signature = Signature {
-                    duration: sanim_core::TimelineEffect::default(),
-                    schedules: false,
+                    capabilities: *capabilities,
                     mutates: false,
-                    duration_parameters: BTreeSet::new(),
                     generics: resolved,
                     default_count: parameters
                         .iter()
@@ -78,7 +79,8 @@ impl Checker<'_> {
                             sanim_core::type_budget::charge(&parameter.ty,&mut remaining).map_err(|reason|self.error("S105",format!("function clause analysis budget exceeded: {reason}; split '{name}' into smaller helpers"),statement.span))?;
                         }
                         self.type_budget.set(remaining);
-                        if previous.generics != signature.generics
+                        if previous.capabilities != signature.capabilities
+                            || previous.generics != signature.generics
                             || previous.default_count != signature.default_count
                             || previous.parameters.len() != signature.parameters.len()
                             || previous
@@ -212,14 +214,8 @@ impl Checker<'_> {
             )
             .expect("nonempty candidates")
         });
-        combined.schedules = candidates.iter().any(|signature| signature.schedules);
         combined.mutates = candidates.iter().any(|signature| signature.mutates);
-        combined.duration = sanim_core::TimelineEffect::alternatives(
-            candidates
-                .iter()
-                .map(|signature| signature.duration.clone()),
-        )
-        .map_err(|reason| self.error("S127", reason, span))?;
+
         Ok((combined, actual))
     }
 
@@ -345,11 +341,18 @@ pub(super) fn infer(
         (Type::List(a, _), Type::List(b, _))
         | (Type::Option(a), Type::Option(b))
         | (Type::Array(a), Type::Array(b))
+        | (Type::Curve(a), Type::Curve(b))
         | (Type::Series(a), Type::Series(b)) => infer(a, b, bindings, budget)?,
         (Type::DataFrame { row: a, groups: ga }, Type::DataFrame { row: b, groups: gb })
             if ga == gb =>
         {
             infer(a, b, bindings, budget)?
+        }
+        (Type::Function(parameter), Type::Function(actual)) => {
+            for (parameter, actual) in parameter.parameters.iter().zip(&actual.parameters) {
+                infer(&parameter.ty, &actual.ty, bindings, budget)?;
+            }
+            infer(&parameter.result, &actual.result, bindings, budget)?;
         }
         (Type::Record(a), Type::Record(b)) => {
             for (name, ty) in a {
@@ -361,4 +364,19 @@ pub(super) fn infer(
         _ => {}
     }
     Ok(())
+}
+
+pub(super) fn generic_variable(parameter: &GenericParameter<Type, TypeBound>) -> Type {
+    parameter.constraint.as_ref().map_or_else(
+        || Type::Variable(parameter.name.clone()),
+        |bound| Type::BoundedVariable(parameter.name.clone(), Box::new(bound.clone())),
+    )
+}
+pub(super) fn generic_variables(
+    parameters: &[GenericParameter<Type, TypeBound>],
+) -> BTreeMap<String, Type> {
+    parameters
+        .iter()
+        .map(|p| (p.name.clone(), generic_variable(p)))
+        .collect()
 }

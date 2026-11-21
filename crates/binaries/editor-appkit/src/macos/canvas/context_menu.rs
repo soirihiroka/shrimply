@@ -4,10 +4,10 @@ use objc2::sel;
 use objc2_app_kit::{
     NSAlert, NSAlertFirstButtonReturn, NSButton, NSControlStateValueOff, NSControlStateValueOn,
     NSFont, NSMenu, NSMenuItem, NSModalResponseOK, NSModalResponseStop, NSOpenPanel, NSPasteboard,
-    NSPasteboardTypeString, NSPopUpButton, NSProgressIndicator, NSProgressIndicatorStyle, NSSlider,
-    NSTextField, NSTextView, NSWorkspace,
+    NSPasteboardTypeString, NSProgressIndicator, NSProgressIndicatorStyle, NSSlider, NSTextField,
+    NSTextView, NSWorkspace,
 };
-use objc2_foundation::{NSPoint, NSString, NSURL, ns_string};
+use objc2_foundation::{NSNumber, NSPoint, NSString, NSURL, ns_string};
 use shrimply_timeline_skia::{ContextMenuEntry, ContextMenuRequest, TIMELINE_CLIPBOARD_MARKER};
 use std::sync::mpsc::{self, TryRecvError};
 
@@ -43,13 +43,16 @@ impl CanvasView {
             self.open_preview_context_menu(event);
             return;
         }
-        let point = self.point(event);
+        self.open_timeline_context_menu(self.point(event), false);
+    }
+
+    pub(super) fn open_timeline_context_menu(&self, point: glam::Vec2, touch: bool) {
         let definition = {
             let mut content = self.ivars().content.borrow_mut();
             let Content::Timeline(scene) = &mut *content else {
                 return;
             };
-            scene.prepare_context_menu(point)
+            scene.prepare_context_menu_for_input(point, touch)
         };
         if definition.sections.is_empty() {
             return;
@@ -73,7 +76,7 @@ impl CanvasView {
                         let item = unsafe {
                             NSMenuItem::initWithTitle_action_keyEquivalent(
                                 NSMenuItem::alloc(self.mtm()),
-                                &NSString::from_str(action.label()),
+                                &NSString::from_str(shrimply_i18n::text(action.label()).as_ref()),
                                 Some(sel!(chooseCanvasContext:)),
                                 ns_string!(""),
                             )
@@ -85,6 +88,16 @@ impl CanvasView {
                                 .expect("menu action index fits NSInteger"),
                         );
                         item.setEnabled(action.enabled);
+                        if let Some(checked) = action.checked {
+                            unsafe {
+                                item.setRepresentedObject(Some(&NSNumber::new_bool(checked)));
+                            }
+                            item.setState(if checked {
+                                NSControlStateValueOn
+                            } else {
+                                NSControlStateValueOff
+                            });
+                        }
                         unsafe {
                             item.setTarget(Some(self));
                         }
@@ -102,7 +115,7 @@ impl CanvasView {
                         let label = NSTextField::labelWithString(
                             &NSString::from_str(&format!(
                                 "{}{}",
-                                control.label(),
+                                shrimply_i18n::text(control.label()),
                                 if control.mixed() { " — Mixed" } else { "" }
                             )),
                             self.mtm(),
@@ -150,7 +163,7 @@ impl CanvasView {
                         let item = unsafe {
                             NSMenuItem::initWithTitle_action_keyEquivalent(
                                 NSMenuItem::alloc(self.mtm()),
-                                &NSString::from_str(control.label()),
+                                &NSString::from_str(shrimply_i18n::text(control.label()).as_ref()),
                                 None,
                                 ns_string!(""),
                             )
@@ -162,11 +175,7 @@ impl CanvasView {
             }
         }
         // Native menus run a nested event loop; no scene/project borrow crosses it.
-        menu.popUpMenuPositioningItem_atLocation_inView(
-            None,
-            NSPoint::new(point.x.into(), point.y.into()),
-            Some(self),
-        );
+        super::super::menu_sheet::present(self, &menu, point, touch);
         let context_error = self.ivars().context_error.borrow_mut().take();
         let result = if let Some(error) = context_error {
             Err(error)
@@ -529,10 +538,10 @@ impl CanvasView {
         let remembered =
             shrimply_editor_state::preferences::snapshot(&self.ivars().session.preferences)
                 .last_tts_model;
-        let model_menu = NSPopUpButton::initWithFrame_pullsDown(
-            NSPopUpButton::alloc(self.mtm()),
+        let model_menu = shrimply_components_appkit::menu::popup(
             NSRect::new(NSPoint::ZERO, NSSize::new(360.0, 26.0)),
             false,
+            self.mtm(),
         );
         for model in &models {
             model_menu.addItemWithTitle(&NSString::from_str(&model.label));
@@ -675,10 +684,10 @@ impl CanvasView {
                     default,
                     ..
                 } => {
-                    let menu = NSPopUpButton::initWithFrame_pullsDown(
-                        NSPopUpButton::alloc(self.mtm()),
+                    let menu = shrimply_components_appkit::menu::popup(
                         NSRect::new(NSPoint::ZERO, NSSize::new(360.0, 26.0)),
                         false,
+                        self.mtm(),
                     );
                     for option in options {
                         menu.addItemWithTitle(&NSString::from_str(&option.label));
@@ -1040,11 +1049,7 @@ impl CanvasView {
         };
 
         label("Model", 0);
-        let model = NSPopUpButton::initWithFrame_pullsDown(
-            NSPopUpButton::alloc(self.mtm()),
-            control_frame(0),
-            false,
-        );
+        let model = shrimply_components_appkit::menu::popup(control_frame(0), false, self.mtm());
         for candidate in &models {
             model.addItemWithTitle(&NSString::from_str(candidate));
         }
@@ -1057,21 +1062,13 @@ impl CanvasView {
         accessory.addSubview(&model);
 
         label("Audio chunks", 1);
-        let chunks = NSPopUpButton::initWithFrame_pullsDown(
-            NSPopUpButton::alloc(self.mtm()),
-            control_frame(1),
-            false,
-        );
+        let chunks = shrimply_components_appkit::menu::popup(control_frame(1), false, self.mtm());
         chunks.addItemWithTitle(ns_string!("Follow cuts"));
         chunks.addItemWithTitle(ns_string!("Continuous"));
         accessory.addSubview(&chunks);
 
         label("Snap source", 2);
-        let snap = NSPopUpButton::initWithFrame_pullsDown(
-            NSPopUpButton::alloc(self.mtm()),
-            control_frame(2),
-            false,
-        );
+        let snap = shrimply_components_appkit::menu::popup(control_frame(2), false, self.mtm());
         for title in ["Audio cuts", "Video cuts", "Audio and video cuts"] {
             snap.addItemWithTitle(&NSString::from_str(title));
         }

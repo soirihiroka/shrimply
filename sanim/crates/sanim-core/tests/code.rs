@@ -146,6 +146,8 @@ fn code_presentation_seeks_handle_boundaries_instant_changes_and_cow_history() {
     state.events.insert(
         1.into(),
         PresentationEvent {
+            cycle: None,
+            interpolation: None,
             start: 1.into(),
             end: 2.into(),
             easing: Easing::Linear,
@@ -160,6 +162,8 @@ fn code_presentation_seeks_handle_boundaries_instant_changes_and_cow_history() {
     state.events.insert(
         3.into(),
         PresentationEvent {
+            cycle: None,
+            interpolation: None,
             start: 3.into(),
             end: 3.into(),
             easing: Easing::Linear,
@@ -211,6 +215,8 @@ fn code_presentation_spring_opacity_is_bounded_while_motion_can_overshoot() {
     state.events.insert(
         0.into(),
         PresentationEvent {
+            cycle: None,
+            interpolation: None,
             start: 0.into(),
             end: 1.into(),
             easing: Easing::SpringBouncy,
@@ -245,9 +251,7 @@ fn unresolved_code_bounds_fail_closed_and_native_evidence_uses_the_new_source() 
     fn rectangle(width: Fraction) -> Element {
         Element {
             id: "glyph".into(),
-            geometry: Arc::new(Geometry::Rectangle {
-                width,
-                height: 10.into(),
+            geometry: Arc::new(Geometry::Box {
                 children: Default::default(),
                 radius: Default::default(),
             }),
@@ -259,7 +263,17 @@ fn unresolved_code_bounds_fail_closed_and_native_evidence_uses_the_new_source() 
             stroke: None,
             reveal: Default::default(),
             horizontal: Default::default(),
-            layout: Layout::default(),
+            layout: Layout {
+                width: Some(Number {
+                    value: width,
+                    unit: Unit::Length,
+                }),
+                height: Some(Number {
+                    value: 10.into(),
+                    unit: Unit::Length,
+                }),
+                ..Default::default()
+            },
         }
     }
     let mut code = rectangle(2.into());

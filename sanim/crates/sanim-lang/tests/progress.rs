@@ -79,7 +79,7 @@ fn compile_and_resource_failures_are_terminal_without_false_success() {
         "let data = read<Dict>(\"missing.json\")",
     ] {
         let mut files = MemorySources::default();
-        files.insert("main.sanim", source);
+        files.insert("main.sanim", format!("{}\nAnimation()", source));
         let (mut engine, events) = observed();
         engine
             .prepare("main.sanim", &files, &BTreeMap::new())
@@ -102,7 +102,7 @@ fn direct_animation_duration_is_a_single_job_without_geometry_preparation() {
     let mut files = MemorySources::default();
     files.insert(
         "main.sanim",
-        "let marker = Circle()\nShift(marker, Vec2(1pt, 0pt), duration=300ms)\nwait(1s)\n",
+        "let marker = Box(width=2*(32pt), height=2*(32pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nmarker.shift([1pt, 0pt], duration=300ms)\nwait(1s)\n",
     );
     let (mut engine, events) = observed();
     let report = engine

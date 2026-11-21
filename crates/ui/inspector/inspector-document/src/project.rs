@@ -5,17 +5,27 @@ use shrimply_inspector_core::{
 use super::{CategoryIcon, InspectorCategory, InspectorListItem, detail_item};
 
 pub(super) fn categories(project: &ProjectPresentation) -> Vec<InspectorCategory> {
+    let mut settings = InspectorControl::new(ControlKind::ProjectSettings, "", "Project Settings")
+        .components(vec![
+            project.canvas_size.width.to_string(),
+            project.canvas_size.height.to_string(),
+            shrimply_math_core::fraction_numerator(project.frame_rate).to_string(),
+            shrimply_math_core::fraction_denominator(project.frame_rate).to_string(),
+        ]);
+    settings.project_settings = Some(Box::new(
+        shrimply_inspector_core::project::settings_presentation(
+            project.canvas_size,
+            project.frame_rate,
+            false,
+        ),
+    ));
     let config = InspectorSection {
         controls: vec![
             InspectorControl::new(ControlKind::Text, "/name", "Name").value(&project.name),
-            InspectorControl::new(ControlKind::ProjectSettings, "", "Project Settings").components(
-                vec![
-                    project.canvas_size.width.to_string(),
-                    project.canvas_size.height.to_string(),
-                    shrimply_math_core::fraction_numerator(project.frame_rate).to_string(),
-                    shrimply_math_core::fraction_denominator(project.frame_rate).to_string(),
-                ],
-            ),
+            InspectorControl::new(ControlKind::MultilineText, "/tags", "Tags")
+                .value(project.tags.join("\n"))
+                .choices(project.tags.clone(), project.tags.clone()),
+            settings,
         ],
     };
     vec![

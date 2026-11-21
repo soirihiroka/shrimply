@@ -14,27 +14,10 @@ fn expect(expected: &Type, actual: &Type) -> Result<(), String> {
 pub(crate) fn fixed(builtin: &Builtin, _actuals: &[Type]) -> Result<Type, String> {
     Ok(builtin.result.clone())
 }
-pub(crate) fn vector(_builtin: &Builtin, actuals: &[Type]) -> Result<Type, String> {
-    let mut unit = None;
-    for ty in actuals.iter().filter(|t| **t != Type::Unit) {
-        let next =
-            scalar_unit(ty).ok_or("vector components must be numeric and have matching units")?;
-        if unit.is_some_and(|u| u != next) {
-            return Err("vector components must have matching units".into());
-        }
-        unit = Some(next);
-    }
-    Ok(Type::Vector(
-        actuals.len(),
-        Some(unit.unwrap_or(Unit::Number)),
-    ))
-}
-pub(crate) fn dot(_builtin: &Builtin, actuals: &[Type]) -> Result<Type, String> {
-    if !matches!((&actuals[0],&actuals[1]),(Type::Vector(n,Some(Unit::Number)),Type::Vector(m,Some(Unit::Number)))if n==m)
-    {
-        return Err("dot requires dimensionless vectors with matching dimensions".into());
-    }
-    Ok(Type::Numeric(Unit::Number))
+pub(crate) fn list_math(builtin: &Builtin, actuals: &[Type]) -> Result<Type, String> {
+    sanim_core::math::linear::list_function(builtin.name)
+        .expect("registered numeric List function")
+        .result_type(actuals)
 }
 pub(crate) fn len(_builtin: &Builtin, actuals: &[Type]) -> Result<Type, String> {
     if matches!(&actuals[0],Type::DataFrame{groups,..} if !groups.is_empty()) {
@@ -90,8 +73,17 @@ pub(crate) fn unwrap(_builtin: &Builtin, actuals: &[Type]) -> Result<Type, Strin
     Ok(*inner.clone())
 }
 pub(crate) fn assertion(builtin: &Builtin, actuals: &[Type]) -> Result<Type, String> {
-    if !matches!(actuals[0], Type::Bool | Type::Predicate) {
+    if !sanim_core::TypeBound::Type(Box::new(Type::Union(vec![Type::Bool, Type::Predicate])))
+        .accepts(&actuals[0])
+    {
         return Err("assert/check requires Bool or a visual relationship".into());
+    }
+    if actuals.get(2).is_some_and(|ty| *ty != Type::Unit)
+        && sanim_core::TypeBound::Type(Box::new(Type::Bool)).accepts(&actuals[0])
+    {
+        return Err(
+            "at applies to visual relationships; boolean assertions validate immediately".into(),
+        );
     }
     Ok(builtin.result.clone())
 }

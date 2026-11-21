@@ -233,7 +233,7 @@ pub(super) fn apply_anime4k(
                 width: params.source_width,
                 height: params.source_height,
             },
-            LayerKind::Rgba => shrimply_anime4k_cuda::Source::Rgba {
+            LayerKind::Rgba | LayerKind::RgbaOpaque => shrimply_anime4k_cuda::Source::Rgba {
                 pixels: params.rgba as *const u8,
                 pitch: params.rgba_pitch,
                 width: params.source_width,

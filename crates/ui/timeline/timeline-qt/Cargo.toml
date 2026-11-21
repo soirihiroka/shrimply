@@ -4,7 +4,8 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-shrimply-timeline-skia = { workspace = true }
+shrimply-components-core.workspace = true
+shrimply-timeline-skia.workspace = true
 shrimply-timeline-edit = { workspace = true }
 shrimply-components-skia.workspace = true
 shrimply-editor-state.workspace = true
@@ -19,7 +20,6 @@ glam.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 shrimply-pointer-lock-wayland.workspace = true
-shrimply-video-recording.workspace = true
 
-[target.'cfg(windows)'.dependencies]
-shrimply-video-recording-windows.workspace = true
+[target.'cfg(any(target_os = "linux", windows))'.dependencies]
+shrimply-video-recording = { workspace = true, features = ["capture"] }

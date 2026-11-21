@@ -25,6 +25,9 @@ pub enum Target {
     Metal,
     Host,
     Vulkan,
+    VulkanPortable,
+    VulkanWordStorage,
+    SpirvPortable,
 }
 
 #[repr(C)]
@@ -37,6 +40,7 @@ struct CompileRequest {
     abi_path: *const c_char,
     entries: *const *const c_char,
     entry_count: usize,
+    precise_math: u32,
 }
 
 pub struct Artifacts {
@@ -53,11 +57,23 @@ pub struct Compiler {
     api: libloading::Library,
     directory: PathBuf,
     output: PathBuf,
+    precise_math: bool,
 }
 
 impl Compiler {
     pub fn new(directory: &Path, output: &Path) -> Self {
-        println!("cargo:rerun-if-changed={}", directory.display());
+        // Track file edits explicitly as well as directory additions/removals.
+        let mut pending = vec![directory.to_path_buf()];
+        while let Some(path) = pending.pop() {
+            println!("cargo:rerun-if-changed={}", path.display());
+            if path.is_dir() {
+                pending.extend(
+                    path.read_dir()
+                        .expect("read shader sources")
+                        .map(|entry| entry.expect("shader source entry").path()),
+                );
+            }
+        }
         println!("cargo:rerun-if-changed={}", crate::LIBRARY_DIR);
         // Load the bridge built with this crate; it links the pinned Slang C++ API.
         #[cfg(windows)]
@@ -88,7 +104,14 @@ impl Compiler {
             api,
             directory: directory.to_owned(),
             output: output.to_owned(),
+            precise_math: false,
         }
+    }
+
+    /// Preserve floating-point operation order for numerical kernels.
+    pub fn precise_math(mut self) -> Self {
+        self.precise_math = true;
+        self
     }
 
     pub fn compile(&self, source: &Path, target: Target, entries: &[&str]) -> Artifacts {
@@ -118,7 +141,11 @@ impl Compiler {
             "Slang artifact name must contain only ASCII letters, digits, '_' or '-'"
         );
         let extension = match target {
-            Target::Spirv | Target::Vulkan => "spv",
+            Target::Spirv
+            | Target::SpirvPortable
+            | Target::Vulkan
+            | Target::VulkanPortable
+            | Target::VulkanWordStorage => "spv",
             Target::Cuda => "cu",
             Target::Metal => "metal",
             Target::Host => "cpp",
@@ -154,6 +181,7 @@ impl Compiler {
             abi_path: abi_path.as_ptr(),
             entries: entry_pointers.as_ptr(),
             entry_count: entry_pointers.len(),
+            precise_math: u32::from(self.precise_math),
         };
         // The synchronous C++ API call borrows only the strings owned above.
         let result = unsafe {
@@ -169,6 +197,14 @@ impl Compiler {
             result, 0,
             "compile Slang module {module} for {target:?}; see compiler diagnostics"
         );
+        if matches!(
+            target,
+            Target::SpirvPortable | Target::VulkanPortable | Target::VulkanWordStorage
+        ) {
+            let bytes = fs::read(&code).expect("read portable SPIR-V code");
+            fs::write(&code, crate::spirv::order_declarations(&bytes))
+                .expect("write ordered portable SPIR-V code");
+        }
         Artifacts {
             filename,
             reflection: fs::read(&reflection)

@@ -26,6 +26,7 @@ pub(super) struct VectorRequest<'a> {
     pub transform: ComposedTransform2D,
     pub transition: Option<shrimply_visual_core::generated::GeneratedTransition>,
     pub svg: Option<media::SvgFrame>,
+    pub morph_endpoint: bool,
 }
 
 impl PreparedVector {
@@ -95,6 +96,7 @@ impl Scene {
             transform,
             transition,
             svg,
+            morph_endpoint,
         } = request;
         let render_size = shrimply_visual_core::generated::render_canvas(
             item,
@@ -176,7 +178,7 @@ impl Scene {
                     let offset = ComposedTransform2D {
                         matrix: glam::Mat3::from_translation(-shape.content_offset),
                     };
-                    let morph_scene = shape.morph_scene();
+                    let morph_scene = morph_endpoint.then(|| shape.morph_scene()).flatten();
                     (Box::new(shape), offset, morph_scene)
                 }
                 VideoItemContent::Text(_) => {
@@ -189,7 +191,9 @@ impl Scene {
                         &mut self.expressions,
                     );
                     let offset = text.source_offset;
-                    let morph_scene = masks.is_empty().then(|| text.morph_scene()).flatten();
+                    let morph_scene = (morph_endpoint && masks.is_empty())
+                        .then(|| text.morph_scene())
+                        .flatten();
                     (Box::new(TextSource { text, masks }), offset, morph_scene)
                 }
                 VideoItemContent::Paint(_) => {
@@ -205,7 +209,7 @@ impl Scene {
                         &mut self.expressions,
                         self.paint_caches.entry(item.id).or_default().clone(),
                     )?;
-                    let morph_scene = paint.morph_scene();
+                    let morph_scene = morph_endpoint.then(|| paint.morph_scene()).flatten();
                     (
                         Box::new(paint),
                         ComposedTransform2D {
@@ -220,7 +224,9 @@ impl Scene {
                     }
                     let svg = svg.ok_or("Vector source was not prepared")?;
                     let root_size = svg.size;
-                    let morph_scene = svg.prepared.morph_scene(root_size, native, &evaluation);
+                    let morph_scene = morph_endpoint
+                        .then(|| svg.prepared.morph_scene(root_size, native, &evaluation))
+                        .flatten();
                     (
                         Box::new(SvgSource {
                             svg: svg.prepared,

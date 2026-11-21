@@ -18,20 +18,15 @@ use shrimply_timeline_skia::{
     ContextMenu, ContextMenuAction, ContextMenuControl, ContextMenuRequest, CursorTool,
     DragCollisionMode, TimelineTools, ToolState, TrackAddAction, TrackAddOutcome,
     VideoFrameSelection,
-    drawing::row_screen_y,
-    items,
     metrics::*,
     scene::{
         Event, Frame, KeyAction, PointerButton, Scene, TimelineModifiers, TrackAddMenuRequest,
         TrackDeletion,
     },
-    track_controls::track_label_button_y,
     view::{TimelineCursor, TimelineScrollEvent, TimelineScrollInput},
 };
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", windows))]
 use shrimply_video_recording as video_recording;
-#[cfg(windows)]
-use shrimply_video_recording_windows as video_recording;
 pub use shrimply_visual_cuda::compositor::RgbaVideoFrame as RenderedVideoFrame;
 #[cfg(target_os = "linux")]
 use std::ffi::c_void;
@@ -46,6 +41,7 @@ pub struct TrackAddMenuPresentation {
     pub kind: shrimply_timeline_edit::TrackKind,
     pub x: f32,
     pub y: f32,
+    pub bottom_sheet: bool,
 }
 
 /// Qt owns the GL context and native pointer capture; Scene owns timeline behavior.
@@ -57,6 +53,7 @@ pub struct ToolkitTimeline {
     selection: SharedSelectionState,
     tools: TimelineTools,
     context_menu: ContextMenu,
+    context_menu_request: Option<(Vec2, bool)>,
     track_add_request: Option<TrackAddMenuRequest>,
     track_add_presentation: Option<TrackAddMenuPresentation>,
     track_remux_request: Option<shrimply_timeline_skia::import_queue::BatchId>,
@@ -97,6 +94,7 @@ impl ToolkitTimeline {
             selection,
             tools: TimelineTools::new(preferences),
             context_menu: ContextMenu::default(),
+            context_menu_request: None,
             track_add_request: None,
             track_add_presentation: None,
             track_remux_request: None,
@@ -119,6 +117,7 @@ impl ToolkitTimeline {
         scale: f32,
         accent_color: Color,
         native_window: usize,
+        force_redraw: bool,
     ) -> Result<(), String> {
         #[cfg(windows)]
         {
@@ -128,6 +127,10 @@ impl ToolkitTimeline {
         let _ = native_window;
         self.poll_screen_recording();
         self.poll_pointer_lock();
+        let size = vec2(width as f32 / scale, height as f32 / scale);
+        if !force_redraw && !self.scene.needs_redraw(size) {
+            return Ok(());
+        }
         let painter = self.renderer.begin_frame(
             glam::UVec2::new(width.max(1), height.max(1)),
             scale,
@@ -135,7 +138,7 @@ impl ToolkitTimeline {
         )?;
         self.scene.draw_frame(
             painter.canvas(),
-            vec2(width as f32 / scale, height as f32 / scale),
+            size,
             Frame {
                 before_seek: None,
                 accent_color,
@@ -147,31 +150,38 @@ impl ToolkitTimeline {
         );
         self.renderer.end_frame()?;
         let requests = self.scene.take_requests();
+        if let Some((point, touch)) = requests.context_menu {
+            self.prepare_context_menu_for_input(point, touch);
+            if !self.context_menu.sections.is_empty() {
+                self.context_menu_request = Some((point, touch));
+            }
+        }
         if requests.pause_playback {
             player_state::set_playing(&self.player, false);
         }
-        if let Some(key) = requests.audio_record
-            && let Err(error) = self.scene.toggle_audio_recording(key)
+        if let Some(request) = requests.audio_record
+            && let Err(error) = self
+                .scene
+                .toggle_audio_recording_at(request.key, request.position)
         {
             self.interaction_error = Some(format!("Could not record audio: {error}"));
         }
-        if let Some(key) = requests.video_record
-            && let Err(error) = self.scene.toggle_video_recording(key)
+        if let Some(request) = requests.video_record
+            && let Err(error) = self
+                .scene
+                .toggle_video_recording_at(request.key, request.position)
         {
             self.interaction_error =
                 Some(format!("Could not record screen or application: {error}"));
         }
         if let Some(request) = requests.track_add {
-            let row = items::row_for_track(
-                &self.project.borrow(),
-                request.key.kind,
-                request.key.track_index,
-            )
-            .ok_or("Add menu track no longer exists")?;
             self.track_add_presentation = Some(TrackAddMenuPresentation {
                 kind: request.key.kind,
-                x: TRACK_LABEL_ADD_X as f32,
-                y: track_label_button_y(row_screen_y(row, self.scene.view())) as f32,
+                x: request.point.x,
+                y: request.point.y,
+                bottom_sheet: shrimply_components_core::layout::menu_uses_bottom_sheet(
+                    if request.touch { "touch" } else { "pointer" },
+                ),
             });
             self.track_add_request = Some(request);
         }
@@ -192,44 +202,17 @@ impl ToolkitTimeline {
                 Some(Ok(event)) => event,
                 Some(Err(std::sync::mpsc::TryRecvError::Empty)) | None => return,
                 Some(Err(std::sync::mpsc::TryRecvError::Disconnected)) => {
-                    video_recording::ScreenRecordingEvent::Finished(Err(
+                    video_recording::VideoRecordingEvent::Finished(Err(
                         "Screen capture stopped without a final event".into(),
                     ))
                 }
             };
             let terminal = matches!(
                 event,
-                video_recording::ScreenRecordingEvent::Cancelled
-                    | video_recording::ScreenRecordingEvent::Finished(_)
+                video_recording::VideoRecordingEvent::Cancelled
+                    | video_recording::VideoRecordingEvent::Finished(_)
             );
-            let event = match event {
-                video_recording::ScreenRecordingEvent::Ready { width, height } => {
-                    shrimply_timeline_skia::recording::VideoRecordingEvent::Ready { width, height }
-                }
-                video_recording::ScreenRecordingEvent::Cancelled => {
-                    shrimply_timeline_skia::recording::VideoRecordingEvent::Cancelled
-                }
-                video_recording::ScreenRecordingEvent::Finished(result) => {
-                    shrimply_timeline_skia::recording::VideoRecordingEvent::Finished(result.map(
-                        |finished| {
-                            let duration = finished.duration;
-                            let width = finished.width;
-                            let height = finished.height;
-                            shrimply_timeline_skia::recording::FinishedVideoRecording::new(
-                                finished.into_path(),
-                                duration,
-                                width,
-                                height,
-                                if cfg!(target_os = "linux") {
-                                    Some(1)
-                                } else {
-                                    None
-                                },
-                            )
-                        },
-                    ))
-                }
-            };
+
             let result = self.scene.handle_video_recording_event(event);
             if terminal {
                 self.screen_recording = None;
@@ -283,7 +266,7 @@ impl ToolkitTimeline {
             .as_ref()
             .ok_or("Track add menu is no longer active")?;
         self.scene
-            .activate_track_add(request.key, action)
+            .activate_track_add_at(request.key, action, request.position)
             .map(|outcome| outcome != TrackAddOutcome::Unchanged)
     }
     pub fn import_track_file(&mut self, path: PathBuf) -> Result<TrackFileImport, String> {
@@ -294,9 +277,9 @@ impl ToolkitTimeline {
         if self.track_remux_request.is_some() {
             return Err("A track import is already awaiting confirmation".into());
         }
-        let started = self
-            .scene
-            .import_track_file(path, &request.import_targets)?;
+        let started =
+            self.scene
+                .import_track_file_at(path, &request.import_targets, request.position)?;
         if started.needs_remux {
             self.track_remux_request = Some(started.batch);
             Ok(TrackFileImport::ConfirmRemux)
@@ -357,6 +340,12 @@ impl ToolkitTimeline {
     pub fn relative_motion(&mut self, x: f32, y: f32) {
         self.scene
             .event(Event::RelativeMotion { delta: vec2(x, y) });
+    }
+    pub fn touch(&mut self, changes: Vec<shrimply_components_skia::input::TouchChange>) {
+        self.scene.event(Event::Touch(changes));
+    }
+    pub fn cancel_input(&mut self) {
+        self.scene.event(Event::Cancel);
     }
     pub fn pointer_move(&mut self, x: f32, y: f32, ctrl: bool, shift: bool) {
         self.scene.event(Event::Motion {
@@ -482,6 +471,12 @@ impl ToolkitTimeline {
         }
         Ok(request)
     }
+    pub fn tools_progress(&self) -> f64 {
+        self.scene.tools_progress()
+    }
+    pub fn audio_monitor_progress(&self) -> f64 {
+        self.scene.audio_monitor_progress()
+    }
     pub fn tool_state(&self) -> ToolState {
         self.tools.state()
     }
@@ -498,8 +493,14 @@ impl ToolkitTimeline {
         self.tools.set_drag_collision(mode);
     }
     pub fn prepare_context_menu(&mut self, x: f32, y: f32) {
-        self.context_menu = self.scene.prepare_context_menu(vec2(x, y));
+        self.prepare_context_menu_for_input(vec2(x, y), false);
+    }
+    fn prepare_context_menu_for_input(&mut self, point: Vec2, touch: bool) {
+        self.context_menu = self.scene.prepare_context_menu_for_input(point, touch);
         self.deletion = None;
+    }
+    pub fn take_context_menu(&mut self) -> Option<(Vec2, bool)> {
+        self.context_menu_request.take()
     }
     pub fn context_menu(&self) -> &ContextMenu {
         &self.context_menu

@@ -10,7 +10,7 @@ use sanim_core::{
     math::{self, chart::LinearScale},
     *,
 };
-use std::collections::BTreeSet;
+use std::{collections::BTreeSet, sync::Arc};
 
 const SUMMARY_FIELDS: [&str; 5] = ["low", "q1", "middle", "q3", "high"];
 fn record(fields: impl IntoIterator<Item = (&'static str, Type)>) -> Type {
@@ -18,8 +18,20 @@ fn record(fields: impl IntoIterator<Item = (&'static str, Type)>) -> Type {
 }
 fn scale_type() -> Type {
     record([
-        ("domain", Type::Vector(2, Some(Unit::Number))),
-        ("range", Type::Vector(2, Some(Unit::Length))),
+        (
+            "domain",
+            Type::List(
+                Box::new(Type::Numeric(Unit::Number)),
+                sanim_core::ListLength::Exact(2),
+            ),
+        ),
+        (
+            "range",
+            Type::List(
+                Box::new(Type::Numeric(Unit::Length)),
+                sanim_core::ListLength::Exact(2),
+            ),
+        ),
         ("clamp", Type::Bool),
     ])
 }
@@ -37,7 +49,7 @@ pub(crate) fn builtins(common: Vec<Parameter>) -> Vec<Builtin> {
             name,
             parameters,
             result,
-            schedule: false,
+            state_effect: false,
             timing: Default::default(),
             content: Default::default(),
             execute: Execution::Native(evaluate),
@@ -47,8 +59,22 @@ pub(crate) fn builtins(common: Vec<Parameter>) -> Vec<Builtin> {
     add(
         "LinearScale",
         vec![
-            p("domain", Type::Vector(2, Some(Unit::Number)), true),
-            p("range", Type::Vector(2, Some(Unit::Length)), true),
+            p(
+                "domain",
+                Type::List(
+                    Box::new(Type::Numeric(Unit::Number)),
+                    sanim_core::ListLength::Exact(2),
+                ),
+                true,
+            ),
+            p(
+                "range",
+                Type::List(
+                    Box::new(Type::Numeric(Unit::Length)),
+                    sanim_core::ListLength::Exact(2),
+                ),
+                true,
+            ),
             p("clamp", Type::Bool, false),
         ],
         scale_type(),
@@ -106,7 +132,14 @@ pub(crate) fn builtins(common: Vec<Parameter>) -> Vec<Builtin> {
                 ]);
                 if name == "Grid" {
                     params.extend([
-                        p("spans", list(Type::Vector(2, Some(Unit::Length))), true),
+                        p(
+                            "spans",
+                            list(Type::List(
+                                Box::new(Type::Numeric(Unit::Length)),
+                                sanim_core::ListLength::Exact(2),
+                            )),
+                            true,
+                        ),
                         p("highlight", list(number.clone()), false),
                         p("grid_opacity", number.clone(), false),
                         p("highlight_opacity", number.clone(), false),
@@ -166,11 +199,8 @@ fn scalar(value: f64, unit: Unit) -> Result<Value, String> {
         unit,
     }))
 }
-fn vec2(x: f64, y: f64) -> Value {
-    Value::Vec2(Vec2 {
-        values: [x, y],
-        unit: Unit::Length,
-    })
+fn vec2(x: f64, y: f64) -> Result<Value, String> {
+    Value::from_vector(vec![x, y], Unit::Length)
 }
 fn positive(value: f64, name: &str) -> Result<f64, String> {
     if !value.is_finite() || value <= 0. {
@@ -238,7 +268,15 @@ impl<'a> Chart<'a> {
             "id".into(),
             Value::String(format!("{}/{}", self.id, key).into()),
         );
-        let shape = native::make_element(name, &args, self.module, self.identity, self.span)?;
+        let mut shape = native::make_element(name, &args, self.module, self.identity, self.span)?;
+        if name == "Box" {
+            let Value::Element(element) = &mut shape else {
+                unreachable!()
+            };
+            let element = Arc::make_mut(element);
+            element.layout.x_align = Align::Center;
+            element.layout.y_align = Align::Center;
+        }
         self.children.push(shape);
         Ok(())
     }
@@ -255,8 +293,8 @@ impl<'a> Chart<'a> {
             "Line",
             key,
             [
-                ("position", vec2((a[0] + b[0]) * 0.5, (a[1] + b[1]) * 0.5)),
-                ("end", vec2(b[0] - a[0], b[1] - a[1])),
+                ("position", vec2((a[0] + b[0]) * 0.5, (a[1] + b[1]) * 0.5)?),
+                ("end", vec2(b[0] - a[0], b[1] - a[1])?),
                 ("width", scalar(width, Unit::Length)?),
                 ("fill", color.clone()),
                 ("opacity", scalar(opacity, Unit::Number)?),
@@ -353,12 +391,9 @@ pub(crate) fn evaluate(
             return Ok(Value::Record(OrdMap::from_iter([
                 (
                     "domain".to_owned(),
-                    Value::Vec2(Vec2 {
-                        values: scale.domain,
-                        unit: Unit::Number,
-                    }),
+                    Value::from_vector(scale.domain.to_vec(), Unit::Number)?,
                 ),
-                ("range".to_owned(), vec2(scale.range[0], scale.range[1])),
+                ("range".to_owned(), vec2(scale.range[0], scale.range[1])?),
                 ("clamp".to_owned(), Value::Bool(scale.clamp)),
             ])));
         }
@@ -437,7 +472,7 @@ pub(crate) fn evaluate(
                     "Circle",
                     &format!("point/{key}"),
                     [
-                        ("position", vec2(point[0], point[1])),
+                        ("position", vec2(point[0], point[1])?),
                         ("radius", radius.clone()),
                         ("opacity", point_opacity.clone()),
                         ("fill", ink.clone()),
@@ -708,7 +743,7 @@ fn axis(
                 ("text", title.clone()),
                 ("font", font.clone()),
                 ("font_size", scalar(size, Unit::Length)?),
-                ("position", vec2(x, y)),
+                ("position", vec2(x, y)?),
                 ("fill", ink.clone()),
             ],
         )?;

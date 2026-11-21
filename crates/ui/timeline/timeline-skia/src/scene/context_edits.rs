@@ -51,6 +51,37 @@ impl Scene {
         Ok(())
     }
 
+    pub(super) fn split_context_items(&mut self, all: bool) -> Result<(), String> {
+        let position = self
+            .context
+            .split_time
+            .ok_or("playhead cut position is unavailable")?;
+        let scope = SequenceTimeline::new(self.context.scope.clone());
+        let mut edited = self.project.borrow().clone();
+        let addresses = if all {
+            scope.items(&edited)
+        } else {
+            items::expand_grouped_item_addresses(&scope, &edited, &self.context.selected)
+        }
+        .into_iter()
+        .filter(|address| {
+            scope
+                .timeline_item_times(&edited, address)
+                .is_some_and(|(start, end)| start < position && position < end)
+        })
+        .collect::<Vec<_>>();
+        if addresses.is_empty() {
+            return Ok(());
+        }
+        let (_, selected) = items::split_item_addresses(&scope, &mut edited, &addresses, position);
+        if selected.is_empty() {
+            return Ok(());
+        }
+        self.commit_context_edit(edited, "split-timeline-item", Some(selected))?;
+        selection_state::set_selected_gap(&self.selection, None);
+        Ok(())
+    }
+
     pub(super) fn delete_context_items(&mut self) -> Result<(), String> {
         let mut edited = self.project.borrow().clone();
         for address in &self.context.selected {

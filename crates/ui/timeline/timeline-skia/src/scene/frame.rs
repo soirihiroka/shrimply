@@ -3,6 +3,34 @@ use crate::drawing::{TimelineInput, active_virtual_tracks, draw_timeline};
 use crate::timeline_operation::{SequenceTimeline, TimelineOperationContext};
 
 pub(super) fn draw(scene: &mut Scene, painter: &TimelinePainter, size: Vec2, frame: Frame<'_>) {
+    scene.source_events.take();
+    if let Some((started, tools, controls, monitor)) = scene.controls_animation {
+        let (tools, tools_active) =
+            shrimply_components_skia::animate_scroll(shrimply_components_skia::ScrollAnimation {
+                source: tools,
+                target: if scene.show_tools { 1.0 } else { 0.0 },
+                elapsed: started.elapsed(),
+            });
+        let (controls, controls_active) =
+            shrimply_components_skia::animate_scroll(shrimply_components_skia::ScrollAnimation {
+                source: controls,
+                target: if scene.show_track_controls { 1.0 } else { 0.0 },
+                elapsed: started.elapsed(),
+            });
+        let (monitor, monitor_active) =
+            shrimply_components_skia::animate_scroll(shrimply_components_skia::ScrollAnimation {
+                source: monitor,
+                target: if scene.show_audio_monitor { 1.0 } else { 0.0 },
+                elapsed: started.elapsed(),
+            });
+        scene.audio_monitor_progress = monitor;
+        scene.tools_progress = tools;
+        scene.view.track_controls_progress = controls;
+        scene.track_controls_animating = tools_active || controls_active || monitor_active;
+        if !scene.track_controls_animating {
+            scene.controls_animation = None;
+        }
+    }
     let playback_performance = scene.performance.snapshot();
     let project = scene.project.clone();
     let player_state = scene.player.clone();
@@ -14,7 +42,7 @@ pub(super) fn draw(scene: &mut Scene, painter: &TimelinePainter, size: Vec2, fra
     let width = f64::from(size.x);
     let height = f64::from(size.y);
     let accent_color = frame.accent_color;
-    let timeline_width = timeline_width(width);
+    let timeline_width = timeline_width(width, runtime.view);
     if timeline_width <= 0.0 {
         return;
     }
@@ -22,7 +50,8 @@ pub(super) fn draw(scene: &mut Scene, painter: &TimelinePainter, size: Vec2, fra
         let project = project.borrow();
         let player = player_state::snapshot(player_state);
         (
-            folded_sequence::expanded_timeline_end(&project)
+            runtime
+                .timeline_end
                 .max(player.duration)
                 .max(player.position)
                 .max(Time::from_seconds(1))
@@ -68,8 +97,11 @@ pub(super) fn draw(scene: &mut Scene, painter: &TimelinePainter, size: Vec2, fra
         } else {
             Vec::new()
         };
-        runtime.snap_repository = crate::snapping::repository(
+        crate::snapping::update(
             &project,
+            runtime.revision,
+            &mut runtime.snapping_cache,
+            &mut runtime.snap_repository,
             crate::snapping::Request {
                 folded_drag: runtime.folded_drag.as_ref(),
                 dragged_group: runtime.dragged_group.as_ref(),
@@ -192,6 +224,13 @@ pub(super) fn draw(scene: &mut Scene, painter: &TimelinePainter, size: Vec2, fra
     let mut track_control_draw = TrackControlDraw {
         animation_active: &mut runtime.track_controls_animating,
         buttons: &mut runtime.track_buttons,
+        external_indication: runtime.native_button_indication && runtime.pointer_touch,
+        touch: runtime.pointer_touch,
+        touch_pressed: runtime
+            .touch_button_feedback
+            .as_ref()
+            .filter(|feedback| feedback.phase == TouchButtonPhase::Pressed)
+            .map(|feedback| feedback.button),
         active_audio_recording_key,
         active_video_recording_key,
     };

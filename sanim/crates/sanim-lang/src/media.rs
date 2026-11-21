@@ -9,7 +9,7 @@ use std::sync::Arc;
 pub(crate) fn register(output: &mut Vec<Builtin>) {
     let mut parameters = vec![Parameter {
         name: "src",
-        ty: Type::String,
+        ty: Type::union([Type::String, Type::Texture]).expect("image source types"),
         required: true,
     }];
     parameters.extend(crate::prelude::element_parameters());
@@ -17,7 +17,7 @@ pub(crate) fn register(output: &mut Vec<Builtin>) {
         name: "Image",
         parameters,
         result: Type::Element,
-        schedule: false,
+        state_effect: false,
         timing: Default::default(),
         content: Default::default(),
         execute: Execution::Source(execute),
@@ -31,17 +31,19 @@ pub(crate) fn resource(path: &str, asset: Arc<media::Asset>) -> Result<Value, St
         "id".into(),
         Value::String(format!("media:{path}:{}", asset.fingerprint()).into()),
     );
-    let Value::Element(mut root) = native::make_element("Rect", &args, path, &[], Span::default())?
-    else {
-        unreachable!()
-    };
     let [width, height] = math::media::intrinsic_size([asset.width, asset.height])?;
-    Arc::make_mut(&mut root).geometry = Arc::new(Geometry::Media {
-        asset,
-        width,
-        height,
-    });
-    Ok(Value::Element(root))
+    native::make_element_with_geometry(
+        "Image",
+        &args,
+        Geometry::Media {
+            asset,
+            width,
+            height,
+        },
+        path,
+        &[],
+        Span::default(),
+    )
 }
 
 fn execute(
@@ -49,41 +51,28 @@ fn execute(
     args: &imbl::OrdMap<String, Value>,
     context: native::Context<'_>,
 ) -> Result<Value, String> {
-    let Some(Value::Element(source)) = args.get("asset") else {
-        return Err("Image source was not loaded by the resource runtime".into());
-    };
-    let Geometry::Media {
-        asset,
-        width,
-        height,
-    } = source.geometry.as_ref()
-    else {
-        return Err("Image requires a supported bitmap or SVG source".into());
+    let asset = match args.get("src") {
+        Some(Value::Texture(texture)) => Arc::new(media::Asset::from_texture(texture.clone())),
+        _ => {
+            let Some(Value::Element(source)) = args.get("asset") else {
+                return Err(
+                    "Image requires a Texture value or a supported bitmap/SVG source path".into(),
+                );
+            };
+            let Geometry::Media { asset, .. } = source.geometry.as_ref() else {
+                return Err("Image requires a supported bitmap or SVG source".into());
+            };
+            asset.clone()
+        }
     };
     let explicit_width = args.contains_key("width");
     let explicit_height = args.contains_key("height");
     let mut args = args.clone();
-    let mut width = *width;
-    let mut height = *height;
-    match (args.get("width"), args.get("height")) {
-        (Some(value), None) if value.number()?.unit == Unit::Length => {
-            width = value.number()?.value;
-            height = math::arithmetic(
-                "*",
-                width,
-                Fraction::new(u64::from(asset.height), u64::from(asset.width)),
-            )?;
-        }
-        (None, Some(value)) if value.number()?.unit == Unit::Length => {
-            height = value.number()?.value;
-            width = math::arithmetic(
-                "*",
-                height,
-                Fraction::new(u64::from(asset.width), u64::from(asset.height)),
-            )?;
-        }
-        _ => {}
-    }
+    let [width, height] = math::media::element_size(
+        [asset.width, asset.height],
+        args.get("width").map(Value::number).transpose()?,
+        args.get("height").map(Value::number).transpose()?,
+    )?;
     args.entry("width".into()).or_insert(Value::Number(Number {
         value: width,
         unit: Unit::Length,
@@ -92,9 +81,14 @@ fn execute(
         value: height,
         unit: Unit::Length,
     }));
-    let Value::Element(mut root) = native::make_element(
-        "Rect",
+    let Value::Element(mut root) = native::make_element_with_geometry(
+        "Image",
         &args,
+        Geometry::Media {
+            asset: asset.clone(),
+            width,
+            height,
+        },
         context.module,
         context.identity,
         context.span,
@@ -103,11 +97,6 @@ fn execute(
         unreachable!()
     };
     let element = Arc::make_mut(&mut root);
-    element.geometry = Arc::new(Geometry::Media {
-        asset: asset.clone(),
-        width,
-        height,
-    });
     if !explicit_width {
         element.layout.width = None;
     }

@@ -383,6 +383,7 @@ pub(crate) fn bounds_at(
     }
     let zero = 0.0_f64;
     let (mut min, mut max) = match element.geometry.as_ref() {
+        Geometry::Voxel(_) => return Err("VoxelScene uses the dedicated voxel renderer; 2D bounds and visual assertions do not apply to its 3D content".into()),
         Geometry::Circle { radius } => (
             Vec2 {
                 values: [-to_f64(*radius)?, -to_f64(*radius)?],
@@ -393,7 +394,7 @@ pub(crate) fn bounds_at(
                 unit: crate::Unit::Length,
             },
         ),
-        Geometry::Rectangle { width, height, .. } | Geometry::Media { width, height, .. } => (
+        Geometry::Media { width, height, .. } => (
             Vec2 {
                 values: [
                     -calc("/", to_f64(*width)?, 2.0)?,

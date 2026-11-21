@@ -1,3 +1,5 @@
+pub mod demux;
+
 use std::{
     collections::HashMap,
     fs::File,
@@ -253,7 +255,7 @@ fn inspect_ffmpeg(path: &Path, result: &mut FileInfo) -> Result<(), String> {
         .get_or_init(|| ffmpeg::init().map_err(|error| error.to_string()))
         .clone()
         .map_err(|error| format!("could not initialize FFmpeg: {error}"))?;
-    let input = format::input(path)
+    let input = demux::open(path)
         .map_err(|error| format!("FFmpeg could not inspect {}: {error}", path.display()))?;
     let detected = input.format();
     result.container = Some(ContainerInfo {
@@ -320,27 +322,42 @@ fn stream_info(stream: &format::stream::Stream<'_>) -> StreamInfo {
     let mut profile = None;
     let (video, audio) = match kind {
         media::Type::Video => {
-            let video = context.and_then(|context| context.decoder().video().ok());
-            profile = video
-                .as_ref()
-                .map(|decoder| format!("{:?}", decoder.profile()));
-            (
-                video.map(|decoder| VideoStreamInfo {
-                    width: decoder.width(),
-                    height: decoder.height(),
-                    pixel_format: format!("{:?}", decoder.format()),
-                    sample_aspect_ratio: ratio(decoder.aspect_ratio()),
+            // avcodec_parameters_to_context provides typed pixel/color fields without
+            // opening a decoder just to describe a stream.
+            let video = context.map(|context| {
+                let video = unsafe { &*context.as_ptr() };
+                profile = Some(format!(
+                    "{:?}",
+                    codec::Profile::from((parameters.id(), video.profile))
+                ));
+                VideoStreamInfo {
+                    width: video.width.max(0) as u32,
+                    height: video.height.max(0) as u32,
+                    pixel_format: match format::Pixel::from(video.pix_fmt) {
+                        format::Pixel::None => "Unknown".into(),
+                        format => format!("{format:?}"),
+                    },
+                    sample_aspect_ratio: ratio(video.sample_aspect_ratio.into()),
                     average_frame_rate: ratio(stream.avg_frame_rate()),
                     nominal_frame_rate: ratio(stream.rate()),
-                    color_range: format!("{:?}", decoder.color_range()),
-                    color_space: format!("{:?}", decoder.color_space()),
-                    color_primaries: format!("{:?}", decoder.color_primaries()),
-                    color_transfer: format!("{:?}", decoder.color_transfer_characteristic()),
-                    chroma_location: format!("{:?}", decoder.chroma_location()),
-                    has_b_frames: decoder.has_b_frames(),
-                }),
-                None,
-            )
+                    color_range: format!("{:?}", ffmpeg::color::Range::from(video.color_range)),
+                    color_space: format!("{:?}", ffmpeg::color::Space::from(video.colorspace)),
+                    color_primaries: format!(
+                        "{:?}",
+                        ffmpeg::color::Primaries::from(video.color_primaries)
+                    ),
+                    color_transfer: format!(
+                        "{:?}",
+                        ffmpeg::color::TransferCharacteristic::from(video.color_trc)
+                    ),
+                    chroma_location: format!(
+                        "{:?}",
+                        ffmpeg::chroma::Location::from(video.chroma_sample_location)
+                    ),
+                    has_b_frames: video.has_b_frames != 0,
+                }
+            });
+            (video, None)
         }
         media::Type::Audio => {
             let audio = context.and_then(|context| context.decoder().audio().ok());

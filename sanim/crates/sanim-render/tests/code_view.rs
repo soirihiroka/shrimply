@@ -4,7 +4,7 @@ use sanim_render::{Options, Renderer};
 
 fn prepare(source: &str) -> Prepared {
     let mut files = MemorySources::default();
-    files.insert("main.sanim", source);
+    files.insert("main.sanim", format!("{}\nAnimation()", source));
     files.insert("snippet.py", "value = 1\nreturn value\n");
     files.insert("large.txt", "word ".repeat(1200));
     Engine::new(Viewport {
@@ -21,8 +21,8 @@ fn prepare(source: &str) -> Prepared {
 fn native_code_glyph_picking_matches_rendered_coverage_and_constructor_locations() {
     let prepared = prepare(
         r#"bg(Color("transparent"))
-let view=CodeView(src="snippet.py",font_size=22pt,line_numbers=false,rotation=17deg,position=Vec2(-30pt,10pt))
-add(view)
+let view=CodeView(src="snippet.py",font_size=22pt,line_numbers=false,rotation=17deg,position=[-30pt, 10pt])
+Animation(children=[view])
 wait(1s)"#,
     );
     let mut renderer = Renderer::default();
@@ -78,7 +78,7 @@ fn dynamic_code_style_uses_actual_color_interpolation_and_caches_reverse_frames(
     let prepared = prepare(
         r#"bg(Color("transparent"))
 let view=CodeView(code=r"value = 1",lang="python",font_size=22pt,line_numbers=false)
-add(view)
+Animation(children=[view])
 wait(1s)
 view.style(spans=[CodeSpan(CodeRange(1,1,1,6),CodeStyle(fill=Color("orange3"),background=Color("blue5"),underline=true))],duration=1s,ease="linear")
 wait(1s)"#,
@@ -117,10 +117,10 @@ fn many_growing_code_views_fail_the_frame_budget_without_discarding_a_good_frame
         r#"mut source=""
 for index in range(64) {
     let view=CodeView(code=source,lang="plain")
-    add(view)
+    Animation(children=[view])
 }
 wait(1s)
-source=read<String>("large.txt")
+animate(source,to=read<String>("large.txt"),duration=0s)
 wait(1s)"#,
     );
     let mut renderer = Renderer::default();

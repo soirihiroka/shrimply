@@ -6,6 +6,6 @@ edition = "2024"
 [dependencies]
 hashbrown.workspace = true
 shrimply-audio-modifiers = { workspace = true }
-shrimply-project-document = { workspace = true, default-features = true }
-shrimply-visual-modifiers = { workspace = true }
+shrimply-project-document = { workspace = true, features = ["editor"] }
+shrimply-visual-modifiers.workspace = true
 uuid = { workspace = true, features = ["v4"] }

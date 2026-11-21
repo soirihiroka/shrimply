@@ -53,6 +53,7 @@ pub fn row(preferences: store::SharedPreferences) -> adw::ComboRow {
                 .expect("saved GPU choice") as u32,
         )
         .build();
+    shrimply_components_gtk::ui::adaptive_choice(&row);
     if let Some(error) = error {
         row.set_tooltip_text(Some(&error));
     }

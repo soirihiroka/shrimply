@@ -4,6 +4,65 @@ const VISUAL_DURATION_UNITS_PER_SECOND: i64 = 10;
 const GPU_MEMORY_UNITS_PER_GIB: i64 = 4;
 const BYTES_PER_GIB: f64 = 1024.0 * 1024.0 * 1024.0;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PreferencePage {
+    Appearance,
+    Performance,
+    Trust,
+    External,
+}
+
+impl PreferencePage {
+    pub const ALL: [Self; 4] = [
+        Self::Appearance,
+        Self::Performance,
+        Self::Trust,
+        Self::External,
+    ];
+
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Appearance => "appearance",
+            Self::Performance => "performance",
+            Self::Trust => "trust",
+            Self::External => "external",
+        }
+    }
+
+    pub fn title(self) -> &'static str {
+        match self {
+            Self::Appearance => "Appearance",
+            Self::Performance => "Performance",
+            Self::Trust => "Trust",
+            Self::External => "External",
+        }
+    }
+
+    pub fn icon(self) -> &'static str {
+        match self {
+            Self::Appearance => "appearance-symbolic",
+            Self::Performance => "speedometer-symbolic",
+            Self::Trust => "security-high-symbolic",
+            Self::External => "application-x-executable-symbolic",
+        }
+    }
+
+    pub fn groups(self) -> &'static [&'static str] {
+        match self {
+            Self::Appearance => &["Captions", "Text", "Preview", "Timeline"],
+            Self::Performance => &["Performance"],
+            Self::Trust => &["Trusted sources"],
+            Self::External => &[
+                "Blender",
+                "Inference Servers",
+                "Selected Server",
+                "Compute",
+                "Features",
+            ],
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ComputeDevicePresentation {
     pub id: String,
@@ -141,6 +200,7 @@ pub enum PreferenceId {
     DefaultVisualDuration,
     TimelineSnapRadius,
     PreviewZoomPan,
+    PreviewControlsVisible,
     PreviewPadding,
     PreviewShadowSize,
     PreviewUpsampleMethod,
@@ -151,24 +211,128 @@ pub enum PreferenceId {
 }
 
 impl PreferenceId {
+    pub const ALL: [Self; 14] = [
+        Self::CaptionFontSize,
+        Self::CaptionBackgroundColor,
+        Self::DefaultTextFontFamily,
+        Self::DefaultVisualDuration,
+        Self::TimelineSnapRadius,
+        Self::PreviewZoomPan,
+        Self::PreviewControlsVisible,
+        Self::PreviewPadding,
+        Self::PreviewShadowSize,
+        Self::PreviewUpsampleMethod,
+        Self::PreviewDownsampleMethod,
+        Self::TemporalDecoderPoolSize,
+        Self::GpuHostMemory,
+        Self::BlenderBinary,
+    ];
+
     pub fn from_key(key: &str) -> Option<Self> {
-        match key {
-            "caption-font-size" => Some(Self::CaptionFontSize),
-            "caption-background-color" => Some(Self::CaptionBackgroundColor),
-            "default-text-font-family" => Some(Self::DefaultTextFontFamily),
-            "default-visual-duration" => Some(Self::DefaultVisualDuration),
-            "timeline-snap-radius" => Some(Self::TimelineSnapRadius),
-            "preview-zoom-pan" => Some(Self::PreviewZoomPan),
-            "preview-padding" => Some(Self::PreviewPadding),
-            "preview-shadow-size" => Some(Self::PreviewShadowSize),
-            "preview-upsample-method" => Some(Self::PreviewUpsampleMethod),
-            "preview-downsample-method" => Some(Self::PreviewDownsampleMethod),
-            "temporal-decoder-pool-size" => Some(Self::TemporalDecoderPoolSize),
-            "gpu-host-memory" => Some(Self::GpuHostMemory),
-            "blender-binary" => Some(Self::BlenderBinary),
-            _ => None,
+        Self::ALL.into_iter().find(|id| id.key() == key)
+    }
+
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::CaptionFontSize => "caption-font-size",
+            Self::CaptionBackgroundColor => "caption-background-color",
+            Self::DefaultTextFontFamily => "default-text-font-family",
+            Self::DefaultVisualDuration => "default-visual-duration",
+            Self::TimelineSnapRadius => "timeline-snap-radius",
+            Self::PreviewZoomPan => "preview-zoom-pan",
+            Self::PreviewControlsVisible => "preview-controls-visible",
+            Self::PreviewPadding => "preview-padding",
+            Self::PreviewShadowSize => "preview-shadow-size",
+            Self::PreviewUpsampleMethod => "preview-upsample-method",
+            Self::PreviewDownsampleMethod => "preview-downsample-method",
+            Self::TemporalDecoderPoolSize => "temporal-decoder-pool-size",
+            Self::GpuHostMemory => "gpu-host-memory",
+            Self::BlenderBinary => "blender-binary",
         }
     }
+
+    pub fn presentation(self) -> PreferencePresentation {
+        let (label, subtitle, group, choices) = match self {
+            Self::CaptionFontSize => ("Font Size", "", "Captions", &[][..]),
+            Self::CaptionBackgroundColor => ("Background Color", "", "Captions", &[][..]),
+            Self::DefaultTextFontFamily => ("Default Text Font", "", "Text", &[][..]),
+            Self::DefaultVisualDuration => ("Default Visual Duration", "", "Timeline", &[][..]),
+            Self::TimelineSnapRadius => (
+                "Snap Attraction Radius",
+                "Distance in pixels for timeline, beat, and preview snapping",
+                "Timeline",
+                &[][..],
+            ),
+            Self::PreviewControlsVisible => ("Show Preview Controls", "", "Preview", &[][..]),
+            Self::PreviewZoomPan => (
+                "Preview zoom and pan",
+                "Scroll to zoom; middle-drag to pan; middle-click to fit.",
+                "Preview",
+                &[][..],
+            ),
+            Self::PreviewPadding => (
+                "Padding",
+                "Space around the video frame in pixels",
+                "Preview",
+                &[][..],
+            ),
+            Self::PreviewShadowSize => (
+                "Shadow Size",
+                "Drop shadow extent around the video frame in pixels",
+                "Preview",
+                &[][..],
+            ),
+            Self::PreviewUpsampleMethod => (
+                "Preview Upsample Method",
+                "Filter used when the preview is larger than the video",
+                "Preview",
+                &["Nearest", "Bilinear"][..],
+            ),
+            Self::PreviewDownsampleMethod => (
+                "Preview Downsample Method",
+                "Filter used when the preview is smaller than the video",
+                "Preview",
+                &["Nearest", "Bilinear", "Trilinear"][..],
+            ),
+            Self::TemporalDecoderPoolSize => (
+                "Temporal Decoder Pool Size",
+                "Maximum number of active video decoder sessions",
+                "Performance",
+                &[][..],
+            ),
+            Self::GpuHostMemory => (
+                "GPU Host Memory Budget",
+                "Maximum system RAM available for CUDA spill and reconstructible GPU resources",
+                "Performance",
+                &[][..],
+            ),
+            Self::BlenderBinary => ("Blender Binary", "", "Blender", &[][..]),
+        };
+        PreferencePresentation {
+            label,
+            subtitle,
+            group,
+            choices,
+            page: if self == Self::PreviewControlsVisible {
+                None
+            } else {
+                PreferencePage::ALL
+                    .into_iter()
+                    .find(|page| page.groups().contains(&group))
+            },
+            available: self != Self::BlenderBinary || shrimply_blender_core::SUPPORTED,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct PreferencePresentation {
+    pub label: &'static str,
+    pub subtitle: &'static str,
+    pub group: &'static str,
+    pub choices: &'static [&'static str],
+    pub page: Option<PreferencePage>,
+    pub available: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -253,7 +417,8 @@ pub fn integer_range(id: PreferenceId) -> Option<IntegerRange> {
             step: 1,
             scale: GPU_MEMORY_UNITS_PER_GIB,
         },
-        PreferenceId::PreviewZoomPan
+        PreferenceId::PreviewControlsVisible
+        | PreferenceId::PreviewZoomPan
         | PreferenceId::CaptionBackgroundColor
         | PreferenceId::DefaultTextFontFamily
         | PreferenceId::BlenderBinary => return None,
@@ -283,6 +448,9 @@ pub fn value(store: &SharedPreferences, id: PreferenceId) -> PreferenceValue {
             PreferenceValue::Integer(i64::from(snapshot.timeline_snap_radius_px))
         }
         PreferenceId::PreviewZoomPan => PreferenceValue::Boolean(snapshot.preview_zoom_pan_enabled),
+        PreferenceId::PreviewControlsVisible => {
+            PreferenceValue::Boolean(snapshot.preview_controls_visible)
+        }
         PreferenceId::PreviewPadding => {
             PreferenceValue::Integer(i64::from(snapshot.preview_padding_px))
         }
@@ -344,6 +512,9 @@ pub fn set_value(
         }
         (PreferenceId::TimelineSnapRadius, PreferenceValue::Integer(value)) => {
             set_timeline_snap_radius_px(store, value.max(0) as u32)
+        }
+        (PreferenceId::PreviewControlsVisible, PreferenceValue::Boolean(value)) => {
+            set_preview_controls_visible(store, value)
         }
         (PreferenceId::PreviewZoomPan, PreferenceValue::Boolean(value)) => {
             set_preview_zoom_pan_enabled(store, value)

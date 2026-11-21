@@ -90,6 +90,7 @@ define_class!(
         #[unsafe(method(viewDidHide))]
         fn did_hide(&self) {
             unsafe { let _: () = msg_send![super(self), viewDidHide]; }
+            self.finish(self.ivars().state.cancel_touch());
             if let Some(timer) = self.ivars().animation_timer.borrow_mut().take() {
                 timer.invalidate();
             }
@@ -218,34 +219,91 @@ define_class!(
             self.finish(self.ivars().state.key(key));
         }
 
+        #[unsafe(method(touchesBeganWithEvent:))]
+        fn touches_begin(&self, event: &NSEvent) {
+            self.forward_touch(event, objc2_app_kit::NSTouchPhase::Began, shrimply_components_skia::input::TouchPhase::Begin);
+        }
+
+        #[unsafe(method(touchesMovedWithEvent:))]
+        fn touches_move(&self, event: &NSEvent) {
+            self.forward_touch(event, objc2_app_kit::NSTouchPhase::Moved, shrimply_components_skia::input::TouchPhase::Move);
+        }
+
+        #[unsafe(method(touchesEndedWithEvent:))]
+        fn touches_end(&self, event: &NSEvent) {
+            self.forward_touch(event, objc2_app_kit::NSTouchPhase::Ended, shrimply_components_skia::input::TouchPhase::End);
+        }
+
+        #[unsafe(method(touchesCancelledWithEvent:))]
+        fn touches_cancel(&self, event: &NSEvent) {
+            self.forward_touch(event, objc2_app_kit::NSTouchPhase::Cancelled, shrimply_components_skia::input::TouchPhase::Cancel);
+        }
+
         #[unsafe(method(cancelOperation:))]
         fn cancel_operation(&self, _sender: &objc2_foundation::NSObject) {
-            self.end_pointer();
+            self.finish(self.ivars().state.cancel_touch());
         }
 
         #[unsafe(method(viewDidMoveToWindow))]
         fn moved_to_window(&self) {
             unsafe { let _: () = msg_send![super(self), viewDidMoveToWindow]; }
-            if self.window().is_none()
-                && let Some(timer) = self.ivars().animation_timer.borrow_mut().take()
-            {
-                timer.invalidate();
+            if self.window().is_none() {
+                self.finish(self.ivars().state.cancel_touch());
+                if let Some(timer) = self.ivars().animation_timer.borrow_mut().take() {
+                    timer.invalidate();
+                }
             }
         }
 
         #[unsafe(method(renderAnimation:))]
         fn render_animation(&self, timer: &CADisplayLink) {
-            if self.window().is_none() || self.isHiddenOrHasHiddenAncestor() || !self.ivars().state.is_animating() {
+            if self.window().is_none() || self.isHiddenOrHasHiddenAncestor() || !(self.ivars().state.is_animating() || self.ivars().state.waiting_long_press()) {
                 timer.invalidate();
                 self.ivars().animation_timer.borrow_mut().take();
                 return;
             }
+            let size = self.bounds().size;
+            self.finish(self.ivars().state.poll_long_press(FrameGraphPointerPosition { x: 0.0, y: 0.0, width: size.width.max(1.0), height: size.height.max(1.0) }));
             self.render();
         }
     }
 );
 
 impl FrameGraphView {
+    fn forward_touch(
+        &self,
+        event: &NSEvent,
+        native_phase: objc2_app_kit::NSTouchPhase,
+        phase: shrimply_components_skia::input::TouchPhase,
+    ) {
+        let changes = event
+            .touchesMatchingPhase_inView(native_phase, Some(self))
+            .iter()
+            .filter(|touch| touch.r#type() == objc2_app_kit::NSTouchType::Direct)
+            .map(|touch| {
+                let point = touch.locationInView(Some(self));
+                shrimply_components_skia::input::TouchChange {
+                    id: Retained::as_ptr(&touch.identity()) as usize as u64,
+                    point: shrimply_components_skia::Vec2::new(point.x as f32, point.y as f32),
+                    phase,
+                }
+            })
+            .collect::<Vec<_>>();
+        if changes.is_empty() {
+            return;
+        }
+        let size = self.bounds().size;
+        self.finish(self.ivars().state.touch(
+            &changes,
+            FrameGraphPointerPosition {
+                x: 0.0,
+                y: 0.0,
+                width: size.width.max(1.0),
+                height: size.height.max(1.0),
+            },
+        ));
+    }
+
     fn point(&self, event: &NSEvent) -> (f64, f64) {
         let point = self.convertPoint_fromView(event.locationInWindow(), None);
         (point.x, point.y)
@@ -305,10 +363,11 @@ impl FrameGraphView {
                 .expect("frame graph must be attached before input")
                 .makeFirstResponder(Some(self));
         }
-        for action in result.actions {
+        let redraw = result.redraw;
+        for action in result.into_actions(self.ivars().state.active_component()) {
             (self.ivars().on_action)(action);
         }
-        if result.redraw {
+        if redraw {
             self.render();
         }
         self.start_animation_if_needed();
@@ -317,7 +376,7 @@ impl FrameGraphView {
     fn start_animation_if_needed(&self) {
         if self.window().is_none()
             || self.isHiddenOrHasHiddenAncestor()
-            || !self.ivars().state.is_animating()
+            || !(self.ivars().state.is_animating() || self.ivars().state.waiting_long_press())
             || self.ivars().animation_timer.borrow().is_some()
         {
             return;
@@ -350,6 +409,9 @@ impl FrameGraphView {
                 let renderer = Renderer::default();
                 self.setLayer(Some(renderer.layer()));
                 self.setWantsLayer(true);
+                self.setLayerContentsPlacement(
+                    objc2_app_kit::NSViewLayerContentsPlacement::TopLeft,
+                );
                 RefCell::new(renderer)
             })
             .borrow_mut();
@@ -396,5 +458,6 @@ pub fn frame_graph_view(
     });
     let view: Retained<FrameGraphView> =
         unsafe { msg_send![super(view), initWithFrame: NSRect::ZERO] };
+    view.setAllowedTouchTypes(objc2_app_kit::NSTouchTypeMask::Direct);
     view
 }

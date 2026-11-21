@@ -1,3 +1,5 @@
+mod controls;
+
 pub mod graph;
 mod layered;
 
@@ -71,33 +73,64 @@ impl InspectorToggleAction {
 
 impl crate::InspectorController {
     pub fn poll_document_dependencies(&self) -> bool {
+        let pdf = crate::video::pdf::poll_pages();
+        if pdf {
+            self.normalize_pdf_page(&self.target())
+                .expect("PDF page normalization must succeed");
+        }
         let sanim = self.poll_sanim_parameters();
         let blender = crate::video::blender::poll_metadata();
         let manim_scenes = crate::manim_parameters::poll_scenes();
         let media = self.media_metadata.borrow_mut().poll();
+        let image_sources = self.visual_sources.borrow_mut().poll();
         let voices = self.voice_models.borrow_mut().poll();
         let cameras = self.camera_models.borrow_mut().poll();
         let analysis = self.poll_camera_analysis();
         let sam2 = self.poll_sam2_analysis();
         let tts = self.poll_tts();
+        let video_generation = self.poll_video_generation();
         let fill = self.poll_transparent_fill_analysis();
         let caches = self.poll_visual_caches();
-        sanim
+        let audio_caches = self.poll_audio_caches();
+        let loading = self.audio_beat_detection_loading(&self.target());
+        let beats = self.beat_detection_loading.replace(loading) != loading;
+        pdf || sanim
             || blender
             || manim_scenes
             || media
+            || image_sources
             || voices
             || cameras
             || analysis
             || sam2
             || tts
+            || video_generation
             || fill
             || caches
+            || audio_caches
+            || beats
     }
 
     pub fn document_snapshot(&self, server_url: &str) -> crate::InspectorSnapshot {
         let camera_models = crate::camera_source::cached_tracking_models(server_url);
         let mut snapshot = self.snapshot_with_camera_models(camera_models.as_ref());
+        if let Some(manim) = snapshot
+            .video
+            .as_ref()
+            .and_then(|video| video.manim.as_ref())
+            && let Some(scene) = manim
+                .main
+                .section
+                .controls
+                .iter()
+                .find(|control| control.path == crate::manim_parameters::SCENE_PATH)
+            && scene.sensitive
+            && scene.value != manim.current_scene
+        {
+            self.set_manim_scene(&snapshot.target, scene.value.clone(), "select-manim-scene")
+                .expect("default Manim scene selection must succeed");
+            snapshot = self.snapshot_with_camera_models(camera_models.as_ref());
+        }
         if let Some(source) = snapshot
             .video
             .as_ref()
@@ -123,6 +156,25 @@ impl crate::InspectorController {
                 0,
                 crate::video::blender::card(&source.item, &source.asset, &metadata),
             );
+        }
+        if let Some(card) = self
+            .video_generation_card(&snapshot.target, server_url)
+            .expect("video generation presentation")
+        {
+            snapshot
+                .video
+                .as_mut()
+                .expect("generation video selected")
+                .visual
+                .insert(0, card);
+        }
+        if let InspectorTarget::Item(address) = &snapshot.target
+            && let Some(item) = self.project.borrow().video_item(address)
+            && let Some(video) = snapshot.video.as_mut()
+        {
+            video
+                .visual
+                .splice(0..0, self.source_image_cards(item, snapshot.runtime));
         }
         if snapshot.video.as_ref().is_some_and(|video| {
             video.visual.iter().any(|card| {
@@ -186,16 +238,18 @@ impl crate::InspectorController {
         &self,
         target: &InspectorTarget,
         action: &BasicInspectorAction,
-    ) -> Result<(), String> {
+    ) -> Result<Option<String>, String> {
         match action {
             BasicInspectorAction::CopyModifier { id, audio } => {
-                if *audio {
+                let name = if *audio {
                     self.copy_audio_modifier(target, *id, &self.property_clipboard)
-                        .map(|_| ())
                 } else {
                     self.copy_visual_modifier(target, *id, &self.property_clipboard)
-                        .map(|_| ())
-                }
+                }?;
+                return Ok(Some(shrimply_i18n::text_args(
+                    "%{name} copied",
+                    &[("name", name)],
+                )));
             }
             BasicInspectorAction::SetModifierEnabled { id, enabled, audio } => {
                 if *audio {
@@ -285,9 +339,28 @@ impl crate::InspectorController {
                 self.reset_manim_parameters(target, reset)
             }
             BasicInspectorAction::SetBoolean { path, value } => {
-                self.set_value(target, path, Value::Bool(*value))
+                if matches!(target, InspectorTarget::Item(ItemAddress::Caption { .. })) {
+                    let control = InspectorControl::new(ControlKind::Boolean, path, "")
+                        .live_commit(crate::caption::EDIT_COMMIT);
+                    let result = self
+                        .set_caption_control_value(target, &control, &value.to_string())
+                        .expect("caption control must use canonical caption editing");
+                    if result.is_ok() {
+                        shrimply_editor_state::player_state::refresh_project(
+                            &self.player_state,
+                            shrimply_editor_state::player_state::ProjectChange {
+                                inspector: true,
+                                ..Default::default()
+                            },
+                        );
+                    }
+                    result
+                } else {
+                    self.set_value(target, path, Value::Bool(*value))
+                }
             }
         }
+        .map(|()| None)
     }
 
     pub fn set_basic_control_value(
@@ -296,6 +369,30 @@ impl crate::InspectorController {
         control: &InspectorControl,
         value: &str,
     ) -> Result<(), String> {
+        self.ensure_control_timeline(target, control)?;
+        if let Some(result) = self.set_caption_control_value(target, control, value) {
+            return result;
+        }
+        if control.kind == ControlKind::LayeredNumber && control.background_integer() {
+            let value = value
+                .parse::<f64>()
+                .map(|value| control.store_number(value))
+                .map_err(|_| "invalid background integer")?;
+            if !value.is_finite()
+                || value.fract() != 0.0
+                || !(0.0..=f64::from(u32::MAX)).contains(&value)
+            {
+                return Err("invalid background integer".into());
+            }
+            return self.set_background_integer_value(
+                target,
+                control.timeline_path.as_deref().unwrap_or(&control.path),
+                control
+                    .timeline_id
+                    .ok_or("background timeline ID is unavailable")?,
+                value as u32,
+            );
+        }
         match control.action {
             Some(crate::InspectorControlAction::SetSam2Model { modifier_id }) => {
                 let model = serde_json::from_value(Value::String(value.to_string()))
@@ -413,6 +510,7 @@ impl crate::InspectorController {
         control: &InspectorControl,
         values: &[f64],
     ) -> Result<(), String> {
+        self.ensure_control_timeline(target, control)?;
         let expected = match control.kind {
             ControlKind::Vector2 | ControlKind::LayeredVector2 => 2,
             ControlKind::Vector3 | ControlKind::LayeredVector3 => 3,
@@ -436,13 +534,19 @@ impl crate::InspectorController {
                 values[3] as u8,
             );
             if let Some(result) = self
-                .set_sanim_color(target, &control.path, color, &control.commit_name)
+                .set_svg_color(target, &control.path, color)
+                .or_else(|| {
+                    self.set_sanim_color(target, &control.path, color, &control.commit_name)
+                })
                 .or_else(|| {
                     self.set_manim_color(target, &control.path, color, &control.commit_name)
                 })
             {
                 return result;
             }
+        }
+        if let Some(result) = self.set_caption_control_components(target, control, values) {
+            return result;
         }
         if let Some(crate::InspectorControlAction::SetSam2PointPosition {
             modifier_id,
@@ -517,6 +621,7 @@ impl crate::InspectorController {
         control: &InspectorControl,
         value: shrimply_math_core::Fraction,
     ) -> Result<(), String> {
+        self.ensure_control_timeline(target, control)?;
         if matches!(target, InspectorTarget::Item(ItemAddress::Video { .. }))
             && !control.commit_name.is_empty()
         {
@@ -531,6 +636,18 @@ impl crate::InspectorController {
         target: &InspectorTarget,
         control: &InspectorControl,
     ) -> Result<(), String> {
+        if let Some(result) = self.commit_caption_control(target, control) {
+            return result;
+        }
+        if control.background_integer() {
+            return self.commit_background_integer_value(
+                target,
+                control.timeline_path.as_deref().unwrap_or(&control.path),
+                control
+                    .timeline_id
+                    .ok_or("background timeline ID is unavailable")?,
+            );
+        }
         if control_commit(control) == InspectorCommit::Deferred {
             let project = self.project.borrow();
             crate::model::target_value(&project, target)
@@ -550,6 +667,8 @@ impl crate::InspectorController {
                 | ControlKind::LayeredSelector
                 | ControlKind::LayeredVector2
                 | ControlKind::LayeredVector3
+                | ControlKind::LayeredText
+                | ControlKind::LayeredDrawing
         ) {
             self.finish_live_inspector_edit(target)
         } else if matches!(target, InspectorTarget::Transition { .. })
@@ -574,6 +693,11 @@ impl crate::InspectorController {
         control: &InspectorControl,
         value: &str,
     ) -> Result<(), String> {
+        if !control.commit_name.is_empty()
+            && let Some(result) = self.set_basic_alpha_mask(target, control, value)
+        {
+            return result;
+        }
         if matches!(target, InspectorTarget::Transition { .. }) && !control.commit_name.is_empty() {
             self.set_transition_field(
                 target,

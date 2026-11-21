@@ -60,10 +60,18 @@ pub(super) fn section(
                 }
             }
             if let Some(artwork) = &info.artwork {
-                let mut control =
-                    InspectorControl::new(ControlKind::InfoArtwork, "", "Artwork").read_only();
-                control.image_bytes = Some(artwork.clone());
-                section.add(control);
+                section.add(match artwork {
+                    Ok(artwork) => {
+                        let mut control =
+                            InspectorControl::new(ControlKind::InfoArtwork, "", "Artwork")
+                                .read_only();
+                        control.artwork = Some(artwork.clone());
+                        control
+                    }
+                    Err(error) => InspectorControl::new(ControlKind::ReadOnly, "", "Artwork")
+                        .value(error)
+                        .read_only(),
+                });
             }
             for group in &info.presentation.groups {
                 section.add(

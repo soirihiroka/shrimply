@@ -27,13 +27,13 @@ pub(super) fn handle_scroll(
     );
     let pointer_x = pointer
         .map(|pointer| f64::from(pointer.x))
-        .unwrap_or_else(|| timeline_x() + timeline_width / 2.0);
+        .unwrap_or_else(|| timeline_x(*view) + timeline_width / 2.0);
 
     if ctrl {
-        if pointer_x < timeline_x() {
+        if pointer_x < timeline_x(*view) {
             return None;
         }
-        let pointer_seconds = x_to_time(pointer_x, view.scroll_seconds, view.seconds_per_pixel);
+        let pointer_seconds = x_to_time(pointer_x, *view);
         let delta = if delta.x.abs() > delta.y.abs() {
             delta.x as f64
         } else {
@@ -42,7 +42,8 @@ pub(super) fn handle_scroll(
         let zoom = if delta < 0.0 { 0.8 } else { 1.25 };
         view.seconds_per_pixel =
             (view.seconds_per_pixel * zoom).clamp(min_seconds_per_pixel, MAX_SECONDS_PER_PIXEL);
-        view.scroll_seconds = pointer_seconds - (pointer_x - timeline_x()) * view.seconds_per_pixel;
+        view.scroll_seconds =
+            pointer_seconds - (pointer_x - timeline_x(*view)) * view.seconds_per_pixel;
         view.clamp(
             duration_seconds,
             timeline_width,

@@ -4,15 +4,26 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+default = ["native-text", "media"]
+native-text = ["sanim-data/native-text"]
+media = ["sanim-data/media", "dep:sanim-render"]
+
 [dependencies]
 imbl.workspace = true
 regex.workspace = true
 sanim-core.workspace = true
-sanim-data.workspace = true
+sanim-data = { workspace = true, default-features = false }
 shrimply-asset.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sanim-voxel.workspace = true
+sanim-render = { workspace = true, optional = true }
 
 [[bench]]
 name = "headless"
 harness = false
+
+[dev-dependencies]
+tempfile.workspace = true
+png.workspace = true

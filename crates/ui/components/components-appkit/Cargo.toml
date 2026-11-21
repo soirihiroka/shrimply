@@ -11,6 +11,8 @@ objc2-core-graphics.workspace = true
 objc2-foundation.workspace = true
 objc2-quartz-core.workspace = true
 shrimply-components-core = { workspace = true }
+shrimply-i18n.workspace = true
+shrimply-components-skia = { workspace = true }
 shrimply-framegraph-appkit = { workspace = true }
 shrimply-cross-ui-theme = { workspace = true }
 shrimply-framegraph-skia = { workspace = true }

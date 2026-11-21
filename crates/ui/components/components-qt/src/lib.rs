@@ -1,3 +1,4 @@
+pub use shrimply_components_core::{layout, math};
 mod backend;
 mod frame_graph;
 #[cfg(target_os = "linux")]

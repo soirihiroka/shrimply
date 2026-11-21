@@ -3,6 +3,50 @@ RUST_TOOLCHAIN ?= nightly-2026-04-03
 CARGO = $(RUSTUP) run $(RUST_TOOLCHAIN) cargo
 ARGS ?=
 
+.PHONY: voxel-check voxel-gpu-check voxel-bench
+voxel-check:
+	$(CARGO) clippy -p sanim-voxel -p sanim-voxel-render -p sanim-cli --all-targets -- -D warnings
+	$(CARGO) test -p sanim-voxel
+	$(CARGO) test -p sanim-voxel-render
+	$(CARGO) test -p sanim-lang --no-default-features --test voxels --test voxel_assertions --test voxel_lint --test voxel_materials --test voxel_lights --test voxel_instances
+	$(CARGO) test -p sanim-cli --test voxels --lib
+	$(CARGO) test -p sanim-runtime --test watching voxel_texture_changes_reload_without_source_edits_or_render_requests
+	$(CARGO) test -p sanim-lsp --test xml_completion voxel_layout_tags_and_attributes_come_from_the_native_registry
+voxel-gpu-check:
+	$(CARGO) test -p sanim-voxel-render --tests -- --ignored --nocapture --skip benchmark
+	$(CARGO) test -p sanim-cli --test voxels survival_water_hard_shadows_match_cpu_visibility -- --ignored --nocapture
+voxel-bench:
+	$(CARGO) test --release -p sanim-voxel-render --test render voxel_gpu_benchmark -- --ignored --nocapture
+	$(CARGO) test --release -p sanim-lang --no-default-features --test voxels -- --ignored --nocapture
+.PHONY: voxel-storage-bench
+voxel-storage-bench:
+	$(CARGO) run --release -p sanim-voxel --example storage_bench
+
+.PHONY: voxel-procedural-check voxel-procedural-bench
+voxel-procedural-check:
+	$(CARGO) clippy -p sanim-voxel --lib --test procedural -- -D warnings
+	$(CARGO) clippy -p sanim-lang --no-default-features --lib --test voxel_procedural -- -D warnings
+	$(CARGO) test -p sanim-voxel --test procedural
+	$(CARGO) test -p sanim-lang --no-default-features --test voxel_procedural
+voxel-procedural-bench:
+	$(CARGO) test --release -p sanim-voxel --test procedural procedural_raster_benchmark -- --ignored --nocapture
+	$(CARGO) test --release -p sanim-lang --no-default-features --test voxel_procedural native_ -- --ignored --nocapture --test-threads=1
+
+.PHONY: headless-check
+.PHONY: event-boundaries-check
+event-boundaries-check:
+	$(CARGO) test -p sanim-core --test time_map
+	$(CARGO) test -p sanim-lang --no-default-features --test event_clocks
+headless-check:
+	$(CARGO) clippy -p sanim-lang --no-default-features --lib -- -D warnings
+	$(CARGO) test -p sanim-data --no-default-features --no-fail-fast
+	$(CARGO) test -p sanim-lang --no-default-features --test headless
+	$(CARGO) tree -p sanim-lang --no-default-features --prefix none --edges normal > target/headless-dependencies.txt
+	@if rg '^(pango[^ ]*|pangocairo[^ ]*|cairo[^ ]*|skia[^ ]*|shrimply-drawing-skia) ' target/headless-dependencies.txt; then echo "Native rendering dependency leaked into the headless language" >&2; exit 1; fi
+.PHONY: headless-bench
+headless-bench:
+	$(CARGO) test --release -p sanim-lang --no-default-features --test headless headless_duration_reload_benchmark -- --ignored --nocapture
+
 .PHONY: sized-lists-check
 sized-lists-check:
 	$(CARGO) test -p sanim-core --test lists
@@ -46,10 +90,10 @@ list-bench:
 
 .PHONY: check test fmt fmt-check bench frame-cache-bench state-cache-bench runtime-hot-bench reflection-bench run build
 check: fmt
-	$(CARGO) clippy --workspace --all-targets -- -D warnings
-	$(CARGO) test --workspace --no-fail-fast
+	$(CARGO) clippy --workspace --exclude sanim-presenter --all-targets -- -D warnings
+	$(MAKE) test CARGO="$(CARGO)"
 test:
-	$(CARGO) test --workspace --no-fail-fast
+	$(CARGO) test --workspace --exclude sanim-presenter --no-fail-fast
 fmt:
 	uv run --no-project python ../packaging/format_workspace.py --manifest Cargo.toml -- $(CARGO)
 fmt-check:
@@ -98,7 +142,13 @@ absolute-layout-bench:
 run:
 	$(CARGO) run -p sanim-cli -- $(ARGS)
 build:
-	$(CARGO) build --workspace --exclude sanim-lsp --release
+	$(CARGO) build --workspace --exclude sanim-lsp --exclude sanim-presenter --release
+
+.PHONY: presenter-check presenter-release
+presenter-check:
+	$(CARGO) clippy -p sanim-presenter --all-targets $(ARGS) -- -D warnings
+presenter-release:
+	$(CARGO) build --locked --release -p sanim-presenter
 
 .PHONY: lsp-build lsp-check lsp-bench lsp-utility-bench lsp-install
 lsp-install: lsp-build
@@ -114,6 +164,8 @@ lsp-build:
 lsp-check:
 	$(CARGO) clippy -p sanim-lsp --all-targets -- -D warnings
 	$(CARGO) test -p sanim-lsp --no-fail-fast
+	$(CARGO) tree -p sanim-lsp --prefix none --edges normal > target/lsp-dependencies.txt
+	@if rg '^(pango[^ ]*|pangocairo[^ ]*|cairo[^ ]*|skia[^ ]*|shrimply-drawing-skia) ' target/lsp-dependencies.txt; then echo "Native rendering dependency leaked into the language server" >&2; exit 1; fi
 
 .PHONY: reactive-bench
 reactive-bench:
@@ -388,14 +440,6 @@ wrapped-token-check:
 wrapped-token-bench:
 	$(CARGO) test --release -p sanim-data --lib long_wrapped_token_scaling_benchmark -- --ignored --nocapture
 
-.PHONY: symbolic-duration-check symbolic-duration-bench
-symbolic-duration-check:
-	$(CARGO) test -p sanim-core --test symbolic_duration
-	$(CARGO) test -p sanim-core --lib duration::
-	$(CARGO) clippy -p sanim-core --lib -- -D warnings
-symbolic-duration-bench:
-	$(CARGO) test --release -p sanim-core --test symbolic_duration symbolic_duration_resolution_benchmark -- --ignored --nocapture
-
 .PHONY: guarded-runtime-check
 guarded-runtime-check:
 	$(CARGO) test -p sanim-lang --test guarded_runtime
@@ -404,18 +448,170 @@ guarded-runtime-check:
 guarded-runtime-bench:
 	$(CARGO) test --release -p sanim-lang --test guarded_runtime guarded_call_benchmark -- --ignored --nocapture
 
-.PHONY: duration-effects-check
-duration-effects-check:
-	$(CARGO) test -p sanim-lang --test duration --test duration_scene_state --test symbolic_effects --test language --test literal_types
+.PHONY: anonymous-functions-check anonymous-functions-test anonymous-functions-bench
+anonymous-functions-check:
+	$(CARGO) clippy -p sanim-lang --no-default-features --lib -- -D warnings
+	$(MAKE) anonymous-functions-test
+anonymous-functions-test:
+	$(CARGO) test -p sanim-lang --no-default-features --test anonymous_functions
+anonymous-functions-bench:
+	$(CARGO) test -p sanim-lang --no-default-features --test anonymous_functions closure_reload_benchmark -- --ignored --nocapture
+
+.PHONY: pure-functions-check pure-functions-test pure-functions-bench
+pure-functions-check:
+	$(CARGO) clippy -p sanim-lang --no-default-features --lib -- -D warnings
+	$(MAKE) pure-functions-test
+pure-functions-test:
+	$(CARGO) test -p sanim-lang --no-default-features --test pure_functions
+pure-functions-bench:
+	$(CARGO) test -p sanim-lang --no-default-features --test pure_functions pure_call_benchmark -- --ignored --nocapture
+
+.PHONY: element-animation-check element-animation-bench
+element-animation-check:
+	$(CARGO) clippy -p sanim-lang --all-targets -- -D warnings
+	$(CARGO) test -p sanim-lang --test element_animation_methods --no-fail-fast
+element-animation-bench:
+	$(CARGO) test -p sanim-lang --test element_animation_methods method_reload_benchmark -- --ignored --nocapture
+
+.PHONY: boolean-assertions-check
+boolean-assertions-check:
+	$(CARGO) clippy -p sanim-lang --no-default-features --lib -- -D warnings
+	$(CARGO) test -p sanim-lang --no-default-features --test boolean_assertions --test pure_functions
+
+.PHONY: gradient-utilities-check gradient-utilities-bench
+gradient-utilities-check:
+	$(CARGO) test -p sanim-lang --test gradient_utilities --test markup --no-fail-fast
 	$(CARGO) clippy -p sanim-lang --lib -- -D warnings
+gradient-utilities-bench:
+	$(CARGO) test -p sanim-lang --test gradient_utilities gradient_utility_benchmark -- --ignored --nocapture
 
-.PHONY: duration-memory-check
-duration-memory-check:
-	$(CARGO) test -p sanim-core --test symbolic_duration
-	$(CARGO) test -p sanim-core --lib duration::
-	$(CARGO) test -p sanim-lang --lib effects::duration_memory_tests
-	$(CARGO) clippy -p sanim-core -p sanim-lang --lib -- -D warnings
+.PHONY: xml-completion-check xml-completion-bench
+xml-completion-check:
+	$(CARGO) clippy -p sanim-lsp --all-targets -- -D warnings
+	$(CARGO) test -p sanim-lsp --lib text::tests
+	$(CARGO) test -p sanim-lsp --test xml_completion
+xml-completion-bench:
+	$(CARGO) test -p sanim-lsp --lib indexed_offset_benchmark -- --ignored --nocapture
+	$(CARGO) test -p sanim-lsp --test xml_completion xml_completion_benchmark -- --ignored --nocapture
 
-.PHONY: duration-memory-bench
-duration-memory-bench:
-	$(CARGO) test --release -p sanim-core --test symbolic_duration duration_heap_accounting_benchmark -- --ignored --nocapture
+.PHONY: animation-plans-check animation-plans-bench
+animation-plans-check:
+	$(CARGO) clippy -p sanim-core -p sanim-lang --no-default-features --lib -- -D warnings
+	$(CARGO) test -p sanim-core --test animation_plan
+	$(CARGO) test -p sanim-lang --no-default-features --test animation_plans
+animation-plans-bench:
+	$(CARGO) test --release -p sanim-core --test animation_plan temporal_layout_benchmark -- --ignored --nocapture
+	$(CARGO) test --release -p sanim-lang --no-default-features --test animation_plans viewport_relayout_benchmark -- --ignored --nocapture
+
+.PHONY: animation-plan-lifecycle-check animation-plan-lifecycle-bench
+animation-plan-lifecycle-check:
+	$(CARGO) clippy -p sanim-lang --no-default-features --lib -- -D warnings
+	$(CARGO) test -p sanim-lang --no-default-features --test forever --test duration --test boolean_assertions
+	$(CARGO) test -p sanim-lang --no-default-features --test animation_plans
+	$(CARGO) check -p sanim-runtime -p sanim-cli
+	$(CARGO) test -p sanim-cli --test commands inspect_exports_compiled_ir_without_expanding_unused_builder_dags
+	$(CARGO) test -p sanim-lang --test forever reflow_rechecks_visual_contracts_with_the_canonical_native_text_resolver
+	$(CARGO) test -p sanim-lang --lib font_tests::changing_native_font_epoch_invalidates_retained_text_prefixes
+animation-plan-lifecycle-bench:
+	$(CARGO) test --release -p sanim-lang --no-default-features --test forever reflow_reuses_builder_and_bounds_retained_revisions -- --ignored --nocapture
+	$(CARGO) test --release -p sanim-lang --no-default-features --test forever unused_pure_callback_pipeline_benchmark -- --ignored --nocapture
+
+.PHONY: temporal-index-check
+temporal-index-check:
+	$(CARGO) clippy -p sanim-core --lib -- -D warnings
+	$(CARGO) test -p sanim-core --test time_map
+	$(CARGO) test -p sanim-runtime --test watching temporal_viewports_reuse_the_pure_plan_and_preserve_indefinite_sources
+.PHONY: temporal-index-bench
+temporal-index-bench:
+	$(CARGO) test --release -p sanim-core --test time_map compact_source_lookup_benchmark -- --ignored --nocapture
+
+.PHONY: runtime-event-check runtime-event-bench
+runtime-event-check:
+	$(CARGO) clippy -p sanim-runtime --all-targets -- -D warnings
+	$(CARGO) test -p sanim-runtime --lib
+	$(CARGO) test -p sanim-runtime --test watching
+runtime-event-bench:
+	$(CARGO) test --release -p sanim-runtime --lib pending_event_benchmark -- --ignored --nocapture
+
+.PHONY: visual-fixture-check
+visual-fixture-check:
+	$(CARGO) test -p sanim-lang --test absolute_layout --test code --test range_edits --test literal_types --test media --test reactive_labels --test reactive_vectors --test scrolling --test signal_functions --no-fail-fast
+
+.PHONY: reactivity-fixture-check
+reactivity-fixture-check:
+	$(CARGO) test -p sanim-lang --test reactivity --no-fail-fast
+
+.PHONY: voxel-camera-check voxel-camera-bench
+voxel-camera-check:
+	$(CARGO) test -p sanim-voxel --test camera_curves --test foliage
+	$(CARGO) test -p sanim-lang --no-default-features --test camera_curves
+voxel-camera-bench:
+	$(CARGO) test --release -p sanim-voxel --test camera_curves camera_curve_lookup_benchmark -- --ignored --nocapture
+
+.PHONY: curve-check curve-test curve-bench
+curve-check:
+	$(CARGO) clippy -p sanim-core -p sanim-lang --no-default-features --lib -- -D warnings
+	$(MAKE) curve-test
+curve-test:
+	$(CARGO) test -p sanim-core --test keyframe_curves
+	$(CARGO) test -p sanim-lang --no-default-features --test keyframe_curves --test camera_curves --test reactive_vectors
+curve-bench:
+	$(CARGO) test --release -p sanim-core --test keyframe_curves keyframe_curve_benchmark -- --ignored --nocapture
+
+.PHONY: list-math-check list-math-bench
+list-math-check:
+	$(CARGO) test -p sanim-core --test numeric_lists --test timed_values
+	$(CARGO) test -p sanim-data --no-default-features --test decoding
+	$(CARGO) test -p sanim-lang --no-default-features --test math_types
+	$(CARGO) clippy -p sanim-core -p sanim-data -p sanim-lang --no-default-features --lib --test numeric_lists --test timed_values --test decoding --test math_types -- -D warnings
+list-math-bench:
+	$(CARGO) test --release -p sanim-core --test numeric_lists nested_list_matrix_benchmark -- --ignored --nocapture
+	$(CARGO) test --release -p sanim-data --no-default-features --test decoding npy_nested_list_streaming_benchmark -- --ignored --nocapture
+
+.PHONY: curve-prefix-check curve-prefix-bench
+curve-prefix-check:
+	$(CARGO) test -p sanim-core --test keyframe_curves
+	$(CARGO) test -p sanim-render --test frame_cache
+curve-prefix-bench:
+	$(CARGO) test --release -p sanim-core --test keyframe_curves keyframe_prefix_diff_benchmark -- --ignored --nocapture
+
+.PHONY: voxel-valley-bench
+voxel-valley-bench:
+	$(CARGO) test --release -p sanim-cli --test voxel_performance actual_valley_same_process_gpu_benchmark -- --ignored --nocapture
+
+.PHONY: voxel-atlas-check voxel-atlas-bench
+voxel-atlas-check:
+	$(CARGO) test -p sanim-voxel-render --lib resident::atlas
+	$(CARGO) clippy -p sanim-voxel-render --lib -- -D warnings
+voxel-atlas-bench:
+	$(CARGO) test --release -p sanim-voxel-render --lib resident::atlas::tests::atlas_mip_generation_benchmark -- --ignored --nocapture
+
+.PHONY: curve-inline-bench
+curve-inline-bench:
+	$(CARGO) test --release -p sanim-lang --no-default-features --test keyframe_curves inline_curve_compile_once_benchmark -- --ignored --nocapture
+
+.PHONY: voxel-quality-bench
+voxel-quality-bench:
+	$(CARGO) test --release -p sanim-cli --test voxel_quality actual_valley_reconstruction_quality_benchmark -- --ignored --nocapture
+
+.PHONY: voxel-texture-check voxel-texture-bench
+voxel-texture-check:
+	$(CARGO) clippy -p sanim-lang --no-default-features --lib --test voxel_textures --test texture_operations -- -D warnings
+	$(CARGO) test -p sanim-lang --no-default-features --test voxel_textures --test texture_operations
+	$(CARGO) test -p sanim-data --no-default-features --test textures
+voxel-texture-bench:
+	$(CARGO) test --release -p sanim-lang --no-default-features --test voxel_textures native_texture_generation_benchmark -- --ignored --nocapture
+	$(CARGO) test --release -p sanim-lang --no-default-features --test texture_operations retained_texture_performance_benchmark -- --ignored --nocapture
+
+.PHONY: texture-draw-bench
+texture-draw-bench:
+	$(CARGO) test --release -p sanim-lang --test media native_texture_drawing_performance_benchmark -- --ignored --nocapture
+
+.PHONY: color-check color-bench
+color-check:
+	$(CARGO) clippy -p sanim-core --lib --test perceptual_colors -- -D warnings
+	$(CARGO) clippy -p sanim-lang --no-default-features --lib --test perceptual_colors -- -D warnings
+	$(CARGO) test -p sanim-core --test perceptual_colors
+	$(CARGO) test -p sanim-lang --no-default-features --test perceptual_colors
+color-bench:
+	$(CARGO) test --release -p sanim-core --test perceptual_colors prepared_perceptual_ramp_benchmark -- --ignored --nocapture

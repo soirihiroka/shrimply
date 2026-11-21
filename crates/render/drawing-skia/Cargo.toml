@@ -4,9 +4,17 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+png.workspace = true
+image = { workspace = true, features = ["bmp", "hdr", "exr", "tiff", "webp"] }
+bytemuck.workspace = true
+jxl-oxide.workspace = true
+imgalifier-heif.workspace = true
+imgalifier-avif.workspace = true
+moxcms.workspace = true
+shrimply-math-core.workspace = true
 glam.workspace = true
 skia-safe = { workspace = true, features = ["svg"] }
 shrimply-resource-pipeline.workspace = true
 shrimply-fonts = { workspace = true, features = ["native"] }
 shrimply-math-color = { workspace = true, features = ["skia"] }
-shrimply-math-geometry = { workspace = true, features = ["skia"] }
+shrimply-math-geometry = { workspace = true, features = ["svg"] }

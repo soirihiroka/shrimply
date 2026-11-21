@@ -17,9 +17,11 @@ RowLayout {
         onClicked: root.triggered()
     }
     ToolButton {
+        id: secondary
         text: "▾"
-        onClicked: menu.open()
-        Menu {
+        MenuInput { id: menuInput }
+        onClicked: menu.presentForInput(secondary, menuInput.takeTouch())
+        AdaptiveMenu {
             id: menu
             MenuItem {
                 text: ComponentTranslations.text(root.secondaryText)

@@ -3,14 +3,19 @@ name = "shrimply-visual-modifiers"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+default = ["preview", "text-mesh"]
+preview = ["dep:shrimply-preview-provider-skia"]
+text-mesh = ["shrimply-scene-3d-modifiers/text-mesh"]
+
 [dependencies]
 hashbrown.workspace = true
 glam = { workspace = true, features = ["serde"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 shrimply-property-model = { workspace = true }
-shrimply-preview-provider-skia = { workspace = true }
-shrimply-scene-3d-modifiers = { workspace = true }
+shrimply-preview-provider-skia = { workspace = true, optional = true }
+shrimply-scene-3d-modifiers.workspace = true
 strum = { workspace = true, features = ["derive"] }
 shrimply-math-geometry = { workspace = true }
 uuid = { workspace = true, features = ["v4", "serde"] }

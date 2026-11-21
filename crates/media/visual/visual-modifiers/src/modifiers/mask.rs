@@ -7,11 +7,13 @@ use shrimply_property_model::timeline_value::{
 use uuid::Uuid;
 
 use super::{KeyframeSpan, ModifierModel};
+#[cfg(feature = "preview")]
 use shrimply_preview_provider_skia::{
     PointerEvent, PreviewBuilder, PreviewContext, PreviewEditSink, PreviewProvider,
     PreviewResponse, PreviewTarget, Rect,
 };
 
+#[cfg(feature = "preview")]
 use super::preview;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
@@ -70,12 +72,14 @@ impl ModifierModel for MaskModifier {
 }
 
 #[derive(Clone, Copy)]
+#[cfg(feature = "preview")]
 struct MaskPreview {
     map: glam::Mat3,
     size: glam::Vec2,
 }
 
 impl MaskModifier {
+    #[cfg(feature = "preview")]
     pub(crate) fn preview_provider(
         &self,
         target: PreviewTarget,
@@ -92,6 +96,7 @@ impl MaskModifier {
     }
 }
 
+#[cfg(feature = "preview")]
 impl PreviewProvider for MaskPreview {
     fn on_draw(
         &mut self,

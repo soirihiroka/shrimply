@@ -50,6 +50,10 @@ fn main() -> Result<(), String> {
     for pass in 1..=2 {
         let started = Instant::now();
         let mut micros = Vec::new();
+        let mut new_state = Vec::new();
+        let mut new_record = Vec::new();
+        let layer_hits = renderer.layer_recording_hits;
+        let layer_states = renderer.layer_state_hits;
         let computed = renderer.states_computed;
         let hits = renderer.cache_hits;
         let paths = renderer.geometries_prepared;
@@ -57,10 +61,20 @@ fn main() -> Result<(), String> {
         let geometry_hits = renderer.geometry_cache_hits;
         for &time in &times {
             let frame_started = Instant::now();
+            let computed = renderer.states_computed;
+            renderer.frame_state(&scene, time, &options)?;
+            let state_us = frame_started.elapsed().as_micros();
+            let record_started = Instant::now();
             renderer.record(&scene, time, &options)?;
+            if renderer.states_computed > computed {
+                new_state.push(state_us);
+                new_record.push(record_started.elapsed().as_micros());
+            }
             micros.push(frame_started.elapsed().as_micros());
         }
         micros.sort_unstable();
+        new_state.sort_unstable();
+        new_record.sort_unstable();
         println!(
             "mode={preparation:?} pass={pass} frames={} elapsed_ms={} median_us={} p95_us={} max_us={} states_computed={} recording_hits={} path_builds={} identity_hits={} geometry_hits={}",
             times.len(),
@@ -73,6 +87,14 @@ fn main() -> Result<(), String> {
             renderer.geometries_prepared - paths,
             renderer.geometry_key_hits - identity_hits,
             renderer.geometry_cache_hits - geometry_hits
+        );
+        println!(
+            "new_frames={} state_median_us={} recording_median_us={} reused_element_states={} reused_element_pictures={}",
+            new_state.len(),
+            new_state.get(new_state.len() / 2).copied().unwrap_or(0),
+            new_record.get(new_record.len() / 2).copied().unwrap_or(0),
+            renderer.layer_state_hits - layer_states,
+            renderer.layer_recording_hits - layer_hits,
         );
     }
     Ok(())

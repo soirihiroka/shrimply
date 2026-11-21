@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 fn run(source: &str) -> Result<Prepared, sanim_core::Diagnostic> {
     let mut files = MemorySources::default();
-    files.insert("main.sanim", source);
+    files.insert("main.sanim", format!("{}\nAnimation()", source));
     files.insert("samples.csv", "run,n,x,y\n");
     Engine::default().prepare("main.sanim", &files, &BTreeMap::new())
 }

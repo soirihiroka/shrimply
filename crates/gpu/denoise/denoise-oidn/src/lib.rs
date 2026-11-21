@@ -4,7 +4,7 @@ use api::{Api, Handle};
 use std::{
     ffi::{CStr, c_void},
     ptr,
-    sync::{Arc, Mutex, OnceLock},
+    sync::Arc,
 };
 
 const CPU_DEVICE: i32 = 1;
@@ -20,6 +20,8 @@ pub fn cuda_supported(ordinal: usize) -> bool {
 
 #[cfg(target_os = "linux")]
 pub fn vulkan_supported(uuid: [u8; 16]) -> bool {
+    use std::sync::{Mutex, OnceLock};
+
     static SUPPORT: OnceLock<Mutex<std::collections::HashMap<[u8; 16], bool>>> = OnceLock::new();
     *SUPPORT.get_or_init(Mutex::default).lock().expect("OIDN capability cache poisoned").entry(uuid).or_insert_with(|| Device::for_uuid(uuid).is_ok_and(|device| unsafe { (device.api.device_int)(device.raw, c"externalMemoryTypes".as_ptr()) } as u32 & OPAQUE_FD != 0))
 }

@@ -1,7 +1,9 @@
+#[cfg(feature = "preview")]
 use super::preview;
 use super::{KeyframeSpan, ModifierModel, combine, ensure_timeline_value_ids, timeline_value_span};
 use hashbrown::HashSet;
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "preview")]
 use shrimply_preview_provider_skia::{
     Cursor, CursorUpdate, PointerEvent, PreviewBuilder, PreviewContext, PreviewEditOutcome,
     PreviewEditSink, PreviewProvider, PreviewRefresh, PreviewResponse, PreviewTarget,
@@ -18,6 +20,7 @@ pub struct ChromaticAberrationModifier {
 }
 
 #[derive(Clone)]
+#[cfg(feature = "preview")]
 struct ChromaticPreview {
     target: PreviewTarget,
     snapshot: ChromaticAberrationModifier,
@@ -29,6 +32,7 @@ struct ChromaticPreview {
     changed: bool,
 }
 #[derive(Clone, Copy)]
+#[cfg(feature = "preview")]
 struct ChromaticDrag {
     map: glam::Mat3,
     center: glam::Vec2,
@@ -36,6 +40,7 @@ struct ChromaticDrag {
 }
 
 impl ChromaticAberrationModifier {
+    #[cfg(feature = "preview")]
     pub(crate) fn preview_provider(
         &self,
         target: PreviewTarget,
@@ -72,6 +77,7 @@ impl ChromaticAberrationModifier {
     }
 }
 
+#[cfg(feature = "preview")]
 impl PreviewProvider for ChromaticPreview {
     fn on_draw(
         &mut self,
@@ -175,6 +181,7 @@ impl PreviewProvider for ChromaticPreview {
     }
 }
 
+#[cfg(feature = "preview")]
 fn chromatic_edit(changed: bool, commit: bool) -> PreviewResponse {
     if !changed {
         return PreviewResponse::handled();
@@ -187,6 +194,7 @@ fn chromatic_edit(changed: bool, commit: bool) -> PreviewResponse {
     })
 }
 
+#[cfg(feature = "preview")]
 fn update_chromatic(
     modifier: &mut ChromaticAberrationModifier,
     drag: &ChromaticDrag,

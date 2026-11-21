@@ -87,10 +87,7 @@ fn animation(batched: bool) -> Result<Animation, String> {
             element: group,
             property: Property::Position,
             from: None,
-            to: Value::Vec2(Vec2 {
-                values: [10., 0.],
-                unit: Unit::Length,
-            }),
+            to: Value::from_vector(vec![10., 0.], Unit::Length).unwrap(),
             reveal: None,
             horizontal: None,
             easing: None,

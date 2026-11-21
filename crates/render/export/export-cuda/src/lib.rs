@@ -13,9 +13,7 @@ use ffmpeg_next as ffmpeg;
 use shrimply_export_core::video::{self as core, FrameTiming, RenderedFrame, VideoBackend};
 use shrimply_math_core::Fraction;
 use shrimply_project_document::project::{Project, Time};
-use shrimply_visual_cuda::compositor::{
-    EXPORT_ASSETS_LOADING, RenderResourceConfig, VideoExportRenderer,
-};
+use shrimply_visual_cuda::compositor::{EXPORT_ASSETS_LOADING, VideoExportRenderer};
 use shrimply_visual_cuda::gpu::{CompositedVideoFrame, ExportPixelFormat};
 
 const VIDEO_HW_POOL_SIZE: i32 = 32;
@@ -26,48 +24,60 @@ mod intel;
 pub use shrimply_visual_cuda::gpu::{configure_gtk_backend, intel_backend_selected};
 
 pub use shrimply_export_core::video::{
-    ExportAudioEncoder, ExportContainer, ExportProgress, ExportVideoCodec, extension_for_container,
+    ExportAudioEncoder, ExportContainer, ExportProgress, ExportRateControl, ExportVideoCodec,
+    extension_for_container,
 };
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ExportRateControl {
-    ConstantQp,
-    ConstantBitrate,
-    VariableBitrate,
-    VariableBitrateTargetQuality,
-    Lossless,
+pub use shrimply_export_core::video::settings::{
+    ExportMultipass, ExportPreset, ExportProfile, ExportTuning,
+};
+pub use shrimply_visual_cuda::compositor::RenderResourceConfig;
+
+pub fn settings_backend() -> core::settings::Backend {
+    #[cfg(target_os = "linux")]
+    if intel_backend_selected() {
+        return core::settings::Backend::Vaapi;
+    }
+    core::settings::Backend::Nvenc
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ExportPreset {
-    P1,
-    P2,
-    P3,
-    P4,
-    P5,
-    P6,
-    P7,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ExportTuning {
-    UltraHighQuality,
-    HighQuality,
-    LowLatency,
-    UltraLowLatency,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ExportMultipass {
-    SinglePass,
-    QuarterResolution,
-    FullResolution,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ExportProfile {
-    Main,
-    Main10,
+pub fn parse_settings(
+    project: &Project,
+    path: PathBuf,
+    values: &serde_json::Value,
+    resources: RenderResourceConfig,
+) -> Result<ExportSettings, String> {
+    let configuration =
+        core::settings::parse_configuration(project, path, values, settings_backend())?;
+    let common = configuration.common;
+    let encoder = configuration.encoder;
+    Ok(ExportSettings {
+        path: common.path,
+        overwrite: true,
+        video_codec: common.video_codec,
+        container: common.container,
+        fps: common.fps,
+        background_alpha: common.background_alpha,
+        rate_control: common.rate_control,
+        constant_qp: common.constant_qp,
+        bitrate_kbps: common.bitrate_kbps,
+        max_bitrate_kbps: encoder.max_bitrate_kbps,
+        target_quality: encoder.target_quality,
+        keyframe_interval_seconds: common.keyframe_interval_seconds,
+        preset: encoder.preset,
+        tuning: encoder.tuning,
+        multipass: encoder.multipass,
+        profile: encoder.profile,
+        look_ahead: encoder.look_ahead,
+        adaptive_quantization: encoder.adaptive_quantization,
+        b_frames: common.b_frames,
+        b_frame_as_reference: encoder.b_frame_as_reference,
+        audio_encoder: common.audio_encoder,
+        audio_sample_rate: common.audio_sample_rate,
+        audio_bitrate_kbps: common.audio_bitrate_kbps,
+        maximum_temporal_decoders: resources.maximum_temporal_decoders,
+        gpu_host_memory_gib: resources.gpu_host_memory_gib,
+    })
 }
 
 #[derive(Clone, Debug)]
@@ -115,6 +125,8 @@ where
         container: settings.container,
         fps: settings.fps,
         background_alpha: settings.background_alpha,
+        rate_control: settings.rate_control,
+        constant_qp: settings.constant_qp,
         bitrate_kbps: settings.bitrate_kbps,
         keyframe_interval_seconds: settings.keyframe_interval_seconds,
         b_frames: settings.b_frames,

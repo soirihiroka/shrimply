@@ -47,7 +47,7 @@ use uuid::Uuid;
 
 mod execute;
 mod frames;
-mod imports;
+use shrimply_editing_api::imports;
 mod manim;
 mod sanim;
 mod speech;

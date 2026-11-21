@@ -14,10 +14,22 @@ let summary = with_speedup.groupby("algorithm").agg({before="mean", after="mean"
 
 # SQLite executes only when values are requested. Native plots consume typed Lists.
 let values = with_speedup["speedup"].to_list()
-let distribution = Histogram(values=values, bins=8, fill=Color("blue3"))
-let title = Text("Measured speedups", position=Vec2(0%, -38%))
-add(distribution)
-FadeIn(title, duration=400ms)
+let xs = LinearScale(domain=[1, 1.6], range=[-260pt, 260pt])
+let ys = LinearScale(domain=[0, 2], range=[90pt, -90pt])
+let distribution = <Box w-720 h-400 x_align={Align.Center} y_align={Align.Center}>
+    <Grid absolute scale={xs} ticks={[1, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6]}
+        spans={[[-90pt, 90pt]]} fill="light5" grid_opacity={0.15}/>
+    <Histogram absolute values={values} bins={8} x_scale={xs} y_scale={ys} fill="blue3"/>
+    <Axis absolute scale={xs} ticks={[1, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6]}
+        position={[0pt, 110pt]} font_size={12pt} format=".1f" title="Speedup (before / after)" fill="light4"/>
+    <Axis absolute scale={ys} ticks={[0, 1, 2]} vertical position={[-280pt, 0pt]}
+        font_size={12pt} format=".0f" fill="light4"/>
+</Box>
+let title = <Label position={[0%, -38%]} font_size={30pt}>Measured speedups</Label>
+let subtitle = <Label position={[0%, -29%]} font_size={16pt} fill="light4">
+    {len(values)} improved measurements · {len(summary)} algorithm groups
+</Label>
+Animation(children=[distribution])
+[title, subtitle].fade_in(duration=400ms)
 wait(2s)
-FadeOut(title, duration=400ms)
-FadeOut(distribution, duration=400ms)
+[title, subtitle, distribution].fade_out(duration=400ms)

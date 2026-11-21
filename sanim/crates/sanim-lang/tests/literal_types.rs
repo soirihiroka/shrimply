@@ -3,7 +3,7 @@ use sanim_lang::{Engine, MemorySources, Prepared};
 use std::collections::BTreeMap;
 fn files(source: &str) -> MemorySources {
     let mut files = MemorySources::default();
-    files.insert("main.sanim", source);
+    files.insert("main.sanim", format!("{}\nAnimation()", source));
     files
 }
 fn run(source: &str) -> Prepared {
@@ -187,15 +187,15 @@ let phase=exact("before")
 fn retained_literal_union_cells_and_signal_function_schemas_remain_exact() {
     let prepared = run(r#"
 type Mode="hidden"|"scroll"
-fn live(sig value:Mode):sig Mode {return value}
+fn<sig> live(sig value:Mode):sig Mode {return value}
 mut mode:Mode="hidden"
 let mirrored=live(mode)
 let panel=Box(overflow_y=mode,width=100pt,height=100pt)
 let via_function=Box(overflow_y=mirrored,width=100pt,height=100pt)
-add(panel)
-add(via_function)
+Animation(children=[panel])
+Animation(children=[via_function])
 wait(100ms)
-mode="scroll"
+animate(mode,to="scroll",duration=0s)
 wait(1s)
 "#);
     let before = prepared
@@ -229,13 +229,13 @@ fn emitted_literal_type_source_round_trips_braces_escapes_and_controls() {
 fn retained_native_configuration_accepts_signal_literal_unions() {
     let prepared = run(r#"
 type Tint="blue3"|"orange3"
-fn palette(sig value:Tint):sig Tint {return value}
+fn<sig> palette(sig value:Tint):sig Tint {return value}
 mut tint:Tint="blue3"
 let live=palette(tint)
-let marker=Circle(fill=Color(live))
-add(marker)
+let marker=Box(fill=Color(live), width=2*(32pt), height=2*(32pt), radius="full", x_align=Align.Center, y_align=Align.Center)
+Animation(children=[marker])
 wait(100ms)
-tint="orange3"
+animate(tint,to="orange3",duration=0s)
 wait(1s)
 "#);
     let before = prepared
@@ -266,13 +266,13 @@ let fixed_x=Box(overflow=mode,overflow_x="hidden",width=100pt,height=100pt)
 let fixed_y=Box(overflow=mode,overflow_y="hidden",width=100pt,height=100pt)
 let both_fixed=Box(overflow=mode,overflow_x="hidden",overflow_y="hidden",width=100pt,height=100pt)
 let live_x=Box(overflow=mode,overflow_x=axis,width=100pt,height=100pt)
-add(fixed_x)
-add(fixed_y)
-add(both_fixed)
-add(live_x)
+Animation(children=[fixed_x])
+Animation(children=[fixed_y])
+Animation(children=[both_fixed])
+Animation(children=[live_x])
 wait(100ms)
-mode="scroll"
-axis="scroll"
+animate(mode,to="scroll",duration=0s)
+animate(axis,to="scroll",duration=0s)
 wait(1s)
 "#);
     use sanim_core::Overflow::{Auto, Hidden, Scroll};
@@ -316,10 +316,10 @@ wait(1s)
 fn retained_overflow_can_become_visible_and_release_scroll_evidence() {
     let prepared = run(r#"
 mut mode:"auto"|"visible"="auto"
-let panel=Box(overflow=mode,width=100pt,height=100pt,scroll=Vec2(10pt,20pt))
-add(panel)
+let panel=Box(overflow=mode,width=100pt,height=100pt,scroll=[10pt, 20pt])
+Animation(children=[panel])
 wait(100ms)
-mode="visible"
+animate(mode,to="visible",duration=0s)
 wait(1s)
 "#);
     let before = prepared
@@ -341,10 +341,10 @@ wait(1s)
 fn a_visible_axis_resets_its_offset_without_erasing_the_still_clipped_axis() {
     let prepared = run(r#"
 mut mode:"auto"|"visible"="auto"
-let panel=Box(overflow=mode,overflow_y="hidden",width=100pt,height=100pt,scroll=Vec2(10pt,20pt),children=[Rect(width=300pt,height=400pt)])
-add(panel)
+let panel=Box(overflow=mode,overflow_y="hidden",width=100pt,height=100pt,scroll=[10pt, 20pt],children=[Box(width=300pt, height=400pt, fill=Color("light1"), x_align=Align.Center, y_align=Align.Center)])
+Animation(children=[panel])
 wait(100ms)
-mode="visible"
+animate(mode,to="visible",duration=0s)
 wait(1s)
 "#);
     let before = prepared

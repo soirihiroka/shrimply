@@ -1,5 +1,60 @@
-Functions, durations and lists
-==============================
+Functions, animation values and lists
+=====================================
+
+Pure functions and capabilities
+-------------------------------
+
+Functions are pure by default. They can read their arguments, immutable outer ``let`` values and pure helpers. Local scratch mutation is allowed because it does not change anything outside the call. Mutable parameters, live signals, external reads and observable effects require explicit capabilities:
+
+.. code-block:: text
+
+   let offset = 2
+   fn double(value: Number): Number { return value * 2 + offset }
+
+   mut count = 0
+   fn<ref> current_count(): Number { return count }
+   fn<mut, ref> increment(): Unit { count = count + 1 }
+   fn<sig> twice(sig value: Number): sig Number { return value * 2 }
+   fn introduction(): Animation { return wait(2s) }
+
+``mut`` permits mutable parameters and observable writes. ``sig`` permits live signal parameters and returns. ``ref`` permits reading outer mutable/signal state or external resources. An outer ``let`` holding a live signal is still live state, rather than an immutable snapshot of its sampled value.
+
+Regular ``assert(condition: Bool, message=...)`` is pure input validation. It returns ``Unit`` on success and fails immediately on false; it does not register deferred verification or advance the timeline. Read-only data queries are pure as well. Assertions over visual/timeline predicates retain their explicit verification effects.
+
+Capabilities belong to function types. A pure function cannot call an impure helper, including through an alias, generic or callback; an impure function may call a pure helper. A pure callback type is ``fn (value: Number): Number``. Explicit capabilities appear in callable types as well, such as ``fn<ref> (): Number``. A caller must permit the capabilities its callees require.
+
+Pure-call reuse includes immutable captures in its semantic inputs. Reflected value overrides and changed data inputs therefore cannot reuse results from different captured values. Returned stateful callable identities are not shared through value memoization.
+
+Anonymous functions
+-------------------
+
+Use the same typed parameters and return syntax as named functions:
+
+.. code-block:: text
+
+   let double = fn (value: Number): Number { return value * 2 }
+   let answers = [1, 2, 3].map(fn (value: Number): Number {
+       return double(value)
+   })
+
+Function values can capture lexical bindings, be returned by helpers, and accept defaults or ``sig`` parameters. A callable annotation uses ``fn (value: Number): Number``. Captured immutable values share persistent storage; captured mutable cells retain their live identity. Bounded execution and explicit capabilities apply to anonymous functions too.
+
+Animation values
+----------------
+
+The entry script collects unassigned ``Animation`` expression results into a sequence. Bound or assigned plans are not collected. ``return animation`` appends a final plan and stops entry execution. A single collected plan stays the root directly; several become an auto-sized sequence. Constructing a plan inside a function or import has no playback side effect: functions must return their plans. Ordinary functions carry value types and capabilities; they do not have timeline-duration effects. Only the resulting root tree is lowered into shared native tracks.
+
+.. code-block:: text
+
+   fn introduction(): Animation { return wait(2s) }
+   let title = <Label>Introduction</Label>
+   return <Animation target={title} flow="sequence">
+       <FadeIn duration={400ms}/>
+       {introduction()}
+       <FadeOut duration={400ms}/>
+   </Animation>
+
+Temporal layout uses the same bounded exact solver for duration discovery, editor resizing and rendering. ``duration="auto"`` measures content; a fixed Duration sets the box size; ``duration="match_parent"`` fills its parent. Children are parallel by default, or sequential with ``flow="sequence"``. Alignment, gaps, padding and offsets place children inside that temporal box. ``position_mode="absolute"`` excludes a child from its parent's content size. The editor supplies the root time viewport; resizing reuses the immutable plan and recalculates layout without evaluating source.
 
 Guarded function clauses
 ------------------------
@@ -8,14 +63,13 @@ A function can have several disjoint clauses. Literal strings and numeric refine
 
 .. code-block:: text
 
-   fn delay(time: "1s"): Unit { wait(1s) }
-   fn delay(time: "2s"): Unit { wait(2s) }
+   fn delay(time: "1s"): Animation { return wait(1s) }
+   fn delay(time: "2s"): Animation { return wait(2s) }
 
-   fn repetitions(count: Int < 1): Unit { wait(0s) }
-   fn repetitions(count: Int >= 1): Unit { wait(count * 1s) }
+   fn repetitions(count: Int < 1): Animation { return wait(0s) }
+   fn repetitions(count: Int >= 1): Animation { return wait(count * 1s) }
 
-   delay("1s")
-   repetitions(3)
+   return Animation(children=[delay("1s"), repetitions(3)], flow="sequence")
 
 ``Int`` is an integer refinement of ``Number``; it uses the same exact numeric values. ``Number < 1`` also accepts non-integers below one. Comparisons use matching units; a duration constraint can use ``Duration <= 1s``. Open and closed bounds remain distinct, and the existing type union/intersection/difference operators compose numeric domains.
 
@@ -23,53 +77,26 @@ Clauses share parameter names, kinds and generic/default structure. Their domain
 
 Known literal arguments can select a clause during checking. Other calls dispatch once using their actual values. ``sig`` inputs select a body from their current sample and retain their live handles inside that body; a later signal change does not switch an already-running invocation to another body. A new call samples and selects again. Ordinary arguments remain snapshots and ``mut`` arguments remain local copies.
 
-Symbolic timeline effects
--------------------------
+Explicit indefinite playback
+----------------------------
 
-Value types and timeline effects are separate. A function may have an exact fixed duration, a formula, a finite set of alternatives, or an unresolved effect:
+``wait(forever)`` constructs an indefinite hold. It does not end language execution: the script still builds and returns its value normally. In sequential temporal layout, children after an indefinite in-flow hold cannot be reached. ``forever`` is a protected sentinel rather than a nonfinite number; finite calculations and ordinary loops retain their two-hour and operation bounds.
 
-.. code-block:: text
-
-   fn steps(count: Int): Unit {
-       repeat count { wait(250ms) }
-   }
-
-   fn rows(items: List<Number>): Unit {
-       for item in items { wait(100ms) }
-   }
-
-   fn choose(short: Bool): Unit {
-       if short { return wait(1s) }
-       return wait(2s)
-   }
-
-The effects are respectively ``count * 250ms``, ``len(items) * 100ms``, and ``1s | 2s``. A union is a set of possible timeline durations, not an instruction to add both branches. Early returns stop their path. Sequential work adds durations; independent branch choices in repeated work can produce mixed sums, so repeating ``1s | 2s`` twice permits ``2s | 3s | 4s``.
-
-Actual inputs resolve formulas. A list read from CSV contributes its parsed record count; quoted CSV fields are handled by the regular reader. Reflected inputs use the current runtime override, rather than baking their source defaults into the plan. If per-item values affect time, the duration pass evaluates those required values. It does not assume every loop costs ``length * one constant``.
-
-The duration pass uses fixed-body multiplication for bounded loops, preserves actual control flow when needed, and skips unrelated value work and rendering. Formulas and alternative sets have fixed complexity budgets. Unsupported or overly complex formulas remain unresolved and use bounded selective evaluation; they never become an invented zero duration. Exact fractions, iteration/work limits and the two-hour total limit apply to the resolved result.
-
-Manual duration contracts
--------------------------
-
-Declare a contract when a helper needs an explicit duration interface:
+``animation.repeat(forever)`` retains one positive finite cycle and samples it with exact periodic clocks. It does not rerun source, allocate successive cycles, or execute an unbounded language loop. A zero-time cycle or competing writer is rejected. Use an absolute child for a background cycle while an in-flow sibling establishes a finite root duration:
 
 .. code-block:: text
 
-   @duration(step)
-   fn pause(step: Duration): Unit {
-       wait(step)
-   }
+   mut phase = 0deg
+   sig size = 64pt + 16pt * sin(phase)
+   let shape = <Box width={size} height={size} fill="blue3"/>
+   let pulse = animate(phase, to=360deg, duration=2s, ease="linear").repeat(forever)
+   return <Animation>
+       {shape}
+       <Animation position_mode="absolute">{pulse}</Animation>
+       {wait(10s)}
+   </Animation>
 
-   @duration(1s)
-   fn preset(name: "quick"): Unit { wait(1s) }
-
-   @duration(2s)
-   fn preset(name: "slow"): Unit { wait(2s) }
-
-The annotation is a pure ``Duration`` expression in the function's parameter scope. It does not schedule work. Checking rejects a provable mismatch; full evaluation checks the body's consumed timeline duration before publishing its result. A mismatch is an error, including when the body takes less time than declared. Background work started by the body must finish within that interval; use an explicit wait to join it. Omitted default arguments execute before the body and contribute their own duration to the call.
-
-Fast duration-only planning may use this declared contract without evaluating an otherwise unnecessary body. It is therefore a promise that full preparation must validate, not a proof obtained from the body. Use ``check`` for complete validation. The separate call option ``duration=...`` retains its ordinary envelope behavior: it may pad a shorter call and rejects a body exceeding the envelope.
+Default temporal overflow is hidden, so the absolute recurring child is cropped to the finite root viewport. A relative indefinite child instead gives the root an intrinsic indefinite extent. Reflow uses the retained plan and preserves animation curves when clipping; it does not stretch a cropped curve into a new easing interval.
 
 List lengths in types
 ---------------------
@@ -86,7 +113,7 @@ List lengths in types
 
 The checker rejects known length mismatches in assignments, arguments and returns. ``read<List<Row,3>>("rows.csv")`` validates the row count when the file is loaded. An empty list has length zero. Generic identity functions preserve known lengths, and nested lists retain each dimension when it is uniform. Ragged dimensions become unspecified rather than inventing a size.
 
-``map``, ``scan``, sorting and reversal preserve length. ``zip`` takes the shorter length, concatenation adds lengths, and known slicing bounds determine the result length. ``filter`` and ``unique`` usually have unspecified result lengths because their sizes depend on values. Exact lengths also specialize timeline formulas without inspecting list contents; complete preparation still validates loaded data.
+``map``, ``scan``, sorting and reversal preserve length. ``zip`` takes the shorter length, concatenation adds lengths, and known slicing bounds determine the result length. ``filter`` and ``unique`` usually have unspecified result lengths because their sizes depend on values. Exact lengths also constrain mapped Animation lists; complete preparation still validates loaded data.
 
 Inferred mutable, signal and reflected lists allow resizing. An explicit ``List<T,N>`` annotation enforces that size. Signal guards describe the sample at invocation, so their body cannot assume that a live signal retains its initial length. Length parameters currently accept nonnegative integer literals or ``_``.
 
@@ -144,4 +171,6 @@ List methods accept ordinary named functions, including generic and guarded func
 
 Bisection requires already-sorted input and uses bounded indexed probes. It does not rescan the entire list to verify sorting on each query. ``lo`` and ``hi`` bound the search interval, with an exclusive ``hi``. List operations retain typed schemas for empty results and share persistent input storage where possible; they do not mutate their source.
 
-Callbacks execute once per visited item through the same function runtime as ordinary calls. Timed callbacks advance sequentially, so a fixed 100ms callback mapped over three items contributes 300ms. Short-circuit predicates may visit fewer items. Sorting and uniqueness run each key callback once, rather than once per comparison. Callback mutations and errors are preserved, and list work obeys the configured iteration and memory budgets.
+Callbacks execute once per visited item through the same function runtime as ordinary calls. A callback returning an Animation builds a value; place the resulting list in an Animation with ``flow="sequence"`` or ``flow="parallel"`` to choose its temporal layout. Function-internal expression statements never emit root animations. Short-circuit predicates may visit fewer items. Sorting and uniqueness run each key callback once, rather than once per comparison. Callback capabilities and errors are preserved, and list work obeys the configured iteration and memory budgets.
+
+Visual relationship assertions take ``at=1s`` to choose a frame explicitly, or ``always(predicate)`` to verify an interval. Omitting ``at`` samples time zero. Constructing a preceding ``wait(...)`` plan does not change assertion time: plan construction has no timeline cursor. Boolean assertions validate immediately and reject ``at``.

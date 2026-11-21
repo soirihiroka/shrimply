@@ -7,6 +7,7 @@ edition = "2024"
 libc.workspace = true
 rusqlite = { workspace = true, features = ["bundled"] }
 shrimply-path-core.workspace = true
+shrimply-i18n.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows = { workspace = true, features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading"] }

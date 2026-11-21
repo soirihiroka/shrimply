@@ -1,5 +1,6 @@
 use hashbrown::HashSet;
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "preview")]
 use shrimply_preview_provider_skia::{
     CursorUpdate, PointerEvent, PreviewBuilder, PreviewContext, PreviewEditOutcome,
     PreviewEditSink, PreviewProvider, PreviewRefresh, PreviewResponse, PreviewTarget, Rect,
@@ -7,6 +8,7 @@ use shrimply_preview_provider_skia::{
 use shrimply_property_model::timeline_value::*;
 use uuid::Uuid;
 
+#[cfg(feature = "preview")]
 use super::preview::{self, HANDLES, Handle};
 use super::{KeyframeSpan, ModifierModel, combine, ensure_timeline_value_ids, timeline_value_span};
 
@@ -91,6 +93,7 @@ impl ModifierModel for CropModifier {
 }
 
 #[derive(Clone, Copy)]
+#[cfg(feature = "preview")]
 struct CropDrag {
     map: glam::Mat3,
     size: glam::Vec2,
@@ -98,6 +101,7 @@ struct CropDrag {
     pixels: bool,
     handle: Handle,
 }
+#[cfg(feature = "preview")]
 struct CropPreview {
     target: PreviewTarget,
     original: CropModifier,
@@ -111,6 +115,7 @@ struct CropPreview {
 }
 
 impl CropModifier {
+    #[cfg(feature = "preview")]
     pub(crate) fn preview_provider(
         &self,
         target: PreviewTarget,
@@ -143,6 +148,7 @@ impl CropModifier {
     }
 }
 
+#[cfg(feature = "preview")]
 impl CropPreview {
     fn rect(&self) -> Rect {
         let [mut top, mut right, mut bottom, mut left] = if self.pixels {
@@ -188,6 +194,7 @@ impl CropPreview {
     }
 }
 
+#[cfg(feature = "preview")]
 impl PreviewProvider for CropPreview {
     fn on_draw(
         &mut self,
@@ -266,6 +273,7 @@ impl PreviewProvider for CropPreview {
     }
 }
 
+#[cfg(feature = "preview")]
 fn update(
     crop: &mut CropModifier,
     drag: CropDrag,
@@ -315,6 +323,7 @@ fn update(
         | preview::set_scalar(&mut edges.left, time, value[3]);
     Some((changed, value))
 }
+#[cfg(feature = "preview")]
 fn cursor(value: shrimply_preview_provider_skia::Cursor) -> PreviewResponse {
     PreviewResponse {
         handled: true,
@@ -323,6 +332,7 @@ fn cursor(value: shrimply_preview_provider_skia::Cursor) -> PreviewResponse {
         edit: PreviewEditOutcome::UNCHANGED,
     }
 }
+#[cfg(feature = "preview")]
 fn edited(changed: bool, commit: bool) -> PreviewResponse {
     if !changed {
         return PreviewResponse::handled();

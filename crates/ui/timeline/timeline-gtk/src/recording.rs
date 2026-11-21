@@ -4,12 +4,15 @@ pub(super) fn handle_video_recording(
     area: &gtk::GLArea,
     runtime_shared: &Rc<RefCell<TimelineRuntime>>,
     runtime: &mut TimelineRuntime,
-    key: TrackKey,
+    request: shrimply_timeline_skia::scene::TrackRecordingRequest,
 ) -> bool {
-    if key.kind != TrackKind::Video {
+    if request.key.kind != TrackKind::Video {
         return false;
     }
-    if let Err(error) = runtime.scene.toggle_video_recording(key) {
+    if let Err(error) = runtime
+        .scene
+        .toggle_video_recording_at(request.key, request.position)
+    {
         interaction::show_error_dialog(area, "Could not record screen or application", &error);
         return true;
     }
@@ -73,7 +76,7 @@ fn poll_video_recording(area: &gtk::GLArea, runtime: Rc<RefCell<TimelineRuntime>
                 return glib::ControlFlow::Continue;
             }
             Some(Err(std::sync::mpsc::TryRecvError::Disconnected)) => {
-                video_recording::ScreenRecordingEvent::Finished(Err(
+                video_recording::VideoRecordingEvent::Finished(Err(
                     "PipeWire screen capture stopped without a final event".into(),
                 ))
             }
@@ -81,34 +84,10 @@ fn poll_video_recording(area: &gtk::GLArea, runtime: Rc<RefCell<TimelineRuntime>
         };
         let terminal = matches!(
             event,
-            video_recording::ScreenRecordingEvent::Cancelled
-                | video_recording::ScreenRecordingEvent::Finished(_)
+            video_recording::VideoRecordingEvent::Cancelled
+                | video_recording::VideoRecordingEvent::Finished(_)
         );
-        let event = match event {
-            video_recording::ScreenRecordingEvent::Ready { width, height } => {
-                tracing::info!(width, height, "screen recording ready");
-                shrimply_timeline_skia::recording::VideoRecordingEvent::Ready { width, height }
-            }
-            video_recording::ScreenRecordingEvent::Cancelled => {
-                shrimply_timeline_skia::recording::VideoRecordingEvent::Cancelled
-            }
-            video_recording::ScreenRecordingEvent::Finished(result) => {
-                shrimply_timeline_skia::recording::VideoRecordingEvent::Finished(result.map(
-                    |finished| {
-                        let duration = finished.duration;
-                        let width = finished.width;
-                        let height = finished.height;
-                        shrimply_timeline_skia::recording::FinishedVideoRecording::new(
-                            finished.into_path(),
-                            duration,
-                            width,
-                            height,
-                            Some(1),
-                        )
-                    },
-                ))
-            }
-        };
+
         let result = {
             let mut runtime = runtime.borrow_mut();
             let result = runtime.scene.handle_video_recording_event(event);

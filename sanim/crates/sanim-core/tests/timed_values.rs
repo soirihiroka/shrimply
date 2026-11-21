@@ -1,5 +1,5 @@
 use sanim_core::{
-    Easing, Fraction, Number, Type, Unit, Value, Vec3, Vec4,
+    Easing, Fraction, Number, Type, Unit, Value,
     reactive::{Node, ReactiveGraph},
 };
 use std::sync::Arc;
@@ -33,7 +33,7 @@ fn assert_discrete(ty: Type, from: Value, to: Value) {
     assert_eq!(restored, graph);
 }
 #[test]
-fn string_record_matrix_and_array_state_commit_at_the_end() {
+fn string_record_and_array_state_commit_at_the_end() {
     assert_discrete(
         Type::String,
         Value::String("before".into()),
@@ -57,13 +57,6 @@ fn string_record_matrix_and_array_state_commit_at_the_end() {
         )
     };
     assert_discrete(ty, record("one", 1), record("two", 2));
-    let mut matrix = sanim_core::math::linear::identity();
-    matrix[0][0] = 2.;
-    assert_discrete(
-        Type::Matrix4,
-        Value::Matrix4(Box::new(sanim_core::math::linear::identity())),
-        Value::Matrix4(Box::new(matrix)),
-    );
     let array = |values: Vec<Value>| Value::Array {
         element_type: Arc::new(Type::Numeric(Unit::Number)),
         shape: vec![values.len()],
@@ -74,6 +67,32 @@ fn string_record_matrix_and_array_state_commit_at_the_end() {
         array(vec![number(1)]),
         array(vec![number(2), number(3)]),
     );
+}
+#[test]
+fn nested_number_lists_retain_discrete_matrix_state_semantics() {
+    let ty = sanim_core::math::linear::matrix::type_of(
+        sanim_core::ListLength::Exact(2),
+        sanim_core::ListLength::Exact(2),
+    );
+    let make = |diagonal: i64| {
+        Value::List(sanim_core::List::typed(
+            Type::List(
+                Box::new(Type::Numeric(Unit::Number)),
+                sanim_core::ListLength::Exact(2),
+            ),
+            vec![
+                Value::List(sanim_core::List::typed(
+                    Type::Numeric(Unit::Number),
+                    vec![number(diagonal), number(0)],
+                )),
+                Value::List(sanim_core::List::typed(
+                    Type::Numeric(Unit::Number),
+                    vec![number(0), number(diagonal)],
+                )),
+            ],
+        ))
+    };
+    assert_discrete(ty, make(1), make(3));
 }
 #[test]
 fn union_and_option_cells_preserve_the_declared_schema() {
@@ -99,41 +118,43 @@ fn fractions_and_three_and_four_component_vectors_interpolate() {
         fraction.sample_cell(1, Fraction::from(2)).unwrap(),
         Value::Fraction(Fraction::from(2))
     );
+    let fraction_values = |n| {
+        Value::List(sanim_core::List::typed(
+            Type::Fraction,
+            vec![Value::Fraction(Fraction::from(n))],
+        ))
+    };
+    let fractions = transition(
+        Type::List(Box::new(Type::Fraction), sanim_core::ListLength::Exact(1)),
+        fraction_values(1u64),
+        fraction_values(3u64),
+    );
+    let middle = fractions.sample_cell(1, Fraction::from(2)).unwrap();
+    assert_eq!(middle, fraction_values(2u64));
+    sanim_core::validate_value(&middle.ty(), &middle).unwrap();
     let vector3 = transition(
-        Type::Vector(3, Some(Unit::Length)),
-        Value::Vec3(Vec3 {
-            values: [0., 2., 4.],
-            unit: Unit::Length,
-        }),
-        Value::Vec3(Vec3 {
-            values: [2., 4., 6.],
-            unit: Unit::Length,
-        }),
+        Type::List(
+            Box::new(Type::Numeric(Unit::Length)),
+            sanim_core::ListLength::Exact(3),
+        ),
+        Value::from_vector(vec![0., 2., 4.], Unit::Length).unwrap(),
+        Value::from_vector(vec![2., 4., 6.], Unit::Length).unwrap(),
     );
     assert_eq!(
         vector3.sample_cell(1, Fraction::from(2)).unwrap(),
-        Value::Vec3(Vec3 {
-            values: [1., 3., 5.],
-            unit: Unit::Length
-        })
+        Value::from_vector(vec![1., 3., 5.], Unit::Length).unwrap()
     );
     let vector4 = transition(
-        Type::Vector(4, Some(Unit::Number)),
-        Value::Vec4(Vec4 {
-            values: [0., 2., 4., 6.],
-            unit: Unit::Number,
-        }),
-        Value::Vec4(Vec4 {
-            values: [2., 4., 6., 8.],
-            unit: Unit::Number,
-        }),
+        Type::List(
+            Box::new(Type::Numeric(Unit::Number)),
+            sanim_core::ListLength::Exact(4),
+        ),
+        Value::from_vector(vec![0., 2., 4., 6.], Unit::Number).unwrap(),
+        Value::from_vector(vec![2., 4., 6., 8.], Unit::Number).unwrap(),
     );
     assert_eq!(
         vector4.sample_cell(1, Fraction::from(2)).unwrap(),
-        Value::Vec4(Vec4 {
-            values: [1., 3., 5., 7.],
-            unit: Unit::Number
-        })
+        Value::from_vector(vec![1., 3., 5., 7.], Unit::Number).unwrap()
     );
 }
 #[test]
@@ -226,11 +247,27 @@ fn generic_state_never_weakens_property_expression_types_or_validation() {
         graph
             .set_typed_cell(
                 2,
-                Type::Vector(3, Some(Unit::Number)),
-                Value::Vec3(Vec3 {
-                    values: [0., f64::NAN, 0.],
-                    unit: Unit::Number
-                })
+                Type::List(
+                    Box::new(Type::Numeric(Unit::Number)),
+                    sanim_core::ListLength::Exact(3)
+                ),
+                Value::List(sanim_core::List::typed(
+                    Type::Numeric(Unit::Number),
+                    vec![
+                        Value::Number(sanim_core::Number {
+                            value: Fraction::from(0),
+                            unit: Unit::Number
+                        }),
+                        Value::Number(sanim_core::Number {
+                            value: Fraction::NaN,
+                            unit: Unit::Number
+                        }),
+                        Value::Number(sanim_core::Number {
+                            value: Fraction::from(0),
+                            unit: Unit::Number
+                        })
+                    ]
+                ))
             )
             .is_err()
     );

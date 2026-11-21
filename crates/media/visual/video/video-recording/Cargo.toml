@@ -3,15 +3,40 @@ name = "shrimply-video-recording"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+default = ["capture"]
+capture = ["dep:ffmpeg-next", "dep:shrimply-path-core", "dep:uuid", "dep:async-channel", "dep:gio", "dep:glib", "dep:hashbrown", "dep:pipewire", "dep:windows", "dep:windows-future"]
+
 [dependencies]
-hashbrown.workspace = true
-async-channel.workspace = true
-ffmpeg-next.workspace = true
-gio.workspace = true
-glib.workspace = true
-pipewire.workspace = true
-shrimply-math-media = { workspace = true }
-shrimply-math-core = { workspace = true }
-shrimply-project-document = { workspace = true, default-features = true }
+shrimply-math-core.workspace = true
 tracing.workspace = true
-uuid = { workspace = true, features = ["v4"] }
+
+[target.'cfg(any(target_os = "linux", windows))'.dependencies]
+ffmpeg-next = { workspace = true, optional = true }
+shrimply-path-core = { workspace = true, optional = true }
+uuid = { workspace = true, features = ["v4"], optional = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+async-channel = { workspace = true, optional = true }
+gio = { workspace = true, optional = true }
+glib = { workspace = true, optional = true }
+hashbrown = { workspace = true, optional = true }
+pipewire = { workspace = true, optional = true }
+
+[target.'cfg(windows)'.dependencies]
+windows = { workspace = true, optional = true, features = [
+    "Foundation",
+    "Graphics",
+    "Graphics_Capture",
+    "Graphics_DirectX",
+    "Graphics_DirectX_Direct3D11",
+    "Win32_Foundation",
+    "Win32_Graphics_Direct3D",
+    "Win32_Graphics_Direct3D11",
+    "Win32_Graphics_Dxgi",
+    "Win32_Graphics_Dxgi_Common",
+    "Win32_System_WinRT",
+    "Win32_System_WinRT_Direct3D11",
+    "Win32_UI_Shell",
+] }
+windows-future = { workspace = true, optional = true }

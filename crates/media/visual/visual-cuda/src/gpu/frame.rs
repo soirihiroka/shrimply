@@ -27,6 +27,21 @@ pub enum FrameBuffer {
     },
 }
 
+#[cfg(target_os = "linux")]
+impl From<shrimply_preview_render_vulkan::worker::Frame> for CompositedVideoFrame {
+    fn from(frame: shrimply_preview_render_vulkan::worker::Frame) -> Self {
+        let mut result = Self::intel(
+            frame.display,
+            frame.rendered,
+            frame.width,
+            frame.height,
+            frame.serial,
+        );
+        result.sanim_sources = frame.sanim_sources;
+        result
+    }
+}
+
 impl FrameBuffer {
     pub fn cuda(&self) -> Result<&Arc<DeviceBuffer<u32>>, String> {
         match self {

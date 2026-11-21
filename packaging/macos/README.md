@@ -13,3 +13,10 @@ packaging uses the same compiled assets. Do not set `applicationIconImage` at
 runtime: that would replace the system-rendered bundle icon with a static image.
 
 See Apple's [Icon Composer guide](https://developer.apple.com/documentation/xcode/creating-your-app-icon-using-icon-composer).
+
+## FFmpeg
+
+AppKit build, check and release targets build FFmpeg under `target/macos-ffmpeg`.
+They use the installed Homebrew FFmpeg's codec and filter choices. The local
+patch requires a hardware VideoToolbox decoder when creating each decompression
+session, including HEVC and ProRes. An unsupported stream fails to open.

@@ -5,6 +5,9 @@ use std::time::Duration;
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
 
 pub use fraction::{BigFraction, Fraction, GenericFraction, Ratio, Sign};
+pub mod events;
+mod statistics;
+pub use statistics::percentile;
 
 pub const FRACTION_ZERO: Fraction =
     GenericFraction::Rational(Sign::Plus, fraction::Ratio::new_raw(0, 1));
@@ -483,6 +486,23 @@ pub fn time_ratio_f64(time: Time, duration: Time) -> f64 {
     if duration == Time::ZERO {
         return 0.0;
     }
+    if let (
+        Some((time_numerator, time_denominator)),
+        Some((duration_numerator, duration_denominator)),
+    ) = (
+        fraction_ratio_i128(time.seconds),
+        fraction_ratio_i128(duration.seconds),
+    ) && let (Some(numerator), Some(denominator)) = (
+        time_numerator.checked_mul(duration_denominator),
+        time_denominator.checked_mul(duration_numerator),
+    ) && denominator != 0
+    {
+        // Stay in exact integer arithmetic until this existing UI conversion.
+        let value = numerator as f64 / denominator as f64;
+        if value.is_finite() {
+            return value;
+        }
+    }
     let ratio =
         BigFraction::from_fraction(time.seconds) / BigFraction::from_fraction(duration.seconds);
     let value = ratio
@@ -572,6 +592,19 @@ impl Time {
             }
             _ => 0,
         }
+    }
+
+    /// Round deadlines up so a timer never wakes before the rational time.
+    pub fn as_nonnegative_duration_ceil(self) -> Duration {
+        let nanos = match self.seconds {
+            GenericFraction::Rational(Sign::Plus, ratio) => {
+                (u128::from(*ratio.numer()) * TIME_NANOSECONDS_PER_SECOND as u128)
+                    .div_ceil(u128::from(*ratio.denom()))
+                    .min(u128::from(u64::MAX)) as u64
+            }
+            _ => 0,
+        };
+        Duration::from_nanos(nanos)
     }
 
     pub fn as_nanos_i128(self) -> i128 {

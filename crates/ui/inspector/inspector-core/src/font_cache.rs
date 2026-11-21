@@ -1,4 +1,8 @@
 use hashbrown::{HashMap, HashSet};
+mod native;
+pub use native::{
+    NativeFontPreview, native_preview_ready, native_preview_source, prepare_native_preview,
+};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};

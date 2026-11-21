@@ -6,7 +6,7 @@ Native image elements
 .. code-block:: text
 
    let logo = <Image src="https://example.org/logo.svg" width={120pt}/>
-   add(logo)
+   Animation(children=[logo])
    wait(1s)
 
 Sources can also be ordinary paths relative to the script. Local files participate in the runtime's event-driven dependency watching. A missing or corrupt source produces a diagnostic at the ``Image`` expression.

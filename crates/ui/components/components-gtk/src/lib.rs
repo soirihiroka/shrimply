@@ -1,3 +1,4 @@
+pub use shrimply_components_core::{layout, presentation};
 pub use shrimply_components_skia::{skia_font, skia_system_font};
 pub use shrimply_surface_gl_skia::gl_loader;
 pub mod canvas {
@@ -19,6 +20,7 @@ pub mod project_save;
 pub mod project_settings;
 pub mod resource_pipeline;
 pub mod toast;
+pub mod touch;
 pub mod ui;
 
 #[macro_export]

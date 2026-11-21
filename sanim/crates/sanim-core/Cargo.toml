@@ -14,3 +14,7 @@ serde.workspace = true
 serde_json.workspace = true
 taffy.workspace = true
 shrimply-math-color.workspace = true
+shrimply-math-core.workspace = true
+sanim-voxel.workspace = true
+glam.workspace = true
+image.workspace = true

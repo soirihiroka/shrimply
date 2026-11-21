@@ -16,7 +16,7 @@ pub fn clean_text_for_speech(source: &str) -> String {
         .join(" ")
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct CaptionItem {
     pub id: Uuid,
     pub start: Time,

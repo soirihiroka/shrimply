@@ -1,6 +1,9 @@
 use std::any::Any;
 
 use glam::Vec2;
+pub use shrimply_paint_edit_skia::{
+    DEFAULT_PAINT_ERASER_SCALE, PAINT_PREVIEW_STATE, PaintPreviewState,
+};
 use shrimply_paint_edit_skia::{
     PAINT_PREVIEW_FACET, PaintOnionFrame, PaintPreviewRender, ResolvedPathOffset,
     ResolvedShakyPath, preview_provider as paint_preview_provider, resolve_onion_frame,

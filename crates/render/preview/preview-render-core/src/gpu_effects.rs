@@ -1,7 +1,112 @@
 use crate::gpu::{Buffer, Renderer, Submission};
+use shrimply_preview_render_core::Layer;
+use shrimply_render_core::Nv12LayerParams;
 use shrimply_render_core::effects::{BufferSlot, PixelEffect, SpatialState};
 
-pub(super) fn apply_stabilization(
+pub(super) struct LayerResources<'a> {
+    pub sources: &'a mut crate::sources::Sources,
+    pub external_masks: &'a [(
+        shrimply_visual_core::raster_modifiers::ExternalDependency,
+        Buffer,
+    )],
+    pub canvas_size: (u32, u32),
+    pub sam2_target: Option<&'a shrimply_visual_core::sam2::analysis::AnalysisTarget>,
+    pub sam2_proxy: &'a mut Option<Buffer>,
+}
+
+pub(super) fn apply_layer(
+    renderer: &mut Renderer,
+    layer: &Layer,
+    (parameters, mut buffer): (Nv12LayerParams, Buffer),
+    resources: LayerResources<'_>,
+    submissions: &mut Vec<Submission>,
+) -> Result<(Nv12LayerParams, Buffer), String> {
+    let mut state = SpatialState {
+        parameters,
+        transform: layer.transform,
+        texture_edges: [0.0; 4],
+        modifier_crop: [0.0; 4],
+        modifier_crop_pixels: [0.0; 4],
+    };
+    if let Some(stabilization) = &layer.stabilization {
+        (state, buffer) = apply_stabilization(
+            renderer,
+            buffer,
+            state,
+            stabilization,
+            layer.render_size,
+            submissions,
+        )?;
+    }
+    if let Some(mask) = &layer.video_mask {
+        let mask_buffer = resources.sources.decoded(renderer, &mask.image)?;
+        let (mut parameters, _) = shrimply_render_core::effects::materialization(
+            layer.parameters,
+            mask.size.0,
+            mask.size.1,
+        );
+        parameters.source_width = mask.image.width() as u32;
+        parameters.source_height = mask.image.height() as u32;
+        parameters.rgba_pitch = parameters.source_width as usize * size_of::<u32>();
+        parameters.inverse = shrimply_render_core::math::Mat3::IDENTITY;
+        parameters.sample_method = mask.sampling;
+        let (mask_buffer, submission) = renderer
+            .composite_buffers(&[(parameters, mask_buffer)], mask.size.0, mask.size.1, 0)?
+            .into_parts();
+        submissions.push(submission);
+        buffer = super::alpha_mask::video(
+            renderer,
+            buffer,
+            (
+                state.parameters.source_width,
+                state.parameters.source_height,
+            ),
+            mask_buffer,
+            mask.size,
+            submissions,
+        )?;
+    }
+    (state, buffer) = apply_modifiers(renderer, buffer, state, layer, resources, submissions)?;
+    if let Some(samples) = &layer.motion_blur {
+        (state, buffer) = apply_motion_blur(
+            renderer,
+            buffer,
+            state,
+            samples,
+            layer.render_size,
+            submissions,
+        )?;
+    }
+    for transition in &layer.transitions {
+        state.transform = transition.transform * state.transform;
+        if let Some(effect) = transition.effect {
+            (state, buffer) = apply_transition(
+                renderer,
+                buffer,
+                state,
+                effect,
+                layer.render_size,
+                submissions,
+            )?;
+        }
+    }
+    state.transform = layer.output_transform * state.transform;
+    if let Some(mask) = &layer.alpha_mask {
+        buffer = super::alpha_mask::apply(
+            renderer,
+            buffer,
+            (
+                state.parameters.source_width,
+                state.parameters.source_height,
+            ),
+            mask,
+            submissions,
+        )?;
+    }
+    Ok((state.sampled(), buffer))
+}
+
+fn apply_stabilization(
     renderer: &mut Renderer,
     input: Buffer,
     state: SpatialState,
@@ -54,7 +159,7 @@ pub(super) fn apply_stabilization(
     }
 }
 
-pub(super) fn apply_transition(
+fn apply_transition(
     renderer: &mut Renderer,
     input: Buffer,
     state: SpatialState,
@@ -137,7 +242,7 @@ fn apply_origami(
     Ok((state, output))
 }
 
-pub(super) fn apply_motion_blur(
+fn apply_motion_blur(
     renderer: &mut Renderer,
     input: Buffer,
     state: SpatialState,
@@ -159,7 +264,7 @@ pub(super) fn apply_motion_blur(
     Ok((motion.baked, buffer))
 }
 
-pub(super) struct ExternalMasks<'a> {
+struct ExternalMasks<'a> {
     pub frames: &'a [(
         shrimply_visual_core::raster_modifiers::ExternalDependency,
         Buffer,
@@ -168,30 +273,29 @@ pub(super) struct ExternalMasks<'a> {
     pub output_transform: shrimply_render_core::math::Mat3,
 }
 
-pub(super) struct ModifierRequest<'a> {
-    pub operations: &'a [shrimply_visual_core::raster_modifiers::Modifier],
-    pub size: (u32, u32),
-    pub external_masks: ExternalMasks<'a>,
-    pub sam2_target: Option<&'a shrimply_visual_core::sam2::analysis::AnalysisTarget>,
-    pub sam2_proxy: &'a mut Option<Buffer>,
-}
-
-pub(super) fn apply_modifiers(
+fn apply_modifiers(
     renderer: &mut Renderer,
     mut input: Buffer,
     mut state: SpatialState,
-    request: ModifierRequest<'_>,
+    layer: &Layer,
+    resources: LayerResources<'_>,
     submissions: &mut Vec<Submission>,
 ) -> Result<(SpatialState, Buffer), String> {
-    let ModifierRequest {
-        operations,
-        size,
+    let LayerResources {
         external_masks,
+        canvas_size,
         sam2_target,
         sam2_proxy,
-    } = request;
+        ..
+    } = resources;
+    let size = layer.render_size;
+    let external_masks = ExternalMasks {
+        frames: external_masks,
+        size: canvas_size,
+        output_transform: layer.output_transform,
+    };
     use shrimply_visual_core::raster_modifiers::Operation;
-    for modifier in operations {
+    for modifier in &layer.effects {
         let original = modifier
             .alpha_mask
             .as_ref()
@@ -555,7 +659,7 @@ fn apply_dithering(
     Ok((state, output))
 }
 
-pub(super) fn apply(
+fn apply(
     renderer: &mut Renderer,
     mut input: Buffer,
     state: SpatialState,

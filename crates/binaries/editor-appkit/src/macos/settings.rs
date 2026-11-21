@@ -252,13 +252,13 @@ pub(super) fn show(editor: &Editor) -> objc2::rc::Retained<NSWindow> {
         ),
     ] {
         label(&appearance, title, y, mtm);
-        let popup = NSPopUpButton::initWithFrame_pullsDown(
-            NSPopUpButton::alloc(mtm),
+        let popup = shrimply_components_appkit::menu::popup(
             NSRect::new(
                 NSPoint::new(CONTROL_X, y - CONTROL_Y_OFFSET),
                 NSSize::new(CONTROL_WIDTH, CONTROL_HEIGHT),
             ),
             false,
+            mtm,
         );
         for choice in choices {
             popup.addItemWithTitle(&NSString::from_str(choice));
@@ -410,13 +410,13 @@ fn compute_server_rows(
 ) {
     let (urls, selected) = preferences::compute_servers(store);
     label(content, "Server", *y, mtm);
-    let selector = NSPopUpButton::initWithFrame_pullsDown(
-        NSPopUpButton::alloc(mtm),
+    let selector = shrimply_components_appkit::menu::popup(
         NSRect::new(
             NSPoint::new(CONTROL_X, *y - CONTROL_Y_OFFSET),
             NSSize::new(CONTROL_WIDTH, CONTROL_HEIGHT),
         ),
         false,
+        mtm,
     );
     selector.setTag(TAG_SERVER_SELECTOR);
     for url in &urls {
@@ -488,13 +488,13 @@ fn compute_server_rows(
 
     section(content, "Compute", y, mtm);
     label(content, "Device", *y, mtm);
-    let device = NSPopUpButton::initWithFrame_pullsDown(
-        NSPopUpButton::alloc(mtm),
+    let device = shrimply_components_appkit::menu::popup(
         NSRect::new(
             NSPoint::new(CONTROL_X, *y - CONTROL_Y_OFFSET),
             NSSize::new(CONTROL_WIDTH, CONTROL_HEIGHT),
         ),
         false,
+        mtm,
     );
     device.setTag(TAG_SERVER_DEVICE);
     device.addItemWithTitle(ns_string!("—"));
@@ -711,13 +711,13 @@ fn color_row(
 
 fn font_row(content: &NSView, editor: &Editor, current: &str, y: &mut f64, mtm: MainThreadMarker) {
     label(content, "Default text font", *y, mtm);
-    let popup = NSPopUpButton::initWithFrame_pullsDown(
-        NSPopUpButton::alloc(mtm),
+    let popup = shrimply_components_appkit::menu::popup(
         NSRect::new(
             NSPoint::new(CONTROL_X, *y - CONTROL_Y_OFFSET),
             NSSize::new(CONTROL_WIDTH, CONTROL_HEIGHT),
         ),
         false,
+        mtm,
     );
     for family in NSFontManager::sharedFontManager(mtm)
         .availableFontFamilies()
@@ -1015,16 +1015,15 @@ pub(super) fn set_caption_color(store: &SharedPreferences, well: &NSColorWell) {
         well.color()
             .getRed_green_blue_alpha(&mut red, &mut green, &mut blue, &mut alpha)
     };
-    let component = |value: f64| (value.clamp(0.0, 1.0) * f64::from(u8::MAX)).round() as u8;
     preferences::set_value(
         store,
         PreferenceId::CaptionBackgroundColor,
-        PreferenceValue::Color(shrimply_project_document::Color::new(
-            component(red),
-            component(green),
-            component(blue),
-            component(alpha),
-        )),
+        PreferenceValue::Color(shrimply_project_document::Color::from_srgba([
+            red as f32,
+            green as f32,
+            blue as f32,
+            alpha as f32,
+        ])),
     )
     .expect("caption background color has a fixed color type");
 }

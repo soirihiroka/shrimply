@@ -31,7 +31,7 @@ fn duplicate_controls_and_named_before_positional_calls_fail_before_filtering() 
         ),
         ("let result=Color(value=\"red\",value=\"blue\")", "value"),
         (
-            "let first=Rect()\nlet second=Circle()\nlet result=first.left_of(second,duration=1s,duration=2s)",
+            "let first=Box(width=64pt, height=64pt, fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nlet second=Box(width=2*(32pt), height=2*(32pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nlet result=first.left_of(second,duration=1s,duration=2s)",
             "duration",
         ),
         (
@@ -40,7 +40,7 @@ fn duplicate_controls_and_named_before_positional_calls_fail_before_filtering() 
         ),
     ] {
         let mut files = MemorySources::default();
-        files.insert("main.sanim", source);
+        files.insert("main.sanim", format!("{}\nAnimation()", source));
         let error = Engine::default()
             .prepare("main.sanim", &files, &BTreeMap::new())
             .unwrap_err();
@@ -52,7 +52,7 @@ fn duplicate_controls_and_named_before_positional_calls_fail_before_filtering() 
 #[test]
 fn declared_duration_and_ease_parameters_remain_values() {
     let mut files = MemorySources::default();
-    files.insert("main.sanim","type Settings={duration:Number,ease:Number}\nlet config=Settings(duration=2,ease=3)\nfn helper(duration:Number,ease:Number):Number{return duration+ease}\nlet result=helper(2,3)\nfn untimed():Number{return 7}\nlet enveloped=untimed(duration=0s,ease=\"linear\")\nwait(1s)");
+    files.insert("main.sanim","type Settings={duration:Number,ease:Number}\nlet config=Settings(duration=2,ease=3)\nfn helper(duration:Number,ease:Number):Number{return duration+ease}\nlet result=helper(2,3)\nfn untimed():Number{return 7}\nlet enveloped=untimed()\nwait(1s)");
     let full = Engine::default()
         .prepare("main.sanim", &files, &BTreeMap::new())
         .unwrap();

@@ -2,7 +2,7 @@ use shrimply_audio_modifiers::{
     AudioModifierEffect, CacheModifier, DenoiseEngine, PNEUMA_MAX_PITCH_OFFSET, PNEUMA_MAX_SPEED,
     PNEUMA_MIN_PITCH_OFFSET, PNEUMA_MIN_SPEED, ReverbMode,
 };
-use shrimply_editor_state::player_state::{self, SharedPlayerState};
+use shrimply_editor_state::player_state::SharedPlayerState;
 use shrimply_project_document::project::{AudioSource, ItemAddress, Project, Time};
 use shrimply_property_model::{modifier_model::ModifierModel, timeline_value::TimelineValue};
 use std::sync::{Mutex, OnceLock};
@@ -553,7 +553,7 @@ pub fn same_audio_modifier_effect(left: &AudioModifierEffect, right: &AudioModif
     left == right
 }
 
-pub(crate) fn audio_title(item: &shrimply_project_document::project::AudioItem) -> &'static str {
+pub fn audio_title(item: &shrimply_project_document::project::AudioItem) -> &'static str {
     match &item.source {
         AudioSource::Media => "Audio",
         AudioSource::FoldedSequence(_) => "Folded Sequence",
@@ -671,7 +671,7 @@ pub(crate) fn audio_modifier_time(
     player_state: &SharedPlayerState,
     target: &InspectorTarget,
 ) -> Result<Time, String> {
-    let position = player_state::snapshot(player_state).position;
+    let position = crate::model::player_snapshot(player_state).position;
     project
         .keyframe_time(audio_item_address(target)?, position)
         .ok_or_else(|| "the current audio modifier time is no longer available".to_string())
@@ -683,7 +683,7 @@ pub(crate) fn audio_modifier_evaluation_time(
     target: &InspectorTarget,
 ) -> Result<Time, String> {
     let address = audio_item_address(target)?;
-    let position = player_state::snapshot(player_state).position;
+    let position = crate::model::player_snapshot(player_state).position;
     let sequence_time = project
         .timeline_time_to_sequence(&address.track(), position)
         .ok_or_else(|| "the current audio sequence time is no longer available".to_string())?;

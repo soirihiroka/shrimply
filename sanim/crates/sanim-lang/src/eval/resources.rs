@@ -29,7 +29,11 @@ impl Runtime<'_, '_> {
         kind: ResourceKind<'_>,
         span: Span,
     ) -> Result<Value, Diagnostic> {
-        let path = if matches!(kind, ResourceKind::Media) && path.contains("://") {
+        let remote = match &kind {
+            ResourceKind::Media => true,
+            ResourceKind::Data(ty) => **ty == Type::Texture,
+        };
+        let path = if remote && path.contains("://") {
             shrimply_asset::remote::canonical_url(path)
         } else {
             source::resolve(&self.module, path)

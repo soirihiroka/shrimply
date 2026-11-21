@@ -4,7 +4,7 @@ import common;
 import math;
 
 [shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void invert(uniform uint *input, uniform uint *out,
-                         uniform uint64_t out_len, uniform float amount,
+                         uniform BufferIndex out_len, uniform float amount,
                          uint3 id : SV_DispatchThreadID) {
   uint i = linear_index(id);
   if (i >= out_len)
@@ -16,7 +16,7 @@ import math;
 }
 
     [shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void posterize(uniform uint *input, uniform uint *out,
-                                uniform uint64_t out_len, uniform float levels,
+                                uniform BufferIndex out_len, uniform float levels,
                                 uint3 id : SV_DispatchThreadID) {
   uint i = linear_index(id);
   if (i >= out_len)
@@ -28,7 +28,7 @@ import math;
 }
 
 [shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void channel_mixer(uniform uint *input, uniform uint *out,
-                                uniform uint64_t out_len,
+                                uniform BufferIndex out_len,
                                 uniform ChannelMixerParams params,
                                 uint3 id : SV_DispatchThreadID) {
   uint i = linear_index(id);
@@ -40,7 +40,7 @@ import math;
 }
 
     [shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void color_correction(uniform uint *input, uniform uint *out,
-                                       uniform uint64_t out_len,
+                                       uniform BufferIndex out_len,
                                        uniform ColorCorrectionParams params,
                                        uint3 id : SV_DispatchThreadID) {
   uint i = linear_index(id);
@@ -50,7 +50,7 @@ import math;
 }
 
 [shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void colorize_duotone(uniform uint *input, uniform uint *out,
-                                   uniform uint64_t out_len,
+                                   uniform BufferIndex out_len,
                                    uniform ColorizeDuotoneParams params,
                                    uint3 id : SV_DispatchThreadID) {
   uint i = linear_index(id);
@@ -63,7 +63,7 @@ import math;
 
     [shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void chromatic_aberration(
         uniform uint *input, uniform uint width, uniform uint height,
-        uniform uint *out, uniform uint64_t out_len,
+        uniform uint *out, uniform BufferIndex out_len,
         uniform ChromaticAberrationParams params,
         uint3 id : SV_DispatchThreadID) {
   uint i = linear_index(id);
@@ -92,7 +92,7 @@ float input_luminance(uint *input, uint width, uint height, int x, int y) {
 
 [shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void edge_detection(uniform uint *input, uniform uint width,
                                  uniform uint height, uniform uint *out,
-                                 uniform uint64_t out_len,
+                                 uniform BufferIndex out_len,
                                  uniform EdgeDetectionParams params,
                                  uint3 id : SV_DispatchThreadID) {
   uint i = linear_index(id);
@@ -120,7 +120,7 @@ float input_luminance(uint *input, uint width, uint height, int x, int y) {
 
     [shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void emboss(uniform uint *input, uniform uint width,
                              uniform uint height, uniform uint *out,
-                             uniform uint64_t out_len, uniform float direction,
+                             uniform BufferIndex out_len, uniform float direction,
                              uniform float depth, uniform float amount,
                              uint3 id : SV_DispatchThreadID) {
   uint i = linear_index(id);
@@ -155,7 +155,7 @@ float grain_hash(uint x) {
 }
 
 [shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void film_grain(uniform uint *input, uniform uint width,
-                             uniform uint *out, uniform uint64_t out_len,
+                             uniform uint *out, uniform BufferIndex out_len,
                              uniform float amount, uniform float size,
                              uniform float colored, uniform float seed,
                              uint3 id : SV_DispatchThreadID) {
@@ -178,7 +178,7 @@ float grain_hash(uint x) {
 
     [shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void scanlines_crt(uniform uint *input, uniform uint width,
                                     uniform uint height, uniform uint *out,
-                                    uniform uint64_t out_len,
+                                    uniform BufferIndex out_len,
                                     uniform ScanlinesCrtParams params,
                                     uint3 id : SV_DispatchThreadID) {
   uint i = linear_index(id);
@@ -208,7 +208,7 @@ float grain_hash(uint x) {
 }
 
 [shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void
-threshold(uniform uint *input, uniform uint *out, uniform uint64_t out_len,
+threshold(uniform uint *input, uniform uint *out, uniform BufferIndex out_len,
           uniform ThresholdParams params, uint3 id : SV_DispatchThreadID) {
   uint i = linear_index(id);
   if (i >= out_len)
@@ -221,7 +221,7 @@ threshold(uniform uint *input, uniform uint *out, uniform uint64_t out_len,
 
     [shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void vignette(uniform uint *input, uniform uint width,
                                uniform uint height, uniform uint *out,
-                               uniform uint64_t out_len, uniform float amount,
+                               uniform BufferIndex out_len, uniform float amount,
                                uniform float midpoint, uniform float softness,
                                uint3 id : SV_DispatchThreadID) {
   uint i = linear_index(id);
@@ -240,7 +240,7 @@ threshold(uniform uint *input, uniform uint *out, uniform uint64_t out_len,
 
 [shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void
 alpha_outline_horizontal(uniform uint *input, uniform uint width,
-                         uniform float *out, uniform uint64_t out_len,
+                         uniform float *out, uniform BufferIndex out_len,
                          uniform uint radius, uint3 id : SV_DispatchThreadID) {
   uint i = linear_index(id);
   if (i >= out_len)
@@ -257,7 +257,7 @@ alpha_outline_horizontal(uniform uint *input, uniform uint width,
 
     [shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void alpha_outline_vertical(
         uniform uint *input, uniform float *horizontal, uniform uint width,
-        uniform uint height, uniform uint *out, uniform uint64_t out_len,
+        uniform uint height, uniform uint *out, uniform BufferIndex out_len,
         uniform uint radius, uniform uint outline_value,
         uint3 id : SV_DispatchThreadID) {
   uint i = linear_index(id);
@@ -338,7 +338,7 @@ void nearest_palette_colors(float r, float g, float b, uint *palette,
 }
 
 [shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void dithering(uniform uint *input, uniform uint width,
-                            uniform uint *out, uniform uint64_t out_len,
+                            uniform uint *out, uniform BufferIndex out_len,
                             uniform DitheringParams params,
                             uint3 id : SV_DispatchThreadID) {
   uint i = linear_index(id);
@@ -388,7 +388,7 @@ void nearest_palette_colors(float r, float g, float b, uint *palette,
 
     [shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void drop_shadow_horizontal(
         uniform uint *input, uniform uint width, uniform uint height,
-        uniform float *out, uniform uint64_t out_len,
+        uniform float *out, uniform BufferIndex out_len,
         uniform DropShadowParams params, uint3 id : SV_DispatchThreadID) {
   uint i = linear_index(id);
   if (i >= out_len)
@@ -408,7 +408,7 @@ void nearest_palette_colors(float r, float g, float b, uint *palette,
 [shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void
 drop_shadow_vertical(uniform uint *input, uniform float *horizontal,
                      uniform uint width, uniform uint height, uniform uint *out,
-                     uniform uint64_t out_len, uniform DropShadowParams params,
+                     uniform BufferIndex out_len, uniform DropShadowParams params,
                      uint3 id : SV_DispatchThreadID) {
   uint i = linear_index(id);
   if (i >= out_len)
@@ -449,7 +449,7 @@ float halftone_dot(float x, float y, float cell, float angle, float offset_x,
 }
 
 [shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void halftone(uniform uint *input, uniform uint width,
-                           uniform uint *out, uniform uint64_t out_len,
+                           uniform uint *out, uniform BufferIndex out_len,
                            uniform HalftoneParams params,
                            uint3 id : SV_DispatchThreadID) {
   uint i = linear_index(id);

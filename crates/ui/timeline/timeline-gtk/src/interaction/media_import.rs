@@ -5,6 +5,7 @@ pub(crate) fn open_track_import_dialog(
     area: &gtk::GLArea,
     runtime: &Rc<RefCell<TimelineRuntime>>,
     targets: Vec<TrackKey>,
+    position: Time,
 ) {
     let label = "Import to Track";
     let dialog = gtk::FileDialog::builder()
@@ -23,7 +24,10 @@ pub(crate) fn open_track_import_dialog(
             let (Some(area), Some(runtime)) = (area.upgrade(), runtime.upgrade()) else {
                 return;
             };
-            let result = runtime.borrow_mut().scene.import_track_file(path, &targets);
+            let result = runtime
+                .borrow_mut()
+                .scene
+                .import_track_file_at(path, &targets, position);
             match result {
                 Ok(started) if started.needs_remux => {
                     crate::external_content::confirm_remux(&area, &runtime, started.batch);

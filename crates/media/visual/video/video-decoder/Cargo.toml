@@ -12,6 +12,7 @@ name = "video_decode"
 required-features = ["cuda-frames"]
 
 [dependencies]
+shrimply-media-info.workspace = true
 shrimply-gpu-cuda = { workspace = true, optional = true }
 ffmpeg-next.workspace = true
 libc.workspace = true
@@ -27,3 +28,7 @@ uuid = { workspace = true, features = ["v4"], optional = true }
 [dev-dependencies]
 shrimply-math-media = { workspace = true }
 tempfile.workspace = true
+
+[target.'cfg(target_os = "android")'.dependencies]
+ndk = { version = "0.9.0", default-features = false }
+ffmpeg-next = { workspace = true, features = ["static"] }

@@ -19,6 +19,7 @@ shrimply-gpu-cuda-memory = { workspace = true }
 shrimply-paint-edit-skia = { workspace = true }
 shrimply-project-document = { workspace = true, default-features = true }
 shrimply-preview-provider-skia = { workspace = true }
+shrimply-preview-render-core = { workspace = true }
 shrimply-preview-interaction-skia = { workspace = true }
 shrimply-preview-runtime-cuda = { workspace = true }
 shrimply-playback-performance = { workspace = true }
@@ -28,7 +29,7 @@ shrimply-editor-state = { workspace = true }
 shrimply-timeline-edit = { workspace = true }
 shrimply-components-gtk = { workspace = true }
 shrimply-visual-cuda = { workspace = true }
-shrimply-visual-modifiers = { workspace = true }
+shrimply-visual-modifiers = { workspace = true, default-features = true }
 shrimply-math-color = { workspace = true, features = ["gdk"] }
 skia-safe = { workspace = true, features = ["textlayout"] }
 tracing.workspace = true

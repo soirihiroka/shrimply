@@ -30,6 +30,7 @@ thread_local! {
 #[derive(Clone)]
 struct CaptionFontId {
     size: f32,
+    scale: f32,
     font: CaptionFont,
 }
 
@@ -38,7 +39,6 @@ struct CaptionLayout {
     spans: Vec<Span>,
     rendered: String,
     text_pos: Vec2,
-    text_size: Vec2,
     background_rect: Rect,
     font: CaptionFontId,
     wrap_width: f32,
@@ -122,17 +122,29 @@ pub fn draw_captions(
     appearance: CaptionAppearance,
     split: Option<(&ItemAddress, Vec2, Color)>,
 ) {
+    let active = active_captions(project, position, appearance.background_color);
+    draw_active_captions(painter, &active, position, appearance, split);
+}
+
+/// A worker can send only the active immutable cues to its GPU surface, rather
+/// than copying the project or accessing the editing model on the draw thread.
+pub fn draw_active_captions(
+    painter: &TimelinePainter,
+    active: &[CaptionItem],
+    position: Time,
+    appearance: CaptionAppearance,
+    split: Option<(&ItemAddress, Vec2, Color)>,
+) {
     let CaptionAppearance {
         preview_rect,
         font_size,
-        background_color,
         bottom_inset,
+        ..
     } = appearance;
     if preview_rect.width() <= 1.0 || preview_rect.height() <= 1.0 {
         return;
     }
 
-    let active = active_captions(project, position, background_color);
     let mut bottom_stack = bottom_inset;
     for item in active {
         let automatic_bottom = item.h_align == HorizontalAlign::Center
@@ -140,26 +152,28 @@ pub fn draw_captions(
             && item.position_x == 50
             && item.position_y == 90;
         let layout = caption_layout(
-            &item,
+            item,
             position,
             preview_rect,
             font_size,
             automatic_bottom,
             if automatic_bottom { bottom_stack } else { 0.0 },
         );
-        let height = layout.as_ref().map_or(0.0, |layout| layout.text_size.y);
+        let height = layout
+            .as_ref()
+            .map_or(0.0, |layout| layout.background_rect.height());
         if let Some(layout) = layout {
             let split = split
                 .filter(|(address, _, _)| {
                     address.item_id() == item.id && item.start < position && position < item.end
                 })
                 .and_then(|(_, point, color)| {
-                    split_for_layout(&item, &layout, point).map(|split| (split, color))
+                    split_for_layout(item, &layout, point).map(|split| (split, color))
                 });
-            draw_caption(painter, &item, layout, split);
+            draw_caption(painter, item, layout, split);
         }
         if automatic_bottom {
-            bottom_stack += height + PREVIEW_CAPTION_PADDING_Y * 2.0;
+            bottom_stack += height;
         }
     }
 }
@@ -196,8 +210,9 @@ pub fn split_at_position(
             if automatic_bottom { bottom_stack } else { 0.0 },
         );
         if automatic_bottom {
-            bottom_stack += layout.as_ref().map_or(0.0, |layout| layout.text_size.y)
-                + PREVIEW_CAPTION_PADDING_Y * 2.0;
+            bottom_stack += layout
+                .as_ref()
+                .map_or(0.0, |layout| layout.background_rect.height());
         }
         if item.id == address.item_id() {
             return split_for_layout(&item, &layout?, point).map(|split| split.text_byte);
@@ -206,7 +221,7 @@ pub fn split_at_position(
     None
 }
 
-fn active_captions(
+pub fn active_captions(
     project: &Project,
     position: Time,
     caption_background_color: Color<u8>,
@@ -268,14 +283,15 @@ fn caption_layout(
         return None;
     }
 
-    let margin = PREVIEW_CAPTION_SAFE_MARGIN;
+    let scale = crate::geometry::caption_preview_scale(preview_rect.size());
+    let margin = PREVIEW_CAPTION_SAFE_MARGIN * scale;
     let wrap_width = (preview_rect.width() - margin * 2.0).max(1.0);
-    // Font size and decoration are deliberately constant in preview pixels. Only the caption's
-    // percentage position follows the preview canvas; neither canvas dimensions nor video bounds
-    // may scale these metrics.
-    let font_size = caption_font_size * f32::from(item.font_scale) / 100.0;
+    // A compact preview shrinks the whole overlay together. Logical pixels keep
+    // the same proportions on high-density surfaces without changing cue style.
+    let font_size = caption_font_size * scale * f32::from(item.font_scale) / 100.0;
     let font = CaptionFontId {
         size: font_size,
+        scale,
         font: item.font,
     };
     let text_color = item.text_color.into();
@@ -317,15 +333,16 @@ fn caption_layout(
         text_size,
         automatic_bottom,
         caption_bottom_inset,
+        scale,
     );
     let background_rect = Rect::from_min_max(
         vec2(
-            text_pos.x - PREVIEW_CAPTION_PADDING_X,
-            text_pos.y - PREVIEW_CAPTION_PADDING_Y,
+            text_pos.x - PREVIEW_CAPTION_PADDING_X * scale,
+            text_pos.y - PREVIEW_CAPTION_PADDING_Y * scale,
         ),
         vec2(
-            text_pos.x + text_size.x + PREVIEW_CAPTION_PADDING_X,
-            text_pos.y + text_size.y + PREVIEW_CAPTION_PADDING_Y,
+            text_pos.x + text_size.x + PREVIEW_CAPTION_PADDING_X * scale,
+            text_pos.y + text_size.y + PREVIEW_CAPTION_PADDING_Y * scale,
         ),
     );
     Some(CaptionLayout {
@@ -333,7 +350,6 @@ fn caption_layout(
         spans,
         rendered,
         text_pos,
-        text_size,
         background_rect,
         font,
         wrap_width,
@@ -452,7 +468,10 @@ fn draw_caption_edge(
     for &offset in offsets {
         caption_paragraph(spans, font.clone(), color, width, item.h_align).paint(
             painter.canvas(),
-            Point::new(position.x + offset.x, position.y + offset.y),
+            Point::new(
+                position.x + offset.x * font.scale,
+                position.y + offset.y * font.scale,
+            ),
         );
     }
 }
@@ -464,6 +483,7 @@ fn caption_position(
     size: shrimply_components_skia::canvas::Vec2,
     automatic_bottom: bool,
     bottom_inset: f32,
+    scale: f32,
 ) -> Vec2 {
     let anchor_x = preview_rect.left() + preview_rect.width() * f32::from(item.position_x) / 100.0;
     let x = match item.h_align {
@@ -471,12 +491,11 @@ fn caption_position(
         HorizontalAlign::Center => anchor_x - size.x / 2.0,
         HorizontalAlign::Right => anchor_x - size.x,
     };
-    // Default bottom captions use fixed preview-space padding. Percentage positioning belongs to
-    // explicit layouts only, so resizing the preview does not change the default bottom gap.
+    // Default captions keep overlay padding; explicit layouts use percentage positions.
     let y = if automatic_bottom {
         preview_rect.bottom()
-            - PREVIEW_CAPTION_BOTTOM_PADDING
-            - PREVIEW_CAPTION_PADDING_Y
+            - PREVIEW_CAPTION_BOTTOM_PADDING * scale
+            - PREVIEW_CAPTION_PADDING_Y * scale
             - size.y
             - bottom_inset.max(0.0)
     } else {

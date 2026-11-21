@@ -11,14 +11,8 @@ let samples = read<List<Sample>>("samples.csv")
 let bar_color: Color = reflect(theme.accent)
 
 for sample in samples {
-    let bar = Rect(
-        id= sample.id,
-        width= sample.value * 1pt,
-        height= 32pt,
-        fill= bar_color,
-        position= Vec2(0%, (sample.rank * 20 - 30) * 1%),
-    )
-    FadeIn(bar, duration=200ms)
+    let bar = Box(id=sample.id, width=sample.value * 1pt, height=32pt, fill=bar_color, position=[0%, (sample.rank * 20 - 30) * 1%], x_align=Align.Center, y_align=Align.Center)
+    bar.fade_in(duration=200ms)
     assert(always(inside_canvas(bar)))
 }
 wait(1s)

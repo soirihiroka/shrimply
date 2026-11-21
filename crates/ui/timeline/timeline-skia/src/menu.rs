@@ -1,5 +1,15 @@
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ContextMenuAction {
+    ShowTools,
+    ShowTrackControls,
+    ShowAudioMonitor,
+    SplitSelected,
+    SplitAll,
+    AddToTrack,
+    RecordAudio,
+    RecordVideo,
+    InspectProperties,
+    DeleteTrack,
     Copy,
     Cut,
     Paste,
@@ -54,6 +64,16 @@ pub const TIMELINE_CLIPBOARD_MARKER: &str = "shrimply timeline items";
 impl ContextMenuAction {
     pub const fn id(self) -> &'static str {
         match self {
+            Self::ShowTools => "show-tools",
+            Self::ShowTrackControls => "show-track-controls",
+            Self::ShowAudioMonitor => "show-audio-monitor",
+            Self::SplitSelected => "split-selected",
+            Self::SplitAll => "split-all",
+            Self::AddToTrack => "add-to-track",
+            Self::RecordAudio => "record-audio",
+            Self::RecordVideo => "record-video",
+            Self::InspectProperties => "inspect-properties",
+            Self::DeleteTrack => "delete-track",
             Self::Copy => "copy",
             Self::Cut => "cut",
             Self::Paste => "paste",
@@ -84,6 +104,16 @@ impl ContextMenuAction {
 
     pub const fn label(self) -> &'static str {
         match self {
+            Self::ShowTools => "Show tools",
+            Self::ShowTrackControls => "Show track controls",
+            Self::ShowAudioMonitor => "Show audio monitor",
+            Self::SplitSelected => "Cut selected",
+            Self::SplitAll => "Cut all",
+            Self::AddToTrack => "Add clip…",
+            Self::RecordAudio => "Record audio",
+            Self::RecordVideo => "Record screen",
+            Self::InspectProperties => "Properties",
+            Self::DeleteTrack => "Delete Track",
             Self::Copy => "Copy",
             Self::Cut => "Cut",
             Self::Paste => "Paste",
@@ -118,6 +148,7 @@ impl ContextMenuAction {
 pub struct ContextMenuItem {
     pub action: ContextMenuAction,
     pub enabled: bool,
+    pub checked: Option<bool>,
 }
 
 impl ContextMenuItem {
@@ -125,11 +156,16 @@ impl ContextMenuItem {
         Self {
             action,
             enabled: true,
+            checked: None,
         }
     }
 
     pub const fn enabled(action: ContextMenuAction, enabled: bool) -> Self {
-        Self { action, enabled }
+        Self {
+            action,
+            enabled,
+            checked: None,
+        }
     }
 
     pub const fn label(self) -> &'static str {
@@ -237,6 +273,7 @@ pub struct ItemMenuContext {
 
 pub fn item_context_menu(context: ItemMenuContext) -> ContextMenu {
     let mut sections = vec![actions(&[
+        ContextMenuItem::new(ContextMenuAction::InspectProperties),
         ContextMenuItem::new(ContextMenuAction::Copy),
         ContextMenuItem::new(ContextMenuAction::Cut),
         ContextMenuItem::new(ContextMenuAction::Paste),
@@ -335,7 +372,7 @@ pub enum TrackMenuContext {
 }
 
 pub fn track_context_menu(context: TrackMenuContext) -> ContextMenu {
-    let sections = match context {
+    let mut sections = match context {
         TrackMenuContext::Comment => Vec::new(),
         TrackMenuContext::Caption => vec![actions(&[ContextMenuItem::new(
             ContextMenuAction::GenerateSpeech,
@@ -363,6 +400,10 @@ pub fn track_context_menu(context: TrackMenuContext) -> ContextMenu {
             ]
         }
     };
+    sections.extend(empty_track_context_menu().sections);
+    sections.push(actions(&[ContextMenuItem::new(
+        ContextMenuAction::DeleteTrack,
+    )]));
     ContextMenu { sections }
 }
 
@@ -379,6 +420,9 @@ pub fn folded_item_context_menu(context: FoldedItemMenuContext) -> ContextMenu {
     let mut sections = vec![actions(&[ContextMenuItem::new(
         ContextMenuAction::MoveOutOfSequence,
     )])];
+    sections.push(actions(&[ContextMenuItem::new(
+        ContextMenuAction::InspectProperties,
+    )]));
     let mut grouping = Vec::new();
     if context.groupable {
         grouping.push(ContextMenuItem::new(ContextMenuAction::Group));

@@ -1,6 +1,8 @@
 pub(crate) mod editor;
 mod generation;
-pub use editor::{EditorPresentation, GenerationPresentation};
+pub use editor::{
+    ConfigurationKind, EditorActions, EditorPresentation, GenerationPresentation, Runtime,
+};
 pub use generation::{GenerationEvent, GenerationTask};
 
 use std::{
@@ -240,17 +242,29 @@ pub fn editor_controls(settings: &TtsSettings, model: &TtsModel) -> Vec<TtsEdito
         .collect()
 }
 
+pub fn caption_editor_controls(settings: &TtsSettings, model: &TtsModel) -> Vec<TtsEditorControl> {
+    let mut model = model.clone();
+    model.inputs.retain(shrimply_tts::is_caption_input);
+    editor_controls(settings, &model)
+}
+
 pub fn edit_input(
     settings: &mut TtsSettings,
     model: &TtsModel,
     key: &str,
     edit: TtsInputEdit,
 ) -> Result<bool, String> {
+    if settings.model.as_deref().is_some_and(|id| id != model.id) {
+        return Err("Text-to-speech model changed; edit the current inspector".into());
+    }
     let definition = model
         .inputs
         .iter()
         .find(|definition| definition.key() == key)
         .ok_or_else(|| "TTS input is unavailable".to_string())?;
+    if !is_visible(definition, &settings.inputs) {
+        return Err("Text-to-speech input is no longer visible".into());
+    }
     let (value, live) = match (definition, edit) {
         (InputDefinition::Text { max_length, .. }, TtsInputEdit::Text(value)) => {
             if value.chars().count() > *max_length {
@@ -494,3 +508,24 @@ impl InspectorController {
 fn remove_generated(path: &std::path::Path) {
     let _ = std::fs::remove_file(path);
 }
+
+pub const MODEL_LABEL: &str = "Model";
+pub const RETRY_LABEL: &str = "Retry";
+pub const STATUS_LABEL: &str = "Status";
+pub const READY_STATUS: &str = "Ready";
+pub const GENERATE_LABEL: &str = "Generate";
+pub const REGENERATE_LABEL: &str = "Regenerate";
+pub const CANCEL_LABEL: &str = "Cancel";
+pub const CHOOSE_AUDIO_LABEL: &str = "Choose…";
+pub const CLEAR_AUDIO_LABEL: &str = "Clear";
+pub const REVEAL_AUDIO_LABEL: &str = "Show in Folder";
+pub const AUDIO_ACTIONS_LABEL: &str = "Reference audio actions";
+pub const AUDIO_EMPTY_LABEL: &str = "Choose an audio file";
+pub const AUDIO_REVEAL_ERROR: &str = "Could not show reference audio";
+pub const CLOSE_LABEL: &str = "Close";
+pub const ADD_ROW_LABEL: &str = "Add row";
+pub const REMOVE_ROW_LABEL: &str = "Remove row";
+
+pub const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
+
+pub const AUDIO_PICKER_TITLE: &str = "Choose reference audio";

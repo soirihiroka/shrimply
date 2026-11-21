@@ -800,6 +800,15 @@ pub struct PreviewResponse {
 }
 
 impl PreviewResponse {
+    pub fn merge(&mut self, other: Self) {
+        self.handled |= other.handled;
+        self.redraw |= other.redraw;
+        self.edit.merge(other.edit);
+        if other.cursor != CursorUpdate::Keep {
+            self.cursor = other.cursor;
+        }
+    }
+
     pub const IGNORED: Self = Self {
         handled: false,
         redraw: false,

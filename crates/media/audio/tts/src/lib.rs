@@ -298,6 +298,24 @@ impl InputDefinition {
     }
 }
 
+pub fn is_caption_input(input: &InputDefinition) -> bool {
+    match input {
+        InputDefinition::Text { purpose, .. } | InputDefinition::Number { purpose, .. } => {
+            !matches!(
+                purpose,
+                Some(InputPurpose::Text | InputPurpose::Duration | InputPurpose::SpeedFactor)
+            )
+        }
+        InputDefinition::Select { options, .. } => !options.iter().any(|option| {
+            matches!(
+                option.purpose,
+                Some(InputPurpose::Duration | InputPurpose::SpeedFactor)
+            )
+        }),
+        _ => true,
+    }
+}
+
 pub fn sync_settings(settings: &mut TtsSettings, model: &TtsModel) {
     settings.model = Some(model.id.clone());
     if model
@@ -668,4 +686,11 @@ async fn synthesize_async(
             }
         }
     }
+}
+
+pub fn is_caption_model(model: &TtsModel) -> bool {
+    model
+        .inputs
+        .iter()
+        .any(|input| input.purpose() == Some(InputPurpose::Duration))
 }

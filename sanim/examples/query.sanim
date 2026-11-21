@@ -14,14 +14,8 @@ for row in rows {
     let identity = decode<String>(row["id"])
     let rank = decode<Number>(row["rank"])
     let amount = decode<Number>(row["value"])
-    let bar = Rect(
-        id= identity,
-        width= amount * 1pt,
-        height= 32pt,
-        fill= tint,
-        position= Vec2(0%, (rank * 20 - 30) * 1%),
-    )
-    FadeIn(bar, duration=200ms)
+    let bar = Box(id=identity, width=amount * 1pt, height=32pt, fill=tint, position=[0%, (rank * 20 - 30) * 1%], x_align=Align.Center, y_align=Align.Center)
+    bar.fade_in(duration=200ms)
     assert(always(inside_canvas(bar)))
 }
 wait(1s)

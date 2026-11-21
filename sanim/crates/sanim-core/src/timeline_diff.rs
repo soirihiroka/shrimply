@@ -131,8 +131,31 @@ impl TimelineDiff {
                 let Some(birth) = birth else {
                     continue;
                 };
+                let paired_changes = a
+                    .zip(b)
+                    .map(|(a, b)| {
+                        a.iter()
+                            .zip(b.iter())
+                            .filter_map(|(a, b)| a.changed_from(b))
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                if a.zip(b).is_some_and(|(a, b)| a.len() == b.len()) && paired_changes.is_empty() {
+                    continue;
+                }
+                for cycle in a
+                    .into_iter()
+                    .chain(b)
+                    .flatten()
+                    .filter_map(|track| track.cycle)
+                {
+                    dirty_from = Some(
+                        dirty_from.map_or(cycle.start(), |previous| previous.min(cycle.start())),
+                    );
+                }
                 changed.push((id, *property, birth));
                 boundaries.insert(birth);
+                boundaries.extend(paired_changes);
                 boundaries.extend(
                     a.into_iter()
                         .chain(b)
@@ -183,126 +206,175 @@ impl TimelineDiff {
     }
 }
 
-pub(crate) fn events(animation: &Animation) -> BTreeSet<Fraction> {
-    let visible = animation
-        .list_views
-        .reachable_views(animation.layers.iter().map(|layer| &layer.element));
-    let cells = animation
-        .reactive
-        .bound_cells(|id| animation.find(id).is_some());
-    std::iter::once(Fraction::from(0))
-        .chain(animation.layers.iter().map(|layer| layer.birth))
-        .chain(
-            animation
-                .tracks
-                .values()
-                .flat_map(|properties| properties.values())
-                .flatten()
-                .flat_map(|track| [track.start, track.end]),
-        )
-        .chain(
-            cells
-                .iter()
-                .filter_map(|id| animation.reactive.cells.get(id))
-                .flat_map(|cell| &cell.tracks)
-                .flat_map(|track| [track.start, track.end]),
-        )
-        .chain(
-            animation
-                .list_views
-                .events(|id| visible.contains(id))
-                .flat_map(|(start, end, _)| [start, end]),
-        )
-        .chain(code_events(animation).flat_map(|event| [event.start, event.end]))
-        .collect()
-}
-
-fn code_events(
-    animation: &Animation,
-) -> impl Iterator<Item = &crate::code::view::PresentationEvent> {
-    animation
-        .code_views
-        .iter()
-        .filter(|(id, _)| animation.find(id).is_some())
-        .flat_map(|(_, state)| state.events.values())
-}
-
-/// Index of exact sample equivalence during holds. Active motions retain exact rational time.
+/// Exact sample equivalence during holds. Every moving interval retains rational time.
+#[derive(Clone, Debug)]
 pub struct SampleTimes {
     boundaries: Vec<Fraction>,
     moving: Vec<TimeRange>,
 }
-impl SampleTimes {
-    pub fn new(animation: &Animation) -> Self {
-        let visible = animation
-            .list_views
-            .reachable_views(animation.layers.iter().map(|layer| &layer.element));
-        let cells = animation
-            .reactive
-            .bound_cells(|id| animation.find(id).is_some());
-        let mut moving: Vec<_> = animation
-            .tracks
-            .values()
-            .flat_map(|properties| properties.values())
-            .flatten()
-            .chain(
-                cells
-                    .iter()
-                    .filter_map(|id| animation.reactive.cells.get(id))
-                    .flat_map(|cell| &cell.tracks),
-            )
-            .filter(|track| track.from != track.to)
-            .map(|track| TimeRange {
-                start: track.start,
-                end: Some(track.end),
-            })
-            .collect();
-        moving.extend(
-            animation
-                .list_views
-                .events(|id| visible.contains(id))
-                .filter(|(start, end, changed)| *changed && start < end)
-                .map(|(start, end, _)| TimeRange {
-                    start,
-                    end: Some(end),
-                }),
-        );
-        moving.extend(
-            code_events(animation)
-                .filter(|event| event.start < event.end && event.from != event.to)
-                .map(|event| TimeRange {
-                    start: event.start,
-                    end: Some(event.end),
-                }),
-        );
-        moving.sort_by_key(|range| range.start);
-        let mut merged: Vec<TimeRange> = Vec::new();
-        for range in moving {
-            if let Some(previous) = merged.last_mut()
-                && previous.end >= Some(range.start)
-            {
-                previous.end = previous.end.max(range.end);
-            } else {
-                merged.push(range);
-            }
+#[derive(Default)]
+struct ClockEvents {
+    boundaries: BTreeSet<Fraction>,
+    moving: Vec<TimeRange>,
+}
+impl ClockEvents {
+    fn event(&mut self, start: Fraction, end: Fraction, changed: bool, birth: Fraction) {
+        if end < birth {
+            return;
         }
-        Self {
-            boundaries: events(animation).into_iter().collect(),
-            moving: merged,
+        let start = start.max(birth);
+        let end = end.max(birth);
+        self.boundaries.extend([start, end]);
+        if changed && start < end {
+            self.moving.push(TimeRange {
+                start,
+                end: Some(end),
+            });
         }
     }
-    pub fn canonical(&self, time: Fraction) -> Result<Fraction, String> {
+    fn cycle(&mut self, cycle: Option<crate::math::cycle::Cycle>) {
+        if let Some(cycle) = cycle {
+            self.moving.push(TimeRange {
+                start: cycle.start(),
+                end: cycle.until(),
+            });
+            self.boundaries.extend(cycle.until());
+        }
+    }
+    fn finish(mut self) -> SampleTimes {
+        self.boundaries.insert(Fraction::from(0));
+        self.moving.sort_by_key(|range| range.start);
+        let mut moving: Vec<TimeRange> = Vec::new();
+        for range in self.moving {
+            if let Some(previous) = moving.last_mut()
+                && previous.end.is_none_or(|end| end >= range.start)
+            {
+                previous.end = previous.end.zip(range.end).map(|(a, b)| a.max(b));
+            } else {
+                moving.push(range);
+            }
+        }
+        SampleTimes {
+            boundaries: self.boundaries.into_iter().collect(),
+            moving,
+        }
+    }
+}
+/// One event collector serves both whole-scene and mounted-layer clocks. Future
+/// live-list descendants participate before they enter an initial scene snapshot.
+fn clocks(animation: &Animation, layered: bool) -> Vec<SampleTimes> {
+    let count = if layered { animation.layers.len() } else { 1 };
+    let mut events: Vec<ClockEvents> = (0..count).map(|_| ClockEvents::default()).collect();
+    let mut nodes = vec![Vec::new(); count];
+    let mut elements = BTreeMap::new();
+    let mut views = BTreeMap::new();
+    animation.list_views.visit_reachable(
+        animation
+            .layers
+            .iter()
+            .map(|layer| (&layer.element, layer.birth)),
+        |reachable| {
+            let root = if layered { reachable.root } else { 0 };
+            let id = reachable.element.id.as_str();
+            events[root].boundaries.insert(reachable.birth);
+            elements.insert(id, (root, reachable.birth));
+            if let Some(properties) = animation.reactive.properties(id) {
+                nodes[root].extend(properties.values().copied());
+            }
+            if let Some(cell) = animation.list_views.view_cell(id) {
+                views.insert(cell, (root, reachable.birth));
+            }
+        },
+    );
+    for (id, properties) in &animation.tracks {
+        if let Some(&(root, birth)) = elements.get(id.as_str()) {
+            for track in properties.values().flatten() {
+                events[root].event(track.start, track.end, track.is_changing(), birth);
+                if track.is_changing() {
+                    events[root].cycle(track.cycle);
+                }
+            }
+        }
+    }
+    // The canonical graph walker visits shared ancestors once per layer instead
+    // of rewalking the DAG independently for every bound property.
+    for (root, nodes) in nodes.into_iter().enumerate() {
+        if nodes.is_empty() {
+            continue;
+        }
+        let cells = animation
+            .reactive
+            .dependency_cells(nodes)
+            .expect("retained bindings reference a validated graph");
+        let birth = if layered {
+            animation.layers[root].birth
+        } else {
+            Fraction::from(0)
+        };
+        for id in cells {
+            if let Some(cell) = animation.reactive.cells.get(&id) {
+                for track in &cell.tracks {
+                    events[root].event(track.start, track.end, track.is_changing(), birth);
+                    if track.is_changing() {
+                        events[root].cycle(track.cycle);
+                    }
+                }
+            }
+        }
+    }
+    for (cell, start, end, changed, cycle) in
+        animation.list_views.events(|id| elements.contains_key(id))
+    {
+        if let Some(&(root, birth)) = views.get(&cell) {
+            events[root].event(start, end, changed, birth);
+            if changed {
+                events[root].cycle(cycle);
+            }
+        }
+    }
+    for (id, state) in &animation.code_views {
+        if let Some(&(root, birth)) = elements.get(id.as_str()) {
+            for event in state.events.values() {
+                events[root].event(event.start, event.end, event.from != event.to, birth);
+                if event.from != event.to {
+                    events[root].cycle(event.cycle);
+                }
+            }
+        }
+    }
+    for (index, layer) in animation.layers.iter().enumerate() {
+        events[if layered { index } else { 0 }]
+            .cycle(layer.cycle.filter(|cycle| layer.birth > cycle.start()));
+    }
+    events.into_iter().map(ClockEvents::finish).collect()
+}
+impl SampleTimes {
+    pub fn new(animation: &Animation) -> Self {
+        clocks(animation, false)
+            .pop()
+            .expect("whole-scene sample clock")
+    }
+    /// Clocks match immutable mounted-layer indices and exclude unrelated layers.
+    /// Build once per prepared scene; sampling performs only indexed lookups.
+    pub fn for_layers(animation: &Animation) -> Vec<Self> {
+        clocks(animation, true)
+    }
+    /// A hold's canonical time is reusable. None means some relevant state is moving.
+    pub fn constant_time(&self, time: Fraction) -> Result<Option<Fraction>, String> {
         if !math::finite(&time) || time < Fraction::from(0) {
             return Err("sample time must be finite and nonnegative".into());
         }
         let count = self.moving.partition_point(|range| range.start <= time);
-        if count > 0 && self.moving[count - 1].end.is_some_and(|end| time < end) {
-            return Ok(time);
+        if count > 0 && self.moving[count - 1].end.is_none_or(|end| time < end) {
+            return Ok(None);
         }
         let count = self
             .boundaries
             .partition_point(|&boundary| boundary <= time);
-        Ok(self.boundaries[count - 1])
+        Ok(Some(self.boundaries[count - 1]))
+    }
+    pub fn canonical(&self, time: Fraction) -> Result<Fraction, String> {
+        Ok(self.constant_time(time)?.unwrap_or(time))
     }
 }
 
@@ -313,7 +385,7 @@ fn select_track<'a>(
     time: Fraction,
 ) -> Option<&'a Track> {
     let tracks = animation.tracks.get(id)?.get(&property)?;
-    Track::at(tracks, time)
+    Track::at(tracks, time).ok().flatten()
 }
 
 fn equivalent_track(
@@ -325,11 +397,13 @@ fn equivalent_track(
     b: Option<&Track>,
     time: Fraction,
 ) -> bool {
-    let moving = |track: Option<&Track>| {
-        track.is_some_and(|track| time < track.end && track.from != track.to)
-    };
+    let moving =
+        |track: Option<&Track>| track.is_some_and(|track| time < track.end && track.is_changing());
     if moving(a) || moving(b) {
-        return a == b;
+        return match (a, b) {
+            (Some(a), Some(b)) => a.changed_from(b).is_none_or(|change| time < change),
+            _ => false,
+        };
     }
     let constant = |animation: &Animation,
                     track: Option<&Track>|

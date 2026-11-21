@@ -2,6 +2,7 @@
 name = "shrimply-manim-parser-worker"
 version = "0.1.0"
 requires-python = ">=3.14"
+# Upstream Manim imports VideoMobject at startup and omits PyAV from its package metadata.
 dependencies = ["av>=19.0.2", "cyclopts>=5.3", "manimgl", "msgpack", "pywavefront", "trimesh>=5.1.1"]
 
 [tool.uv]

@@ -1,14 +1,17 @@
-use std::{cell::RefCell, path::PathBuf, rc::Rc};
+use std::{path::PathBuf, rc::Rc};
 
 use objc2::ClassType;
-use objc2::rc::{Retained, Weak};
+use objc2::rc::Retained;
 use objc2_app_kit::{NSStackView, NSTextField, NSView, NSWorkspace};
 use objc2_foundation::{MainThreadMarker, NSArray, NSString, NSURL};
 use shrimply_components_appkit::{
     ActionButton, MultilineTextInput, NumberPicker, SingleLineTextInput, Spinner, StringChoice,
     StringSelector, column_append_intrinsic, column_stack, control_row, row_stack, switch_row,
 };
-use shrimply_inspector_core::{InspectorControl, tts::TtsEditorControl, tts::TtsInputEdit};
+use shrimply_inspector_core::{
+    InspectorControl,
+    tts::{self, TtsEditorControl, TtsInputEdit},
+};
 use shrimply_math_core::fraction_as_f64;
 use shrimply_tts::TtsModel;
 
@@ -21,6 +24,7 @@ const TEXT_HEIGHT: f64 = 100.0;
 struct Editor {
     context: Context,
     model: Rc<TtsModel>,
+    sensitive: bool,
 }
 
 impl Editor {
@@ -65,6 +69,7 @@ pub(super) fn view(
         column_append_intrinsic(&column, &label(&control.subtitle, mtm));
         return column.as_super().into();
     };
+    let actions = presentation.actions();
     let selected = presentation
         .model
         .as_ref()
@@ -97,14 +102,21 @@ pub(super) fn view(
         },
         mtm,
     );
-    column_append_intrinsic(&column, &control_row("Model", selector.view(), mtm));
-    if !presentation.catalog_status.is_empty() {
-        column_append_intrinsic(&column, &label(&presentation.catalog_status, mtm));
+    if !actions.model_sensitive {
+        super::control::disable_native_controls(selector.view());
     }
+    column_append_intrinsic(
+        &column,
+        &control_row(
+            shrimply_i18n::text(tts::MODEL_LABEL).as_ref(),
+            selector.view(),
+            mtm,
+        ),
+    );
     if presentation.can_retry {
         let retry_context = context.clone();
         let retry = ActionButton::new(
-            "Retry",
+            shrimply_i18n::text(tts::RETRY_LABEL).as_ref(),
             move || {
                 retry_context.end_editing();
                 retry_context
@@ -116,84 +128,49 @@ pub(super) fn view(
         );
         column_append_intrinsic(&column, retry.view());
     }
+    let status_row = row_stack(FIELD_GAP, mtm);
+    let spinner = Spinner::new(mtm);
+    spinner.set_active(actions.busy);
+    status_row.addArrangedSubview(spinner.view());
+    status_row.addArrangedSubview(&label(shrimply_i18n::text(actions.status).as_ref(), mtm));
     if let Some(model) = &presentation.model {
         let editor = Editor {
             context: context.clone(),
             model: Rc::new(model.clone()),
+            sensitive: actions.inputs_sensitive,
         };
+        let fields = column_stack(FIELD_GAP, mtm);
         for field in &presentation.controls {
-            append_field(&column, field, &editor, mtm);
+            append_field(&fields, field, &editor, mtm);
         }
-        let generating = editor.clone();
+        if !actions.inputs_sensitive {
+            super::control::disable_native_controls(&fields);
+        }
+        column_append_intrinsic(&column, &fields);
+        let generating = editor;
         let button = ActionButton::new(
-            if presentation.generated {
-                "Regenerate"
-            } else {
-                "Generate"
-            },
+            shrimply_i18n::text(actions.generate_label).as_ref(),
             move || {
                 generating.context.end_editing();
-                let was_running = generating
-                    .context
-                    .controller
-                    .tts_generation(&generating.context.target)
-                    .running;
                 let result = generating.context.controller.toggle_tts_generation(
                     &generating.context.target,
                     &generating.context.server_url.borrow(),
                     &generating.model,
                 );
-                if !was_running && result.is_ok() {
+                if result.is_ok() {
                     shrimply_editor_state::preferences::set_last_tts_model(
                         &generating.context.preferences,
                         &generating.model.id,
                     );
                 }
-                generating.context.finish(result);
+                generating.context.refresh(result);
             },
             mtm,
         );
-        let status = label("Ready", mtm);
-        let spinner = Spinner::new(mtm);
-        let status_row = row_stack(FIELD_GAP, mtm);
-        status_row.addArrangedSubview(spinner.view());
-        status_row.addArrangedSubview(&status);
-        column_append_intrinsic(&column, button.view());
-        column_append_intrinsic(&column, &status_row);
-        let button = Weak::new(button.view());
-        let status = Weak::new(&*status);
-        let controller = context.controller.clone();
-        let target = context.target.clone();
-        let generated = presentation.generated;
-        let previous = RefCell::new(None);
-        let poll = move || {
-            let (Some(button), Some(status)) = (button.load(), status.load()) else {
-                return;
-            };
-            let state = controller.tts_generation(&target);
-            if previous.borrow().as_ref() == Some(&state) {
-                return;
-            }
-            spinner.set_active(state.running);
-            button.setTitle(&NSString::from_str(if state.running {
-                "Cancel"
-            } else if generated {
-                "Regenerate"
-            } else {
-                "Generate"
-            }));
-            button.setEnabled(!state.cancelling);
-            status.setStringValue(&NSString::from_str(if state.status.is_empty() {
-                "Ready"
-            } else {
-                &state.status
-            }));
-            status.setToolTip(Some(&NSString::from_str(&state.status)));
-            previous.replace(Some(state));
-        };
-        poll();
-        editor.context.polls.borrow_mut().push(Box::new(poll));
+        button.view().setEnabled(actions.generate_sensitive);
+        status_row.addArrangedSubview(button.view());
     }
+    column_append_intrinsic(&column, &status_row);
     column.as_super().into()
 }
 
@@ -289,6 +266,7 @@ fn append_field(
             let committed = editor.clone();
             let key = key.clone();
             let input = NumberPicker::fraction_builder(*value)
+                .enabled(editor.sensitive)
                 .minimum(fraction_as_f64(*minimum))
                 .maximum(fraction_as_f64(*maximum))
                 .drag_step(fraction_as_f64(*step))
@@ -342,7 +320,7 @@ fn append_field(
                 let removed_key = key.clone();
                 let remove = ActionButton::symbol(
                     "minus.circle",
-                    "Remove row",
+                    shrimply_i18n::text(tts::REMOVE_ROW_LABEL).as_ref(),
                     move || {
                         removed.edit(&removed_key, TtsInputEdit::RemoveTableRow(row_index));
                     },
@@ -354,7 +332,7 @@ fn append_field(
             let added = editor.clone();
             let key = key.clone();
             let add = ActionButton::new(
-                "Add row",
+                shrimply_i18n::text(tts::ADD_ROW_LABEL).as_ref(),
                 move || {
                     added.edit(&key, TtsInputEdit::AddTableRow);
                 },
@@ -377,14 +355,14 @@ fn audio(
     let chosen = editor.clone();
     let chosen_key = key.to_string();
     let choose = ActionButton::new(
-        "Choose audio…",
+        shrimply_i18n::text(tts::CHOOSE_AUDIO_LABEL).as_ref(),
         move || {
             chosen.context.end_editing();
             let chosen = chosen.clone();
             let key = chosen_key.clone();
             super::files::choose(
                 shrimply_inspector_core::file_selection::FileSelection {
-                    title: "Choose reference audio",
+                    title: tts::AUDIO_PICKER_TITLE,
                     extensions: &[],
                 },
                 move |result| match result {
@@ -406,7 +384,7 @@ fn audio(
         let reveal_path = path.clone();
         let reveal = ActionButton::symbol(
             "folder",
-            "Reveal audio",
+            shrimply_i18n::text(tts::REVEAL_AUDIO_LABEL).as_ref(),
             move || {
                 if let Some(url) = NSURL::from_file_path(&reveal_path) {
                     NSWorkspace::sharedWorkspace()
@@ -420,7 +398,7 @@ fn audio(
         let key = key.to_string();
         let clear = ActionButton::symbol(
             "xmark",
-            "Clear audio",
+            shrimply_i18n::text(tts::CLEAR_AUDIO_LABEL).as_ref(),
             move || {
                 cleared.edit(&key, TtsInputEdit::Audio(None));
             },

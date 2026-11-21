@@ -8,6 +8,7 @@ pub mod camera_source;
 pub mod caption;
 pub mod comment;
 pub mod document;
+mod edit_transaction;
 pub mod file_selection;
 pub mod font_cache;
 pub mod font_selector;
@@ -22,7 +23,7 @@ pub mod list;
 #[path = "video/manim_parameters.rs"]
 pub mod manim_parameters;
 mod model;
-mod model_catalog;
+pub mod model_catalog;
 pub mod paint;
 pub mod project;
 mod refresh;
@@ -42,7 +43,9 @@ pub mod transform;
 pub mod transition;
 pub mod tts;
 mod value;
+pub use edit_transaction::{InspectorEditTransaction, InspectorGraphEdit};
 pub mod video;
+pub mod video_generation;
 pub mod visual_modifiers;
 
 pub use alpha_mask::AlphaMaskPresentation;
@@ -52,7 +55,7 @@ pub use audio_cache::{
 };
 pub use audio_modifiers::{
     AudioModifierControl, AudioModifierOption, AudioModifierScalarPresentation,
-    audio_modifier_catalog, audio_modifier_controls, cached_voice_change_models,
+    audio_modifier_catalog, audio_modifier_controls, audio_title, cached_voice_change_models,
     default_audio_modifier_effect, same_audio_modifier_effect, voice_change_model_catalog,
     voice_change_models,
 };
@@ -72,7 +75,7 @@ pub use project::ProjectPresentation;
 pub use section::{
     AnalysisControlPresentation, AnalysisTooltip, ControlKind, ControlRowRole, InspectorControl,
     InspectorControlAction, InspectorSection, KeyframeCommits, NumberConstraint, NumberMapping,
-    NumberSpec, ScalarStorage, TextKeyframeCommits,
+    NumberSpec, ProgressButtonPresentation, ScalarStorage, TextKeyframeCommits,
 };
 pub use target::InspectorTarget;
 pub use track::TrackPresentation;

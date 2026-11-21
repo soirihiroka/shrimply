@@ -41,6 +41,12 @@ export async function activate(context: ExtensionContext): Promise<void> {
         outputChannelName: 'Sanim Language Server',
     };
     client = new LanguageClient('sanim', 'Sanim', serverOptions, clientOptions);
+    context.subscriptions.push(workspace.registerTextDocumentContentProvider('sanim-stdlib', {
+        provideTextDocumentContent: async () => {
+            if (!client) throw new Error('Sanim language server is not running.');
+            return client.sendRequest<string>('sanim/stdlib', {});
+        },
+    }));
     context.subscriptions.push(commands.registerCommand('sanim.restartServer', async () => {
         await client?.restart();
     }));

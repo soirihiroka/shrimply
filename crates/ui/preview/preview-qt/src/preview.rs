@@ -2,153 +2,13 @@ use super::*;
 use shrimply_editor_state::preview_focus::{self, SharedPreviewFocus};
 use shrimply_paint_edit_skia::{PAINT_PREVIEW_STATE, PaintPreviewMode, PaintPreviewState};
 use shrimply_preview_provider_skia::{
-    Cursor, CursorUpdate, Modifiers, PointerButton, PointerEvent, PointerInput, PointerSample,
-    PointerTool, PreviewEditSink, PreviewExtensionKey, PreviewItemGeometry, PreviewProvider,
-    PreviewRefresh, PreviewResponse, PreviewTarget, PreviewViewport, SnapScene,
+    Cursor, CursorUpdate, Key, KeyboardEvent, Modifiers, PointerButton, PointerEvent, PointerInput,
+    PointerSample, PointerTool, PreviewRefresh, PreviewResponse, PreviewViewport,
 };
-use shrimply_preview_runtime_cuda::provider::{
-    BuildContext, PreparedGeometry, SnapPreparation, prepare_geometry, prepare_snap_scene,
-};
-use shrimply_project_document::project::{ItemAddress, PreviewGuides};
+use shrimply_preview_runtime_cuda::controller::{self, Controller, PointerSequence, Preparation};
 use shrimply_project_evaluation::{FrameAudioAnalysis, TransformExpressionCache};
 use shrimply_timeline_edit::selection_state::{self, SharedSelectionState};
-use std::{any::Any, cell::Cell, collections::HashMap};
-
-#[derive(Clone, PartialEq)]
-struct SnapConfiguration {
-    enabled: bool,
-    radius_px: u32,
-    guides_visible: bool,
-    vertical_guides: Vec<f32>,
-    horizontal_guides: Vec<f32>,
-}
-
-struct OverlayCacheKey<'a> {
-    address: &'a ItemAddress,
-    target: PreviewTarget,
-    revision: u64,
-    position: Time,
-    viewport: PreviewViewport,
-    audio_revision: u64,
-    preferences: &'a preferences_store::PreferencesSnapshot,
-    guides: &'a PreviewGuides,
-}
-
-struct OverlayRequest {
-    address: ItemAddress,
-    target: PreviewTarget,
-    revision: u64,
-    position: Time,
-    viewport: PreviewViewport,
-    snap_configuration: SnapConfiguration,
-}
-
-impl SnapConfiguration {
-    fn capture(
-        preferences: &preferences_store::PreferencesSnapshot,
-        guides: &PreviewGuides,
-    ) -> Self {
-        Self {
-            enabled: preferences.timeline_magnet == "true",
-            radius_px: preferences.timeline_snap_radius_px,
-            guides_visible: preferences.preview_guides_visible,
-            vertical_guides: guides.vertical.clone(),
-            horizontal_guides: guides.horizontal.clone(),
-        }
-    }
-
-    fn matches(
-        &self,
-        preferences: &preferences_store::PreferencesSnapshot,
-        guides: &PreviewGuides,
-    ) -> bool {
-        self.enabled == (preferences.timeline_magnet == "true")
-            && self.radius_px == preferences.timeline_snap_radius_px
-            && self.guides_visible == preferences.preview_guides_visible
-            && self.vertical_guides == guides.vertical
-            && self.horizontal_guides == guides.horizontal
-    }
-}
-
-struct PreparedOverlay {
-    address: ItemAddress,
-    target: PreviewTarget,
-    revision: u64,
-    position: Time,
-    viewport: PreviewViewport,
-    audio_revision: u64,
-    snap_configuration: SnapConfiguration,
-    prepared: PreparedGeometry,
-    snap_scene: Option<SnapScene>,
-    provider: Box<dyn PreviewProvider>,
-    deferred_refresh: PreviewRefresh,
-}
-
-struct OverlayEdits<'a> {
-    project: &'a mut Project,
-    extensions: &'a mut HashMap<PreviewExtensionKey, Box<dyn Any>>,
-    address: &'a ItemAddress,
-    keyframe_time: Time,
-    context: BuildContext<'a>,
-}
-
-impl PreviewEditSink for OverlayEdits<'_> {
-    fn keyframe_time(&self) -> Time {
-        self.keyframe_time
-    }
-
-    fn target_mut(&mut self, target: PreviewTarget) -> &mut dyn Any {
-        self.project
-            .preview_target_mut(target)
-            .expect("Qt preview target is missing")
-    }
-
-    fn updated_geometry(&self, _target: PreviewTarget) -> Option<PreviewItemGeometry> {
-        let item = self.project.video_item(self.address)?;
-        let mut source_sizes = self.context.source_sizes().clone();
-        shrimply_preview_runtime_cuda::provider::update_text_source_size(
-            &mut source_sizes,
-            item,
-            self.context.evaluation(),
-            self.context.expression_cache(),
-        );
-        item.preview_geometry(&self.context.with_source_sizes(&source_sizes))
-    }
-
-    fn extension_mut(
-        &mut self,
-        _target: PreviewTarget,
-        key: PreviewExtensionKey,
-    ) -> Option<&mut dyn Any> {
-        self.extensions.get_mut(&key).map(|value| value.as_mut())
-    }
-}
-
-impl PreparedOverlay {
-    fn current(&self, key: OverlayCacheKey<'_>) -> bool {
-        self.address == *key.address
-            && self.target == key.target
-            && self.revision == key.revision
-            && self.position == key.position
-            && self.viewport == key.viewport
-            && self.audio_revision == key.audio_revision
-            && self.snap_configuration.matches(key.preferences, key.guides)
-    }
-
-    fn draw(
-        &mut self,
-        canvas: &skia_safe::Canvas,
-        cache: &RefCell<TransformExpressionCache>,
-        extensions: &HashMap<shrimply_preview_provider_skia::PreviewExtensionKey, Box<dyn Any>>,
-    ) {
-        let context = self
-            .prepared
-            .context(self.position, cache, self.viewport)
-            .snapping(self.snap_scene.as_ref())
-            .extensions(Some(extensions));
-        self.provider.on_draw(canvas, &context);
-    }
-}
+use std::cell::Cell;
 
 pub struct ToolkitPreview {
     project: Rc<RefCell<Project>>,
@@ -167,20 +27,10 @@ pub struct ToolkitPreview {
     fullscreen: bool,
     expression_cache: RefCell<TransformExpressionCache>,
     audio_analysis: FrameAudioAnalysis,
-    audio_revision: u64,
-    extensions: HashMap<shrimply_preview_provider_skia::PreviewExtensionKey, Box<dyn Any>>,
-    base_exclusion: Option<uuid::Uuid>,
-    presented_base_exclusion: Option<uuid::Uuid>,
-    overlay: Option<PreparedOverlay>,
-    retiring_overlay: Option<PreparedOverlay>,
-    provider_active: bool,
+    controller: Controller,
     provider_cursor: Cursor,
     guide_active: bool,
-    provider_origin: Option<PointerSample>,
-    provider_moved: bool,
     provider_invalidated: Rc<Cell<bool>>,
-    live_base_pending: bool,
-    live_base_in_flight: Option<u64>,
 }
 
 impl ToolkitPreview {
@@ -198,10 +48,10 @@ impl ToolkitPreview {
             player_state.clone(),
             playback_performance,
             preferences.clone(),
+            shrimply_visual_cuda::compositor::spawn_worker_with_resources_and_observer,
         );
         let video_tx = media.sender();
-        let mut extensions = HashMap::<_, Box<dyn Any>>::new();
-        extensions.insert(PAINT_PREVIEW_STATE, Box::new(PaintPreviewState::default()));
+        let controller = Controller::default();
         let provider_invalidated = Rc::new(Cell::new(false));
         let selection_invalidated = provider_invalidated.clone();
         selection_state::connect_named(
@@ -230,20 +80,10 @@ impl ToolkitPreview {
             fullscreen: false,
             expression_cache: RefCell::new(TransformExpressionCache::default()),
             audio_analysis: FrameAudioAnalysis::default(),
-            audio_revision: 0,
-            extensions,
-            base_exclusion: None,
-            presented_base_exclusion: None,
-            overlay: None,
-            retiring_overlay: None,
-            provider_active: false,
+            controller,
             provider_cursor: Cursor::Default,
             guide_active: false,
-            provider_origin: None,
-            provider_moved: false,
             provider_invalidated,
-            live_base_pending: false,
-            live_base_in_flight: None,
         })
     }
 
@@ -255,6 +95,7 @@ impl ToolkitPreview {
         background_color: Color,
         fullscreen: bool,
     ) -> Result<(), String> {
+        self.synchronize_history();
         self.fullscreen = fullscreen;
         if !preferences_store::snapshot(&self.preferences).preview_zoom_pan_enabled {
             if self.navigation.active() {
@@ -262,14 +103,19 @@ impl ToolkitPreview {
             }
             self.navigation.reset();
         }
-        if self.provider_invalidated.replace(false) && self.provider_active {
-            self.pointer_cancel();
-            self.provider_cursor = Cursor::Default;
+        if self.provider_invalidated.replace(false) {
+            if self.controller.sequence != PointerSequence::Idle {
+                self.pointer_cancel();
+            }
+            self.controller.context_invalidated = true;
         }
         let background_color =
             shrimply_preview_runtime_cuda::background_color(background_color, fullscreen);
         self.schedule_live_base();
         let update = self.media.poll();
+        // Media callbacks can adopt durable metadata/parameter edits before a
+        // base-frame receipt enters the shared controller.
+        self.synchronize_history();
         assert!(update.running, "video compositor stopped unexpectedly");
         if let Some(label) = update.render_elapsed.and_then(rendered_frame_rate_label) {
             self.frame_rate_label = label;
@@ -281,46 +127,24 @@ impl ToolkitPreview {
                 revision,
                 excluded_item_id,
                 ..
-            }) if excluded_item_id == self.base_exclusion => {
+            }) if self
+                .controller
+                .accept_base_frame(revision, excluded_item_id) =>
+            {
                 self.frame = Some(frame);
-                self.presented_base_exclusion = excluded_item_id;
-                self.retiring_overlay = None;
-                if self
-                    .live_base_in_flight
-                    .is_some_and(|requested| revision >= requested)
-                {
-                    self.live_base_in_flight = None;
-                }
-                if !self.audio_analysis.same_frame(&audio_analysis) {
-                    self.audio_analysis = audio_analysis;
-                    self.audio_revision = self.audio_revision.wrapping_add(1);
-                }
-                if let Some(overlay) = self.overlay.as_mut() {
-                    overlay.provider.on_base_frame_presented(revision);
-                }
+                self.audio_analysis = audio_analysis;
             }
             Some(VideoEvent::Clear {
                 audio_analysis,
                 revision,
                 excluded_item_id,
                 ..
-            }) if excluded_item_id == self.base_exclusion => {
+            }) if self
+                .controller
+                .accept_base_frame(revision, excluded_item_id) =>
+            {
                 self.frame = None;
-                self.presented_base_exclusion = excluded_item_id;
-                self.retiring_overlay = None;
-                if self
-                    .live_base_in_flight
-                    .is_some_and(|requested| revision >= requested)
-                {
-                    self.live_base_in_flight = None;
-                }
-                if !self.audio_analysis.same_frame(&audio_analysis) {
-                    self.audio_analysis = audio_analysis;
-                    self.audio_revision = self.audio_revision.wrapping_add(1);
-                }
-                if let Some(overlay) = self.overlay.as_mut() {
-                    overlay.provider.on_base_frame_presented(revision);
-                }
+                self.audio_analysis = audio_analysis;
             }
             Some(VideoEvent::Frame { .. } | VideoEvent::Clear { .. }) => {}
             Some(_) => unreachable!(),
@@ -358,16 +182,13 @@ impl ToolkitPreview {
             snapshot.position,
             snapshot.revision,
             viewport,
-        );
+        )?;
         self.update_base_exclusion(snapshot.position);
         let clip_rect = self.navigation.clip_rect(bounds, viewport_surface);
         let Self {
             renderer,
-            overlay,
-            retiring_overlay,
+            controller,
             expression_cache,
-            extensions,
-            presented_base_exclusion,
             frame,
             ..
         } = self;
@@ -385,34 +206,24 @@ impl ToolkitPreview {
                 viewport,
                 clip_rect,
                 |canvas| {
-                    let current_covers_base = overlay.as_ref().is_some_and(|overlay| {
-                        overlay.provider.base_frame_exclusion() == *presented_base_exclusion
-                    });
-                    if !current_covers_base
-                        && let Some(retiring) = retiring_overlay.as_mut()
-                        && retiring.provider.base_frame_exclusion() == *presented_base_exclusion
-                    {
-                        retiring.viewport = viewport;
-                        retiring.draw(canvas, expression_cache, extensions);
+                    if let Some(retiring) = controller.retiring_provider.as_mut() {
+                        retiring.context.viewport = viewport;
                     }
-                    if let Some(overlay) = overlay.as_mut()
-                        && overlay.provider.base_frame_exclusion() == *presented_base_exclusion
-                    {
-                        overlay.draw(canvas, expression_cache, extensions);
-                    }
+                    controller.draw(canvas, expression_cache);
                 },
             )
     }
 
     fn update_base_exclusion(&mut self, position: Time) {
         let exclusion = self
-            .overlay
+            .controller
+            .provider
             .as_ref()
             .and_then(|overlay| overlay.provider.base_frame_exclusion());
-        if exclusion == self.base_exclusion {
+        if exclusion == self.controller.base_exclusion {
             return;
         }
-        self.base_exclusion = exclusion;
+        self.controller.base_exclusion = exclusion;
         for command in [
             VideoCommand::SetPreviewExclusion(exclusion),
             VideoCommand::Render {
@@ -427,10 +238,9 @@ impl ToolkitPreview {
     }
 
     fn schedule_live_base(&mut self) {
-        if !self.live_base_pending || self.live_base_in_flight.is_some() {
+        if !self.controller.take_live_base_request() {
             return;
         }
-        self.live_base_pending = false;
         player_state::refresh_project(
             &self.player_state,
             player_state::ProjectChange {
@@ -439,10 +249,27 @@ impl ToolkitPreview {
                 ..Default::default()
             },
         );
-        let revision = player_state::snapshot(&self.player_state).revision;
-        self.live_base_in_flight = Some(revision);
-        if let Some(overlay) = self.overlay.as_mut() {
-            overlay.revision = revision;
+        self.controller
+            .live_base_requested(player_state::snapshot(&self.player_state).revision);
+    }
+
+    fn synchronize_history(&mut self) {
+        if self.controller.synchronize_history() {
+            // These drafts belong to the old history owner. Never roll them back
+            // into the replacement model through GuideInput/provider Cancel.
+            self.guide_input = guides::GuideInput::default();
+            self.guide_active = false;
+            self.navigation.cancel();
+            self.provider_cursor = Cursor::Default;
+        }
+    }
+
+    fn prepare_input(&mut self) {
+        self.synchronize_history();
+        if self.provider_invalidated.get() {
+            self.pointer_cancel();
+            self.provider_invalidated.set(false);
+            self.controller.context_invalidated = true;
         }
     }
 
@@ -453,171 +280,46 @@ impl ToolkitPreview {
         position: Time,
         revision: u64,
         viewport: PreviewViewport,
-    ) {
-        if self.provider_active {
-            return;
-        }
-        let Some(address) = selection_state::focused_video_address(&self.selection_state, project)
-        else {
-            self.replace_overlay(None);
-            return;
-        };
-        let Some(item) = project.video_item(&address) else {
-            self.replace_overlay(None);
-            return;
-        };
-        let target = preview_focus::snapshot(&self.preview_focus)
-            .filter(|focused| focused.item == address && item.owns_preview_target(focused.target))
-            .map_or_else(|| item.default_preview_target(), |focused| focused.target);
-        if self.overlay.as_ref().is_some_and(|overlay| {
-            overlay.current(OverlayCacheKey {
-                address: &address,
-                target,
-                revision,
-                position,
-                viewport,
-                audio_revision: self.audio_revision,
-                preferences,
-                guides: &project.preview_guides,
-            })
-        }) {
-            return;
-        }
-        let overlay = self.prepare_overlay(
+    ) -> Result<(), String> {
+        let selected = selection_state::focused_video_address(&self.selection_state, project);
+        let focused = preview_focus::snapshot(&self.preview_focus);
+        let selection = controller::selection(
             project,
-            OverlayRequest {
-                address,
-                target,
-                revision,
-                position,
-                viewport,
-                snap_configuration: SnapConfiguration::capture(
-                    preferences,
-                    &project.preview_guides,
-                ),
-            },
+            selected.as_ref(),
+            focused
+                .as_ref()
+                .map(|focused| (&focused.item, focused.target)),
         );
-        self.replace_overlay(overlay);
-    }
-
-    fn replace_overlay(&mut self, overlay: Option<PreparedOverlay>) {
-        let previous = std::mem::replace(&mut self.overlay, overlay);
-        if let Some(previous) = previous
-            && previous.provider.base_frame_exclusion().is_some()
-            && !self.retiring_overlay.as_ref().is_some_and(|retiring| {
-                retiring.provider.base_frame_exclusion() == self.presented_base_exclusion
-            })
-        {
-            self.retiring_overlay = Some(previous);
-        }
-    }
-
-    fn prepare_overlay(
-        &self,
-        project: &Project,
-        request: OverlayRequest,
-    ) -> Option<PreparedOverlay> {
-        let item = project.video_item(&request.address)?;
-        let mut prepared = prepare_geometry(
+        self.controller.ensure(
             project,
-            &request.address,
-            request.position,
-            &self.audio_analysis,
-            &self.expression_cache,
-            request.viewport,
-            Some(&self.extensions),
+            selection,
+            position,
+            Preparation {
+                project_revision: revision,
+                viewport,
+                audio_analysis: &self.audio_analysis,
+                expression_cache: &self.expression_cache,
+                snap_enabled: preferences.timeline_magnet == "true",
+                snap_radius_px: preferences.timeline_snap_radius_px as f32,
+                guides: preferences
+                    .preview_guides_visible
+                    .then_some(project.preview_guides.as_ref()),
+                camera_sampler: shrimply_preview_runtime_cuda::provider::sample_camera,
+            },
         )?;
-        let snap_scene = request.snap_configuration.enabled.then(|| {
-            prepare_snap_scene(
-                project,
-                &request.address,
-                request.position,
-                request.viewport,
-                &mut prepared.source_sizes,
-                SnapPreparation {
-                    audio_analysis: &self.audio_analysis,
-                    expression_cache: &self.expression_cache,
-                    extensions: &self.extensions,
-                    guides: request
-                        .snap_configuration
-                        .guides_visible
-                        .then_some(project.preview_guides.as_ref()),
-                    radius_px: request.snap_configuration.radius_px as f32,
-                },
-            )
-        });
-        let provider = item.preview_provider(
-            request.target,
-            &prepared
-                .context(request.position, &self.expression_cache, request.viewport)
-                .snapping(snap_scene.as_ref())
-                .extensions(Some(&self.extensions)),
-        )?;
-        Some(PreparedOverlay {
-            address: request.address,
-            target: request.target,
-            revision: request.revision,
-            position: request.position,
-            viewport: request.viewport,
-            audio_revision: self.audio_revision,
-            snap_configuration: request.snap_configuration,
-            prepared,
-            snap_scene,
-            provider,
-            deferred_refresh: PreviewRefresh::NONE,
-        })
+        Ok(())
     }
 
     fn dispatch_provider(&mut self, event: PointerEvent<'_>) -> PreviewResponse {
-        let cancel = matches!(event, PointerEvent::Cancel);
-        let terminal = matches!(event, PointerEvent::End(_) | PointerEvent::Cancel);
-        let Some(mut overlay) = self.overlay.take() else {
-            return PreviewResponse::IGNORED;
-        };
-        let project_handle = self.project.clone();
-        let mut response = {
-            let mut project = project_handle.borrow_mut();
-            let context = overlay
-                .prepared
-                .context(overlay.position, &self.expression_cache, overlay.viewport)
-                .snapping(overlay.snap_scene.as_ref());
-            overlay.provider.on_pointer(
-                event,
-                &context,
-                &mut OverlayEdits {
-                    project: &mut project,
-                    extensions: &mut self.extensions,
-                    address: &overlay.address,
-                    keyframe_time: overlay.prepared.keyframe_time,
-                    context,
-                },
-            )
-        };
-        if cancel {
-            response.edit = response.edit.canceled();
+        if self.provider_invalidated.get() {
+            return PreviewResponse::IGNORED.redraw();
         }
-        if response.edit.changed() && !response.edit.commits() && !terminal {
-            if response.edit.refresh.contains(PreviewRefresh::PREVIEW) {
-                self.live_base_pending = true;
-            }
-            overlay.deferred_refresh |= response.edit.refresh;
-            response.edit.refresh = PreviewRefresh::NONE;
-        } else if response.edit.commits() || terminal {
-            response.edit.refresh |= overlay.deferred_refresh;
-            overlay.deferred_refresh = PreviewRefresh::NONE;
-            self.live_base_pending = false;
-        }
-        self.overlay = Some(overlay);
+        let response = self.controller.pointer(
+            &mut self.project.borrow_mut(),
+            &self.expression_cache,
+            event,
+        );
         self.apply_provider_response(response);
-        if response.edit.commits() {
-            let revision = player_state::snapshot(&self.player_state).revision;
-            if let Some(overlay) = self.overlay.as_mut() {
-                overlay.provider.on_project_committed(revision);
-                if overlay.provider.keeps_frame_until_base() {
-                    overlay.revision = revision;
-                }
-            }
-        }
         response
     }
 
@@ -627,12 +329,7 @@ impl ToolkitPreview {
             CursorUpdate::Set(cursor) => self.provider_cursor = cursor,
             CursorUpdate::Clear => self.provider_cursor = Cursor::Default,
         }
-        if response.edit.commits() {
-            shrimply_project_document::project::commit_edit(
-                &self.project.borrow(),
-                "qt-preview-edit",
-            );
-        }
+        controller::commit_response(&self.project.borrow(), response, "preview-provider");
         if response.edit.refresh != PreviewRefresh::NONE {
             player_state::refresh_project(
                 &self.player_state,
@@ -644,9 +341,14 @@ impl ToolkitPreview {
                 },
             );
         }
+        if response.edit.commits() {
+            self.controller
+                .project_committed(player_state::snapshot(&self.player_state).revision);
+        }
     }
 
     pub fn destroy(&mut self) {
+        self.pointer_cancel();
         self.media.stop();
         self.audio_player.stop();
         if let Some(renderer) = self.renderer.as_mut() {
@@ -677,6 +379,7 @@ impl ToolkitPreview {
 
     fn paint_state<R>(&self, read: impl FnOnce(&PaintPreviewState) -> R) -> R {
         let state = self
+            .controller
             .extensions
             .get(&PAINT_PREVIEW_STATE)
             .and_then(|value| value.downcast_ref::<PaintPreviewState>())
@@ -685,12 +388,12 @@ impl ToolkitPreview {
     }
 
     fn update_paint_state(&mut self, update: impl FnOnce(&mut PaintPreviewState)) {
-        let state = self
-            .extensions
-            .get_mut(&PAINT_PREVIEW_STATE)
-            .and_then(|value| value.downcast_mut::<PaintPreviewState>())
-            .expect("Qt paint preview state is missing");
-        update(state);
+        self.synchronize_history();
+        assert!(
+            self.controller
+                .update_extension(PAINT_PREVIEW_STATE, update),
+            "Qt paint preview state is missing"
+        );
     }
 
     pub fn pen_tool_active(&self) -> bool {
@@ -732,6 +435,7 @@ impl ToolkitPreview {
     }
 
     pub fn navigate(&mut self, size: glam::Vec2, event: PointerEvent<'_>) -> bool {
+        self.synchronize_history();
         let preferences = preferences_store::snapshot(&self.preferences);
         let fit = renderer::toolkit_guide_viewport(
             &self.project.borrow(),
@@ -751,7 +455,7 @@ impl ToolkitPreview {
             bounds,
             event,
             preferences.preview_zoom_pan_enabled,
-            self.provider_active || self.guide_active,
+            self.controller.sequence != PointerSequence::Idle || self.guide_active,
         );
         if response.is_some_and(|response| response.redraw) {
             self.provider_cursor = if self.navigation.active() {
@@ -764,6 +468,7 @@ impl ToolkitPreview {
     }
 
     pub fn pointer_move(&mut self, width: f32, height: f32, x: f32, y: f32, modifiers: Modifiers) {
+        self.synchronize_history();
         if self.navigation.active() {
             self.navigate(
                 glam::vec2(width, height),
@@ -771,9 +476,8 @@ impl ToolkitPreview {
             );
             return;
         }
-        if self.provider_active {
+        if self.controller.sequence == PointerSequence::Active {
             let sample = pointer_sample(x, y);
-            self.provider_moved |= self.provider_origin != Some(sample);
             self.dispatch_provider(PointerEvent::Samples {
                 input: pointer_input(sample, modifiers),
                 samples: std::slice::from_ref(&sample),
@@ -822,6 +526,7 @@ impl ToolkitPreview {
         y: f32,
         modifiers: Modifiers,
     ) -> bool {
+        self.prepare_input();
         if self.navigation.active() {
             return false;
         }
@@ -849,6 +554,7 @@ impl ToolkitPreview {
             glam::vec2(x, y),
         ) {
             self.guide_active = true;
+            self.controller.sequence = PointerSequence::Guide;
             return true;
         }
         drop(project);
@@ -861,23 +567,26 @@ impl ToolkitPreview {
         }
         let player = player_state::snapshot(&self.player_state);
         let project_handle = self.project.clone();
-        self.update_overlay(
+        if let Err(error) = self.update_overlay(
             &project_handle.borrow(),
             &preferences,
             player.position,
             player.revision,
             viewport,
-        );
+        ) {
+            tracing::error!(%error, "could not prepare Qt preview interaction");
+            return false;
+        }
         self.update_base_exclusion(player.position);
-        self.provider_invalidated.set(false);
-        self.live_base_pending = false;
-        self.live_base_in_flight = None;
         let sample = pointer_sample(x, y);
         let response =
             self.dispatch_provider(PointerEvent::Begin(pointer_input(sample, modifiers)));
-        self.provider_active = response.handled;
-        self.provider_origin = response.handled.then_some(sample);
-        self.provider_moved = false;
+        if !response.handled {
+            let canceled = self
+                .controller
+                .teardown(&mut self.project.borrow_mut(), &self.expression_cache);
+            self.apply_provider_response(canceled);
+        }
         response.handled
     }
 
@@ -889,6 +598,7 @@ impl ToolkitPreview {
         y: f32,
         modifiers: Modifiers,
     ) {
+        self.synchronize_history();
         let preferences = preferences_store::snapshot(&self.preferences);
         let mut project = self.project.borrow_mut();
         let viewport_surface = glam::vec2(width, height);
@@ -916,47 +626,90 @@ impl ToolkitPreview {
         drop(project);
         if changed.flatten() == Some(true) {
             guides::commit_edit(&self.project.borrow());
+            self.controller
+                .project_committed(player_state::snapshot(&self.player_state).revision);
         }
         if self.guide_active {
             self.guide_active = false;
+            self.controller.sequence = PointerSequence::Idle;
+            self.controller.context_invalidated = true;
             return;
         }
-        if self.provider_active {
+        if self.controller.sequence == PointerSequence::Active {
             let sample = pointer_sample(x, y);
-            self.provider_moved |= self.provider_origin != Some(sample);
-            if self.provider_moved {
-                self.dispatch_provider(PointerEvent::Samples {
-                    input: pointer_input(sample, modifiers),
-                    samples: std::slice::from_ref(&sample),
-                });
-            }
-            self.provider_active = false;
             self.dispatch_provider(PointerEvent::End(pointer_input(sample, modifiers)));
             self.provider_cursor = Cursor::Default;
-            self.provider_origin = None;
-            self.provider_moved = false;
         }
     }
 
+    pub fn keyboard(&mut self, size: glam::Vec2, event: KeyboardEvent) -> bool {
+        if !size.is_finite() || size.min_element() <= 0.0 {
+            return false;
+        }
+        self.prepare_input();
+        if let Some(response) = self.navigation.keyboard(event) {
+            self.apply_provider_response(response);
+            return response.handled;
+        }
+        let preferences = preferences_store::snapshot(&self.preferences);
+        let project_handle = self.project.clone();
+        let project = project_handle.borrow();
+        let fit = renderer::toolkit_guide_viewport(
+            &project,
+            &preferences,
+            size.x,
+            size.y,
+            self.fullscreen,
+        );
+        let bounds = guides::bounds(
+            size,
+            preferences.preview_padding_px,
+            preferences.preview_guides_visible,
+            self.fullscreen,
+        );
+        let viewport = self.navigation.viewport(fit, bounds);
+        let player = player_state::snapshot(&self.player_state);
+        let prepared = self.update_overlay(
+            &project,
+            &preferences,
+            player.position,
+            player.revision,
+            viewport,
+        );
+        drop(project);
+        if let Err(error) = prepared {
+            tracing::error!(%error, "could not prepare Qt preview keyboard interaction");
+            return false;
+        }
+        self.update_base_exclusion(player.position);
+        let response = self.controller.keyboard(
+            &mut self.project.borrow_mut(),
+            &self.expression_cache,
+            event,
+        );
+        self.apply_provider_response(response);
+        response.handled
+    }
+
     pub fn pointer_cancel(&mut self) {
+        self.synchronize_history();
         self.navigation.cancel();
-        self.provider_cursor = Cursor::Default;
         if self.guide_active {
             self.guide_input
                 .pointer_cancel(&mut self.project.borrow_mut().preview_guides);
             self.guide_active = false;
-        } else if self.provider_active {
-            self.provider_active = false;
-            self.dispatch_provider(PointerEvent::Cancel);
-            self.provider_cursor = Cursor::Default;
-            self.provider_origin = None;
-            self.provider_moved = false;
         }
+        let response = self
+            .controller
+            .teardown(&mut self.project.borrow_mut(), &self.expression_cache);
+        self.apply_provider_response(response);
+        self.provider_cursor = Cursor::Default;
     }
 
     pub fn pointer_leave(&mut self) {
+        self.synchronize_history();
         self.guide_input.pointer_leave();
-        if !self.provider_active {
+        if self.controller.sequence != PointerSequence::Active {
             self.dispatch_provider(PointerEvent::Leave);
             self.provider_cursor = Cursor::Default;
         }
@@ -987,6 +740,41 @@ fn pointer_input(sample: PointerSample, modifiers: Modifiers) -> PointerInput {
         tool: PointerTool::Mouse,
         button: PointerButton::Primary,
         modifiers,
+    }
+}
+
+pub(crate) fn keyboard_key(key: u32, text: &str) -> Key {
+    const QT_ESCAPE: u32 = 0x0100_0000;
+    const QT_TAB: u32 = 0x0100_0001;
+    const QT_BACKTAB: u32 = 0x0100_0002;
+    const QT_BACKSPACE: u32 = 0x0100_0003;
+    const QT_RETURN: u32 = 0x0100_0004;
+    const QT_ENTER: u32 = 0x0100_0005;
+    const QT_DELETE: u32 = 0x0100_0007;
+    const QT_SHIFT: u32 = 0x0100_0020;
+    const QT_CONTROL: u32 = 0x0100_0021;
+    const QT_ALT: u32 = 0x0100_0023;
+    match key {
+        QT_ESCAPE => Key::Escape,
+        QT_TAB | QT_BACKTAB => Key::Tab,
+        QT_BACKSPACE => Key::Backspace,
+        QT_RETURN | QT_ENTER => Key::Enter,
+        QT_DELETE => Key::Delete,
+        QT_SHIFT => Key::Shift,
+        QT_CONTROL => Key::Control,
+        QT_ALT => Key::Alt,
+        _ => text
+            .chars()
+            .next()
+            .filter(|value| !value.is_control())
+            .or_else(|| char::from_u32(key).filter(|value| !value.is_control()))
+            .map_or(Key::Unknown, |value| {
+                if value == ' ' {
+                    Key::Space
+                } else {
+                    Key::Character(value)
+                }
+            }),
     }
 }
 

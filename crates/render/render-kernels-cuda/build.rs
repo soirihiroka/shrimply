@@ -51,10 +51,12 @@ fn main() {
     };
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let shaders = manifest.join("../render-core/shaders");
+    println!("cargo:rerun-if-changed=../../../vendor/vision/shaders");
     let out = PathBuf::from(env::var_os("OUT_DIR").expect("CUDA build output"));
     let output = out.join("cuda").join(&target);
     fs::create_dir_all(&output).expect("create CUDA artifact directory");
     let compiler = Compiler::new(&shaders, &output);
+    let precise_compiler = Compiler::new(&shaders, &output).precise_math();
     let toolkit = env::var_os("CUDA_TOOLKIT_PATH")
         .or_else(|| env::var_os("CUDA_HOME"))
         .or_else(|| env::var_os("CUDA_PATH"))
@@ -69,6 +71,11 @@ fn main() {
     let host = env::var("CUDA_HOST_CXX").unwrap_or_else(|_| "g++-15".to_owned());
     let mut bindings = String::new();
     for module in MODULES.lines() {
+        let compiler = if module == "tracking" {
+            &precise_compiler
+        } else {
+            &compiler
+        };
         let source = shaders.join(format!("{module}.slang"));
         let artifact = compiler.compile(&source, Target::Cuda, &[]);
         let image = output.join(format!("{module}.{extension}"));
@@ -80,6 +87,10 @@ fn main() {
             .arg(format!("--gpu-architecture={target}"));
         if env::var_os("CUDA_ALLOW_UNSUPPORTED_COMPILER").is_some_and(|value| !value.is_empty()) {
             command.arg("--allow-unsupported-compiler");
+        }
+        // KLT follows OpenCV scalar reductions; fusing products changes track convergence.
+        if module == "tracking" {
+            command.arg("--fmad=false");
         }
         let status = command
             .arg(output.join(artifact.filename))

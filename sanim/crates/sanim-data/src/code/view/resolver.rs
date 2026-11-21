@@ -469,7 +469,10 @@ pub fn resolve_pending(element: &mut Element, _time: Fraction) -> Result<(), Str
             ];
             (to, children, size)
         };
-    if animation == sanim_core::code::view::PatchAnimation::Typewriter {
+    if animation == sanim_core::code::view::PatchAnimation::Typewriter
+        && raw_progress > 0.into()
+        && raw_progress < 1.into()
+    {
         // A wide early grapheme can exceed a proportional box-size interpolation.
         for child in &children {
             let bounds = sanim_core::verify::bounds(child)?;

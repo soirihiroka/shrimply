@@ -332,16 +332,28 @@ fn json_decodes_fraction_vectors_and_matrices() {
         decode("a.json", br#""1/3""#, &Type::Fraction, limits).unwrap(),
         Value::Fraction(Fraction::new(1u64, 3u64))
     );
-    let v = decode("a.json", b"[1,2,3]", &Type::Vector(3, None), limits).unwrap();
+    let v = decode(
+        "a.json",
+        b"[1,2,3]",
+        &Type::List(
+            Box::new(Type::Numeric(Unit::Number)),
+            sanim_core::ListLength::Exact(3),
+        ),
+        limits,
+    )
+    .unwrap();
     assert_eq!(v.vector().unwrap().0.len(), 3);
     let m = decode(
         "a.json",
         b"[[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1]]",
-        &Type::Matrix4,
+        &sanim_core::math::linear::matrix::type_of(
+            sanim_core::ListLength::Exact(4),
+            sanim_core::ListLength::Exact(4),
+        ),
         limits,
     )
     .unwrap();
-    assert!(matches!(m, Value::Matrix4(_)));
+    assert!(matches!(m, Value::List(_)));
 }
 #[test]
 fn npy_decodes_vectors_from_trailing_component_axis() {
@@ -350,7 +362,10 @@ fn npy_decodes_vectors_from_trailing_component_axis() {
         .flat_map(i32::to_le_bytes)
         .collect::<Vec<_>>();
     let bytes = npy("<i4", "2,3", &payload);
-    let ty = Type::Array(Box::new(Type::Vector(3, None)));
+    let ty = Type::Array(Box::new(Type::List(
+        Box::new(Type::Numeric(Unit::Number)),
+        sanim_core::ListLength::Exact(3),
+    )));
     let value = decode("a.npy", &bytes, &ty, Limits::default()).unwrap();
     let Value::Array { shape, values, .. } = value else {
         panic!()
@@ -360,17 +375,94 @@ fn npy_decodes_vectors_from_trailing_component_axis() {
 }
 #[test]
 fn npy_decodes_matrix_shape() {
-    let matrix = sanim_core::math::linear::identity();
+    let matrix = [[1i32, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]];
     let payload = matrix
         .iter()
         .flatten()
-        .flat_map(|v| (*v as i32).to_le_bytes())
+        .flat_map(|v| (*v).to_le_bytes())
         .collect::<Vec<_>>();
     let bytes = npy("<i4", "4,4", &payload);
     assert!(matches!(
-        decode("a.npy", &bytes, &Type::Matrix4, Limits::default()).unwrap(),
-        Value::Matrix4(_)
+        decode(
+            "a.npy",
+            &bytes,
+            &sanim_core::math::linear::matrix::type_of(
+                sanim_core::ListLength::Exact(4),
+                sanim_core::ListLength::Exact(4)
+            ),
+            Limits::default()
+        )
+        .unwrap(),
+        Value::List(_)
     ));
+}
+
+#[test]
+fn npy_nested_lists_validate_scalar_refinements_and_dimensions() {
+    let payload = [1i32, 2, 3, 4]
+        .into_iter()
+        .flat_map(i32::to_le_bytes)
+        .collect::<Vec<_>>();
+    let bytes = npy("<i4", "2,2", &payload);
+    let singleton = Type::RefinedNumeric(sanim_core::math::domain::NumericDomain::singleton(
+        sanim_core::Number::scalar(1),
+    ));
+    let ty = Type::List(
+        Box::new(Type::List(
+            Box::new(singleton),
+            sanim_core::ListLength::Exact(2),
+        )),
+        sanim_core::ListLength::Exact(2),
+    );
+    assert!(
+        decode("a.npy", &bytes, &ty, Limits::default())
+            .unwrap_err()
+            .contains("expected")
+    );
+    let wrong_shape = sanim_core::math::linear::matrix::type_of(
+        sanim_core::ListLength::Exact(2),
+        sanim_core::ListLength::Exact(3),
+    );
+    assert!(
+        decode("a.npy", &bytes, &wrong_shape, Limits::default())
+            .unwrap_err()
+            .contains("dimension")
+    );
+    let ty = Type::Array(Box::new(sanim_core::math::linear::matrix::type_of(
+        sanim_core::ListLength::Exact(2),
+        sanim_core::ListLength::Exact(2),
+    )));
+    let bytes = npy("<i4", "1,2,2", &payload);
+    let decoded = decode("a.npy", &bytes, &ty, Limits::default()).unwrap();
+    let Value::Array { shape, values, .. } = decoded else {
+        panic!("array")
+    };
+    assert_eq!(shape, vec![1]);
+    assert_eq!(
+        values[0].list().unwrap()[1].list().unwrap()[0]
+            .number()
+            .unwrap()
+            .value,
+        Fraction::from(3)
+    );
+}
+
+#[test]
+fn npy_zero_width_nested_lists_cannot_bypass_value_budget() {
+    let bytes = npy("<i4", "1000000,0", &[]);
+    let ty = sanim_core::math::linear::matrix::type_of(
+        sanim_core::ListLength::Unknown,
+        sanim_core::ListLength::Unknown,
+    );
+    let limits = Limits {
+        max_values: 100,
+        ..Limits::default()
+    };
+    assert!(
+        decode("a.npy", &bytes, &ty, limits)
+            .unwrap_err()
+            .contains("value limit")
+    );
 }
 
 #[test]
@@ -390,27 +482,33 @@ fn yaml_duplicate_keys_and_multiple_documents_fail() {
     }
 }
 #[test]
-fn json_and_npy_vectors_retain_f64_range() {
-    let vector = decode(
-        "data.json",
-        b"[1e100,1e-100]",
-        &Type::Vector(2, None),
-        Limits::default(),
-    )
-    .unwrap();
-    assert_eq!(vector.vector().unwrap().0, &[1e100, 1e-100]);
+fn json_and_npy_numeric_lists_share_number_range() {
+    let ty = Type::List(Box::new(number()), sanim_core::ListLength::Exact(2));
+    let payload = [1.25_f64, -2.5]
+        .into_iter()
+        .flat_map(f64::to_le_bytes)
+        .collect::<Vec<_>>();
+    for (path, bytes) in [
+        ("data.json", b"[1.25,-2.5]".to_vec()),
+        ("data.npy", npy("<f8", "2", &payload)),
+    ] {
+        let values = decode(path, &bytes, &ty, Limits::default()).unwrap();
+        assert_eq!(values.vector().unwrap().0, &[1.25, -2.5]);
+    }
+    assert!(decode("data.json", b"[1e100,1e-100]", &ty, Limits::default()).is_err());
     let payload = [1e100_f64, 1e-100]
         .into_iter()
         .flat_map(f64::to_le_bytes)
         .collect::<Vec<_>>();
-    let vector = decode(
-        "data.npy",
-        &npy("<f8", "2", &payload),
-        &Type::Vector(2, None),
-        Limits::default(),
-    )
-    .unwrap();
-    assert_eq!(vector.vector().unwrap().0, &[1e100, 1e-100]);
+    assert!(
+        decode(
+            "data.npy",
+            &npy("<f8", "2", &payload),
+            &ty,
+            Limits::default()
+        )
+        .is_err()
+    );
 }
 #[test]
 fn sql_instruction_budget_interrupts_recursive_queries() {
@@ -434,4 +532,62 @@ fn sql_rejects_multiple_statements() {
     )
     .unwrap_err();
     assert!(e.to_ascii_lowercase().contains("multiple"), "{e}");
+}
+
+#[test]
+#[ignore = "manual streamed nested NPY decode versus full flat intermediate benchmark"]
+fn npy_nested_list_streaming_benchmark() {
+    use std::{hint::black_box, time::Instant};
+    const SIDE: usize = 256;
+    let payload = (0..SIDE * SIDE)
+        .flat_map(|v| (v as i32).to_le_bytes())
+        .collect::<Vec<_>>();
+    let bytes = npy("<i4", &format!("{SIDE},{SIDE}"), &payload);
+    let ty = sanim_core::math::linear::matrix::type_of(
+        sanim_core::ListLength::Exact(SIDE),
+        sanim_core::ListLength::Exact(SIDE),
+    );
+    let mut streamed = vec![];
+    let mut intermediate = vec![];
+    for _ in 0..7 {
+        let start = Instant::now();
+        let output = decode("a.npy", black_box(&bytes), &ty, Limits::default()).unwrap();
+        streamed.push(start.elapsed());
+        black_box(output);
+        let start = Instant::now();
+        let raw = decode(
+            "a.npy",
+            black_box(&bytes),
+            &Type::Array(Box::new(number())),
+            Limits::default(),
+        )
+        .unwrap();
+        let Value::Array { values, .. } = raw else {
+            panic!("array")
+        };
+        let rows = (0..SIDE)
+            .map(|row| {
+                Value::List(sanim_core::List::typed(
+                    number(),
+                    (0..SIDE)
+                        .map(|column| values[row * SIDE + column].clone())
+                        .collect(),
+                ))
+            })
+            .collect();
+        let output = Value::List(sanim_core::List::typed(
+            Type::List(Box::new(number()), sanim_core::ListLength::Exact(SIDE)),
+            rows,
+        ));
+        intermediate.push(start.elapsed());
+        black_box((output, values));
+    }
+    streamed.sort();
+    intermediate.sort();
+    println!(
+        "{SIDE}x{SIDE} NPY streamed {:?}; full-flat intermediate {:?}; additional intermediate payload {} bytes",
+        streamed[3],
+        intermediate[3],
+        SIDE * SIDE * std::mem::size_of::<Value>()
+    );
 }

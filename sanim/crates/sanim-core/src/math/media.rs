@@ -1,5 +1,31 @@
 //! Intrinsic image sizing uses the language's existing CSS-pixel unit definition.
 use super::{Fraction, Number, arithmetic};
+pub fn element_size(
+    source: [u32; 2],
+    width: Option<Number>,
+    height: Option<Number>,
+) -> Result<[Fraction; 2], String> {
+    let fixed_width = width
+        .filter(|number| number.unit == crate::Unit::Length)
+        .map(|number| number.value);
+    let fixed_height = height
+        .filter(|number| number.unit == crate::Unit::Length)
+        .map(|number| number.value);
+    match (fixed_width, fixed_height) {
+        (Some(length), None) if height.is_none() => aspect_size(source, 0, length),
+        (None, Some(length)) if width.is_none() => aspect_size(source, 1, length),
+        _ => {
+            let mut size = intrinsic_size(source)?;
+            if let Some(width) = fixed_width {
+                size[0] = width;
+            }
+            if let Some(height) = fixed_height {
+                size[1] = height;
+            }
+            Ok(size)
+        }
+    }
+}
 pub fn intrinsic_size(source: [u32; 2]) -> Result<[Fraction; 2], String> {
     Ok([
         Number::parse(&format!("{}px", source[0]))?.value,

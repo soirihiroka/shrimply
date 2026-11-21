@@ -55,7 +55,7 @@ pub fn update_resize_drag(
     snap_repository: &SnapRepo,
 ) {
     let minimum_duration = crate::geometry::frame_step(project);
-    let target = Time::from_seconds_f64(x_to_time(x, view.scroll_seconds, view.seconds_per_pixel));
+    let target = Time::from_seconds_f64(x_to_time(x, view));
     let target = snap_repository
         .snap(target)
         .unwrap_or_else(|| target.snapped(minimum_duration));
@@ -356,7 +356,7 @@ pub fn cut_time_for_address(
     let context = SequenceTimeline::for_item(project, address)?;
     let (start, end) = context.timeline_item_times(project, address)?;
     let minimum_duration = crate::geometry::frame_step(project);
-    let cut = Time::from_seconds_f64(x_to_time(x, view.scroll_seconds, view.seconds_per_pixel));
+    let cut = Time::from_seconds_f64(x_to_time(x, view));
     let cut = snap_repository.snap(cut).unwrap_or(cut);
     (start.saturating_add(minimum_duration)..=end.saturating_sub(minimum_duration))
         .contains(&cut)

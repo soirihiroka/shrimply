@@ -3,12 +3,13 @@ use core::pin::Pin;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use cxx_qt::CxxQtType;
-use cxx_qt_lib::{QPoint, QString, QStringList};
+use cxx_qt_lib::{QPoint, QPointF, QString, QStringList};
 use shrimply_components_skia::canvas::UVec2;
 use shrimply_keyframe_graph_skia::{
-    FrameGraphAction, FrameGraphComponentAction, FrameGraphComponents, FrameGraphKey,
-    FrameGraphKeyMove, FrameGraphModifiers, FrameGraphPointerButton, FrameGraphPointerPosition,
-    FrameGraphScrollInput, FrameGraphState, KeyframeGraph, KeyframePoint, RawSegment, SpeedSegment,
+    FRAME_GRAPH_CONTEXT_ACTIONS, FrameGraphAction, FrameGraphCommand, FrameGraphComponentAction,
+    FrameGraphComponents, FrameGraphKey, FrameGraphKeyMove, FrameGraphModifiers,
+    FrameGraphPointerButton, FrameGraphPointerPosition, FrameGraphScrollInput, FrameGraphState,
+    KeyframeGraph, KeyframePoint, RawSegment, SpeedSegment,
 };
 use shrimply_math_color::Color;
 use shrimply_math_core::{Time, fraction_denominator, fraction_numerator};
@@ -32,6 +33,13 @@ struct QtFrameGraphRenderer {
 
 #[cxx_qt::bridge]
 pub mod qobject {
+    struct FrameGraphContact {
+        id: u64,
+        x: f32,
+        y: f32,
+        phase: u8,
+    }
+
     unsafe extern "C++Qt" {
         include!("frame_graph.h");
         #[qobject]
@@ -44,6 +52,8 @@ pub mod qobject {
         type QStringList = cxx_qt_lib::QStringList;
         include!("cxx-qt-lib/qpoint.h");
         type QPoint = cxx_qt_lib::QPoint;
+        include!("cxx-qt-lib/qpointf.h");
+        type QPointF = cxx_qt_lib::QPointF;
     }
 
     unsafe extern "RustQt" {
@@ -53,6 +63,9 @@ pub mod qobject {
         #[qproperty(bool, can_previous, cxx_name = "canPrevious")]
         #[qproperty(bool, can_next, cxx_name = "canNext")]
         #[qproperty(bool, key_at_playhead, cxx_name = "keyAtPlayhead")]
+        #[qproperty(QString, previous_label, cxx_name = "previousLabel")]
+        #[qproperty(QString, toggle_label, cxx_name = "toggleLabel")]
+        #[qproperty(QString, next_label, cxx_name = "nextLabel")]
         #[qproperty(f64, graph_value, cxx_name = "graphValue")]
         #[qproperty(i32, preferred_height, cxx_name = "preferredHeight")]
         #[qproperty(i32, interpolation_count, cxx_name = "interpolationCount")]
@@ -71,6 +84,18 @@ pub mod qobject {
         #[cxx_override]
         #[cxx_name = "frameGraphHandle"]
         fn frame_graph_handle(self: &FrameGraphItem) -> usize;
+        #[cxx_override]
+        #[cxx_name = "frameGraphTouch"]
+        fn frame_graph_touch(
+            self: Pin<&mut FrameGraphItem>,
+            contacts: &[FrameGraphContact],
+        ) -> bool;
+        #[cxx_override]
+        #[cxx_name = "frameGraphPollTouch"]
+        fn frame_graph_poll_touch(self: Pin<&mut FrameGraphItem>) -> bool;
+        #[cxx_override]
+        #[cxx_name = "frameGraphCancelTouch"]
+        fn frame_graph_cancel_touch(self: Pin<&mut FrameGraphItem>);
 
         #[qinvokable]
         #[cxx_name = "pointerMoved"]
@@ -105,6 +130,14 @@ pub mod qobject {
         #[qinvokable]
         #[cxx_name = "handleKey"]
         fn handle_key(self: Pin<&mut FrameGraphItem>, key: i32);
+
+        #[qinvokable]
+        #[cxx_name = "contextActionLabels"]
+        fn context_action_labels(self: &FrameGraphItem) -> QStringList;
+
+        #[qinvokable]
+        #[cxx_name = "activateContextAction"]
+        fn activate_context_action(self: Pin<&mut FrameGraphItem>, index: i32);
         #[qinvokable]
         #[cxx_name = "previousKey"]
         fn previous_key(self: Pin<&mut FrameGraphItem>);
@@ -232,6 +265,15 @@ pub mod qobject {
         #[cxx_name = "editFinished"]
         fn edit_finished(self: Pin<&mut FrameGraphItem>);
         #[qsignal]
+        #[cxx_name = "editStarted"]
+        fn edit_started(self: Pin<&mut FrameGraphItem>);
+        #[qsignal]
+        #[cxx_name = "editCancelled"]
+        fn edit_cancelled(self: Pin<&mut FrameGraphItem>);
+        #[qsignal]
+        #[cxx_name = "historyRequested"]
+        fn history_requested(self: Pin<&mut FrameGraphItem>, redo: bool);
+        #[qsignal]
         #[cxx_name = "playheadChanged"]
         fn playhead_changed(
             self: Pin<&mut FrameGraphItem>,
@@ -288,13 +330,16 @@ pub mod qobject {
             denominator: i64,
         );
         #[qsignal]
+        #[cxx_name = "contextMenuRequested"]
+        fn context_menu_requested(self: Pin<&mut FrameGraphItem>, position: QPointF, touch: bool);
+        #[qsignal]
         #[cxx_name = "textInterpolationRequested"]
         fn text_interpolation_requested(
             self: Pin<&mut FrameGraphItem>,
             component: i32,
             owner_id: QString,
-            x: f64,
-            y: f64,
+            position: QPointF,
+            touch: bool,
         );
         #[qsignal]
         #[cxx_name = "textInterpolationChanged"]
@@ -311,8 +356,8 @@ pub mod qobject {
             component: i32,
             owner_id: QString,
             index: i32,
-            x: f64,
-            y: f64,
+            position: QPointF,
+            touch: bool,
         );
         #[qsignal]
         #[cxx_name = "interpolationChanged"]
@@ -331,6 +376,9 @@ pub struct FrameGraphItemRust {
     can_previous: bool,
     can_next: bool,
     key_at_playhead: bool,
+    previous_label: QString,
+    toggle_label: QString,
+    next_label: QString,
     graph_value: f64,
     preferred_height: i32,
     interpolation_count: i32,
@@ -345,6 +393,15 @@ impl Default for FrameGraphItemRust {
             can_previous: status.can_previous,
             can_next: status.can_next,
             key_at_playhead: status.key_at_playhead,
+            previous_label: QString::from(
+                status
+                    .command_label(FrameGraphCommand::PreviousKey)
+                    .as_ref(),
+            ),
+            toggle_label: QString::from(
+                status.command_label(FrameGraphCommand::ToggleKey).as_ref(),
+            ),
+            next_label: QString::from(status.command_label(FrameGraphCommand::NextKey).as_ref()),
             graph_value: status.value,
             preferred_height: state.preferred_height(),
             interpolation_count: Interpolation::KEYFRAME.len() as i32,
@@ -363,6 +420,74 @@ impl cxx_qt::Initialize for qobject::FrameGraphItem {
 impl qobject::FrameGraphItem {
     pub fn frame_graph_handle(&self) -> usize {
         Arc::as_ptr(&self.rust().graph) as usize
+    }
+
+    fn position(&self, x: f64, y: f64) -> FrameGraphPointerPosition {
+        FrameGraphPointerPosition {
+            x,
+            y,
+            width: self.item_width(),
+            height: self.item_height(),
+        }
+    }
+
+    pub fn frame_graph_touch(
+        mut self: Pin<&mut Self>,
+        contacts: &[qobject::FrameGraphContact],
+    ) -> bool {
+        use shrimply_components_skia::{
+            canvas::vec2,
+            input::{TouchChange, TouchPhase},
+        };
+        let changes = contacts
+            .iter()
+            .map(|contact| TouchChange {
+                id: contact.id,
+                point: vec2(contact.x, contact.y),
+                phase: match contact.phase {
+                    0 => TouchPhase::Begin,
+                    1 => TouchPhase::Move,
+                    2 => TouchPhase::End,
+                    _ => panic!("Qt passed an invalid frame graph touch phase"),
+                },
+            })
+            .collect::<Vec<_>>();
+        let position = self.position(0.0, 0.0);
+        let (actions, waiting) = {
+            let mut graph = self.rust().lock();
+            let component = graph.state.active_component();
+            let result = graph.state.input_touch(&changes, position);
+            (
+                result.into_actions(component),
+                graph.state.input_waiting_long_press(),
+            )
+        };
+        self.as_mut().finish(actions);
+        waiting
+    }
+
+    pub fn frame_graph_poll_touch(mut self: Pin<&mut Self>) -> bool {
+        let position = self.position(0.0, 0.0);
+        let (actions, waiting) = {
+            let mut graph = self.rust().lock();
+            let component = graph.state.active_component();
+            let result = graph.state.input_poll_long_press(position);
+            (
+                result.into_actions(component),
+                graph.state.input_waiting_long_press(),
+            )
+        };
+        self.as_mut().finish(actions);
+        waiting
+    }
+
+    pub fn frame_graph_cancel_touch(mut self: Pin<&mut Self>) {
+        let actions = {
+            let mut graph = self.rust().lock();
+            let component = graph.state.active_component();
+            graph.state.input_cancel_touch().into_actions(component)
+        };
+        self.as_mut().finish(actions);
     }
 
     pub fn pointer_moved(mut self: Pin<&mut Self>, x: f64, y: f64) {
@@ -389,43 +514,19 @@ impl qobject::FrameGraphItem {
             2 => FrameGraphPointerButton::Secondary,
             _ => panic!("Qt passed an invalid frame graph pointer button: {button}"),
         };
-        let width = self.item_width();
-        let height = self.item_height();
-        let (actions, selected) = {
+        let position = self.position(x, y);
+        let actions = {
             let mut model = self.rust().lock();
             model.context_owner = None;
-            let actions = model.state.active_actions(|state| {
-                state.begin_pointer(
-                    button,
-                    x,
-                    y,
-                    width,
-                    height,
-                    FrameGraphModifiers { control, shift },
-                )
-            });
-            let selected =
-                actions
-                    .iter()
-                    .find_map(|component_action| match &component_action.action {
-                        FrameGraphAction::InterpolationRequested {
-                            owner_id,
-                            interpolation,
-                            ..
-                        } => Some((*owner_id, Some(*interpolation))),
-                        FrameGraphAction::TextInterpolationRequested { owner_id, .. } => {
-                            Some((*owner_id, None))
-                        }
-                        _ => None,
-                    });
-            if let Some((owner_id, _)) = selected {
-                model.context_owner = Some(owner_id);
-            }
-            (
-                actions,
-                selected.and_then(|(_, interpolation)| interpolation),
-            )
+            model
+                .state
+                .input_begin_pointer(button, position, FrameGraphModifiers { control, shift })
+                .actions
         };
+        let selected = actions.iter().find_map(|action| match action.action {
+            FrameGraphAction::InterpolationRequested { interpolation, .. } => Some(interpolation),
+            _ => None,
+        });
         self.as_mut().finish(actions);
         selected.map_or(-1, interpolation_index)
     }
@@ -437,16 +538,18 @@ impl qobject::FrameGraphItem {
             .rust()
             .lock()
             .state
-            .active_actions(|state| state.update_pointer(x, y, width, height));
+            .input_update_pointer(FrameGraphPointerPosition {
+                x,
+                y,
+                width,
+                height,
+            })
+            .actions;
         self.as_mut().finish(actions);
     }
 
     pub fn end_pointer(mut self: Pin<&mut Self>) {
-        let actions = self
-            .rust()
-            .lock()
-            .state
-            .active_actions(FrameGraphState::end_pointer);
+        let actions = self.rust().lock().state.input_end_pointer().actions;
         self.as_mut().finish(actions);
         self.as_mut().request_update();
     }
@@ -478,22 +581,42 @@ impl qobject::FrameGraphItem {
         };
         let width = self.item_width();
         let height = self.item_height();
-        let handled = self.rust().lock().state.scroll(
-            dx,
-            dy,
-            FrameGraphPointerPosition {
-                x,
-                y,
-                width,
-                height,
-            },
-            control,
-            input,
-        );
+        let handled = self
+            .rust()
+            .lock()
+            .state
+            .input_scroll(
+                dx,
+                dy,
+                FrameGraphPointerPosition {
+                    x,
+                    y,
+                    width,
+                    height,
+                },
+                control,
+                input,
+            )
+            .handled;
         if handled {
             self.as_mut().request_update();
         }
         handled
+    }
+
+    pub fn context_action_labels(&self) -> QStringList {
+        FRAME_GRAPH_CONTEXT_ACTIONS
+            .into_iter()
+            .map(|action| shrimply_i18n_qt::text(action.label))
+            .collect()
+    }
+
+    pub fn activate_context_action(mut self: Pin<&mut Self>, index: i32) {
+        let action = FRAME_GRAPH_CONTEXT_ACTIONS
+            .get(usize::try_from(index).expect("graph context action index"))
+            .expect("graph context menu returned a known command");
+        let actions = self.rust().lock().state.input_key(action.key).actions;
+        self.as_mut().finish(actions);
     }
 
     pub fn handle_key(mut self: Pin<&mut Self>, key: i32) {
@@ -510,11 +633,7 @@ impl qobject::FrameGraphItem {
             9 => FrameGraphKey::TogglePlayback,
             _ => panic!("Qt passed an invalid frame graph key: {key}"),
         };
-        let actions = self
-            .rust()
-            .lock()
-            .state
-            .active_actions(|state| state.key(key));
+        let actions = self.rust().lock().state.input_key(key).actions;
         self.as_mut().finish(actions);
     }
 
@@ -594,7 +713,12 @@ impl qobject::FrameGraphItem {
     }
 
     pub fn configure_graph_value(mut self: Pin<&mut Self>, value: f64) {
-        self.rust().lock().state = FrameGraphComponents::single(FrameGraphState::constant(value));
+        self.rust()
+            .lock()
+            .state
+            .replace_components(FrameGraphComponents::single(FrameGraphState::constant(
+                value,
+            )));
         self.as_mut().sync_status();
         self.as_mut().request_update();
     }
@@ -607,8 +731,13 @@ impl qobject::FrameGraphItem {
     ) {
         let active_component =
             usize::try_from(active_component).expect("non-negative frame graph component");
-        self.rust().lock().state =
-            FrameGraphComponents::constant_values(&[first, second], active_component);
+        self.rust()
+            .lock()
+            .state
+            .replace_components(FrameGraphComponents::constant_values(
+                &[first, second],
+                active_component,
+            ));
         self.as_mut().sync_status();
         self.as_mut().request_update();
     }
@@ -818,7 +947,7 @@ impl qobject::FrameGraphItem {
             .ok()
             .and_then(|index| Interpolation::KEYFRAME.get(index))
             .map_or_else(QString::default, |interpolation| {
-                QString::from(interpolation.label())
+                shrimply_i18n_qt::text(interpolation.label())
             })
     }
 
@@ -881,26 +1010,43 @@ impl qobject::FrameGraphItem {
                 }
                 FrameGraphAction::TogglePlayback => self.as_mut().toggle_playback(),
                 FrameGraphAction::EditFinished => self.as_mut().edit_finished(),
+                FrameGraphAction::EditStarted => self.as_mut().edit_started(),
+                FrameGraphAction::EditCancelled => self.as_mut().edit_cancelled(),
+                FrameGraphAction::HistoryRequested { redo } => {
+                    self.as_mut().history_requested(redo)
+                }
+                FrameGraphAction::ContextMenuRequested { x, y, touch } => {
+                    self.as_mut()
+                        .context_menu_requested(QPointF::new(x, y), touch);
+                }
                 FrameGraphAction::InterpolationRequested {
                     owner_id,
                     interpolation,
                     x,
                     y,
+                    touch,
                 } => {
+                    self.rust().lock().context_owner = Some(owner_id);
                     self.as_mut().interpolation_requested(
                         component,
                         QString::from(owner_id.to_string()),
                         interpolation_index(interpolation),
-                        x,
-                        y,
+                        QPointF::new(x, y),
+                        touch,
                     );
                 }
-                FrameGraphAction::TextInterpolationRequested { owner_id, x, y } => {
+                FrameGraphAction::TextInterpolationRequested {
+                    owner_id,
+                    x,
+                    y,
+                    touch,
+                } => {
+                    self.rust().lock().context_owner = Some(owner_id);
                     self.as_mut().text_interpolation_requested(
                         component,
                         QString::from(owner_id.to_string()),
-                        x,
-                        y,
+                        QPointF::new(x, y),
+                        touch,
                     );
                 }
             }
@@ -917,6 +1063,17 @@ impl qobject::FrameGraphItem {
         self.as_mut().set_can_previous(status.can_previous);
         self.as_mut().set_can_next(status.can_next);
         self.as_mut().set_key_at_playhead(status.key_at_playhead);
+        self.as_mut().set_previous_label(QString::from(
+            status
+                .command_label(FrameGraphCommand::PreviousKey)
+                .as_ref(),
+        ));
+        self.as_mut().set_toggle_label(QString::from(
+            status.command_label(FrameGraphCommand::ToggleKey).as_ref(),
+        ));
+        self.as_mut().set_next_label(QString::from(
+            status.command_label(FrameGraphCommand::NextKey).as_ref(),
+        ));
         self.as_mut().set_graph_value(status.value);
         self.as_mut().set_preferred_height(preferred_height);
     }

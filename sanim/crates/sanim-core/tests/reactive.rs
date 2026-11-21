@@ -134,6 +134,29 @@ fn element(id: &str, geometry: Geometry) -> Element {
         layout: Layout::default(),
     }
 }
+fn box_element(
+    id: &str,
+    width: Fraction,
+    height: Fraction,
+    radius: sanim_core::CornerRadius,
+) -> Element {
+    let mut value = element(
+        id,
+        Geometry::Box {
+            children: Default::default(),
+            radius,
+        },
+    );
+    value.layout.width = Some(Number {
+        value: width,
+        unit: Unit::Length,
+    });
+    value.layout.height = Some(Number {
+        value: height,
+        unit: Unit::Length,
+    });
+    value
+}
 fn oscillator() -> (ReactiveGraph, usize) {
     let mut graph = ReactiveGraph::default();
     graph.set_cell(1, numeric(0, Unit::Angle)).unwrap();
@@ -290,14 +313,11 @@ fn retained_properties_share_scene_sampling_and_preserve_static_geometry() {
         .unwrap();
     animation
         .add(
-            element(
+            box_element(
                 "rectangle",
-                Geometry::Rectangle {
-                    width: Fraction::from(20),
-                    height: Fraction::from(10),
-                    children: Default::default(),
-                    radius: Fraction::from(0).into(),
-                },
+                Fraction::from(20),
+                Fraction::from(10),
+                Fraction::from(0).into(),
             ),
             Fraction::from(0),
         )
@@ -356,14 +376,11 @@ fn retained_lengths_update_geometry_without_mutating_original_definitions() {
         .unwrap();
     animation
         .add(
-            element(
+            box_element(
                 "rect",
-                Geometry::Rectangle {
-                    width: Fraction::from(10),
-                    height: Fraction::from(10),
-                    children: Default::default(),
-                    radius: Fraction::from(0).into(),
-                },
+                Fraction::from(10),
+                Fraction::from(10),
+                Fraction::from(0).into(),
             ),
             Fraction::from(0),
         )
@@ -373,7 +390,8 @@ fn retained_lengths_update_geometry_without_mutating_original_definitions() {
         matches!(frame[0].geometry.as_ref(),Geometry::Circle{radius} if *radius==Fraction::from(15))
     );
     assert!(
-        matches!(frame[1].geometry.as_ref(),Geometry::Rectangle {width,height, .. } if *width==Fraction::from(15)&&*height==Fraction::from(15))
+        frame[1].layout.width.unwrap().value == Fraction::from(15)
+            && frame[1].layout.height.unwrap().value == Fraction::from(15)
     );
     assert!(
         matches!(animation.layers[0].element.geometry.as_ref(),Geometry::Circle{radius} if *radius==Fraction::from(10))
@@ -673,14 +691,11 @@ fn retained_frame_benchmark() {
         .unwrap();
     animation
         .add(
-            element(
+            box_element(
                 "rectangle",
-                Geometry::Rectangle {
-                    width: Fraction::from(20),
-                    height: Fraction::from(10),
-                    children: Default::default(),
-                    radius: Fraction::from(0).into(),
-                },
+                Fraction::from(20),
+                Fraction::from(10),
+                Fraction::from(0).into(),
             ),
             Fraction::from(0),
         )
@@ -725,14 +740,11 @@ fn rounded_rectangle_radius_samples_are_nonnegative_and_keep_the_same_outer_boun
     animation.reactive = graph;
     animation
         .add(
-            element(
+            box_element(
                 "rectangle",
-                Geometry::Rectangle {
-                    width: Fraction::from(20),
-                    height: Fraction::from(20),
-                    children: Default::default(),
-                    radius: Fraction::from(0).into(),
-                },
+                Fraction::from(20),
+                Fraction::from(20),
+                Fraction::from(0).into(),
             ),
             Fraction::from(0),
         )
@@ -836,17 +848,23 @@ fn background_points_and_animations_insert_chronologically_and_rebase_future_sta
 }
 
 #[test]
-fn typed_vector_nodes_and_components_share_cells_and_validate_serialized_indices() {
+fn typed_list_nodes_and_indices_share_cells_and_validate_serialized_indices() {
     let mut graph = ReactiveGraph::default();
     graph.set_cell(1, numeric(10, Unit::Length)).unwrap();
     graph.set_cell(2, numeric(20, Unit::Length)).unwrap();
     let x = graph.insert_node(Node::Cell(1), 20).unwrap();
     let y = graph.insert_node(Node::Cell(2), 20).unwrap();
     let vector = graph
-        .insert_node(Node::Vector { values: vec![x, y] }, 20)
+        .insert_node(Node::List { values: vec![x, y] }, 20)
         .unwrap();
     let component = graph
-        .insert_node(Node::Component { vector, index: 0 }, 20)
+        .insert_node(
+            Node::Index {
+                list: vector,
+                index: 0,
+            },
+            20,
+        )
         .unwrap();
     graph
         .animate_cell(
@@ -875,23 +893,32 @@ fn typed_vector_nodes_and_components_share_cells_and_validate_serialized_indices
     let unitless = graph
         .insert_node(Node::Constant(numeric(0, Unit::Number)), 20)
         .unwrap();
+    let mixed = graph
+        .insert_node(
+            Node::List {
+                values: vec![x, unitless],
+            },
+            20,
+        )
+        .unwrap();
+    assert!(
+        graph
+            .bind("shape".into(), Property::Position, mixed)
+            .is_err()
+    );
     assert!(
         graph
             .insert_node(
-                Node::Vector {
-                    values: vec![x, unitless]
+                Node::Index {
+                    list: vector,
+                    index: 2
                 },
                 20
             )
             .is_err()
     );
-    assert!(
-        graph
-            .insert_node(Node::Component { vector, index: 2 }, 20)
-            .is_err()
-    );
     let mut json = serde_json::to_value(&graph).unwrap();
-    json["nodes"][component]["operation"]["Component"]["index"] = serde_json::json!(2);
+    json["nodes"][component]["operation"]["Index"]["index"] = serde_json::json!(2);
     assert!(serde_json::from_value::<ReactiveGraph>(json).is_err());
 }
 

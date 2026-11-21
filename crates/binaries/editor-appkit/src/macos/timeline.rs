@@ -1,7 +1,7 @@
 use super::layout::{BUTTON_SIZE, TOOLBAR_WIDTH, button, stack};
 use objc2::rc::Retained;
 use objc2::{MainThreadOnly, sel};
-use objc2_app_kit::{NSBox, NSBoxType, NSStackView, NSView};
+use objc2_app_kit::{NSBox, NSBoxType, NSLayoutConstraint, NSStackView, NSView};
 use objc2_foundation::{MainThreadMarker, NSEdgeInsets, NSRect};
 use shrimply_components_appkit::{EffectRole, EffectView};
 
@@ -10,6 +10,58 @@ const AUDIO_METER_WIDTH: f64 = shrimply_components_skia::audio_meter::DEFAULT_WI
 const DIVIDER_WIDTH: f64 = 1.0;
 const TOOL_GAP: f64 = 4.0;
 const TOOL_GROUP_WIDTH: f64 = BUTTON_SIZE + TOOL_GAP * 2.0;
+
+pub(super) struct Chrome {
+    tools: Retained<NSView>,
+    tools_width: Retained<NSLayoutConstraint>,
+    meter: Retained<NSView>,
+    meter_width: Retained<NSLayoutConstraint>,
+}
+
+impl Chrome {
+    pub(super) fn update(&self, tools: f64, monitor: f64) {
+        self.tools_width
+            .setConstant((TOOLBAR_WIDTH + DIVIDER_WIDTH) * tools);
+        self.meter_width
+            .setConstant((AUDIO_METER_WIDTH + DIVIDER_WIDTH) * monitor);
+        self.tools.setHidden(tools == 0.0);
+        self.meter.setHidden(monitor == 0.0);
+    }
+}
+
+fn clipped(
+    view: &NSView,
+    width: f64,
+    trailing: bool,
+    mtm: MainThreadMarker,
+) -> (Retained<NSView>, Retained<NSLayoutConstraint>) {
+    let container = NSView::initWithFrame(NSView::alloc(mtm), NSRect::ZERO);
+    container.setTranslatesAutoresizingMaskIntoConstraints(false);
+    container.setClipsToBounds(true);
+    view.setTranslatesAutoresizingMaskIntoConstraints(false);
+    container.addSubview(view);
+    let horizontal = if trailing {
+        view.trailingAnchor()
+            .constraintEqualToAnchor(&container.trailingAnchor())
+    } else {
+        view.leadingAnchor()
+            .constraintEqualToAnchor(&container.leadingAnchor())
+    };
+    for constraint in [
+        horizontal,
+        view.topAnchor()
+            .constraintEqualToAnchor(&container.topAnchor()),
+        view.bottomAnchor()
+            .constraintEqualToAnchor(&container.bottomAnchor()),
+    ] {
+        constraint.setActive(true);
+    }
+    let constraint = container
+        .widthAnchor()
+        .constraintEqualToConstant(width + DIVIDER_WIDTH);
+    constraint.setActive(true);
+    (container, constraint)
+}
 
 #[derive(Clone, Copy)]
 #[repr(isize)]
@@ -184,10 +236,18 @@ pub fn build(
         .widthAnchor()
         .constraintEqualToConstant(AUDIO_METER_WIDTH)
         .setActive(true);
+    let (tool_container, tools_width) = clipped(&tools, TOOLBAR_WIDTH, false, mtm);
+    let (meter_container, meter_width) = clipped(&meter, AUDIO_METER_WIDTH, true, mtm);
+    tracks.register_timeline_chrome(Chrome {
+        tools: tool_container.clone(),
+        tools_width,
+        meter: meter_container.clone(),
+        meter_width,
+    });
     let timeline = stack(false, mtm);
-    timeline.setSpacing(DIVIDER_WIDTH);
-    timeline.addArrangedSubview(&tools);
+    timeline.setSpacing(0.0);
+    timeline.addArrangedSubview(&tool_container);
     timeline.addArrangedSubview(&tracks);
-    timeline.addArrangedSubview(&meter);
+    timeline.addArrangedSubview(&meter_container);
     (timeline, tracks, meter)
 }

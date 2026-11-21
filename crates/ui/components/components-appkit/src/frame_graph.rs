@@ -1,11 +1,10 @@
 use crate::{
-    StringChoice, action, column_append, column_stack, controls::show_searchable_popover_at,
-    row_stack,
+    StringChoice, action, column_append, column_stack, controls::show_searchable_menu_at, row_stack,
 };
 use objc2::rc::{Retained, Weak};
 use objc2_app_kit::{NSButton, NSImage, NSLayoutConstraint, NSStackView};
 use objc2_foundation::{MainThreadMarker, NSPoint, NSString};
-use shrimply_framegraph_skia::FrameGraphCommand;
+use shrimply_framegraph_skia::{FRAME_GRAPH_CONTEXT_ACTIONS, FrameGraphCommand};
 use shrimply_keyframe_graph_skia::{
     FrameGraphAction, FrameGraphComponentAction, FrameGraphComponents, FrameGraphState,
     FrameGraphStatus,
@@ -67,9 +66,24 @@ impl FrameGraph {
         let controls = row_stack(6.0, mtm);
         let spacer = objc2_app_kit::NSView::new(mtm);
         controls.addArrangedSubview(&spacer);
-        let previous = graph_button("backward.end", "Previous keyframe", mtm);
-        let toggle = graph_button("plus", "Add keyframe at playhead", mtm);
-        let next = graph_button("forward.end", "Next keyframe", mtm);
+        let status = state.status();
+        let previous = graph_button(
+            "backward.end",
+            status
+                .command_label(FrameGraphCommand::PreviousKey)
+                .as_ref(),
+            mtm,
+        );
+        let toggle = graph_button(
+            "plus",
+            status.command_label(FrameGraphCommand::ToggleKey).as_ref(),
+            mtm,
+        );
+        let next = graph_button(
+            "forward.end",
+            status.command_label(FrameGraphCommand::NextKey).as_ref(),
+            mtm,
+        );
         controls.addArrangedSubview(&previous);
         controls.addArrangedSubview(&toggle);
         controls.addArrangedSubview(&next);
@@ -86,11 +100,53 @@ impl FrameGraph {
         let view = shrimply_framegraph_appkit::frame_graph_view(
             state.clone(),
             Rc::new(move |component_action| {
-                if let FrameGraphAction::InterpolationRequested {
+                if let FrameGraphAction::ContextMenuRequested { x, y, touch } =
+                    component_action.action
+                {
+                    if let Some(view) = action_view.borrow().as_ref().and_then(Weak::load) {
+                        let state = action_state.clone();
+                        let handler = action_handler.clone();
+                        let weak: Weak<shrimply_framegraph_appkit::FrameGraphView> =
+                            Weak::new(&view);
+                        let sync = action_sync.clone();
+                        show_searchable_menu_at(
+                            &view,
+                            (NSPoint::new(x, y), touch),
+                            "",
+                            FRAME_GRAPH_CONTEXT_ACTIONS
+                                .into_iter()
+                                .map(|action| StringChoice {
+                                    value: action.id.into(),
+                                    label: shrimply_i18n::text(action.label).into_owned(),
+                                })
+                                .collect(),
+                            String::new(),
+                            move |id| {
+                                let action = FRAME_GRAPH_CONTEXT_ACTIONS
+                                    .into_iter()
+                                    .find(|action| action.id == id)
+                                    .expect("graph context menu returned a known command");
+                                for action in
+                                    state.key(action.key).into_actions(state.active_component())
+                                {
+                                    handler(action);
+                                }
+                                if let Some(sync) = sync.borrow().as_ref() {
+                                    sync();
+                                }
+                                if let Some(view) = weak.load() {
+                                    view.render();
+                                }
+                            },
+                            mtm,
+                        );
+                    }
+                } else if let FrameGraphAction::InterpolationRequested {
                     owner_id,
                     interpolation,
                     x,
                     y,
+                    touch,
                 } = component_action.action
                 {
                     if let Some(view) = action_view.borrow().as_ref().and_then(Weak::load) {
@@ -101,7 +157,7 @@ impl FrameGraph {
                             component_action.component,
                             owner_id,
                             interpolation,
-                            NSPoint::new(x, y),
+                            (NSPoint::new(x, y), touch),
                             mtm,
                         );
                     }
@@ -136,23 +192,16 @@ impl FrameGraph {
                     next.setEnabled(status.can_next);
                 }
                 if let Some(toggle) = toggle.load() {
+                    let label = status.command_label(FrameGraphCommand::ToggleKey);
                     toggle.setImage(Some(&symbol(
                         if status.key_at_playhead {
                             "minus"
                         } else {
                             "plus"
                         },
-                        if status.key_at_playhead {
-                            "Delete keyframe"
-                        } else {
-                            "Add keyframe"
-                        },
+                        label.as_ref(),
                     )));
-                    toggle.setToolTip(Some(&NSString::from_str(if status.key_at_playhead {
-                        "Delete keyframe at playhead"
-                    } else {
-                        "Add keyframe at playhead"
-                    })));
+                    toggle.setToolTip(Some(&NSString::from_str(label.as_ref())));
                 }
                 for handler in handlers.borrow().iter() {
                     handler(status);
@@ -327,22 +376,22 @@ fn show_interpolation_menu(
     component: usize,
     owner_id: uuid::Uuid,
     selected: Interpolation,
-    point: NSPoint,
+    (point, touch): (NSPoint, bool),
     mtm: MainThreadMarker,
 ) {
     let choices = Interpolation::KEYFRAME
         .into_iter()
         .map(|interpolation| StringChoice {
             value: interpolation.label().to_string(),
-            label: interpolation.label().to_string(),
+            label: shrimply_i18n::text(interpolation.label()).into_owned(),
         })
         .collect();
     let view = Weak::new(view);
     let host = view.load().expect("interpolation graph must be attached");
-    show_searchable_popover_at(
+    show_searchable_menu_at(
         &host,
-        point,
-        "Search interpolations",
+        (point, touch),
+        shrimply_i18n::text("Search interpolations").as_ref(),
         choices,
         selected.label().to_string(),
         move |value| {
@@ -358,6 +407,7 @@ fn show_interpolation_menu(
                     interpolation,
                     x: point.x,
                     y: point.y,
+                    touch,
                 },
             });
             if let Some(view) = view.load() {

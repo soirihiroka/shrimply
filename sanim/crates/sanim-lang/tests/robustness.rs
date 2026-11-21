@@ -1,10 +1,10 @@
-use sanim_core::{Fraction, Number, Value};
+use sanim_core::{Fraction, Number, Type, Value};
 use sanim_lang::{Engine, FileSources, MemorySources, Reload, Session, Sources};
 use std::collections::BTreeMap;
 
 fn run(text: &str) -> Result<sanim_lang::Prepared, sanim_core::Diagnostic> {
     let mut files = MemorySources::default();
-    files.insert("main.sanim", text);
+    files.insert("main.sanim", format!("{}\nAnimation()", text));
     Engine::default().prepare("main.sanim", &files, &BTreeMap::new())
 }
 
@@ -20,7 +20,7 @@ fn default_arguments_participate_in_cycle_checking() {
 }
 #[test]
 fn percentage_components_keep_units() {
-    let p = run("let p = Vec2(50%, 25%)\nlet x: Percent = p.x\n").unwrap();
+    let p = run("let p = [50%, 25%]\nlet x: Percent = p[0]\n").unwrap();
     assert_eq!(
         p.bindings["x"].number().unwrap().unit,
         sanim_core::Unit::Percent
@@ -28,13 +28,13 @@ fn percentage_components_keep_units() {
 }
 #[test]
 fn point_parameter_units_can_be_explicit() {
-    let p=run("fn x_coordinate(p: Vec2<Length>): Length { return p.x }\nlet x = x_coordinate(Vec2(10pt, 20pt))\n").unwrap();
+    let p=run("fn x_coordinate(p: List<Length,2>): Length { return p[0] }\nlet x = x_coordinate([10pt, 20pt])\n").unwrap();
     assert_eq!(p.bindings["x"].number().unwrap().value, Fraction::from(10));
 }
 #[test]
 fn percentage_cannot_be_used_as_length() {
     assert_eq!(
-        run("let p = Vec2(50%, 25%)\nlet x: Length = p.x\n")
+        run("let p = [50%, 25%]\nlet x: Length = p[0]\n")
             .unwrap_err()
             .code,
         "S106"
@@ -53,7 +53,7 @@ fn enum_case_qualifier_must_match() {
 }
 #[test]
 fn floating_layout_supports_values_beyond_fraction_products() {
-    let p = run("let marker = Circle(position= Vec2(18446744073709551565%, 0%))\nadd(marker)\n")
+    let p = run("let marker = Box(position=[18446744073709551565%, 0%], width=2*(32pt), height=2*(32pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nAnimation(children=[marker])\n")
         .unwrap();
     assert!(
         p.animation
@@ -67,7 +67,7 @@ fn floating_layout_supports_values_beyond_fraction_products() {
 }
 #[test]
 fn assertion_overflow_is_not_a_proof() {
-    let p=run("let marker = Circle(position= Vec2(18446744073709551615pt, 10pt))\ncheck(inside_canvas(marker))\n").unwrap();
+    let p=run("let marker = Box(position=[18446744073709551615pt, 10pt], width=2*(32pt), height=2*(32pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\ncheck(inside_canvas(marker))\n").unwrap();
     assert_ne!(p.checks[0].evidence, sanim_core::verify::Evidence::Proved);
 }
 #[test]
@@ -90,7 +90,7 @@ fn changing_decode_limits_invalidates_asset_cache() {
     let mut files = MemorySources::default();
     files.insert(
         "main.sanim",
-        "let data = read<List<Number>>(\"values.json\")\n",
+        "let data = read<List<Number>>(\"values.json\")\n\nAnimation()",
     );
     files.insert("values.json", "[1,2,3]");
     let mut engine = Engine::default();
@@ -109,7 +109,7 @@ fn changing_decode_limits_invalidates_asset_cache() {
 #[test]
 fn changing_iteration_limits_invalidates_pure_cache() {
     let mut files = MemorySources::default();
-    files.insert("main.sanim", "let values = range(10)\n");
+    files.insert("main.sanim", "let values = range(10)\n\nAnimation()");
     let mut engine = Engine::default();
     engine
         .prepare("main.sanim", &files, &BTreeMap::new())
@@ -135,7 +135,7 @@ fn changed_read_schema_is_not_cached_as_old_type() {
     let mut files = MemorySources::default();
     files.insert(
         "main.sanim",
-        "let data = read<List<Number>>(\"values.json\")\n",
+        "let data = read<List<Number>>(\"values.json\")\n\nAnimation()",
     );
     files.insert("values.json", "[1,2]");
     let mut engine = Engine::default();
@@ -144,7 +144,7 @@ fn changed_read_schema_is_not_cached_as_old_type() {
         .unwrap();
     files.insert(
         "main.sanim",
-        "let data = read<List<String>>(\"values.json\")\n",
+        "let data = read<List<String>>(\"values.json\")\n\nAnimation()",
     );
     assert_eq!(
         engine
@@ -157,13 +157,25 @@ fn changed_read_schema_is_not_cached_as_old_type() {
 #[test]
 fn reflected_nonfinite_coordinates_are_rejected() {
     let mut files = MemorySources::default();
-    files.insert("main.sanim", "let location=reflect(Vec2(10pt, 20pt))\n");
+    files.insert(
+        "main.sanim",
+        "let location=reflect([10pt, 20pt])\n\nAnimation()",
+    );
     let input = BTreeMap::from([(
         "main.sanim::location".into(),
-        Value::Vec2(sanim_core::Vec2 {
-            values: [f64::NAN, 0.0],
-            unit: sanim_core::Unit::Length,
-        }),
+        Value::List(sanim_core::List::typed(
+            Type::Numeric(sanim_core::Unit::Length),
+            vec![
+                Value::Number(sanim_core::Number {
+                    value: Fraction::NaN,
+                    unit: sanim_core::Unit::Length,
+                }),
+                Value::Number(sanim_core::Number {
+                    value: Fraction::from(0),
+                    unit: sanim_core::Unit::Length,
+                }),
+            ],
+        )),
     )]);
     assert_eq!(
         Engine::default()
@@ -204,12 +216,100 @@ fn source_changes_during_prepare_discard_revision() {
 #[test]
 fn all_shipped_examples_prepare() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples");
-    let sources = FileSources::new(root).unwrap();
-    for path in ["hello.sanim", "data.sanim", "timer.sanim", "query.sanim"] {
+    let sources = FileSources::new(&root).unwrap();
+    let mut examples =
+        std::fs::read_dir(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples"))
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .filter(|name| {
+                name.ends_with(".sanim")
+                    && !matches!(
+                        name.as_str(),
+                        "theme.sanim" | "voxel_structures.sanim" | "voxel_textures.sanim"
+                    )
+            })
+            .collect::<Vec<_>>();
+    examples.sort();
+    for path in &examples {
         let p = Engine::default()
             .prepare(path, &sources, &BTreeMap::new())
             .unwrap_or_else(|e| panic!("{path}: {e}"));
         assert!(!p.animation.layers.is_empty());
+    }
+    let mut sources = MemorySources::default();
+    for name in ["voxel_structures.sanim", "voxel_textures.sanim"] {
+        sources.insert(name, std::fs::read_to_string(root.join(name)).unwrap());
+    }
+    sources.insert(
+        "main.sanim",
+        r#"
+import "./voxel_structures.sanim" as structures
+let specimen = structures.tree(seed=73)
+assert(specimen.get([9,0,9]) != None)
+let repeated = structures.tree(seed=73)
+Animation()
+"#,
+    );
+    let probe = Engine::default()
+        .prepare("main.sanim", &sources, &BTreeMap::new())
+        .unwrap();
+    let (Value::VoxelGrid(a), Value::VoxelGrid(b)) =
+        (&probe.bindings["specimen"], &probe.bindings["repeated"])
+    else {
+        panic!("tree factory returns grids")
+    };
+    assert_eq!(a.dimensions(), [19, 31, 19]);
+    assert!(
+        std::sync::Arc::ptr_eq(a, b),
+        "pure factory should reuse the same immutable tree"
+    );
+}
+
+#[test]
+fn demo_labels_change_at_their_placed_timeline_boundaries() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples");
+    let sources = FileSources::new(root).unwrap();
+    for (path, id, samples) in [
+        (
+            "text_wrapping.sanim",
+            "mode",
+            vec![
+                (Fraction::from(0), "whitespace-normal · wrap-normal"),
+                (
+                    Fraction::new(31u64, 5u64),
+                    "whitespace-pre-wrap · preserved spaces and newlines",
+                ),
+                (
+                    Fraction::new(59u64, 5u64),
+                    "whitespace-nowrap · clipped horizontal overflow",
+                ),
+                (
+                    Fraction::new(87u64, 5u64),
+                    "whitespace-normal · wrap-anywhere · long words can break",
+                ),
+            ],
+        ),
+        (
+            "code_view_scroller.sanim",
+            "stage_label",
+            vec![
+                (Fraction::from(0), "Scroll through the source"),
+                (Fraction::new(2u64, 5u64), "Reveal the gutter"),
+                (Fraction::new(93u64, 20u64), "Fold push; pop remains open"),
+            ],
+        ),
+    ] {
+        let prepared = Engine::default()
+            .prepare(path, &sources, &BTreeMap::new())
+            .unwrap();
+        let element = prepared.animation.find(id).unwrap();
+        for (time, expected) in samples {
+            let actual = prepared
+                .animation
+                .sample_property(element, sanim_core::Property::Text, time)
+                .unwrap();
+            assert_eq!(actual.string().unwrap(), expected, "{path} at {time}");
+        }
     }
 }
 #[test]
@@ -234,7 +334,7 @@ fn unknown_override_does_not_change_cache_validity() {
 #[test]
 fn parser_limits_are_enforced_on_cached_modules() {
     let mut files = MemorySources::default();
-    files.insert("main.sanim", "let value = 1 + 2\n");
+    files.insert("main.sanim", "let value = 1 + 2\n\nAnimation()");
     let mut engine = Engine::default();
     engine
         .prepare("main.sanim", &files, &BTreeMap::new())
@@ -250,7 +350,7 @@ fn parser_limits_are_enforced_on_cached_modules() {
 }
 #[test]
 fn flow_position_conflicts_fail_explicitly() {
-    assert!(run("let child = Circle(id= \"child\")\nadd(Box(flex_direction=\"row\",children= [child]))\nMoveTo(child, Vec2(10pt,0pt), duration=1s, ease=\"linear\")\n").unwrap_err().message.contains("flow layout controls"));
+    assert!(run("let child = Box(id=\"child\", width=2*(32pt), height=2*(32pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nAnimation(children=[Box(flex_direction=\"row\",children= [child])])\nchild.move_to([10pt, 0pt], duration=1s, ease=\"linear\")\n").unwrap_err().message.contains("flow layout controls"));
 }
 
 #[test]
@@ -260,7 +360,7 @@ fn shallow_multiline_source_does_not_recurse_per_newline() {
         "\n # blank\n".repeat(20_000)
     );
     let mut files = MemorySources::default();
-    files.insert("main.sanim", source);
+    files.insert("main.sanim", format!("{}\nAnimation()", source));
     Engine::default()
         .prepare("main.sanim", &files, &BTreeMap::new())
         .unwrap();
@@ -280,7 +380,7 @@ fn registered_types_functions_and_constants_are_automatically_protected() {
     {
         assert!(sanim_lang::prelude::protected(name), "{name}");
         let mut files = MemorySources::default();
-        files.insert("main.sanim", format!("let {name}=1"));
+        files.insert("main.sanim", format!("let {name}=1\nAnimation()"));
         assert_eq!(
             Engine::default()
                 .prepare("main.sanim", &files, &BTreeMap::new())
@@ -298,10 +398,9 @@ fn functions_cannot_bypass_static_call_graph_in_temporary_values() {
         "fn identity<T>(value:T):T{return value}\nfn recurse():Number{return identity(recurse)()}\nlet x=recurse()",
         "fn recurse():Number{return unwrap(Some(recurse),recurse)()}\nlet x=recurse()",
         "fn recurse():Number{return ({callback=recurse}).callback()}\nlet x=recurse()",
-        "fn identity<T>(value:T):T{return value}\nfn number_value():Number{return 1}\nidentity(number_value)",
     ] {
         let mut files = MemorySources::default();
-        files.insert("main.sanim", source);
+        files.insert("main.sanim", format!("{}\nAnimation()", source));
         assert_eq!(
             Engine::default()
                 .prepare("main.sanim", &files, &BTreeMap::new())
@@ -324,7 +423,7 @@ fn resolved_alias_expansion_has_a_global_byte_budget() {
         ));
     }
     let mut files = MemorySources::default();
-    files.insert("main.sanim", source);
+    files.insert("main.sanim", format!("{}\nAnimation()", source));
     let error = Engine::default()
         .prepare("main.sanim", &files, &BTreeMap::new())
         .unwrap_err();
@@ -342,7 +441,7 @@ fn enum_namespaces_cannot_bypass_type_budget() {
             .join(",")
     );
     let mut files = MemorySources::default();
-    files.insert("main.sanim", source);
+    files.insert("main.sanim", format!("{}\nAnimation()", source));
     let error = Engine::default()
         .prepare("main.sanim", &files, &BTreeMap::new())
         .unwrap_err();
@@ -358,7 +457,7 @@ fn inferred_generic_expansion_cannot_bypass_type_budget() {
         source.push_str(&format!("let a{i}=wrap(a{})\n", i - 1));
     }
     let mut files = MemorySources::default();
-    files.insert("main.sanim", source);
+    files.insert("main.sanim", format!("{}\nAnimation()", source));
     let error = Engine::default()
         .prepare("main.sanim", &files, &BTreeMap::new())
         .unwrap_err();

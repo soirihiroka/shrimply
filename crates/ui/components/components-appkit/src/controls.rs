@@ -221,11 +221,7 @@ impl StringSelector {
                 view: button.into_super().into_super(),
             }
         } else {
-            let popup = objc2_app_kit::NSPopUpButton::initWithFrame_pullsDown(
-                objc2_app_kit::NSPopUpButton::alloc(mtm),
-                NSRect::ZERO,
-                false,
-            );
+            let popup = crate::menu::popup(NSRect::ZERO, false, mtm);
             for choice in &choices {
                 popup.addItemWithTitle(&NSString::from_str(&choice.label));
             }
@@ -323,7 +319,7 @@ define_class!(
                 125 => self.focus_sibling(1),
                 126 => self.focus_sibling(-1),
                 53 => {
-                    if let Some(popover) = self.ivars().popover.load() { popover.close(); }
+                    if let Some(popover) = self.ivars().popover.load() { dismiss_search(&popover); }
                 }
                 _ => unsafe { let _: () = msg_send![super(self), keyDown: event]; },
             }
@@ -336,26 +332,28 @@ impl SearchResult {
         let Some(list) = self.ivars().list.load() else {
             return;
         };
-        let children = list.subviews();
+        let children = list
+            .subviews()
+            .iter()
+            .filter_map(|view| view.downcast::<NSButton>().ok())
+            .filter(|button| button.isEnabled())
+            .collect::<Vec<_>>();
         let Some(index) = children
             .iter()
-            .position(|view| std::ptr::eq(&*view, self.as_super().as_super().as_super()))
+            .position(|button| std::ptr::eq(&**button, self.as_super()))
         else {
             return;
         };
         let Some(next) = index.checked_add_signed(offset) else {
             return;
         };
-        let Some(view) = children.iter().nth(next) else {
+        let Some(button) = children.get(next) else {
             return;
         };
-        let button = view
-            .downcast::<NSButton>()
-            .expect("search result list only contains buttons");
         button
             .window()
             .expect("search result must be attached")
-            .makeFirstResponder(Some(&button));
+            .makeFirstResponder(Some(button));
     }
 }
 
@@ -368,9 +366,7 @@ fn search_menu_button(
     on_select: impl Fn(String) + 'static,
     mtm: MainThreadMarker,
 ) -> Retained<NSButton> {
-    let button = unsafe {
-        NSButton::buttonWithTitle_target_action(&NSString::from_str(title), None, None, mtm)
-    };
+    let button = crate::menu::button(title, mtm);
     button.setAlignment(NSTextAlignment::Left);
     if let Some(icon) = icon {
         button.setImage(Some(&symbol(icon, title)));
@@ -397,24 +393,22 @@ fn search_menu_button(
         Some(Weak::new(&*button)),
         update_title,
         on_select,
+        None,
         mtm,
     );
     action::attach(
         &button,
         move |control| {
-            (parts.refresh)();
             let button = control
                 .downcast_ref::<NSButton>()
                 .expect("search menu button sender");
-            parts.popover.showRelativeToRect_ofView_preferredEdge(
-                button.bounds(),
+            show_menu_parts(
                 button,
-                NSRectEdge::MaxY,
+                button.bounds(),
+                crate::menu::touch_triggered(control),
+                &parts,
+                mtm,
             );
-            button
-                .window()
-                .expect("search menu must be attached")
-                .makeFirstResponder(Some(&parts.search));
         },
         mtm,
     );
@@ -424,9 +418,11 @@ fn search_menu_button(
 struct SearchPopoverParts {
     popover: Retained<NSPopover>,
     search: Retained<SearchField>,
+    list: Retained<SearchResultsView>,
     refresh: Rc<dyn Fn()>,
 }
 
+#[allow(clippy::too_many_arguments)]
 fn search_popover(
     placeholder: &str,
     choices: Rc<SearchChoices>,
@@ -434,6 +430,7 @@ fn search_popover(
     main_button: Option<Weak<NSButton>>,
     update_title: bool,
     on_select: SearchSelection,
+    native_menu: Option<Weak<objc2_app_kit::NSMenu>>,
     mtm: MainThreadMarker,
 ) -> SearchPopoverParts {
     let popover = NSPopover::new(mtm);
@@ -459,7 +456,7 @@ fn search_popover(
                     126 => focus_result(&list, true),
                     53 => {
                         if let Some(popover) = popover.load() {
-                            popover.close();
+                            dismiss_search(&popover);
                         }
                         true
                     }
@@ -470,10 +467,15 @@ fn search_popover(
     });
     let search: Retained<SearchField> =
         unsafe { msg_send![super(search), initWithFrame: NSRect::ZERO] };
-    search.setPlaceholderString(Some(&NSString::from_str(placeholder)));
+    search.setPlaceholderString(Some(&NSString::from_str(
+        &shrimply_components_core::presentation::choice_label(placeholder, None),
+    )));
     search.setSendsSearchStringImmediately(true);
+    let searchable = shrimply_components_core::selector::searchable(choices.choices.len());
+    search.setHidden(!searchable);
     search.setTranslatesAutoresizingMaskIntoConstraints(false);
     let search_container = NSView::new(mtm);
+    search_container.setHidden(!searchable);
     search_container.addSubview(&search);
     for constraint in [
         search.leadingAnchor().constraintEqualToAnchor_constant(
@@ -505,7 +507,8 @@ fn search_popover(
     scroll.setDocumentView(Some(&list));
     list.setFrameSize(NSSize::new(280.0, 240.0));
     list.setAutoresizingMask(NSAutoresizingMaskOptions::ViewWidthSizable);
-    let results_height = CONTROL_HEIGHT * SEARCH_VISIBLE_ROWS as f64;
+    let results_height =
+        CONTROL_HEIGHT * choices.choices.len().clamp(1, SEARCH_VISIBLE_ROWS) as f64;
     scroll
         .heightAnchor()
         .constraintEqualToConstant(results_height)
@@ -516,7 +519,11 @@ fn search_popover(
     controller.setView(&content);
     controller.setPreferredContentSize(NSSize::new(
         292.0,
-        CONTROL_HEIGHT + SEARCH_FIELD_VERTICAL_INSET * 2.0 + results_height,
+        if searchable {
+            CONTROL_HEIGHT + SEARCH_FIELD_VERTICAL_INSET * 2.0
+        } else {
+            0.0
+        } + results_height,
     ));
     popover.setContentViewController(Some(&controller));
 
@@ -531,6 +538,7 @@ fn search_popover(
         &weak_popover,
         update_title,
         &on_select,
+        &native_menu,
         mtm,
     );
     action::attach(
@@ -542,6 +550,7 @@ fn search_popover(
             let weak_button = weak_button.clone();
             let weak_popover = weak_popover.clone();
             let on_select = on_select.clone();
+            let native_menu = native_menu.clone();
             move |control| {
                 let query = control
                     .downcast_ref::<NSSearchField>()
@@ -557,6 +566,7 @@ fn search_popover(
                     &weak_popover,
                     update_title,
                     &on_select,
+                    &native_menu,
                     mtm,
                 );
             }
@@ -582,6 +592,7 @@ fn search_popover(
                 &weak_popover,
                 update_title,
                 &on_select,
+                &native_menu,
                 mtm,
             );
         }
@@ -589,6 +600,7 @@ fn search_popover(
     SearchPopoverParts {
         popover,
         search,
+        list,
         refresh,
     }
 }
@@ -609,50 +621,261 @@ pub fn show_searchable_popover_at(
         None,
         false,
         Rc::new(on_select),
+        None,
         mtm,
     );
-    (parts.refresh)();
-    parts.popover.showRelativeToRect_ofView_preferredEdge(
-        NSRect::new(point, NSSize::new(1.0, 1.0)),
+    show_menu_parts(
         view,
-        NSRectEdge::MaxY,
+        NSRect::new(point, NSSize::new(1.0, 1.0)),
+        false,
+        &parts,
+        mtm,
     );
-    view.window()
-        .expect("search popover host must be attached")
-        .makeFirstResponder(Some(&parts.search));
+}
+
+/// Direct-touch choices reuse the searchable content in a native window sheet.
+pub fn show_searchable_menu_at(
+    view: &NSView,
+    (point, touch): (NSPoint, bool),
+    placeholder: &str,
+    choices: Vec<StringChoice>,
+    selected: String,
+    on_select: impl Fn(String) + 'static,
+    mtm: MainThreadMarker,
+) {
+    let parts = search_popover(
+        placeholder,
+        Rc::new(choices.into()),
+        Rc::new(RefCell::new(Some(selected))),
+        None,
+        false,
+        Rc::new(on_select),
+        None,
+        mtm,
+    );
+    show_menu_parts(
+        view,
+        NSRect::new(point, NSSize::new(1.0, 1.0)),
+        touch,
+        &parts,
+        mtm,
+    );
+}
+
+fn show_menu_parts(
+    view: &NSView,
+    anchor: NSRect,
+    touch: bool,
+    parts: &SearchPopoverParts,
+    mtm: MainThreadMarker,
+) {
+    (parts.refresh)();
+    if !shrimply_components_core::layout::menu_uses_bottom_sheet(if touch {
+        "touch"
+    } else {
+        "pointer"
+    }) {
+        parts
+            .popover
+            .showRelativeToRect_ofView_preferredEdge(anchor, view, NSRectEdge::MaxY);
+        if parts.search.isHidden() {
+            focus_result(&parts.list, false);
+        } else {
+            view.window()
+                .expect("search popover host must be attached")
+                .makeFirstResponder(Some(&parts.search));
+        }
+        unsafe {
+            objc_setAssociatedObject(
+                std::ptr::from_ref(view).cast_mut().cast(),
+                std::ptr::from_ref(&SEARCH_POPOVER_KEY).cast::<c_void>(),
+                Retained::as_ptr(&parts.popover).cast_mut().cast(),
+                OBJC_ASSOCIATION_RETAIN_NONATOMIC,
+            );
+        }
+        return;
+    }
+    use objc2_app_kit::{NSApplication, NSBackingStoreType, NSWindow, NSWindowStyleMask};
+    parts.popover.close();
+    let content = parts
+        .popover
+        .contentViewController()
+        .expect("search chooser has content")
+        .view();
+    let root = column_stack(SEARCH_FIELD_VERTICAL_INSET, mtm);
+    root.addArrangedSubview(&content);
+    content.setTranslatesAutoresizingMaskIntoConstraints(false);
+    let content_width = content
+        .widthAnchor()
+        .constraintEqualToAnchor(&root.widthAnchor());
+    content_width.setActive(true);
+    let cancel = crate::ActionButton::new(
+        &shrimply_components_core::presentation::choice_label("Cancel", None),
+        move || NSApplication::sharedApplication(mtm).stopModal(),
+        mtm,
+    );
+    cancel
+        .view()
+        .setKeyEquivalent(&NSString::from_str("\u{1b}"));
+    column_append(&root, cancel.view());
+    let size = parts.popover.contentSize();
+    let window = unsafe {
+        NSWindow::initWithContentRect_styleMask_backing_defer(
+            NSWindow::alloc(mtm),
+            NSRect::new(
+                NSPoint::ZERO,
+                NSSize::new(
+                    size.width,
+                    size.height + CONTROL_HEIGHT + SEARCH_FIELD_VERTICAL_INSET,
+                ),
+            ),
+            NSWindowStyleMask::Titled,
+            NSBackingStoreType::Buffered,
+            false,
+        )
+    };
     unsafe {
-        objc_setAssociatedObject(
-            std::ptr::from_ref(view).cast_mut().cast(),
-            std::ptr::from_ref(&SEARCH_POPOVER_KEY).cast::<c_void>(),
-            Retained::as_ptr(&parts.popover).cast_mut().cast(),
-            OBJC_ASSOCIATION_RETAIN_NONATOMIC,
+        window.setReleasedWhenClosed(false);
+    }
+    window.setContentView(Some(&root));
+    let parent = view.window().expect("search sheet host must be attached");
+    parent.beginSheet_completionHandler(&window, None);
+    if parts.search.isHidden() {
+        focus_result(&parts.list, false);
+    } else {
+        window.makeFirstResponder(Some(&parts.search));
+    }
+    NSApplication::sharedApplication(mtm).runModalForWindow(&window);
+    parent.endSheet(&window);
+    window.orderOut(None);
+    content_width.setActive(false);
+    root.removeArrangedSubview(&content);
+    content.removeFromSuperview();
+}
+
+pub(crate) fn show_popup_sheet(popup: &objc2_app_kit::NSPopUpButton, mtm: MainThreadMarker) {
+    unsafe {
+        objc2_foundation::NSNotificationCenter::defaultCenter().postNotificationName_object(
+            objc2_app_kit::NSPopUpButtonWillPopUpNotification,
+            Some(popup),
         );
+    }
+    let Some(menu) = popup.menu() else {
+        return;
+    };
+    let Some(path) = choose_native_menu(
+        popup,
+        &menu,
+        popup.indexOfSelectedItem().to_string(),
+        popup.pullsDown(),
+        mtm,
+    ) else {
+        return;
+    };
+    popup.selectItemAtIndex(path[0]);
+    let mut menu = menu;
+    for index in &path[..path.len() - 1] {
+        menu = menu
+            .itemAtIndex(*index)
+            .and_then(|item| item.submenu())
+            .expect("native submenu must exist");
+    }
+    menu.performActionForItemAtIndex(*path.last().expect("native menu selection"));
+}
+
+fn choose_native_menu(
+    view: &NSView,
+    menu: &objc2_app_kit::NSMenu,
+    selected: String,
+    pulls_down: bool,
+    mtm: MainThreadMarker,
+) -> Option<Vec<isize>> {
+    menu.update();
+    let choices = (0..menu.numberOfItems())
+        .filter(|index| !pulls_down || *index != 0)
+        .filter_map(|index| {
+            let item = menu.itemAtIndex(index)?;
+            (!item.isHidden()).then(|| StringChoice {
+                value: index.to_string(),
+                label: item.title().to_string(),
+            })
+        })
+        .collect::<Vec<_>>();
+    let picked = Rc::new(RefCell::new(None));
+    let selection = picked.clone();
+    let parts = search_popover(
+        "Search choices",
+        Rc::new(choices.into()),
+        Rc::new(RefCell::new(Some(selected))),
+        None,
+        false,
+        Rc::new(move |value| {
+            *selection.borrow_mut() =
+                Some(value.parse::<isize>().expect("native popup item index"));
+        }),
+        Some(Weak::new(menu)),
+        mtm,
+    );
+    show_menu_parts(view, view.bounds(), true, &parts, mtm);
+    let index = picked.borrow_mut().take()?;
+    let item = menu
+        .itemAtIndex(index)
+        .expect("native menu choice must exist");
+    if !item.isEnabled() || item.isSeparatorItem() {
+        return None;
+    }
+    let mut path = vec![index];
+    if let Some(submenu) = item.submenu() {
+        path.extend(choose_native_menu(
+            view,
+            &submenu,
+            String::new(),
+            false,
+            mtm,
+        )?);
+    }
+    Some(path)
+}
+
+fn dismiss_search(popover: &NSPopover) {
+    if popover.isShown() {
+        popover.close();
+    } else if let Some(window) = popover
+        .contentViewController()
+        .and_then(|controller| controller.view().window())
+    {
+        let application = objc2_app_kit::NSApplication::sharedApplication(popover.mtm());
+        if application
+            .modalWindow()
+            .as_deref()
+            .is_some_and(|modal| std::ptr::eq(&*window, modal))
+        {
+            application.stopModal();
+        }
     }
 }
 
 fn first_result(list: &NSView) -> Option<Retained<NSButton>> {
     list.subviews()
         .iter()
-        .next()
-        .and_then(|view| view.downcast::<NSButton>().ok())
+        .filter_map(|view| view.downcast::<NSButton>().ok())
+        .find(|button| button.isEnabled())
 }
 
 fn focus_result(list: &NSView, last: bool) -> bool {
     let children = list.subviews();
-    let result = if last {
-        children.iter().last()
-    } else {
-        children.iter().next()
-    };
-    result
-        .and_then(|view| view.downcast::<NSButton>().ok())
-        .is_some_and(|button| {
-            button
-                .window()
-                .expect("search result must be attached")
-                .makeFirstResponder(Some(&button));
-            true
-        })
+    let mut buttons = children
+        .iter()
+        .filter_map(|view| view.downcast::<NSButton>().ok())
+        .filter(|button| button.isEnabled());
+    let result = if last { buttons.last() } else { buttons.next() };
+    result.is_some_and(|button| {
+        button
+            .window()
+            .expect("search result must be attached")
+            .makeFirstResponder(Some(&button));
+        true
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -665,6 +888,7 @@ fn populate_search_results(
     popover: &Weak<NSPopover>,
     update_title: bool,
     on_select: &SearchSelection,
+    native_menu: &Option<Weak<objc2_app_kit::NSMenu>>,
     mtm: MainThreadMarker,
 ) {
     let children = list.subviews();
@@ -675,6 +899,32 @@ fn populate_search_results(
     let mut row_index = 0usize;
     for index in matches {
         let choice = &choices.choices[index];
+        let item = native_menu.as_ref().and_then(Weak::load).map(|menu| {
+            menu.itemAtIndex(
+                choice
+                    .value
+                    .parse::<isize>()
+                    .expect("native menu item index"),
+            )
+            .expect("native menu choice must exist")
+        });
+        if item.as_ref().is_some_and(|item| item.isSeparatorItem()) {
+            let separator = objc2_app_kit::NSBox::initWithFrame(
+                objc2_app_kit::NSBox::alloc(mtm),
+                NSRect::new(
+                    NSPoint::new(
+                        SEARCH_ROW_HORIZONTAL_INSET,
+                        row_index as f64 * CONTROL_HEIGHT,
+                    ),
+                    NSSize::new(280.0 - SEARCH_ROW_HORIZONTAL_INSET * 2.0, CONTROL_HEIGHT),
+                ),
+            );
+            separator.setBoxType(objc2_app_kit::NSBoxType::Separator);
+            separator.setAutoresizingMask(NSAutoresizingMaskOptions::ViewWidthSizable);
+            list.addSubview(&separator);
+            row_index += 1;
+            continue;
+        }
         let row = SearchResult::alloc(mtm).set_ivars(SearchResultIvars {
             list: Weak::new(list),
             popover: popover.clone(),
@@ -697,6 +947,13 @@ fn populate_search_results(
         row.setTitle(&NSString::from_str(&choice.label));
         row.setAlignment(NSTextAlignment::Left);
         row.setBordered(false);
+        if let Some(item) = item {
+            row.setEnabled(item.isEnabled());
+            if item.submenu().is_some() {
+                row.setImage(Some(&symbol("chevron.right", &choice.label)));
+                row.setImagePosition(NSCellImagePosition::ImageRight);
+            }
+        }
         row.setAutoresizingMask(NSAutoresizingMaskOptions::ViewWidthSizable);
         if selected.borrow().as_ref() == Some(&choice.value) {
             let checkmark = NSImageView::new(mtm);
@@ -734,7 +991,7 @@ fn populate_search_results(
                 }
                 on_select(value.clone());
                 if let Some(popover) = popover.load() {
-                    popover.close();
+                    dismiss_search(&popover);
                 }
             },
             mtm,
@@ -744,7 +1001,8 @@ fn populate_search_results(
     }
     list.setFrameSize(NSSize::new(
         280.0,
-        (row_index.max(SEARCH_VISIBLE_ROWS) as f64) * CONTROL_HEIGHT,
+        (row_index.max(choices.choices.len().clamp(1, SEARCH_VISIBLE_ROWS)) as f64)
+            * CONTROL_HEIGHT,
     ));
 }
 

@@ -32,7 +32,11 @@ pub fn draw(input: TrackDrawInput<'_>, first_visible_row: usize, last_visible_ro
             y,
             timeline_width,
         );
-        for (index, item) in track.items.iter().enumerate() {
+        for (index, item) in timeline_search::overlapping_disjoint(
+            &track.items,
+            input.visible_times.0,
+            input.visible_times.1,
+        ) {
             let (item_x, item_width) = item_rect(item.start, item.end, timeline_x, view);
             if item_x + item_width <= timeline_x || item_x >= timeline_x + timeline_width {
                 continue;

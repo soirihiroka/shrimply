@@ -18,6 +18,6 @@ shrimply-math-core = { workspace = true }
 shrimply-paint-geometry = { workspace = true }
 shrimply-project-document = { workspace = true, default-features = true }
 shrimply-scene-3d = { workspace = true }
-shrimply-visual-modifiers = { workspace = true }
+shrimply-visual-modifiers = { workspace = true, default-features = true }
 tracing.workspace = true
 uuid = { workspace = true, features = ["v4", "serde"] }

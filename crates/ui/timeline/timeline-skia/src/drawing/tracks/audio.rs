@@ -55,7 +55,11 @@ pub fn draw(
         let mut selected_subpixel_columns = vec![false; tiny_item_columns.len()];
         let mut waveform_columns = vec![0.0; timeline_width.ceil() as usize];
         let mut clip_transitions = Vec::new();
-        for (index, item) in track.items.iter().enumerate() {
+        for (index, item) in timeline_search::overlapping_disjoint(
+            &track.items,
+            input.visible_times.0,
+            input.visible_times.1,
+        ) {
             let (item_x, item_width) = item_rect(item.start, item.end, timeline_x, view);
             let item_pixel_width =
                 (item.end.as_secs_f64() - item.start.as_secs_f64()) / view.seconds_per_pixel;

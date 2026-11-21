@@ -10,3 +10,6 @@ cuda = ["dep:shrimply-gpu-cuda", "dep:shrimply-gpu-cuda-memory"]
 shrimply-gpu-cuda = { workspace = true, optional = true }
 shrimply-gpu-cuda-memory = { workspace = true, optional = true }
 ffmpeg-next.workspace = true
+
+[target.'cfg(target_os = "android")'.dependencies]
+ndk = { version = "0.9.0", default-features = false, features = ["media", "api-level-26"] }

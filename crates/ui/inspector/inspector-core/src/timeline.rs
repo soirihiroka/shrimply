@@ -15,6 +15,85 @@ use crate::{
 mod background_integer;
 mod text;
 
+// Background enum fields share their concrete type across edits, evaluation and clipboard data.
+macro_rules! background_step {
+    (@getter $getter:pat, $value:ident, $variant:ident, $field:ident) => {
+        let $getter: fn(&shrimply_project_document::project::BackgroundGenerator) -> Option<&TimelineValue<$value>> =
+            |generator| match generator {
+                shrimply_project_document::project::BackgroundGenerator::$variant(value) => Some(&value.$field),
+                _ => None,
+            };
+    };
+    ($project:expr, $target:expr, $path:expr, $value:ident, $getter:pat, $action:expr) => {{
+        use shrimply_project_document::project::{
+            BackgroundKind, Curve, GradientMode, GridLineStyle, NoiseColorMode, NoiseDistribution,
+            PerlinMode, RainbowBands, RainbowFill, VoronoiFill, VoronoiMetric,
+        };
+        let kind = {
+            let project = $project;
+            let item = project
+                .video_item(video_item_address($target)?)
+                .ok_or("background item is no longer available")?;
+            crate::background::generator(item)
+                .ok_or("background generator is no longer available")?
+                .kind()
+        };
+        match ($path, kind) {
+            ("/content/generator/mode", BackgroundKind::ColorGradient) => {
+                type $value = GradientMode;
+                background_step!(@getter $getter, $value, ColorGradient, mode);
+                $action
+            }
+            ("/content/generator/mode", BackgroundKind::PerlinNoise) => {
+                type $value = PerlinMode;
+                background_step!(@getter $getter, $value, PerlinNoise, mode);
+                $action
+            }
+            ("/content/generator/curve", _) => {
+                type $value = Curve;
+                background_step!(@getter $getter, $value, ColorGradient, curve);
+                $action
+            }
+            ("/content/generator/line_style", _) => {
+                type $value = GridLineStyle;
+                background_step!(@getter $getter, $value, Grid, line_style);
+                $action
+            }
+            ("/content/generator/distribution", _) => {
+                type $value = NoiseDistribution;
+                background_step!(@getter $getter, $value, WhiteNoise, distribution);
+                $action
+            }
+            ("/content/generator/color_mode", _) => {
+                type $value = NoiseColorMode;
+                background_step!(@getter $getter, $value, WhiteNoise, color_mode);
+                $action
+            }
+            ("/content/generator/fill", BackgroundKind::Rainbow) => {
+                type $value = RainbowFill;
+                background_step!(@getter $getter, $value, Rainbow, fill);
+                $action
+            }
+            ("/content/generator/fill", BackgroundKind::Voronoi) => {
+                type $value = VoronoiFill;
+                background_step!(@getter $getter, $value, Voronoi, fill);
+                $action
+            }
+            ("/content/generator/bands", _) => {
+                type $value = RainbowBands;
+                background_step!(@getter $getter, $value, Rainbow, bands);
+                $action
+            }
+            ("/content/generator/metric", _) => {
+                type $value = VoronoiMetric;
+                background_step!(@getter $getter, $value, Voronoi, metric);
+                $action
+            }
+            _ => Err(format!("unknown background step timeline: {}", $path)),
+        }
+    }};
+}
+
 impl InspectorController {
     pub fn current_keyframe_time(&self, target: &InspectorTarget) -> Result<Time, String> {
         let address = match target {
@@ -130,73 +209,19 @@ impl InspectorController {
                     >(target, path, enabled, commit),
             };
         }
+        if path.starts_with("/content/generator/") {
+            return background_step!(
+                self.project.borrow(),
+                target,
+                path,
+                T,
+                _,
+                self.set_video_step_keyframes_enabled::<T>(target, path, enabled, commit)
+            );
+        }
         match path {
             crate::gaussian_3d::MODEL_ROTATION_ORDER_PATH => self
                 .set_video_step_keyframes_enabled::<shrimply_3dgs_core::RotationOrder>(
-                    target, path, enabled, commit,
-                ),
-            "/content/generator/mode" => {
-                let project = self.project.borrow();
-                let item = project
-                    .video_item(video_item_address(target)?)
-                    .ok_or_else(|| "background item is no longer available".to_string())?;
-                let kind = crate::background::generator(item)
-                    .map(shrimply_project_document::project::BackgroundGenerator::kind);
-                drop(project);
-                match kind {
-                    Some(shrimply_project_document::project::BackgroundKind::ColorGradient) => self
-                        .set_video_step_keyframes_enabled::<
-                            shrimply_project_document::project::GradientMode,
-                        >(target, path, enabled, commit),
-                    Some(shrimply_project_document::project::BackgroundKind::PerlinNoise) => self
-                        .set_video_step_keyframes_enabled::<shrimply_project_document::project::PerlinMode>(
-                            target, path, enabled, commit,
-                        ),
-                    _ => Err("background mode is no longer available".to_string()),
-                }
-            }
-            "/content/generator/curve" => self
-                .set_video_step_keyframes_enabled::<shrimply_project_document::project::Curve>(
-                    target, path, enabled, commit,
-                ),
-            "/content/generator/line_style" => self
-                .set_video_step_keyframes_enabled::<shrimply_project_document::project::GridLineStyle>(
-                    target, path, enabled, commit,
-                ),
-            "/content/generator/distribution" => self
-                .set_video_step_keyframes_enabled::<shrimply_project_document::project::NoiseDistribution>(
-                    target, path, enabled, commit,
-                ),
-            "/content/generator/color_mode" => self
-                .set_video_step_keyframes_enabled::<shrimply_project_document::project::NoiseColorMode>(
-                    target, path, enabled, commit,
-                ),
-            "/content/generator/fill" => {
-                let project = self.project.borrow();
-                let item = project
-                    .video_item(video_item_address(target)?)
-                    .ok_or_else(|| "background item is no longer available".to_string())?;
-                let kind = crate::background::generator(item)
-                    .map(shrimply_project_document::project::BackgroundGenerator::kind);
-                drop(project);
-                match kind {
-                    Some(shrimply_project_document::project::BackgroundKind::Rainbow) => self
-                        .set_video_step_keyframes_enabled::<shrimply_project_document::project::RainbowFill>(
-                            target, path, enabled, commit,
-                        ),
-                    Some(shrimply_project_document::project::BackgroundKind::Voronoi) => self
-                        .set_video_step_keyframes_enabled::<shrimply_project_document::project::VoronoiFill>(
-                            target, path, enabled, commit,
-                        ),
-                    _ => Err("background fill is no longer available".to_string()),
-                }
-            }
-            "/content/generator/bands" => self
-                .set_video_step_keyframes_enabled::<shrimply_project_document::project::RainbowBands>(
-                    target, path, enabled, commit,
-                ),
-            "/content/generator/metric" => self
-                .set_video_step_keyframes_enabled::<shrimply_project_document::project::VoronoiMetric>(
                     target, path, enabled, commit,
                 ),
             "/sample_method" => self
@@ -299,12 +324,45 @@ impl InspectorController {
         })
     }
 
+    pub(crate) fn background_step_graph(
+        &self,
+        target: &InspectorTarget,
+        path: &str,
+        timeline_id: uuid::Uuid,
+    ) -> Result<Option<crate::ScalarGraph>, String> {
+        background_step!(self.project.borrow(), target, path, T, get, {
+            let project = self.project.borrow();
+            let item = project
+                .video_item(video_item_address(target)?)
+                .ok_or("background item is no longer available")?;
+            let timeline = crate::background::generator(item)
+                .and_then(get)
+                .filter(|timeline| timeline.id == timeline_id)
+                .ok_or("background timeline changed while the inspector was open")?;
+            let runtime = crate::model::target_runtime(&project, &self.player_state, target);
+            Ok(crate::selector::step_graph(timeline, runtime))
+        })
+    }
+
     pub fn step_expression_output(
         &self,
         target: &InspectorTarget,
         path: &str,
         timeline_id: Option<uuid::Uuid>,
     ) -> Result<InspectorExpressionOutput<String>, String> {
+        if path.starts_with("/content/generator/") {
+            if let Some(id) = timeline_id {
+                self.ensure_timeline(target, path, id)?;
+            }
+            return background_step!(
+                self.project.borrow(),
+                target,
+                path,
+                T,
+                _,
+                self.step_expression_output_as::<T>(target, path)
+            );
+        }
         if path.ends_with("/effect/effect/config/method")
             && sampling_method_target(&self.project.borrow(), target, path)?
         {
@@ -508,7 +566,7 @@ impl InspectorController {
         if &self.target() != target {
             return Err("inspector target changed".to_string());
         }
-        let player = shrimply_editor_state::player_state::snapshot(&self.player_state);
+        let player = crate::model::player_snapshot(&self.player_state);
         let project = self.project.borrow();
         let address = video_item_address(target)?;
         let position = project
@@ -561,7 +619,7 @@ impl InspectorController {
         if &self.target() != target {
             return Err("inspector target changed".to_string());
         }
-        let player = shrimply_editor_state::player_state::snapshot(&self.player_state);
+        let player = crate::model::player_snapshot(&self.player_state);
         let project = self.project.borrow();
         let address = video_item_address(target)?;
         let position = project
@@ -659,7 +717,7 @@ impl InspectorController {
         if &self.target() != target {
             return Err("inspector target changed".to_string());
         }
-        let player = shrimply_editor_state::player_state::snapshot(&self.player_state);
+        let player = crate::model::player_snapshot(&self.player_state);
         let project = self.project.borrow();
         let address = video_item_address(target)?;
         let position = project
@@ -697,7 +755,7 @@ impl InspectorController {
         if &self.target() != target {
             return Err("inspector target changed".to_string());
         }
-        let player = shrimply_editor_state::player_state::snapshot(&self.player_state);
+        let player = crate::model::player_snapshot(&self.player_state);
         let project = self.project.borrow();
         let address = video_item_address(target)?;
         let sequence_time = project
@@ -1638,6 +1696,9 @@ fn step_timeline_type(
     target: &InspectorTarget,
     path: &str,
 ) -> Result<&'static str, String> {
+    if path.starts_with("/content/generator/") {
+        return background_step!(project, target, path, T, _, Ok(std::any::type_name::<T>()));
+    }
     if path.ends_with("/effect/effect/config/method")
         && sampling_method_target(project, target, path)?
     {

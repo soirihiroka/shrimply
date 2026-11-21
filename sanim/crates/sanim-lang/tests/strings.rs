@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 
 fn check(source: &str) {
     let mut sources = MemorySources::default();
-    sources.insert("main.sanim", source);
+    sources.insert("main.sanim", format!("{}\nAnimation()", source));
     Engine::default()
         .prepare("main.sanim", &sources, &BTreeMap::new())
         .unwrap();
@@ -97,7 +97,7 @@ fn multiline_strings_keep_crlf_contents_and_correct_following_diagnostics() {
     let mut sources = MemorySources::default();
     sources.insert(
         "main.sanim",
-        "let text=\"\"\"a\r\nb\"\"\"\r\nlet broken=missing",
+        "let text=\"\"\"a\r\nb\"\"\"\r\nlet broken=missing\nAnimation()",
     );
     let error = Engine::default()
         .prepare("main.sanim", &sources, &BTreeMap::new())
@@ -128,11 +128,10 @@ assert("{'hello'!s:>7}" == "  hello")
 }
 
 #[test]
-fn multiline_interpolation_uses_the_same_expression_parser_and_timeline_order() {
+fn multiline_interpolation_uses_the_same_expression_parser_and_value_order() {
     check(
         r#"
 fn step(value: Number): Number {
-    wait(100ms)
     return value
 }
 let text = "first={step(1)}, second={
@@ -143,14 +142,11 @@ wait(100ms)
 "#,
     );
     let mut sources = MemorySources::default();
-    sources.insert("main.sanim", "fn step(): Number { wait(100ms)\nreturn 1 }\nlet text=\"{step()}{step()}\"\nassert(text==\"11\")");
+    sources.insert("main.sanim", "fn step(): Number {return 1}\nlet text=\"{step()}{step()}\"\nassert(text==\"11\")\nAnimation()");
     let prepared = Engine::default()
         .prepare("main.sanim", &sources, &BTreeMap::new())
         .unwrap();
-    assert_eq!(
-        prepared.animation.duration,
-        sanim_core::Fraction::new(1u64, 5u64)
-    );
+    assert_eq!(prepared.animation.duration, sanim_core::Fraction::from(0));
 }
 
 #[test]
@@ -168,7 +164,7 @@ fn malformed_interpolation_has_a_source_location_and_actionable_reason() {
         ),
     ] {
         let mut sources = MemorySources::default();
-        sources.insert("main.sanim", source);
+        sources.insert("main.sanim", format!("{}\nAnimation()", source));
         let error = Engine::default()
             .prepare("main.sanim", &sources, &BTreeMap::new())
             .unwrap_err();

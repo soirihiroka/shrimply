@@ -99,13 +99,9 @@ pub(crate) fn confirm_remux(
     runtime: &Rc<RefCell<TimelineRuntime>>,
     batch: shrimply_timeline_skia::import_queue::BatchId,
 ) {
-    let dialog = adw::AlertDialog::new(
-        Some("Remux MKV/WebM to MP4?"),
-        Some(
-            "MP4 is the supported timeline format. The MP4 will be created beside the source. After import, you can choose whether to delete the original.",
-        ),
-    );
-    dialog.add_responses_i18n(&[("cancel", "Cancel"), ("remux", "Remux")]);
+    let prompt = shrimply_timeline_skia::external_content::remux_prompt();
+    let dialog = adw::AlertDialog::new(Some(&prompt.title), Some(&prompt.body));
+    dialog.add_responses(&[("cancel", &prompt.cancel), ("remux", &prompt.confirm)]);
     dialog.set_close_response("cancel");
     dialog.set_default_response(Some("remux"));
     dialog.set_response_appearance("remux", adw::ResponseAppearance::Suggested);

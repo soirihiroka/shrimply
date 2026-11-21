@@ -10,15 +10,16 @@ Button {
     property var values: []
     property var labels: []
     property var searchTerms: labels
+    property string searchPlaceholderText: ""
     signal selected(string value)
-    text: qsTr("Add modifier")
     flat: true
     icon.source: "qrc:/qt/qml/dev/shrimply/components/icons/add-modifier.svg"
     icon.color: palette.buttonText
     display: AbstractButton.TextBesideIcon
-    onClicked: menu.popup(anchor, 0, 0)
+    onClicked: menu.presentForInput(anchor, menuInput.takeTouch())
 
     SelectorBackend { id: backend }
+    MenuInput { id: menuInput }
     Item {
         id: anchor
         parent: root
@@ -30,10 +31,10 @@ Button {
     }
     SearchMenu {
         id: menu
-        width: 280
+        preferredWidth: 280
         labels: root.labels
         searchTerms: root.searchTerms
-        placeholderText: qsTr("Search modifiers")
+        placeholderText: root.searchPlaceholderText
         onActivated: function(index) {
             const value = backend.valueAt(root.values, index)
             if (value.length > 0)

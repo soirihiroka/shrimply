@@ -32,12 +32,13 @@ pub enum Node {
     Template {
         parts: std::sync::Arc<[crate::TemplatePart<NodeId>]>,
     },
-    Vector {
-        values: Vec<NodeId>,
-    },
-    Component {
-        vector: NodeId,
+    Index {
+        list: NodeId,
         index: usize,
+    },
+    Field {
+        record: NodeId,
+        name: String,
     },
     List {
         values: Vec<NodeId>,
@@ -63,7 +64,7 @@ pub struct CellChannel {
     pub tracks: Vector<Track>,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(try_from = "GraphData")]
 pub struct ReactiveGraph {
     nodes: Vector<Expression>,
@@ -75,16 +76,35 @@ pub struct ReactiveGraph {
     binding_count: usize,
     #[serde(skip)]
     metadata_bytes: usize,
+    native_byte_limit: usize,
+}
+impl Default for ReactiveGraph {
+    fn default() -> Self {
+        Self {
+            nodes: Vector::new(),
+            cells: OrdMap::new(),
+            bindings: OrdMap::new(),
+            track_count: 0,
+            binding_count: 0,
+            metadata_bytes: 0,
+            native_byte_limit: MAX_REACTIVE_BYTES,
+        }
+    }
 }
 #[derive(Deserialize)]
 struct GraphData {
     nodes: Vector<Expression>,
     cells: OrdMap<CellId, CellChannel>,
     bindings: OrdMap<String, OrdMap<Property, NodeId>>,
+    native_byte_limit: Option<usize>,
 }
 impl TryFrom<GraphData> for ReactiveGraph {
     type Error = String;
     fn try_from(data: GraphData) -> Result<Self, String> {
+        let native_byte_limit = data.native_byte_limit.unwrap_or(MAX_REACTIVE_BYTES);
+        if native_byte_limit > MAX_REACTIVE_BYTES {
+            return Err("retained native byte limit exceeds its hard budget".into());
+        }
         let mut graph = Self {
             nodes: data.nodes,
             cells: data.cells,
@@ -92,13 +112,45 @@ impl TryFrom<GraphData> for ReactiveGraph {
             track_count: 0,
             binding_count: 0,
             metadata_bytes: 0,
+            native_byte_limit: MAX_REACTIVE_BYTES,
         };
+        graph.set_native_byte_limit(native_byte_limit)?;
         (graph.track_count, graph.binding_count, graph.metadata_bytes) =
             graph.validated_counts()?;
         Ok(graph)
     }
 }
 impl ReactiveGraph {
+    pub fn set_native_byte_limit(&mut self, bytes: usize) -> Result<(), String> {
+        let limit = bytes.min(MAX_REACTIVE_BYTES);
+        // Restored prefixes can have been prepared under a larger host budget.
+        // Scan only when reducing the ceiling, not on every node insertion.
+        if limit < self.native_byte_limit {
+            let constants =
+                self.nodes
+                    .iter()
+                    .filter_map(|expression| match &expression.operation {
+                        Node::Constant(value) => Some(value),
+                        _ => None,
+                    });
+            let cells = self.cells.values().flat_map(|cell| {
+                std::iter::once(&cell.initial).chain(
+                    cell.tracks
+                        .iter()
+                        .flat_map(|track| [&track.from, &track.to]),
+                )
+            });
+            for value in constants.chain(cells) {
+                if let Value::Texture(texture) = value
+                    && texture.pixels().len() > limit
+                {
+                    return Err("retained texture exceeds the host byte budget".into());
+                }
+            }
+        }
+        self.native_byte_limit = limit;
+        Ok(())
+    }
     pub fn has_cell(&self, id: CellId) -> bool {
         self.cells.contains_key(&id)
     }
@@ -116,20 +168,10 @@ impl ReactiveGraph {
     pub fn cell_dependencies(&self, root: NodeId) -> Result<imbl::OrdSet<CellId>, String> {
         self.dependency_cells(vec![root])
     }
-    pub(crate) fn bound_cells(
+    pub(crate) fn dependency_cells(
         &self,
-        mut visible: impl FnMut(&str) -> bool,
-    ) -> imbl::OrdSet<CellId> {
-        let roots = self
-            .bindings
-            .iter()
-            .filter(|(id, _)| visible(id))
-            .flat_map(|(_, properties)| properties.values().copied())
-            .collect();
-        self.dependency_cells(roots)
-            .expect("retained bindings reference a validated graph")
-    }
-    fn dependency_cells(&self, mut pending: Vec<NodeId>) -> Result<imbl::OrdSet<CellId>, String> {
+        mut pending: Vec<NodeId>,
+    ) -> Result<imbl::OrdSet<CellId>, String> {
         let mut visited = std::collections::BTreeSet::new();
         let mut cells = imbl::OrdSet::new();
         while let Some(id) = pending.pop() {
@@ -159,11 +201,11 @@ impl ReactiveGraph {
                         }
                     }
                 }
-                Node::Vector { values } => pending.extend(values),
                 Node::List { values } => pending.extend(values),
                 Node::Record { fields } => pending.extend(fields.values()),
                 Node::NativeConfig { arguments, .. } => pending.extend(arguments.values()),
-                Node::Component { vector, .. } => pending.push(*vector),
+                Node::Index { list, .. } => pending.push(*list),
+                Node::Field { record, .. } => pending.push(*record),
             }
         }
         Ok(cells)
@@ -228,12 +270,12 @@ impl ReactiveGraph {
             .cells
             .get(&id)
             .ok_or_else(|| format!("unknown reactive cell {id}"))?;
-        Track::at(&cell.tracks, time).map_or_else(
+        Track::at(&cell.tracks, time)?.map_or_else(
             || Ok(cell.initial.clone()),
             |track| {
-                if interpolated_type(&cell.ty) {
+                if track.curve.is_some() || interpolated_type(&cell.ty) {
                     track.sample(time)
-                } else if time >= track.end {
+                } else if track.progress(time)? >= Fraction::from(1) {
                     Ok(track.to.clone())
                 } else {
                     Ok(track.from.clone())
@@ -242,7 +284,14 @@ impl ReactiveGraph {
         )
     }
     pub fn write_cell(&mut self, id: CellId, time: Fraction, value: Value) -> Result<(), String> {
-        self.insert_cell_track(id, time, time, value, Easing::Linear)
+        self.write_cell_in_window(
+            id,
+            time,
+            0.into(),
+            value,
+            Easing::Linear,
+            Default::default(),
+        )
     }
     pub fn animate_cell(
         &mut self,
@@ -255,19 +304,72 @@ impl ReactiveGraph {
         if end <= start {
             return Err("cell animation requires a positive duration".into());
         }
-        self.insert_cell_track(id, start, end, to, easing)
+        self.write_cell_in_window(
+            id,
+            start,
+            math::arithmetic("-", end, start)?,
+            to,
+            easing,
+            Default::default(),
+        )
     }
-    fn insert_cell_track(
+    pub fn write_cell_in_window(
         &mut self,
         id: CellId,
         start: Fraction,
-        end: Fraction,
+        duration: Fraction,
         to: Value,
         easing: Easing,
+        window: crate::math::temporal::Window,
     ) -> Result<(), String> {
+        self.write_cell_track(id, start, duration, (to, None), easing, window)
+    }
+    pub fn write_curve_cell_in_window(
+        &mut self,
+        id: CellId,
+        start: Fraction,
+        duration: Fraction,
+        curve: std::sync::Arc<crate::curve::Curve>,
+        window: crate::math::temporal::Window,
+    ) -> Result<(), String> {
+        curve
+            .duration()
+            .ok_or("animate(curve=...) requires keyframed Curve timestamps")?;
+        let to = curve.at(1.into())?;
+        self.write_cell_track(
+            id,
+            start,
+            duration,
+            (to, Some(curve)),
+            Easing::Linear,
+            window,
+        )
+    }
+    fn write_cell_track(
+        &mut self,
+        id: CellId,
+        start: Fraction,
+        duration: Fraction,
+        target: (Value, Option<std::sync::Arc<crate::curve::Curve>>),
+        easing: Easing,
+        window: crate::math::temporal::Window,
+    ) -> Result<(), String> {
+        let (mut to, curve) = target;
+        math::temporal::writer_end(start, duration)?;
+        let Some(interval) = window.interval(start, duration)? else {
+            return Ok(());
+        };
+        let start = interval.start;
+        let end = interval.end;
+        let cycle = interval.cycle;
         check_time(start)?;
         check_time(end)?;
-        math::timeline_end(start, math::arithmetic("-", end, start)?)?;
+        math::temporal::writer_end(start, math::arithmetic("-", end, start)?)?;
+        if let Some(curve) = &curve
+            && let Some((natural_start, natural_end)) = interval.interpolation
+        {
+            to = curve.at(math::progress(end, natural_start, natural_end)?)?;
+        }
         let cell = self
             .cells
             .get(&id)
@@ -278,6 +380,18 @@ impl ReactiveGraph {
                 cell.ty
             )
         })?;
+        let curve_bytes = if let Some(curve) = &curve {
+            if !cell.ty.accepts(&curve.value_type()) {
+                return Err(format!(
+                    "animated curve value {} does not preserve target type {}",
+                    curve.value_type(),
+                    cell.ty
+                ));
+            }
+            curve.resident_bytes()
+        } else {
+            0
+        };
         // Insert after equal-time events: the last source write wins at an instant.
         let index = cell
             .tracks
@@ -293,7 +407,11 @@ impl ReactiveGraph {
             .checked_sub(1)
             .and_then(|index| cell.tracks.get(index));
         let next = cell.tracks.get(index);
-        if previous.is_some_and(|track| track.end > start)
+        if cell.tracks.back().is_some_and(|track| {
+            track.cycle.is_some_and(|previous| {
+                Some(previous) != cycle && previous.until().is_none_or(|until| until > start)
+            })
+        }) || previous.is_some_and(|track| track.end > start)
             || next.is_some_and(|track| track.start < end)
         {
             return Err(format!(
@@ -305,6 +423,9 @@ impl ReactiveGraph {
         }
         let from = self.sample_cell(id, start)?;
         let track = Track {
+            curve,
+            interpolation: interval.interpolation,
+            cycle,
             start,
             end,
             from,
@@ -330,7 +451,7 @@ impl ReactiveGraph {
                 )?)?;
             }
         }
-        let bytes = self.reserve(2 * std::mem::size_of::<Track>() + value_bytes)?;
+        let bytes = self.reserve(2 * std::mem::size_of::<Track>() + value_bytes + curve_bytes)?;
         let mut tracks = cell.tracks.clone();
         tracks.insert(index, track);
         if let Some(successor) = successor {
@@ -345,13 +466,109 @@ impl ReactiveGraph {
         Ok(())
     }
     pub fn insert_node(&mut self, operation: Node, limit: usize) -> Result<NodeId, String> {
+        self.insert_node_budgeted(operation, limit, &mut 0, u64::MAX)
+    }
+    /// Static immediate inputs become immutable constants; sampling never rebuilds them.
+    pub fn insert_node_budgeted(
+        &mut self,
+        operation: Node,
+        limit: usize,
+        native_work: &mut u64,
+        native_limit: u64,
+    ) -> Result<NodeId, String> {
+        // A literal record projection depends only on its selected child; edits
+        // to unrelated fields must not invalidate or evaluate that child.
+        if let Node::Field { record, name } = &operation
+            && let Some(Expression {
+                operation: Node::Record { fields },
+                ..
+            }) = self.nodes.get(*record)
+            && let Some(child) = fields.get(name)
+        {
+            return Ok(*child);
+        }
         if self.nodes.len() >= limit.min(MAX_REACTIVE_NODES) {
-            return Err("retained expression node limit exceeded; simplify the signal or increase the host's node budget".into());
+            return Err("retained expression node limit exceeded; move constant constructors or lists into a let binding before sig (for example let curve=Curve(...)), or simplify the signal".into());
         }
         let id = self.nodes.len();
-        let (ty, depth) = self.describe(&operation, id)?;
+        let (mut ty, mut depth) = self.describe(&operation, id)?;
         if depth > MAX_REACTIVE_DEPTH {
             return Err("retained expression dependency depth exceeded".into());
+        }
+        let constant = |id: &NodeId| match &self.nodes[*id].operation {
+            Node::Constant(value) => Some(value.clone()),
+            _ => None,
+        };
+        let folded = match &operation {
+            Node::List { values } => {
+                values
+                    .iter()
+                    .map(constant)
+                    .collect::<Option<Vec<_>>>()
+                    .map(|values| {
+                        let Type::List(inner, _) = &ty else {
+                            unreachable!("checked List")
+                        };
+                        Value::List(crate::List::typed(inner.as_ref().clone(), values))
+                    })
+            }
+            Node::Record { fields } => fields
+                .iter()
+                .map(|(name, id)| constant(id).map(|value| (name.clone(), value)))
+                .collect::<Option<OrdMap<_, _>>>()
+                .map(Value::Record),
+            Node::Field { record, name } => constant(record).and_then(|value| {
+                if let Value::Record(fields) = value {
+                    fields.get(name).cloned()
+                } else {
+                    None
+                }
+            }),
+            Node::NativeConfig {
+                operation,
+                arguments,
+            } => {
+                if let Some(arguments) = arguments
+                    .iter()
+                    .map(|(name, id)| constant(id).map(|value| (name.clone(), value)))
+                    .collect::<Option<OrdMap<_, _>>>()
+                {
+                    let mut reservation_error = None;
+                    // Folding is optional: a failing pure call must stay lazy when its
+                    // parent short-circuits, rather than becoming a preparation error.
+                    let value=operation.evaluate(&arguments,|cost|{
+                        if cost.bytes.max(cost.output_bytes)>self.native_byte_limit{
+                            let message="constant native folding exceeds the host byte budget".to_string();reservation_error=Some(message.clone());return Err(message);
+                        }
+                        let required=u64::try_from(cost.work).map_err(|_|"native folding work count overflow")?;
+                        let total=native_work.checked_add(required).ok_or("native folding work count overflow")?;
+                        if total>native_limit {
+                            let message="constant native folding exceeds the remaining native preparation work budget".to_string();reservation_error=Some(message.clone());return Err(message);
+                        }
+                        *native_work=total;Ok(())
+                    });
+                    if let Some(error) = reservation_error {
+                        return Err(error);
+                    }
+                    value.ok()
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        };
+        let operation = if let Some(value) = folded {
+            crate::validate_value(&ty, &value)?;
+            ty = leaf_type(&value)?;
+            depth = 1;
+            Node::Constant(value)
+        } else {
+            operation
+        };
+        if let Node::Constant(Value::Texture(texture)) = &operation
+            && texture.pixels().len() > self.native_byte_limit
+        {
+            return Err("retained texture exceeds the host byte budget".into());
         }
         let bytes = self.reserve(node_bytes(&operation)?)?;
         self.nodes.push_back(Expression {
@@ -409,6 +626,10 @@ impl ReactiveGraph {
             time,
             values: vec![None; self.nodes.len()],
             evaluated: 0,
+            native_work: 0,
+            texture_bytes: self.native_byte_limit,
+            texture_items: MAX_REACTIVE_NODES,
+            texture_budget: crate::value_budget::Budget::default(),
         })
     }
     fn describe(&self, operation: &Node, before: usize) -> Result<(Type, usize), String> {
@@ -486,7 +707,6 @@ impl ReactiveGraph {
                         | Type::Record(_)
                         | Type::Option(_)
                         | Type::Enum { .. }
-                        | Type::Vector(2..=4, Some(_))
                 ) {
                     return Err(format!(
                         "state of type {} cannot be used by a native animated argument; use scalar, font, code, enum or structured configuration values",
@@ -510,37 +730,17 @@ impl ReactiveGraph {
                     left.depth.max(right.depth) + 1,
                 ))
             }
-            Node::Vector { values } => {
-                if !(2..=4).contains(&values.len()) {
-                    return Err(
-                        "retained vectors require two, three or four numeric components".into(),
-                    );
-                }
-                let mut unit = None;
-                let mut depth = 0;
-                for &id in values {
-                    let value = child(id)?;
-                    let component = math::operations::scalar_unit(&value.ty)
-                        .ok_or("retained vector components must be numbers")?;
-                    if unit.is_some_and(|unit| unit != component) {
-                        return Err("retained vector components must use matching units".into());
-                    }
-                    unit = Some(component);
-                    depth = depth.max(value.depth);
-                }
-                Ok((Type::Vector(values.len(), unit), depth + 1))
+            Node::Index { list, index } => {
+                let list = child(*list)?;
+                let inner = list
+                    .ty
+                    .fixed_index(*index)?
+                    .ok_or("retained indexing requires a List with a known fixed length")?;
+                Ok((inner, list.depth + 1))
             }
-            Node::Component { vector, index } => {
-                let vector = child(*vector)?;
-                let Type::Vector(dimension, Some(unit)) = &vector.ty else {
-                    return Err(
-                        "retained component access requires a vector with known units".into(),
-                    );
-                };
-                if *index >= *dimension {
-                    return Err("retained vector component index is out of range".into());
-                }
-                Ok((Type::Numeric(*unit), vector.depth + 1))
+            Node::Field { record, name } => {
+                let record = child(*record)?;
+                Ok((record.ty.record_field(name)?, record.depth + 1))
             }
             Node::Template { parts } => {
                 let mut depth = 0;
@@ -567,6 +767,18 @@ impl ReactiveGraph {
                 Ok((Type::String, depth + 1))
             }
             Node::Math { name, args } => {
+                if let Some(function) = math::linear::list_function(name) {
+                    let mut depth = 0;
+                    let actuals = args
+                        .iter()
+                        .map(|id| {
+                            let node = child(*id)?;
+                            depth = depth.max(node.depth);
+                            Ok(node.ty.clone())
+                        })
+                        .collect::<Result<Vec<_>, String>>()?;
+                    return Ok((function.result_type(&actuals)?, depth + 1));
+                }
                 let function = math::functions::function(name)
                     .ok_or_else(|| format!("'{name}' is not a retained math function"))?;
                 let required = function
@@ -648,7 +860,10 @@ impl ReactiveGraph {
             for track in &cell.tracks {
                 check_time(track.start)?;
                 check_time(track.end)?;
-                math::timeline_end(track.start, math::arithmetic("-", track.end, track.start)?)?;
+                math::temporal::writer_end(
+                    track.start,
+                    math::arithmetic("-", track.end, track.start)?,
+                )?;
                 if previous.is_some_and(|end| end > track.start)
                     || track.reveal.is_some()
                     || track.horizontal.is_some()
@@ -657,7 +872,18 @@ impl ReactiveGraph {
                     return Err("invalid or overlapping retained cell tracks".into());
                 }
                 crate::validate_value(&cell.ty, &track.from)?;
-                let target = state_value_bytes(&cell.ty, &track.to)?;
+                let target = state_value_bytes(&cell.ty, &track.to)?
+                    + if let Some(curve) = &track.curve {
+                        if curve.duration().is_none()
+                            || track.easing != Easing::Linear
+                            || !cell.ty.accepts(&curve.value_type())
+                        {
+                            return Err("invalid retained keyframed curve track".into());
+                        }
+                        curve.resident_bytes()
+                    } else {
+                        0
+                    };
                 state_bytes = state_bytes
                     .checked_add(target)
                     .ok_or("retained state size overflow")?;
@@ -849,10 +1075,23 @@ impl ReactiveGraph {
                             .take_while(|(a, b)| a == b)
                             .count();
                         a.tracks
-                            .get(common)
+                            .iter()
+                            .skip(common)
+                            .zip(b.tracks.iter().skip(common))
+                            .find_map(|(a, b)| a.changed_from(b))
                             .into_iter()
-                            .chain(b.tracks.get(common))
-                            .map(|track| track.start)
+                            .chain(
+                                a.tracks
+                                    .iter()
+                                    .skip(b.tracks.len())
+                                    .map(|track| track.start),
+                            )
+                            .chain(
+                                b.tracks
+                                    .iter()
+                                    .skip(a.tracks.len())
+                                    .map(|track| track.start),
+                            )
                             .min()
                     }
                 }
@@ -871,16 +1110,16 @@ impl ReactiveGraph {
                         right: v,
                     },
                 ) if a == b => earlier(children(*x, *u), children(*y, *v)),
-                (
-                    Node::Component {
-                        vector: a,
-                        index: x,
-                    },
-                    Node::Component {
-                        vector: b,
-                        index: y,
-                    },
-                ) if x == y => children(*a, *b),
+                (Node::Index { list: a, index: x }, Node::Index { list: b, index: y })
+                    if x == y =>
+                {
+                    children(*a, *b)
+                }
+                (Node::Field { record: a, name: x }, Node::Field { record: b, name: y })
+                    if x == y =>
+                {
+                    children(*a, *b)
+                }
                 (Node::Math { name: a, args: x }, Node::Math { name: b, args: y })
                     if a == b && x.len() == y.len() =>
                 {
@@ -888,14 +1127,10 @@ impl ReactiveGraph {
                         .zip(y)
                         .fold(None, |time, (&a, &b)| earlier(time, children(a, b)))
                 }
-                (Node::Vector { values: a }, Node::Vector { values: b })
-                | (Node::List { values: a }, Node::List { values: b })
-                    if a.len() == b.len() =>
-                {
-                    a.iter()
-                        .zip(b)
-                        .fold(None, |time, (&a, &b)| earlier(time, children(a, b)))
-                }
+                (Node::List { values: a }, Node::List { values: b }) if a.len() == b.len() => a
+                    .iter()
+                    .zip(b)
+                    .fold(None, |time, (&a, &b)| earlier(time, children(a, b))),
                 (Node::Record { fields: a }, Node::Record { fields: b })
                     if a.keys().eq(b.keys()) =>
                 {
@@ -968,7 +1203,7 @@ fn node_bytes(node: &Node) -> Result<usize, String> {
             Node::Constant(value) => state_value_bytes(&value.ty(), value)?,
             Node::Unary { op, .. } | Node::Binary { op, .. } => op.len(),
             Node::Math { name, args } => name.len() + args.len() * std::mem::size_of::<NodeId>(),
-            Node::Vector { values } => values.len() * std::mem::size_of::<NodeId>(),
+            Node::Field { name, .. } => name.len(),
             Node::List { values } => values.len() * std::mem::size_of::<NodeId>(),
             Node::Record { fields } => fields
                 .keys()
@@ -998,6 +1233,10 @@ pub struct Sampler<'a> {
     time: Fraction,
     values: Vec<Option<Value>>,
     evaluated: usize,
+    native_work: usize,
+    texture_bytes: usize,
+    texture_items: usize,
+    texture_budget: crate::value_budget::Budget,
 }
 impl Sampler<'_> {
     pub fn evaluated_nodes(&self) -> usize {
@@ -1022,7 +1261,22 @@ impl Sampler<'_> {
                     .iter()
                     .map(|(name, id)| self.value(*id).map(|value| (name.clone(), value)))
                     .collect::<Result<imbl::OrdMap<_, _>, _>>()?;
-                operation.execute(&arguments)?
+                operation.evaluate(&arguments, |cost| {
+                    self.native_work = self
+                        .native_work
+                        .checked_add(cost.work)
+                        .ok_or("retained native work count overflow")?;
+                    if self.native_work > crate::math::texture::MAX_WORK {
+                        return Err("retained native sampling exceeds the frame work budget".into());
+                    }
+                    if cost.bytes > self.texture_bytes {
+                        return Err(
+                            "retained texture sampling exceeds the remaining frame byte budget"
+                                .into(),
+                        );
+                    }
+                    Ok(())
+                })?
             }
             Node::Constant(value) => value.clone(),
             Node::List { values } => {
@@ -1064,34 +1318,51 @@ impl Sampler<'_> {
                 .into(),
             ),
             Node::Math { name, args } => {
-                let numbers = args
-                    .iter()
-                    .map(|id| self.value(*id)?.number())
-                    .collect::<Result<Vec<Number>, String>>()?;
-                Value::Number(math::functions::evaluate(name, &numbers)?)
+                if let Some(function) = math::linear::list_function(name) {
+                    function.evaluate(
+                        &args
+                            .iter()
+                            .map(|id| self.value(*id))
+                            .collect::<Result<Vec<_>, _>>()?,
+                    )?
+                } else {
+                    let numbers = args
+                        .iter()
+                        .map(|id| self.value(*id)?.number())
+                        .collect::<Result<Vec<Number>, String>>()?;
+                    Value::Number(math::functions::evaluate(name, &numbers)?)
+                }
             }
-            Node::Vector { values } => {
-                let numbers = values
-                    .iter()
-                    .map(|id| self.value(*id)?.number())
-                    .collect::<Result<Vec<_>, String>>()?;
-                let unit = numbers[0].unit;
-                let components = numbers
-                    .iter()
-                    .map(|value| math::to_f64(value.value))
-                    .collect::<Result<Vec<_>, _>>()?;
-                Value::from_vector(components, unit)?
-            }
-            Node::Component { vector, index } => {
-                let vector = self.value(*vector)?;
-                let (values, unit) = vector.vector()?;
-                Value::Number(Number {
-                    value: math::from_f64(values[*index])?,
-                    unit,
-                })
+            Node::Index { list, index } => self
+                .value(*list)?
+                .list()?
+                .get(*index)
+                .cloned()
+                .ok_or("retained List index is out of range")?,
+            Node::Field { record, name } => {
+                let Value::Record(fields) = self.value(*record)? else {
+                    return Err(format!(
+                        "retained field '{name}' requires the checked record value"
+                    ));
+                };
+                fields.get(name).cloned().ok_or_else(|| {
+                    format!(
+                        "retained field '{name}' is missing; available fields: {}",
+                        fields.keys().cloned().collect::<Vec<_>>().join(", ")
+                    )
+                })?
             }
         };
         leaf_type(&value)?;
+        if matches!(value, Value::Texture(_)) {
+            crate::value_budget::charge_with_budget(
+                &value,
+                &mut self.texture_bytes,
+                &mut self.texture_items,
+                MAX_REACTIVE_DEPTH,
+                &mut self.texture_budget,
+            )?;
+        }
         self.values[id] = Some(value.clone());
         self.evaluated += 1;
         Ok(value)
@@ -1122,23 +1393,29 @@ fn state_value_bytes(ty: &Type, value: &Value) -> Result<usize, String> {
 fn interpolated_type(ty: &Type) -> bool {
     matches!(
         ty,
-        Type::Numeric(_)
-            | Type::RefinedNumeric(_)
-            | Type::Fraction
-            | Type::Color
-            | Type::Vector(2..=4, Some(_))
-    )
+        Type::Numeric(_) | Type::RefinedNumeric(_) | Type::Fraction | Type::Color
+    ) || matches!(ty, Type::List(inner, _) if math::operations::scalar_unit(inner).is_some())
 }
 fn leaf_type(value: &Value) -> Result<Type, String> {
     match value {
         Value::Number(number) if math::finite(&number.value) => {}
         Value::Fraction(value) if math::finite(value) => {}
         Value::Bool(_) => {}
-        Value::String(text) if text.len() <= math::format::MAX_OUTPUT_BYTES => {}
+        Value::String(text) if text.len() <= math::format::MAX_OUTPUT_BYTES => {
+            return Ok(Type::StringLiteral(text.clone()));
+        }
         Value::Font(font) => {
             font.validate()?;
         }
-        Value::Code(_)
+        Value::Element(_)
+        | Value::Code(_)
+        | Value::VoxelGrid(_)
+        | Value::VoxelLayout(_)
+        | Value::Density(_)
+        | Value::Curve(_)
+        | Value::Random(_)
+        | Value::VoxelMaterial(_)
+        | Value::Texture(_)
         | Value::List(_)
         | Value::Record(_)
         | Value::Some(_)
@@ -1155,8 +1432,6 @@ fn leaf_type(value: &Value) -> Result<Type, String> {
                 .iter()
                 .all(|v| math::finite(v) && *v >= Fraction::from(0) && *v <= Fraction::from(1)) => {
         }
-        Value::Vec2(_) | Value::Vec3(_) | Value::Vec4(_)
-            if value.vector()?.0.iter().all(|v| v.is_finite()) => {}
         _ => {
             return Err(format!(
                 "a value of type {} cannot be retained as a native animated argument; use finite scalar, font, code, enum or structured configuration values",
@@ -1164,10 +1439,27 @@ fn leaf_type(value: &Value) -> Result<Type, String> {
             ));
         }
     }
-    Ok(value.ty())
+    Ok(constant_schema(value))
 }
+// Constants cannot change their discriminants. Keep record string literals without
+// walking persistent list payloads; lists already carry their checked element schema.
+fn constant_schema(value: &Value) -> Type {
+    match value {
+        Value::String(text) => Type::StringLiteral(text.clone()),
+        Value::Record(fields) => Type::Record(
+            fields
+                .iter()
+                .map(|(name, value)| (name.clone(), constant_schema(value)))
+                .collect(),
+        ),
+        _ => value.ty(),
+    }
+}
+
 fn property_type(property: Property, ty: &Type) -> Result<(), String> {
-    if let Some(expected) = crate::code::view::input_type(property) {
+    if let Some(expected) =
+        crate::code::view::input_type(property).or_else(|| crate::voxel::input_type(property))
+    {
         return if expected.accepts(ty) {
             Ok(())
         } else {
@@ -1177,9 +1469,7 @@ fn property_type(property: Property, ty: &Type) -> Result<(), String> {
         };
     }
     let valid = match property {
-        Property::Position | Property::Scroll => {
-            matches!(ty, Type::Vector(2, Some(Unit::Length | Unit::Percent)))
-        }
+        Property::Position | Property::Scroll => Type::coordinates().accepts(ty),
         Property::Rotation => math::operations::scalar_unit(ty) == Some(Unit::Angle),
         Property::Scale | Property::StretchX | Property::Opacity | Property::Reveal => {
             math::operations::scalar_unit(ty) == Some(Unit::Number)
@@ -1190,7 +1480,20 @@ fn property_type(property: Property, ty: &Type) -> Result<(), String> {
             Some(Unit::Length | Unit::Percent)
         ),
         Property::Fill => crate::Paint::ty().accepts(ty),
+        Property::Texture => crate::Type::Texture.accepts(ty),
         Property::Code
+        | Property::VoxelVolume
+        | Property::VoxelLayout
+        | Property::VoxelView
+        | Property::VoxelYaw
+        | Property::VoxelPitch
+        | Property::VoxelZoom
+        | Property::VoxelFov
+        | Property::VoxelCheckFraming
+        | Property::VoxelFrameMargin
+        | Property::VoxelLights
+        | Property::VoxelEnvironment
+        | Property::VoxelCamera
         | Property::CodeLanguage
         | Property::CodeTheme
         | Property::CodeSpans

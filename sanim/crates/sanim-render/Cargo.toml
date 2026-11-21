@@ -6,12 +6,13 @@ license.workspace = true
 
 [dependencies]
 sanim-core.workspace = true
-sanim-data.workspace = true
+sanim-data = { workspace = true, features = ["native-text", "media"] }
 skia-safe.workspace = true
 serde_json.workspace = true
 
 shrimply-drawing-skia.workspace = true
 glam.workspace = true
+shrimply-fonts = { workspace = true, features = ["native"] }
 
 [dev-dependencies]
 sanim-lang.workspace = true

@@ -12,6 +12,7 @@ pub mod canvas;
 pub mod cursor;
 pub mod font_grid;
 pub mod icon;
+pub mod input;
 pub mod math;
 pub mod skia_font;
 pub mod skia_system_font;
@@ -187,7 +188,7 @@ pub fn animate_scroll(animation: ScrollAnimation) -> (f64, bool) {
 
     let t =
         (animation.elapsed.as_secs_f64() / SCROLL_ANIMATION_DURATION.as_secs_f64()).clamp(0.0, 1.0);
-    let eased = 1.0 - (1.0 - t).powi(3);
+    let eased = shrimply_components_core::math::ease_out_cubic(t);
     (
         animation.source + eased * (animation.target - animation.source),
         true,

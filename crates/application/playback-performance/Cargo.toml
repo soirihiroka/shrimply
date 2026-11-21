@@ -10,7 +10,7 @@ serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 shrimply-math-core = { workspace = true }
 shrimply-math-media = { workspace = true }
-shrimply-project-document = { workspace = true, default-features = true }
-shrimply-preview-provider-skia = { workspace = true }
+shrimply-project-document.workspace = true
+shrimply-profiling.workspace = true
 tracing.workspace = true
 uuid.workspace = true

@@ -1,12 +1,17 @@
 #[cfg(target_os = "macos")]
 fn main() {
     use objc2_foundation::NSString;
-    use objc2_metal::{MTLCreateSystemDefaultDevice, MTLDevice, MTLLibrary};
+    use objc2_metal::{
+        MTLCompileOptions, MTLCreateSystemDefaultDevice, MTLDevice, MTLLibrary,
+        MTLMathFloatingPointFunctions, MTLMathMode,
+    };
     use std::{fmt::Write, path::PathBuf};
 
     let directory = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../render-core/shaders");
+    println!("cargo:rerun-if-changed=../../../vendor/vision/shaders");
     let output = PathBuf::from(std::env::var_os("OUT_DIR").expect("Metal shader output"));
     let compiler = shrimply_slang_build::Compiler::new(&directory, &output);
+    let precise_compiler = shrimply_slang_build::Compiler::new(&directory, &output).precise_math();
     let device = MTLCreateSystemDefaultDevice().expect("Metal compiler device unavailable");
     let mut generated = String::from("static MODULES: &[Module] = &[\n");
     // Keep the same module set as render-cuda. Only target compilation differs.
@@ -14,6 +19,11 @@ fn main() {
         .lines()
         .chain(["video_metal"])
     {
+        let compiler = if module == "tracking" {
+            &precise_compiler
+        } else {
+            &compiler
+        };
         let source_path = directory.join(format!("{module}.slang"));
         let (artifacts, changed) = cached_artifacts(&directory, &output, module).map_or_else(
             || {
@@ -27,8 +37,17 @@ fn main() {
         let source =
             std::fs::read_to_string(output.join(&artifacts.filename)).expect("read Metal source");
         let library = changed.then(|| {
+            let options = (module == "tracking").then(|| {
+                let options = MTLCompileOptions::new();
+                options.setMathMode(MTLMathMode::Safe);
+                options.setMathFloatingPointFunctions(MTLMathFloatingPointFunctions::Precise);
+                options
+            });
             device
-                .newLibraryWithSource_options_error(&NSString::from_str(&source), None)
+                .newLibraryWithSource_options_error(
+                    &NSString::from_str(&source),
+                    options.as_deref(),
+                )
                 .unwrap_or_else(|error| panic!("compile Metal module {module}: {error}"))
         });
         let reflection: serde_json::Value =
@@ -101,7 +120,13 @@ fn cached_artifacts(
         .collect::<Option<Vec<_>>>()?
         .into_iter()
         .min()?;
-    let mut inputs = vec![directory.join(format!("{module}.slang"))];
+    let mut inputs = vec![
+        directory.join(format!("{module}.slang")),
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("build.rs"),
+    ];
+    if module == "tracking" {
+        inputs.push(directory.join("../../../../vendor/vision/shaders/tracking.slang"));
+    }
     inputs.extend(
         directory
             .join("modules")
@@ -117,6 +142,7 @@ fn cached_artifacts(
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../gpu/slang/slang-build");
     inputs.push(slang_build.join("compiler.cpp"));
     inputs.push(slang_build.join("build.rs"));
+    inputs.push(slang_build.join("src/slang.rs"));
     inputs.extend(
         std::path::Path::new(shrimply_slang_build::LIBRARY_DIR)
             .read_dir()

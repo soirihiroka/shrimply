@@ -22,6 +22,9 @@ pub mod qobject {
         include!("drag_input.h");
         #[namespace = "shrimply"]
         fn register_drag_input();
+        type QQuickItem;
+        #[namespace = "shrimply"]
+        unsafe fn activate_combo_index(control: *mut QQuickItem, index: i32);
 
         include!("frame_graph.h");
         #[namespace = "shrimply"]
@@ -271,6 +274,12 @@ pub mod qobject {
         fn value_at(self: &SelectorBackend, values: &QStringList, index: i32) -> QString;
         #[qinvokable]
         fn searchable(self: &SelectorBackend, count: i32) -> bool;
+        #[qinvokable]
+        #[cxx_name = "menuUsesBottomSheet"]
+        fn menu_uses_bottom_sheet(self: &SelectorBackend, touch: bool) -> bool;
+        #[qinvokable]
+        #[cxx_name = "activateComboIndex"]
+        unsafe fn activate_combo(self: &SelectorBackend, control: *mut QQuickItem, index: i32);
 
         #[qobject]
         #[qml_element]
@@ -280,8 +289,14 @@ pub mod qobject {
         #[qproperty(i32, frame_rate, cxx_name = "frameRate")]
         #[qproperty(i32, preset_count, cxx_name = "presetCount")]
         #[qproperty(i32, frame_rate_count, cxx_name = "frameRateCount")]
+        #[qproperty(bool, changed)]
         type ProjectSettingsBackend = super::ProjectSettingsBackendRust;
 
+        #[qinvokable]
+        fn discard(self: Pin<&mut ProjectSettingsBackend>);
+        #[qinvokable]
+        #[cxx_name = "settingsText"]
+        fn settings_text(self: &ProjectSettingsBackend, field: &QString) -> QString;
         #[qinvokable]
         fn configure(
             self: Pin<&mut ProjectSettingsBackend>,
@@ -1129,6 +1144,20 @@ impl cxx_qt::Initialize for qobject::SelectorBackend {
 }
 
 impl qobject::SelectorBackend {
+    /// # Safety
+    /// `control` must be a live Qt Quick ComboBox on its GUI thread.
+    pub unsafe fn activate_combo(&self, control: *mut qobject::QQuickItem, index: i32) {
+        unsafe { qobject::activate_combo_index(control, index) };
+    }
+
+    pub fn menu_uses_bottom_sheet(&self, touch: bool) -> bool {
+        shrimply_components_core::layout::menu_uses_bottom_sheet(if touch {
+            "touch"
+        } else {
+            "pointer"
+        })
+    }
+
     pub fn selected_index(&self, values: &QStringList, value: &QString) -> i32 {
         let choices = selector::identity_choices(values.iter().map(ToString::to_string).collect());
         i32::try_from(selector::selected_index(&value.to_string(), &choices)).unwrap_or_default()
@@ -1201,6 +1230,7 @@ pub struct ProjectSettingsBackendRust {
     frame_rate: i32,
     preset_count: i32,
     frame_rate_count: i32,
+    changed: bool,
     settings: project_settings::ProjectSettings,
 }
 
@@ -1214,6 +1244,7 @@ impl Default for ProjectSettingsBackendRust {
             frame_rate: settings.frame_rate as i32,
             preset_count: (PROJECT_PRESETS.len() + 1) as i32,
             frame_rate_count: COMMON_FRAME_RATES.len() as i32,
+            changed: false,
             settings,
         }
     }
@@ -1369,6 +1400,25 @@ impl qobject::LivePerformanceBackend {
 }
 
 impl qobject::ProjectSettingsBackend {
+    pub fn settings_text(&self, field: &QString) -> QString {
+        let text = match field.to_string().as_str() {
+            "fps" => "FPS",
+            "resolution" => "Resolution",
+            "discard" => project_settings::SETTINGS_DISCARD,
+            "apply" => project_settings::SETTINGS_APPLY,
+            "cancel" => project_settings::SETTINGS_CANCEL,
+            "title" => project_settings::SETTINGS_TITLE,
+            "warning" => project_settings::SETTINGS_WARNING,
+            field => panic!("unknown project settings label: {field}"),
+        };
+        shrimply_i18n_qt::text(text)
+    }
+
+    pub fn discard(mut self: Pin<&mut Self>) {
+        self.as_mut().rust_mut().settings.discard();
+        self.as_mut().publish_settings();
+    }
+
     pub fn minimum_dimension(&self) -> i32 {
         i32::try_from(MIN_CANVAS_DIMENSION).expect("minimum canvas dimension must fit i32")
     }
@@ -1511,6 +1561,7 @@ impl qobject::ProjectSettingsBackend {
         self.as_mut().set_width(settings.width as i32);
         self.as_mut().set_height(settings.height as i32);
         self.as_mut().set_frame_rate(settings.frame_rate as i32);
+        self.as_mut().set_changed(settings.changed());
     }
 }
 

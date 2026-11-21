@@ -88,11 +88,16 @@ pub(super) fn view(
                 let edited = control.clone();
                 let canvas = Rc::new(RefCell::new(None::<Weak<NSView>>));
                 let action_canvas = canvas.clone();
+                let edit = RefCell::new(shrimply_inspector_core::InspectorGraphEdit::default());
                 let graph = FrameGraph::with_actions(
                     state,
                     move |action| {
-                        if let FrameGraphAction::TextInterpolationRequested { owner_id, x, y } =
-                            action
+                        if let FrameGraphAction::TextInterpolationRequested {
+                            owner_id,
+                            x,
+                            y,
+                            touch,
+                        } = action
                         {
                             let Some(canvas) = action_canvas.borrow().as_ref().and_then(Weak::load)
                             else {
@@ -119,9 +124,9 @@ pub(super) fn view(
                                     .collect();
                             let selected_context = editing.clone();
                             let selected_control = edited.clone();
-                            shrimply_components_appkit::show_searchable_popover_at(
+                            shrimply_components_appkit::show_searchable_menu_at(
                                 &canvas,
-                                objc2_foundation::NSPoint::new(x, y),
+                                (objc2_foundation::NSPoint::new(x, y), touch),
                                 "Search text interpolations",
                                 choices,
                                 menu.value,
@@ -145,15 +150,24 @@ pub(super) fn view(
                         }
                         let live = matches!(
                             action,
-                            FrameGraphAction::KeysMoved(_) | FrameGraphAction::PlayheadChanged(_)
+                            FrameGraphAction::EditStarted
+                                | FrameGraphAction::KeysMoved(_)
+                                | FrameGraphAction::PlayheadChanged(_)
                         );
                         if !live {
                             editing.end_editing();
                         }
-                        let result = editing.controller.apply_control_graph_action(
+                        let result = edit.borrow_mut().apply(
+                            &editing.controller,
                             &editing.target,
-                            &edited,
                             action,
+                            |action| {
+                                editing.controller.apply_control_graph_action(
+                                    &editing.target,
+                                    &edited,
+                                    action,
+                                )
+                            },
                         );
                         if live && result.is_ok() {
                             editing.finish(result);

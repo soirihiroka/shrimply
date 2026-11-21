@@ -1,0 +1,99 @@
+# An original Minecraft-inspired survival base with native procedural textures.
+import "./voxel_structures.sanim" as structures
+let grass = structures.materials.grass
+let stone = structures.materials.stone
+let cobble = structures.materials.cobble
+let wood = structures.materials.wood
+let timber = structures.materials.timber
+let leaves = structures.materials.leaves
+let water = structures.materials.water
+let sand = structures.materials.sand
+let lantern = structures.materials.lantern
+
+# Terrain and river banks are independently reusable volumes.
+mut terrain = VoxelGrid(size = [96, 52, 96])
+terrain = terrain.fill(min = [2, 0, 2], max = [94, 5, 94], material = stone)
+terrain = terrain.fill(min = [1, 5, 1], max = [95, 7, 95], material = grass)
+terrain = terrain.fill(min = [4, 7, 4], max = [69, 9, 91], material = grass)
+terrain = terrain.fill(min = [83, 7, 6], max = [93, 9, 91], material = grass)
+terrain = terrain.fill(min = [70, 6, 1], max = [82, 7, 95], material = water)
+terrain = terrain.fill(min = [68, 7, 2], max = [70, 8, 94], material = sand)
+terrain = terrain.fill(min = [82, 7, 3], max = [84, 8, 94], material = sand)
+terrain = terrain.fill(min = [8, 9, 6], max = [26, 11, 27], material = grass)
+terrain = terrain.fill(min = [10, 11, 8], max = [23, 13, 23], material = grass)
+# Level the building site and support the watchtower above the riverbank.
+terrain = terrain.erase(min = [18, 9, 11], max = [79, 15, 49])
+terrain = terrain.fill(min = [66, 7, 25], max = [76, 9, 35], material = stone)
+
+# Cabin, porch, roof, chimney, and window cutouts.
+let cabin = structures.cabin()
+
+# A separate watchtower is positioned by the layout tree, rather than world coordinates.
+let tower = structures.tower()
+
+# Garden, orchard, bridge and courtyard details.
+let garden = structures.garden()
+
+mut details = VoxelGrid(size = [96, 52, 96])
+details = details.fill(min = [68, 10, 56], max = [85, 11, 64], material = wood)
+for x in [68, 73, 78, 83] {
+    for z in [55, 64] {
+        details = details.fill(min = [x, 8, z], max = [x + 1, 14, z + 1], material = timber)
+    }
+}
+details = details.fill(min = [68, 13, 55], max = [85, 14, 56], material = timber)
+details = details.fill(min = [68, 13, 64], max = [85, 14, 65], material = timber)
+details = details.fill(min = [32, 9, 48], max = [67, 10, 52], material = cobble)
+details = details.fill(min = [64, 9, 53], max = [68, 10, 89], material = cobble)
+details = details.fill(min = [13, 9, 48], max = [33, 10, 52], material = cobble)
+for x in [26, 65] {
+    for z in [51, 86] {
+        details = details.fill(min = [x, 9, z], max = [x + 1, 15, z + 1], material = timber)
+        details = details.fill(min = [x, 15, z], max = [x + 1, 16, z + 1], material = lantern)
+    }
+}
+# Three steps join the raised porch to the courtyard without entering its foundation.
+details = details.fill(min = [36, 9, 47], max = [42, 10, 50], material = cobble)
+details = details.fill(min = [36, 10, 46], max = [42, 11, 48], material = wood)
+details = details.fill(min = [36, 11, 45], max = [42, 12, 47], material = wood)
+for base in [[12, 13, 15], [85, 9, 18], [88, 9, 76], [12, 9, 83], [10, 9, 43]] {
+    let x = base[0]
+    let y = base[1]
+    let z = base[2]
+    details = details.fill(min = [x, y, z], max = [x + 2, y + 15, z + 2], material = timber)
+    details = details.fill(min = [x - 4, y + 10, z - 4], max = [x + 6, y + 15, z + 6], material = leaves)
+    details = details.fill(min = [x - 3, y + 15, z - 3], max = [x + 5, y + 18, z + 5], material = leaves)
+    details = details.fill(min = [x - 1, y + 18, z - 1], max = [x + 3, y + 20, z + 3], material = leaves)
+}
+
+# A real three-dimensional layout: fixed containing space, nested flow and anchors.
+let cabin_part = <VoxelPart volume={cabin}/>
+let tower_part = <VoxelPart volume={tower}/>
+let garden_part = <VoxelPart volume={garden}/>
+let terrain_part = <VoxelPart volume={terrain} position_mode="absolute"/>
+let details_part = <VoxelPart volume={details} position_mode="absolute"/>
+let buildings = <VoxelBox flow="x" gap={8} align={["center","start","center"]}>
+    {cabin_part}
+    {tower_part}
+</VoxelBox>
+let world = <VoxelBox size={[96,52,96]}>
+    {terrain_part}
+    <VoxelBox flow="z" gap={5} position_mode="absolute" at={[50%,0%,50%]} anchor={[50%,0%,50%]} offset={[0,9,0]} align={["center","start","center"]}>
+        {buildings}
+        {garden_part}
+    </VoxelBox>
+    {details_part}
+</VoxelBox>
+# Validate solid cells, rather than rejecting overlapping bounding boxes of hollow parts.
+world.assert_disjoint(cabin_part, details_part)
+world.assert_disjoint(cabin_part, terrain_part)
+world.assert_disjoint(garden_part, details_part)
+world.assert_disjoint(garden_part, terrain_part)
+world.assert_disjoint(cabin_part, tower_part)
+world.assert_within(cabin_part, world)
+mut yaw =-25deg
+let scene = VoxelScene(layout = world, yaw = yaw, zoom = 1, check_framing = true)
+scene.assert_framed()
+scene.fade_in(duration = 600ms)
+animate(yaw, to = 110deg, duration = 8s, ease = "linear")
+wait(800ms)

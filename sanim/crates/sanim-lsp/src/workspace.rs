@@ -1,4 +1,4 @@
-//! Overlay-aware static analysis. Data assets and animation evaluation are never invoked.
+//! Overlay-aware analysis; bounded temporal sizing reads only analyzed source modules.
 use crate::text::{self, Document};
 use sanim_lang::{AnalyzedModule, Engine, FileSources, LintSeverity, Sources};
 use serde_json::{Value, json};
@@ -17,6 +17,8 @@ pub(crate) struct Syntax {
     version: i64,
     pub markup: Vec<sanim_lang::parser::MarkupOpening>,
     pub highlights: Vec<sanim_lang::core::code::Highlight>,
+    pub type_references: Vec<sanim_lang::parser::TypeReference>,
+    pub declarations: Vec<sanim_lang::parser::Declaration>,
 }
 impl OpenDocument {
     pub fn syntax(&self) -> std::cell::Ref<'_, Syntax> {
@@ -41,6 +43,8 @@ impl OpenDocument {
         *self.syntax.borrow_mut() = Some(Syntax {
             version: self.document.version,
             markup: recovery.markup.clone(),
+            type_references: recovery.type_references.clone(),
+            declarations: recovery.declarations.clone(),
             highlights: sanim_lang::core::code::normalize_highlights(
                 &highlights,
                 &self.document.text,
@@ -63,10 +67,33 @@ pub(crate) struct Analysis {
 #[derive(Default)]
 pub(crate) struct Workspace {
     pub roots: Vec<PathBuf>,
+    pub snippet_support: bool,
     pub documents: BTreeMap<String, OpenDocument>,
     pub analyses: BTreeMap<String, Analysis>,
     engines: BTreeMap<PathBuf, Engine>,
+    layouts: sanim_lang::core::cache::Cache<String, StaticLayout>,
     published: BTreeSet<String>,
+}
+
+const STATIC_LAYOUT_BYTES: usize = 8 * 1024 * 1024;
+const STATIC_LAYOUT_ENTRIES: usize = 64;
+const STATIC_LAYOUT_OPERATIONS: u64 = 10_000;
+pub(crate) struct StaticLayout {
+    pub duration: Option<sanim_lang::core::plan::Extent>,
+    pub receipts: Arc<[sanim_lang::core::plan::Receipt]>,
+    pub constraint: Option<&'static str>,
+}
+struct LayoutSources<'a> {
+    source: &'a dyn Sources,
+    modules: &'a BTreeMap<String, AnalyzedModule>,
+}
+impl Sources for LayoutSources<'_> {
+    fn read(&self, path: &str) -> Result<Vec<u8>, String> {
+        if !self.modules.contains_key(path) {
+            return Err(format!("layout depends on external resource '{path}'"));
+        }
+        self.source.read(path)
+    }
 }
 
 struct Overlay<'a> {
@@ -137,6 +164,7 @@ impl Workspace {
     pub fn close(&mut self, uri: &str) {
         self.documents.remove(uri);
         self.analyses.remove(uri);
+        self.layouts.remove(&uri.to_owned());
         let used = self
             .documents
             .values()
@@ -167,6 +195,7 @@ impl Workspace {
             .map(|(uri, _)| uri.clone())
             .collect::<Vec<_>>();
         for uri in affected {
+            self.layouts.remove(&uri);
             if let Err(error) = self.analyze(&uri) {
                 let document = &self.documents[&uri].document;
                 let analysis = Analysis {
@@ -452,6 +481,97 @@ impl Workspace {
             .find(|(_, document)| document.path == path)
             .map(|(uri, _)| Ok(uri.clone()))
             .unwrap_or_else(|| text::uri(&path))
+    }
+    pub(crate) fn animation_layout(&mut self, uri: &str) -> Option<Arc<StaticLayout>> {
+        self.layouts
+            .configure(STATIC_LAYOUT_BYTES, STATIC_LAYOUT_ENTRIES);
+        if let Some(layout) = self.layouts.get(&uri.to_owned()) {
+            return Some(layout);
+        }
+        let analysis = self.analyses.get(uri)?;
+        if analysis.failed {
+            return None;
+        }
+        let sources = Overlay {
+            files: FileSources::new(&analysis.root).ok()?,
+            root: &analysis.root,
+            documents: &self.documents,
+        };
+        let sources = LayoutSources {
+            source: &sources,
+            modules: &analysis.modules,
+        };
+        let engine = self.engines.get_mut(&analysis.root)?;
+        let limits = engine.limits.clone();
+        let preparation = engine.preparation;
+        let available = engine.available_duration;
+        engine.preparation = sanim_lang::Preparation::Demand;
+        engine.available_duration = None;
+        engine.limits.max_operations = engine.limits.max_operations.min(STATIC_LAYOUT_OPERATIONS);
+        engine.limits.max_iterations = engine
+            .limits
+            .max_iterations
+            .min(STATIC_LAYOUT_OPERATIONS as usize);
+        engine.limits.max_elements = engine
+            .limits
+            .max_elements
+            .min(STATIC_LAYOUT_OPERATIONS as usize);
+        engine.limits.max_time_map_bytes =
+            engine.limits.max_time_map_bytes.min(STATIC_LAYOUT_BYTES);
+        engine.limits.max_cache_bytes = engine.limits.max_cache_bytes.min(STATIC_LAYOUT_BYTES);
+        engine.limits.data.max_bytes = engine.limits.data.max_bytes.min(STATIC_LAYOUT_BYTES);
+        engine.limits.data.max_values = engine
+            .limits
+            .data
+            .max_values
+            .min(STATIC_LAYOUT_OPERATIONS as usize);
+        engine.limits.data.max_sql_steps = engine
+            .limits
+            .data
+            .max_sql_steps
+            .min(STATIC_LAYOUT_OPERATIONS);
+        let result = engine.duration(&analysis.entry, &sources, &BTreeMap::new());
+        engine.limits = limits;
+        engine.preparation = preparation;
+        engine.available_duration = available;
+        let layout = match result {
+            Ok(report) => StaticLayout {
+                duration: Some(if report.indefinite {
+                    sanim_lang::core::plan::Extent::Infinite
+                } else {
+                    sanim_lang::core::plan::Extent::Finite(report.duration)
+                }),
+                receipts: report.temporal_layout,
+                constraint: None,
+            },
+            Err(error) => StaticLayout {
+                duration: None,
+                receipts: Arc::from([]),
+                constraint: Some(if matches!(error.code.as_str(), "S138" | "S139") {
+                    "Duration: `match_parent`; the editor clip supplies the parent constraint."
+                } else if error.message.contains("budget") || error.message.contains("limit") {
+                    "Duration: unresolved within the static evaluation budget."
+                } else {
+                    "Duration: unresolved without runtime inputs."
+                }),
+            },
+        };
+        let bytes = std::mem::size_of::<StaticLayout>()
+            + uri.len()
+            + layout
+                .receipts
+                .iter()
+                .map(|receipt| {
+                    std::mem::size_of_val(receipt)
+                        + receipt.origin.as_ref().map_or(0, |origin| {
+                            origin.location.source.len()
+                                + origin.binding.as_ref().map_or(0, |binding| binding.len())
+                        })
+                })
+                .sum::<usize>();
+        let layout = Arc::new(layout);
+        self.layouts.insert(uri.to_owned(), layout.clone(), bytes);
+        Some(layout)
     }
     pub fn module(&self, uri: &str) -> Option<(&Analysis, &AnalyzedModule)> {
         let analysis = self.analyses.get(uri)?;

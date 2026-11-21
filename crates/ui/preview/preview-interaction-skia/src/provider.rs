@@ -80,7 +80,7 @@ pub fn prepare_geometry(
     let keyframe_time = project.keyframe_time(address, position)?;
     let evaluation =
         VisualEvaluation::for_item_with_audio(project, item, sequence_position, audio_analysis);
-    let mut source_sizes = source_sizes(project);
+    let mut source_sizes = HashMap::from([(item.id, source_size(project, item))]);
     update_text_source_size(&mut source_sizes, item, &evaluation, expression_cache);
     let tracked_camera = item
         .tracking_camera_source()
@@ -163,6 +163,9 @@ pub fn prepare_snap_scene(
             ) {
                 continue;
             }
+            source_sizes
+                .entry(item.id)
+                .or_insert_with(|| source_size(project, item));
             update_text_source_size(
                 source_sizes,
                 item,
@@ -337,34 +340,16 @@ impl PreviewBuilder for BuildContext<'_> {
     }
 }
 
-pub fn source_sizes(project: &Project) -> HashMap<uuid::Uuid, Vec2> {
-    let fallback = Vec2::new(
-        project.canvas_size.width.max(1) as f32,
-        project.canvas_size.height.max(1) as f32,
-    );
-    project
-        .video_tracks
-        .iter()
-        .flat_map(|track| &track.items)
-        .chain(
-            project
-                .folded_sequences
-                .iter()
-                .flat_map(|sequence| &sequence.video_tracks)
-                .flat_map(|track| &track.items),
+fn source_size(project: &Project, item: &shrimply_project_document::project::VideoItem) -> Vec2 {
+    let size = Vec2::new(item.source_width as f32, item.source_height as f32);
+    if size.min_element() > 0.0 {
+        size
+    } else {
+        Vec2::new(
+            project.canvas_size.width.max(1) as f32,
+            project.canvas_size.height.max(1) as f32,
         )
-        .map(|item| {
-            let size = Vec2::new(item.source_width as f32, item.source_height as f32);
-            (
-                item.id,
-                if size.min_element() > 0.0 {
-                    size
-                } else {
-                    fallback
-                },
-            )
-        })
-        .collect()
+    }
 }
 
 pub fn update_text_source_size(
@@ -409,4 +394,19 @@ pub fn update_text_source_size(
         .size
         .max(Vec2::ONE),
     );
+}
+
+pub fn sample_camera(
+    id: uuid::Uuid,
+    source: &shrimply_3dgs_core::TrackingCameraSource,
+    time: shrimply_project_document::project::Time,
+) -> Option<shrimply_project_document::project::TrackedCameraPreview> {
+    shrimply_visual_core::camera_reconstruction::sample(id, source, time).map(|camera| {
+        shrimply_project_document::project::TrackedCameraPreview {
+            position: camera.position,
+            rotation: camera.rotation,
+            projection: camera.projection,
+            vertical_fov_degrees: camera.vertical_fov_degrees,
+        }
+    })
 }

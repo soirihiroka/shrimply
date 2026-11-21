@@ -1,27 +1,20 @@
 //! Exact execution provenance with direct playback indexing and indexed source invalidation.
 use crate::{Fraction, Span, math};
+mod frames;
 use serde::{Deserialize, Serialize};
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    sync::Arc,
-};
+use std::{collections::BTreeMap, sync::Arc};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-pub enum TimeMapKind {
-    Statement,
-    Function,
-    Schedule,
-}
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct TimeMapEntry {
     pub source: String,
     pub span: Span,
     pub start: Fraction,
-    pub end: Fraction,
+    /// Exclusive finite end; None retains an indefinitely active source interval.
+    pub end: Option<Fraction>,
     /// Root execution boundary: resume from this statement's pre-state.
     pub statement: usize,
-    pub kind: TimeMapKind,
     pub call_path: imbl::Vector<String>,
+    pub clock: Option<Arc<crate::math::cycle::Cycle>>,
 }
 impl TimeMapEntry {
     fn estimated_bytes(&self) -> usize {
@@ -39,9 +32,11 @@ impl TimeMapEntry {
 pub struct TimeMap {
     pub entries: imbl::Vector<Arc<TimeMapEntry>>,
     #[serde(skip)]
-    frames: Arc<Vec<Option<Arc<TimeMapEntry>>>>,
+    frames: Arc<frames::Index>,
     #[serde(skip)]
     sources: BTreeMap<String, SourceIndex>,
+    #[serde(skip)]
+    event_index: Arc<shrimply_math_core::events::Index>,
     #[serde(skip)]
     metadata_bytes: usize,
 }
@@ -49,60 +44,98 @@ impl std::fmt::Debug for TimeMap {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("TimeMap")
             .field("executions", &self.entries.len())
-            .field("frames", &self.frames.len())
+            .field("frames", &self.frames.count())
             .field("sources", &self.sources.len())
             .finish()
     }
 }
 impl TimeMap {
     pub fn push(&mut self, entry: TimeMapEntry, max_bytes: usize) -> Result<(), String> {
+        math::temporal::viewport(entry.start)?;
+        if let Some(end) = entry.end {
+            math::temporal::viewport(end)?;
+            if end < entry.start {
+                return Err("source execution ends before it begins".into());
+            }
+        }
         let bytes = entry.estimated_bytes();
-        self.metadata_bytes = self
+        let metadata_bytes = self
             .metadata_bytes
             .checked_add(bytes)
             .ok_or("time map metadata size overflow")?;
-        if self.metadata_bytes > max_bytes {
+        if metadata_bytes > max_bytes {
             return Err(format!(
                 "time map execution metadata exceeds {max_bytes} bytes; reduce repeated scheduling or increase the host's time-map limit"
             ));
         }
+        self.metadata_bytes = metadata_bytes;
         self.entries.push_back(Arc::new(entry));
         Ok(())
     }
-    /// O(1): direct access to the execution covering this presentation frame.
+    /// Direct lookup for small timelines; indexed winner runs for large or repeated timelines.
     pub fn at_frame(&self, frame: usize) -> Option<&TimeMapEntry> {
-        self.frames.get(frame)?.as_deref()
+        self.frames.at(frame, &self.entries)
     }
-    pub fn indexed_frames(&self) -> usize {
-        self.frames.len()
+    /// None is an unbounded source; Some(0) is metadata-only or not indexed yet.
+    pub fn indexed_frames(&self) -> Option<usize> {
+        self.frames.count()
+    }
+    /// Shared exact finite and periodic execution boundaries, without expanding playback cycles.
+    pub fn event_index(&self) -> Arc<shrimply_math_core::events::Index> {
+        self.event_index.clone()
     }
     /// Indexed overlapping source spans; repeated calls are aggregated at their earliest use.
     pub fn earliest(&self, source: &str, span: Span) -> Option<Fraction> {
         self.sources.get(source)?.earliest(span)
     }
-    /// Build once per successful revision. The sweep never compares every entry to every frame.
+    /// Index a source clock once; absent duration is indefinite, absent rate is metadata only.
     pub fn index(
         &mut self,
-        rate: Fraction,
-        duration: Fraction,
+        rate: Option<Fraction>,
+        duration: Option<Fraction>,
         max_bytes: usize,
     ) -> Result<(), String> {
-        let count = usize::try_from(math::frame_count(duration, rate)?)
-            .map_err(|_| "time map frame count exceeds address space")?
-            .checked_add(1)
-            .ok_or("time map frame count overflow")?;
-        let bytes = count
-            .checked_mul(std::mem::size_of::<Option<Arc<TimeMapEntry>>>())
-            .ok_or("time map byte count overflow")?;
-        if bytes > max_bytes {
-            return Err(format!(
-                "time map needs {bytes} bytes for {count} frames; limit {max_bytes}. Reduce the external frame rate or duration."
-            ));
+        if let Some(rate) = rate {
+            math::frame_count(Fraction::from(0), rate)?;
         }
-        let mut events = BTreeMap::<usize, Vec<(bool, (TimeMapKind, usize, usize))>>::new();
+        if let Some(duration) = duration {
+            math::temporal::viewport(duration)?;
+        }
+        let count = match (rate, duration) {
+            (Some(rate), Some(duration)) => Some(
+                usize::try_from(math::frame_count(duration, rate)?)
+                    .map_err(|_| "time map frame count exceeds address space")?
+                    .checked_add(1)
+                    .ok_or("time map frame count overflow")?,
+            ),
+            (Some(_), None) => None,
+            (None, _) => Some(0),
+        };
         let mut source_spans = BTreeMap::<String, BTreeMap<(usize, usize), Fraction>>::new();
+        let mut event_index = shrimply_math_core::events::Builder::new(max_bytes);
         self.metadata_bytes = 0;
-        for (index, entry) in self.entries.iter().enumerate() {
+        for entry in &self.entries {
+            event_index.boundaries([Some(entry.start), entry.end].into_iter().flatten().filter(
+                |time| *time >= Fraction::from(0) && duration.is_none_or(|end| *time <= end),
+            ))?;
+            if let Some(clock) = &entry.clock {
+                event_index.clock(
+                    clock.start(),
+                    clock.end(),
+                    clock.until(),
+                    [
+                        clock.start(),
+                        clock.end(),
+                        entry.start,
+                        entry.end.unwrap_or(clock.end()),
+                    ]
+                    .into_iter()
+                    .filter(|time| *time >= clock.start() && *time <= clock.end()),
+                )?;
+                if let Some(until) = clock.until() {
+                    event_index.boundaries([until])?;
+                }
+            }
             self.metadata_bytes = self
                 .metadata_bytes
                 .checked_add(entry.estimated_bytes())
@@ -117,22 +150,6 @@ impl TimeMap {
                 .entry((entry.span.start, entry.span.end))
                 .and_modify(|time| *time = (*time).min(entry.start))
                 .or_insert(entry.start);
-            let start = usize::try_from(math::frame_count(entry.start, rate)?)
-                .map_err(|_| "time map start overflow")?;
-            let mut end = usize::try_from(math::frame_count(entry.end, rate)?)
-                .map_err(|_| "time map end overflow")?;
-            if entry.start == entry.end {
-                if math::arithmetic("/", Fraction::from(start as u64), rate)? != entry.start {
-                    continue;
-                }
-                end = start.checked_add(1).ok_or("time map boundary overflow")?;
-            }
-            if start >= count || end <= start {
-                continue;
-            }
-            let key = (entry.kind, entry.statement, index);
-            events.entry(start).or_default().push((true, key));
-            events.entry(end).or_default().push((false, key));
         }
         let source_bytes = source_spans
             .iter()
@@ -143,33 +160,29 @@ impl TimeMap {
                             + 4 * std::mem::size_of::<Option<SpanSummary>>())
             })
             .sum::<usize>();
-        let total_bytes = bytes
-            .saturating_add(self.metadata_bytes)
-            .saturating_add(source_bytes);
+        let event_index = event_index.finish()?;
+        let total_bytes = self
+            .metadata_bytes
+            .saturating_add(source_bytes)
+            .saturating_add(event_index.estimated_bytes());
         if total_bytes > max_bytes {
             return Err(format!(
                 "time map needs approximately {total_bytes} bytes including frame/source indexes; limit {max_bytes}. Reduce scheduling work, frame rate or duration."
             ));
         }
-        let mut active = BTreeSet::new();
-        let mut frames = Vec::with_capacity(count);
-        for frame in 0..count {
-            if let Some(changes) = events.remove(&frame) {
-                // End intervals before opening the next ones at the same exact frame boundary.
-                for &(_, key) in changes.iter().filter(|(add, _)| !add) {
-                    active.remove(&key);
-                }
-                for (_, key) in changes.into_iter().filter(|(add, _)| *add) {
-                    active.insert(key);
-                }
-            }
-            frames.push(
-                active
-                    .last()
-                    .map(|&(_, _, index)| self.entries[index].clone()),
-            );
-        }
+        let frames = if let Some(rate) = rate {
+            frames::Index::build(
+                &self.entries,
+                count,
+                rate,
+                max_bytes - total_bytes,
+                &event_index,
+            )?
+        } else {
+            frames::Index::default()
+        };
         self.frames = Arc::new(frames);
+        self.event_index = Arc::new(event_index);
         self.sources = source_spans
             .into_iter()
             .map(|(source, spans)| (source, SourceIndex::new(spans)))

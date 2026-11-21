@@ -1,5 +1,7 @@
 use shrimply_math_color::Color;
 
+pub mod picker;
+
 pub const RECENT_LIMIT: usize = 8;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -95,21 +97,10 @@ pub fn color_hex(color: Color<u8>, with_alpha: bool) -> String {
 
 pub fn parse_hex(value: &str, with_alpha: bool) -> Option<Color<u8>> {
     let value = value.trim().strip_prefix('#').unwrap_or(value.trim());
-    let parsed = u32::from_str_radix(value, 16).ok()?;
-    let mut color = match value.len() {
-        6 => Color::from_rgb(
-            ((parsed >> 16) & 0xff) as u8,
-            ((parsed >> 8) & 0xff) as u8,
-            (parsed & 0xff) as u8,
-        ),
-        8 => Color::new(
-            ((parsed >> 24) & 0xff) as u8,
-            ((parsed >> 16) & 0xff) as u8,
-            ((parsed >> 8) & 0xff) as u8,
-            (parsed & 0xff) as u8,
-        ),
-        _ => return None,
-    };
+    if !value.bytes().all(|digit| digit.is_ascii_hexdigit()) {
+        return None;
+    }
+    let mut color = shrimply_math_color::parse_css_color(&format!("#{value}"))?;
     if !with_alpha {
         color.a = u8::MAX;
     }

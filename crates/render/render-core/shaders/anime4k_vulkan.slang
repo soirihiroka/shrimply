@@ -4,9 +4,9 @@ import anime4k;
 struct ConvolutionArguments {
   ConvolutionParams params;
   ConvolutionTerm* terms;
-  uint64_t term_count;
+  BufferIndex term_count;
   float4* output;
-  uint64_t output_count;
+  BufferIndex output_count;
 };
 
 [shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)]

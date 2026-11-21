@@ -4,9 +4,12 @@ use shrimply_components_gtk::ui::I18nFileFilterExt;
 use shrimply_export_gtk as export;
 use shrimply_process_reporting::crash;
 mod header_menu;
+mod inspector_layout;
+mod view_preferences;
 use shrimply_components_gtk::project_settings::ProjectSettingsSelector;
 use shrimply_editor_state::player_state;
 use shrimply_inspector_gtk as inspector;
+use shrimply_preferences_core as preferences;
 use shrimply_preview_gtk as video_player;
 use shrimply_timeline_gtk as timeline;
 
@@ -28,9 +31,7 @@ use std::time::{Duration, SystemTime};
 
 const DEFAULT_WINDOW_WIDTH: i32 = 1800;
 const DEFAULT_WINDOW_HEIGHT: i32 = 1100;
-const DEFAULT_INSPECTOR_WIDTH: i32 = inspector::INSPECTOR_MIN_WIDTH;
-const DEFAULT_TOP_PANEL_HEIGHT: i32 = 660;
-const PANEL_ANIMATION_DURATION_MS: u32 = 250;
+use shrimply_components_core::layout::PANEL_ANIMATION_DURATION_MS;
 const SESSION_POLL_INTERVAL: Duration = Duration::from_millis(16);
 const LOADING_WINDOW_WIDTH: i32 = 800;
 const LOADING_WINDOW_HEIGHT: i32 = 600;
@@ -111,6 +112,7 @@ fn build_ui(window: &adw::ApplicationWindow, project: project::Project) {
     let preview_focus = session.preview_focus.clone();
     let property_clipboard = session.property_clipboard.clone();
     let preferences = session.preferences.clone();
+    let editor_layout = preferences::snapshot(&preferences).editor_layout;
     let audio_levels = session.audio_levels.clone();
     let audio_player = session.audio_player.clone();
 
@@ -141,11 +143,17 @@ fn build_ui(window: &adw::ApplicationWindow, project: project::Project) {
         video_player.clone(),
         property_clipboard.clone(),
     );
+    let overlay_mode = Rc::new(Cell::new(false));
     let top = gtk::Paned::new(gtk::Orientation::Horizontal);
     top.set_wide_handle(false);
     top.set_start_child(Some(&inspector));
     top.set_end_child(Some(&video_player));
-    top.set_position(DEFAULT_INSPECTOR_WIDTH);
+    top.set_position(if editor_layout.inspector_visible {
+        editor_layout.inspector_width.round() as i32
+    } else {
+        0
+    });
+    inspector.set_visible(editor_layout.inspector_visible);
     top.set_resize_start_child(true);
     top.set_resize_end_child(true);
     top.set_shrink_start_child(false);
@@ -153,9 +161,11 @@ fn build_ui(window: &adw::ApplicationWindow, project: project::Project) {
 
     let layout = gtk::Paned::new(gtk::Orientation::Vertical);
     layout.set_wide_handle(false);
-    layout.set_start_child(Some(&top));
     layout.set_end_child(Some(&timeline));
-    layout.set_position(DEFAULT_TOP_PANEL_HEIGHT);
+    layout.set_position(
+        ((1.0 - editor_layout.timeline_fraction) * DEFAULT_WINDOW_HEIGHT as f32).round() as i32,
+    );
+    timeline.set_visible(editor_layout.timeline_visible);
     layout.set_resize_start_child(true);
     layout.set_resize_end_child(true);
     layout.set_shrink_start_child(false);
@@ -163,19 +173,29 @@ fn build_ui(window: &adw::ApplicationWindow, project: project::Project) {
 
     let (header_bar, title, connection_indicator) = header_bar();
     let inspector_toggle = gtk::ToggleButton::builder()
-        .active(true)
+        .active(editor_layout.inspector_visible)
         .icon_name("dock-left-symbolic")
         .tooltip_text(tr!("Toggle Inspector").as_ref())
         .build();
-    connect_panel_toggle(
+    let inspector_animation = connect_panel_toggle(
         &inspector_toggle,
         &top,
         &inspector,
         PanelSide::Start,
-        DEFAULT_INSPECTOR_WIDTH,
+        editor_layout.inspector_width.round() as i32,
+        Some(overlay_mode.clone()),
+        &preferences,
     );
+    let inspector_host = inspector_layout::connect(
+        &top,
+        &inspector,
+        &inspector_toggle,
+        overlay_mode,
+        inspector_animation,
+    );
+    layout.set_start_child(Some(&inspector_host));
     let timeline_toggle = gtk::ToggleButton::builder()
-        .active(true)
+        .active(editor_layout.timeline_visible)
         .icon_name("dock-bottom-symbolic")
         .tooltip_text(tr!("Toggle Timeline").as_ref())
         .build();
@@ -184,8 +204,12 @@ fn build_ui(window: &adw::ApplicationWindow, project: project::Project) {
         &layout,
         &timeline,
         PanelSide::End,
-        DEFAULT_WINDOW_HEIGHT - DEFAULT_TOP_PANEL_HEIGHT,
+        (editor_layout.timeline_fraction * DEFAULT_WINDOW_HEIGHT as f32).round() as i32,
+        None,
+        &preferences,
     );
+    view_preferences::connect(&preferences, &inspector_toggle, &top, PanelSide::Start);
+    view_preferences::connect(&preferences, &timeline_toggle, &layout, PanelSide::End);
     let panel_toggles = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     panel_toggles.append(&inspector_toggle);
     panel_toggles.append(&timeline_toggle);
@@ -234,11 +258,18 @@ fn connect_panel_toggle(
     panel: &impl IsA<gtk::Widget>,
     side: PanelSide,
     default_size: i32,
-) {
+    overlay_mode: Option<Rc<Cell<bool>>>,
+    preferences: &preferences::SharedPreferences,
+) -> (Rc<Cell<i32>>, adw::TimedAnimation) {
     let panel = panel.as_ref().clone();
     let expanded_size = Rc::new(Cell::new(default_size));
     let weak_paned = paned.downgrade();
+    let target_overlay_mode = overlay_mode.clone();
     let target = adw::CallbackAnimationTarget::new(move |size| {
+        if target_overlay_mode.as_ref().is_some_and(|mode| mode.get()) {
+            return;
+        }
+
         let Some(paned) = weak_paned.upgrade() else {
             return;
         };
@@ -259,7 +290,11 @@ fn connect_panel_toggle(
     let weak_button = button.downgrade();
     let weak_paned = paned.downgrade();
     let weak_panel = panel.downgrade();
+    let done_overlay_mode = overlay_mode.clone();
     animation.connect_done(move |_| {
+        if done_overlay_mode.as_ref().is_some_and(|mode| mode.get()) {
+            return;
+        }
         let (Some(button), Some(paned), Some(panel)) = (
             weak_button.upgrade(),
             weak_paned.upgrade(),
@@ -277,29 +312,52 @@ fn connect_panel_toggle(
     });
 
     let paned = paned.clone();
+    let expanded_panel_size = expanded_size.clone();
+    let toggle_animation = animation.clone();
+    let preferences = preferences.clone();
     button.connect_toggled(move |button| {
+        if overlay_mode.as_ref().is_some_and(|mode| mode.get()) {
+            return;
+        }
         let current_size = match side {
             PanelSide::Start => paned.position(),
             PanelSide::End => paned.height().saturating_sub(paned.position()),
         };
-        if !button.is_active() && animation.state() != adw::AnimationState::Playing {
-            expanded_size.set(current_size);
+        if !button.is_active() && toggle_animation.state() != adw::AnimationState::Playing {
+            expanded_panel_size.set(current_size);
         }
         if button.is_active() {
             panel.set_visible(true);
+            let layout = preferences::snapshot(&preferences).editor_layout;
+            expanded_panel_size.set(match side {
+                PanelSide::Start => layout.inspector_width.round() as i32,
+                PanelSide::End => {
+                    let height = paned.height() as f32;
+                    let content = paned.start_child().expect("preview pane exists").height()
+                        + paned.end_child().expect("timeline pane exists").height();
+                    let divider = (height - content as f32).max(0.0);
+                    (shrimply_components_core::math::split_pane_extent(
+                        height,
+                        divider,
+                        layout.timeline_fraction,
+                    ) + divider)
+                        .round() as i32
+                }
+            });
         }
         match side {
             PanelSide::Start => paned.set_shrink_start_child(true),
             PanelSide::End => paned.set_shrink_end_child(true),
         }
-        animation.set_value_from(f64::from(current_size));
-        animation.set_value_to(f64::from(if button.is_active() {
-            expanded_size.get()
+        toggle_animation.set_value_from(f64::from(current_size));
+        toggle_animation.set_value_to(f64::from(if button.is_active() {
+            expanded_panel_size.get()
         } else {
             0
         }));
-        animation.play();
+        toggle_animation.play();
     });
+    (expanded_size, animation)
 }
 
 fn begin_project_load(app: &adw::Application, path: PathBuf) {
@@ -705,13 +763,13 @@ fn project_loading_view_with_subtitle(subtitle: &str) -> adw::ToolbarView {
 fn header_bar() -> (adw::HeaderBar, gtk::Label, gtk::Image) {
     let title = gtk::Label::builder()
         .label(tr!("Shrimply").as_ref())
+        .ellipsize(gtk::pango::EllipsizeMode::End)
         .css_classes(["title"])
         .build();
     let connection_indicator = gtk::Image::builder()
         .icon_name("network-server-symbolic")
         .pixel_size(16)
         .tooltip_text(tr!("Editing API activity (active or within the last 3 seconds)").as_ref())
-        .css_classes(["success"])
         .visible(false)
         .build();
     let title_box = gtk::Box::new(gtk::Orientation::Horizontal, 6);

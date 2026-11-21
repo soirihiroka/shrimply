@@ -146,10 +146,11 @@ impl Scene {
             let (item, motion_blur_source) = if branch == CaptureBranch::Host {
                 (item, None)
             } else {
-                match shrimply_visual_core::modifier_cache::effective_item(
+                match shrimply_visual_core::modifier_cache::effective_item_at(
                     &address,
                     &item,
                     project.canvas_size,
+                    item_time,
                 )? {
                     Some(cached) => (Cow::Owned(cached), Some(item)),
                     None => (item, None),
@@ -182,7 +183,9 @@ impl Scene {
                 shrimply_visual_core::transparent_fill::render_position(project, &item, item_time)
             };
             let source_time = match item.content {
-                VideoItemContent::Media | VideoItemContent::Gif => {
+                VideoItemContent::Media
+                | VideoItemContent::Gif
+                | VideoItemContent::AnimatedImage => {
                     let Some(time) = video_source_time_at(&item, content_time) else {
                         continue;
                     };

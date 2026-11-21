@@ -3,17 +3,21 @@ name = "shrimply-text-3d"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+default = ["mesh"]
+mesh = ["dep:shrimply-fonts", "dep:cairo", "dep:glib", "dep:lyon_tessellation", "dep:pango", "dep:pangocairo", "dep:tracing"]
+
 [dependencies]
-shrimply-fonts = { workspace = true, features = ["native"] }
+shrimply-fonts = { workspace = true, features = ["native"], optional = true }
 hashbrown.workspace = true
-cairo = { workspace = true, features = ["freetype"] }
+cairo = { workspace = true, features = ["freetype"], optional = true }
 glam.workspace = true
-glib.workspace = true
-lyon_tessellation.workspace = true
-pango = { workspace = true, features = ["v1_56"] }
-pangocairo.workspace = true
+glib = { workspace = true, optional = true }
+lyon_tessellation = { workspace = true, optional = true }
+pango = { workspace = true, features = ["v1_56"], optional = true }
+pangocairo = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive"] }
 shrimply-property-model = { workspace = true }
 shrimply-scene-3d = { workspace = true }
-tracing.workspace = true
+tracing = { workspace = true, optional = true }
 uuid = { workspace = true, features = ["v4", "serde"] }

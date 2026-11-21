@@ -1,11 +1,14 @@
 use crate::device::Device;
 use ash::vk;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
+#[cfg(target_os = "linux")]
+use std::sync::OnceLock;
 
 #[derive(Clone)]
 pub struct Buffer(Arc<Storage>);
 
 struct Storage {
+    #[cfg(target_os = "linux")]
     oidn: OnceLock<Result<shrimply_denoise_oidn::SharedBuffer, String>>,
     device: Arc<Device>,
     buffer: vk::Buffer,
@@ -14,6 +17,7 @@ struct Storage {
     address: u64,
     host_visible: bool,
     exportable: bool,
+    #[cfg(target_os = "linux")]
     allocation_size: usize,
 }
 
@@ -29,8 +33,14 @@ impl Buffer {
         }
         let mut external = vk::ExternalMemoryBufferCreateInfo::default()
             .handle_types(vk::ExternalMemoryHandleTypeFlags::OPAQUE_FD);
+        // Word-backed sub-byte shader access may touch the last partial word.
+        let storage_size = if device.word_storage {
+            size.next_multiple_of(size_of::<u32>())
+        } else {
+            size
+        };
         let mut info = vk::BufferCreateInfo::default()
-            .size(size as u64)
+            .size(storage_size as u64)
             .usage(
                 vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
                     | vk::BufferUsageFlags::STORAGE_BUFFER
@@ -65,9 +75,7 @@ impl Buffer {
             unsafe {
                 device.raw.destroy_buffer(buffer, None);
             }
-            return Err(format!(
-                "Intel Vulkan buffer has no memory type for {flags:?}"
-            ));
+            return Err(format!("Vulkan buffer has no memory type for {flags:?}"));
         };
         let mut address =
             vk::MemoryAllocateFlagsInfo::default().flags(vk::MemoryAllocateFlags::DEVICE_ADDRESS);
@@ -86,7 +94,7 @@ impl Buffer {
                 unsafe {
                     device.raw.destroy_buffer(buffer, None);
                 }
-                return Err(format!("allocate Intel Vulkan memory: {e:?}"));
+                return Err(format!("allocate Vulkan memory: {e:?}"));
             }
         };
         if let Err(e) = unsafe { device.raw.bind_buffer_memory(buffer, memory, 0) } {
@@ -94,19 +102,15 @@ impl Buffer {
                 device.raw.destroy_buffer(buffer, None);
                 device.raw.free_memory(memory, None);
             }
-            return Err(format!("bind Intel Vulkan memory: {e:?}"));
+            return Err(format!("bind Vulkan memory: {e:?}"));
         }
-        let address = unsafe {
-            device
-                .raw
-                .get_buffer_device_address(&vk::BufferDeviceAddressInfo::default().buffer(buffer))
-        };
+        let address = device.buffer_address(buffer);
         if address == 0 {
             unsafe {
                 device.raw.destroy_buffer(buffer, None);
                 device.raw.free_memory(memory, None);
             }
-            return Err("Intel Vulkan buffer device addresses are unavailable".into());
+            return Err("Vulkan buffer device addresses are unavailable".into());
         }
         let host_visible = device.memory.memory_types[index as usize]
             .property_flags
@@ -114,6 +118,7 @@ impl Buffer {
                 vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
             );
         Ok(Self(Arc::new(Storage {
+            #[cfg(target_os = "linux")]
             oidn: OnceLock::new(),
             device,
             buffer,
@@ -122,6 +127,7 @@ impl Buffer {
             address,
             host_visible,
             exportable,
+            #[cfg(target_os = "linux")]
             allocation_size: requirements.size as usize,
         })))
     }
@@ -130,6 +136,7 @@ impl Buffer {
         self.0.exportable
     }
 
+    #[cfg(target_os = "linux")]
     pub(crate) fn oidn(
         &self,
         device: &Arc<shrimply_denoise_oidn::Device>,
@@ -216,6 +223,7 @@ impl Buffer {
 
 impl Drop for Storage {
     fn drop(&mut self) {
+        #[cfg(target_os = "linux")]
         drop(self.oidn.take());
         unsafe {
             self.device.raw.destroy_buffer(self.buffer, None);

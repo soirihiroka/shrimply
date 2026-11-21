@@ -106,6 +106,17 @@ fn prepare_imported_outcome(outcome: ProjectValidationOutcome) -> ProjectValidat
 }
 
 impl Project {
+    pub fn set_video_settings(
+        &mut self,
+        canvas_size: CanvasSize,
+        frame_rate: Fraction,
+    ) -> Result<(), String> {
+        shrimply_project_types::validate_video_settings(canvas_size, frame_rate)?;
+        self.canvas_size = canvas_size;
+        self.fps = frame_rate;
+        Ok(())
+    }
+
     pub fn frame_step(&self) -> Time {
         shrimply_math_core::time_from_frame(1, self.fps)
             .expect("project frame rate must be positive")

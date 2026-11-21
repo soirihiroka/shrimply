@@ -5,11 +5,22 @@ edition = "2024"
 
 [dependencies]
 serde_json.workspace = true
+shrimply-framegraph-skia.workspace = true
+shrimply-components-skia.workspace = true
+shrimply-components-core.workspace = true
+shrimply-i18n.workspace = true
 shrimply-audio-modifiers = { workspace = true }
 shrimply-property-model = { workspace = true }
 shrimply-inspector-core = { workspace = true, default-features = false }
 shrimply-math-core = { workspace = true }
 shrimply-preview-provider-skia = { workspace = true }
 shrimply-project-document = { workspace = true, default-features = true }
-shrimply-visual-modifiers = { workspace = true }
+shrimply-visual-modifiers = { workspace = true, default-features = true }
 uuid.workspace = true
+shrimply-timeline-skia.workspace = true
+shrimply-tts.workspace = true
+shrimply-export-core.workspace = true
+shrimply-preferences-core.workspace = true
+shrimply-path-core.workspace = true
+shrimply-asset.workspace = true
+shrimply-trust-core.workspace = true

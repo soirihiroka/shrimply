@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::sync::mpsc;
 
 use imagesize::ImageType;
-use shrimply_editor_state::player_state;
+use shrimply_player_core as player_state;
 use shrimply_project_document::project::project_directory;
 
 use super::*;
@@ -31,6 +31,24 @@ pub enum ExternalDropAction {
     ConfirmRemux { batch: crate::import_queue::BatchId },
 }
 
+pub struct RemuxPrompt {
+    pub title: std::borrow::Cow<'static, str>,
+    pub body: std::borrow::Cow<'static, str>,
+    pub confirm: std::borrow::Cow<'static, str>,
+    pub cancel: std::borrow::Cow<'static, str>,
+}
+
+pub fn remux_prompt() -> RemuxPrompt {
+    RemuxPrompt {
+        title: shrimply_i18n::text("Remux MKV/WebM to MP4?"),
+        body: shrimply_i18n::text(
+            "MP4 is the supported timeline import format. The file can be remuxed losslessly first.",
+        ),
+        confirm: shrimply_i18n::text("Remux"),
+        cancel: shrimply_i18n::text("Cancel"),
+    }
+}
+
 pub struct ExternalImportEvent {
     pub batch: crate::import_queue::BatchId,
     pub retained_paths: Option<Vec<PathBuf>>,
@@ -53,22 +71,20 @@ pub fn classify_external_text(text: String) -> ExternalText {
     url.map_or(ExternalText::Text(text), ExternalText::ImageUrl)
 }
 
-pub fn external_files_need_remux(paths: &[PathBuf]) -> Result<bool, String> {
+pub(super) fn validate_dropped_files(paths: &[PathBuf]) -> Result<(), String> {
     if paths.is_empty() {
         return Err("drop contains no files".into());
     }
-    let mut remux = false;
     for path in paths {
         match crate::import::file_kind(path) {
             None => return Err(format!("{} has an unsupported file type", path.display())),
             Some(crate::import::FileKind::Vtt) => {
                 return Err("VTT files must be imported through a caption track".into());
             }
-            Some(crate::import::FileKind::Mkv | crate::import::FileKind::WebM) => remux = true,
             Some(_) => {}
         }
     }
-    Ok(remux)
+    Ok(())
 }
 
 fn download_image(url: &str) -> Result<OwnedFile, String> {
@@ -110,6 +126,8 @@ fn image_extension_for_content_type(content_type: &str) -> Option<&'static str> 
         "image/gif" => Some("gif"),
         "image/webp" => Some("webp"),
         "image/avif" => Some("avif"),
+        "image/heic" | "image/heif" => Some("heif"),
+        "image/jxl" => Some("jxl"),
         "image/svg+xml" => Some("svg"),
         _ => None,
     }
@@ -128,6 +146,8 @@ fn image_extension_for_url(url: &str) -> Option<&'static str> {
         "gif" => Some("gif"),
         "webp" => Some("webp"),
         "avif" => Some("avif"),
+        "heic" | "heif" => Some("heif"),
+        "jxl" => Some("jxl"),
         "svg" => Some("svg"),
         _ => None,
     }
@@ -144,16 +164,11 @@ pub fn validate_clipboard_image_length(length: usize) -> Result<(), String> {
 }
 
 pub fn store_clipboard_visual_file(path: &Path) -> Result<Option<PathBuf>, String> {
-    let Some(kind) = crate::import::file_kind(path) else {
+    use crate::import::VisualMediaKind;
+    let Some(kind) = crate::import::image_kind(path) else {
         return Ok(None);
     };
-    if !matches!(
-        kind,
-        crate::import::FileKind::Image
-            | crate::import::FileKind::Gif
-            | crate::import::FileKind::Svg
-            | crate::import::FileKind::Pdf
-    ) {
+    if kind == VisualMediaKind::LayeredImage {
         return Ok(None);
     }
     let directory = project_directory().join(CLIPBOARD_MEDIA_DIR);
@@ -161,10 +176,7 @@ pub fn store_clipboard_visual_file(path: &Path) -> Result<Option<PathBuf>, Strin
         return Ok(Some(path.to_owned()));
     }
     let bytes = read_clipboard_file(path)?;
-    if matches!(
-        kind,
-        crate::import::FileKind::Image | crate::import::FileKind::Gif
-    ) {
+    if matches!(kind, VisualMediaKind::Image | VisualMediaKind::Gif) {
         return store_clipboard_raster(
             &bytes,
             path.extension().and_then(|extension| extension.to_str()),
@@ -213,6 +225,9 @@ fn store_clipboard_raster(bytes: &[u8], extension_hint: Option<&str>) -> Result<
         ImageType::Jpeg => "jpg",
         ImageType::Webp => "webp",
         ImageType::Gif => "gif",
+        ImageType::Jxl => "jxl",
+        ImageType::Heif(imagesize::Compression::Hevc) => "heic",
+        ImageType::Heif(imagesize::Compression::Av1) => "avif",
         ImageType::Heif(_)
             if extension_hint.is_some_and(|extension| extension.eq_ignore_ascii_case("avif")) =>
         {
@@ -249,7 +264,7 @@ pub struct TextPreview {
 
 impl crate::scene::Scene {
     pub fn update_external_files_preview(&mut self, paths: &[PathBuf], point: Vec2) -> bool {
-        if external_files_need_remux(paths).is_err() {
+        if validate_dropped_files(paths).is_err() {
             self.clear_drop_preview();
             return false;
         }
@@ -285,16 +300,40 @@ impl crate::scene::Scene {
         paths: Vec<PathBuf>,
         point: Option<Vec2>,
     ) -> Result<crate::import_queue::ImportStart, String> {
+        let destination = self.external_files_destination(point)?;
+        self.external_imports.enqueue_destination(
+            paths,
+            &self.project.borrow(),
+            destination,
+            self.default_visual_duration,
+        )
+    }
+
+    pub fn external_files_destination(
+        &self,
+        point: Option<Vec2>,
+    ) -> Result<crate::import_queue::Destination, String> {
         if point.is_some_and(|point| !self.external_drop_target(point)) {
             return Err("files cannot be inserted at this timeline position".into());
         }
-        let placement = self.external_placement(point);
-        self.external_imports.enqueue(
+        crate::import_queue::destination(&self.project.borrow(), self.external_placement(point))
+    }
+
+    /// Retain provider copies and their captured destination until the import commits or fails.
+    pub fn enqueue_external_owned_files(
+        &mut self,
+        files: Vec<OwnedFile>,
+        destination: crate::import_queue::Destination,
+    ) -> Result<crate::import_queue::ImportStart, String> {
+        let paths = files.iter().map(|file| file.path().to_path_buf()).collect();
+        let started = self.external_imports.enqueue_destination(
             paths,
             &self.project.borrow(),
-            placement,
+            destination,
             self.default_visual_duration,
-        )
+        )?;
+        self.external_owned_files.insert(started.batch, files);
+        Ok(started)
     }
 
     pub fn perform_external_drop(
@@ -425,6 +464,7 @@ impl crate::scene::Scene {
                 break;
             };
             if completion.cancelled {
+                self.external_owned_files.remove(&completion.batch);
                 self.external_import_events.push_back(ExternalImportEvent {
                     batch: completion.batch,
                     retained_paths: None,
@@ -437,13 +477,12 @@ impl crate::scene::Scene {
                 completion.result,
             ) {
                 Ok(()) => {
-                    for file in self
-                        .external_owned_files
-                        .remove(&completion.batch)
-                        .unwrap_or_default()
-                    {
-                        file.keep();
-                    }
+                    self.external_imports.finish_owned_sources(
+                        self.external_owned_files
+                            .remove(&completion.batch)
+                            .unwrap_or_default(),
+                        &completion.paths,
+                    );
                     self.external_import_events.push_back(ExternalImportEvent {
                         batch: completion.batch,
                         retained_paths: Some(completion.paths),

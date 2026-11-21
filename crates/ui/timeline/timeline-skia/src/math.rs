@@ -30,10 +30,20 @@ pub fn toggle_timeline_zoom(
 pub fn time_at_x(view: crate::view::TimelineViewState, x: f64) -> Time {
     Time::from_big_fraction(
         BigFraction::from_fraction(fraction_from_f64(view.scroll_seconds))
-            + BigFraction::from_fraction(fraction_from_f64(x - crate::geometry::timeline_x()))
+            + BigFraction::from_fraction(fraction_from_f64(x - crate::geometry::timeline_x(view)))
                 * BigFraction::from_fraction(fraction_from_f64(view.seconds_per_pixel)),
     )
     .max(Time::ZERO)
+}
+
+/// Conservative bounds include the minimum-width pixel used for subpixel clips.
+pub fn visible_item_times(view: crate::view::TimelineViewState, width: f64) -> (Time, Time) {
+    let origin = crate::geometry::timeline_x(view);
+    let padding = shrimply_timeline_paint_skia::MIN_ITEM_PIXEL_WIDTH;
+    (
+        time_at_x(view, origin - padding),
+        time_at_x(view, origin + width + padding),
+    )
 }
 
 pub fn snap_distance(view: crate::view::TimelineViewState, radius_pixels: f64) -> Time {
@@ -53,7 +63,7 @@ pub fn zoom_at_x(
     if !factor.is_finite() || factor <= 0.0 {
         return;
     }
-    let x = x.max(crate::geometry::timeline_x());
+    let x = x.max(crate::geometry::timeline_x(*view));
     let anchor = time_at_x(*view, x);
     view.seconds_per_pixel = (view.seconds_per_pixel / factor).clamp(
         minimum_seconds_per_pixel,
@@ -61,7 +71,7 @@ pub fn zoom_at_x(
     );
     view.scroll_seconds = Time::from_big_fraction(
         BigFraction::from_fraction(anchor.seconds)
-            - BigFraction::from_fraction(fraction_from_f64(x - crate::geometry::timeline_x()))
+            - BigFraction::from_fraction(fraction_from_f64(x - crate::geometry::timeline_x(*view)))
                 * BigFraction::from_fraction(fraction_from_f64(view.seconds_per_pixel)),
     )
     .max(Time::ZERO)
@@ -85,4 +95,65 @@ pub(crate) fn track_row_at_y(y: f64) -> Option<usize> {
     (y.is_finite() && y >= crate::metrics::RULER_HEIGHT).then(|| {
         ((y - crate::metrics::RULER_HEIGHT) / crate::metrics::TRACK_HEIGHT).floor() as usize
     })
+}
+
+// Drawing coordinates retain the desktop's existing arithmetic and cost.
+pub fn time_to_x(time_seconds: f64, x: f64, view: crate::TimelineViewState) -> f64 {
+    x + (time_seconds - view.scroll_seconds) / view.seconds_per_pixel
+}
+
+pub fn frame_width(view: crate::TimelineViewState, frame_step_seconds: f64) -> f64 {
+    if view.seconds_per_pixel <= 0.0 {
+        1.0
+    } else {
+        frame_step_seconds / view.seconds_per_pixel
+    }
+}
+
+/// Pan and zoom in one operation, preserving the time under the moving centroid.
+pub fn touch_transform(
+    view: &mut crate::TimelineViewState,
+    previous: crate::Vec2,
+    center: crate::Vec2,
+    scale: f32,
+    minimum: f64,
+) {
+    if !scale.is_finite() || scale <= 0.0 {
+        return;
+    }
+    zoom_at_x(view, previous.x.into(), scale.into(), minimum);
+    let delta = center - previous;
+    view.scroll_seconds = shrimply_math_core::Time::from_seconds_f64(view.scroll_seconds)
+        .signed_sub(
+            shrimply_math_core::Time::from_seconds_f64(view.seconds_per_pixel)
+                .scaled(shrimply_math_core::Fraction::from(delta.x)),
+        )
+        .max(shrimply_math_core::Time::ZERO)
+        .as_secs_f64();
+    view.scroll_y = (view.scroll_y - f64::from(delta.y)).max(0.0);
+}
+
+/// Match the shared painted playhead handle, including its triangular tip.
+pub fn playhead_handle_contains(
+    view: crate::TimelineViewState,
+    time: Time,
+    x: f64,
+    y: f64,
+) -> bool {
+    use crate::metrics::{
+        PLAYHEAD_HANDLE_HEIGHT, PLAYHEAD_HANDLE_TOP, PLAYHEAD_HANDLE_TRIANGLE_HEIGHT,
+        PLAYHEAD_HANDLE_WIDTH,
+    };
+    if x < view.timeline_x() || y < PLAYHEAD_HANDLE_TOP {
+        return false;
+    }
+    let handle_x = time_to_x(time.as_secs_f64(), view.timeline_x(), view);
+    let bottom = PLAYHEAD_HANDLE_TOP + PLAYHEAD_HANDLE_HEIGHT;
+    let half_width = PLAYHEAD_HANDLE_WIDTH * 0.5;
+    if y <= bottom {
+        (x - handle_x).abs() <= half_width
+    } else {
+        let tip = (y - bottom) / PLAYHEAD_HANDLE_TRIANGLE_HEIGHT;
+        tip <= 1.0 && (x - handle_x).abs() <= half_width * (1.0 - tip)
+    }
 }

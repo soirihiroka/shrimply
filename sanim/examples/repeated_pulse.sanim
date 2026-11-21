@@ -1,0 +1,9 @@
+let cycles = reflect(4)
+let pulse = <Box w-48 h-48 rounded-full bg-blue3/>
+let beat = <Animation flow="sequence">
+    {pulse.fade_in(duration=100ms)}
+    {pulse.fade_out(duration=100ms)}
+    {wait(300ms)}
+</Animation>
+assert(always(inside_canvas(pulse)))
+beat.repeat(cycles)

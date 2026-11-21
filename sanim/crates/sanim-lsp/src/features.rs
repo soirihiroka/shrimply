@@ -3,7 +3,7 @@ use crate::{text::Document, workspace::Workspace};
 use sanim_lang::{
     AnalyzedModule,
     ast::{BindingKind, Expr, ExprKind, Module, Statement, StatementKind},
-    core::{Signature, Span, TimelineEffect, Type},
+    core::{Signature, Span, Type},
     prelude,
 };
 use serde_json::{Value, json};
@@ -58,6 +58,13 @@ fn declaration_signature<'a>(
     name: &str,
     span: Span,
 ) -> Option<&'a Signature> {
+    if let Some(signature) = module
+        .checked
+        .anonymous_functions
+        .get(&(span.start, span.end))
+    {
+        return Some(signature);
+    }
     module
         .checked
         .exports
@@ -74,6 +81,18 @@ fn symbols(module: &AnalyzedModule, length: usize) -> Vec<Symbol> {
         out: &mut Vec<Symbol>,
     ) {
         for statement in body {
+            statement.visit_own_expressions(&mut |expr| {
+                if let ExprKind::Function(declaration) = &expr.kind
+                    && let StatementKind::Function {
+                        name,
+                        parameters,
+                        body,
+                        ..
+                    } = &declaration.kind
+                {
+                    function(declaration, name, parameters, body, module, out);
+                }
+            });
             let (name, kind, forward) = match &statement.kind {
                 StatementKind::Bind { name, kind, .. } => (
                     Some(name),
@@ -116,23 +135,7 @@ fn symbols(module: &AnalyzedModule, length: usize) -> Vec<Symbol> {
                     body,
                     ..
                 } => {
-                    let signature = declaration_signature(module, name, statement.span);
-                    for (index, parameter) in parameters.iter().enumerate() {
-                        let name = &parameter.name;
-                        out.push(Symbol {
-                            name: name.clone(),
-                            ty: signature
-                                .and_then(|signature| signature.parameters.get(index))
-                                .map(|parameter| parameter.ty.clone()),
-                            span: statement.span,
-                            selection: parameter.name_span,
-                            scope: statement.span,
-                            kind: 13,
-                            forward: true,
-                            root: false,
-                        });
-                    }
-                    block(body, statement.span, module, false, out);
+                    function(statement, name, parameters, body, module, out);
                 }
                 StatementKind::If { yes, no, .. } => {
                     branch(yes, statement.span, module, out);
@@ -152,9 +155,7 @@ fn symbols(module: &AnalyzedModule, length: usize) -> Vec<Symbol> {
                     });
                     block(body, scope, module, false, out);
                 }
-                StatementKind::Repeat { body, .. } | StatementKind::Background { body } => {
-                    branch(body, statement.span, module, out)
-                }
+                StatementKind::Repeat { body, .. } => branch(body, statement.span, module, out),
                 StatementKind::Match { cases, .. } => {
                     for case in cases {
                         let scope = body_span(&case.body, statement.span);
@@ -176,6 +177,32 @@ fn symbols(module: &AnalyzedModule, length: usize) -> Vec<Symbol> {
                 _ => {}
             }
         }
+    }
+    fn function(
+        statement: &Statement,
+        name: &str,
+        parameters: &[sanim_lang::ast::Parameter],
+        body: &[Statement],
+        module: &AnalyzedModule,
+        out: &mut Vec<Symbol>,
+    ) {
+        let signature = declaration_signature(module, name, statement.span);
+        for (index, parameter) in parameters.iter().enumerate() {
+            let name = &parameter.name;
+            out.push(Symbol {
+                name: name.clone(),
+                ty: signature
+                    .and_then(|signature| signature.parameters.get(index))
+                    .map(|parameter| parameter.ty.clone()),
+                span: statement.span,
+                selection: parameter.name_span,
+                scope: statement.span,
+                kind: 13,
+                forward: true,
+                root: false,
+            });
+        }
+        block(body, statement.span, module, false, out);
     }
     fn body_span(body: &[Statement], fallback: Span) -> Span {
         Span {
@@ -215,7 +242,14 @@ fn find_symbol(
     name: &str,
     offset: usize,
 ) -> Option<Symbol> {
-    symbols(module, length)
+    select_symbol(symbols(module, length), name, offset)
+}
+fn select_symbol(
+    symbols: impl IntoIterator<Item = Symbol>,
+    name: &str,
+    offset: usize,
+) -> Option<Symbol> {
+    symbols
         .into_iter()
         .filter(|symbol| symbol.name == name && visible(symbol, offset))
         .min_by_key(|symbol| {
@@ -227,31 +261,10 @@ fn find_symbol(
 }
 fn expressions(module: &Module, visitor: &mut impl FnMut(&Expr)) {
     for statement in &module.statements {
-        statement.visit_expressions(visitor);
-        statement.visit(&mut |statement| {
-            if let StatementKind::Function {
-                parameters,
-                body,
-                duration,
-                ..
-            } = &statement.kind
-            {
-                if let Some(duration) = duration {
-                    duration.visit(visitor);
-                }
-                for parameter in parameters {
-                    let default = &parameter.default;
-                    if let Some(default) = default {
-                        default.visit(visitor);
-                    }
-                }
-                for statement in body {
-                    statement.visit_expressions(visitor);
-                }
-            }
-        });
+        statement.visit_all_expressions(visitor);
     }
 }
+
 fn expression_at(module: &Module, offset: usize) -> Option<Expr> {
     let mut best: Option<Expr> = None;
     expressions(module, &mut |expression| {
@@ -259,6 +272,7 @@ fn expression_at(module: &Module, offset: usize) -> Option<Expr> {
             && expression.span.start <= offset
             && offset <= expression.span.end
             && matches!(expression.kind, ExprKind::Name(_) | ExprKind::Member(_, _))
+            && !matches!(&expression.kind, ExprKind::Member(base, _) if offset < base.span.end)
             && best.as_ref().is_none_or(|best| {
                 expression.span.end - expression.span.start < best.span.end - best.span.start
             })
@@ -268,7 +282,10 @@ fn expression_at(module: &Module, offset: usize) -> Option<Expr> {
     });
     best
 }
-fn native_signature(builtin: &prelude::Builtin, receiver: bool) -> (String, Vec<(String, String)>) {
+pub(crate) fn native_signature(
+    builtin: &prelude::Builtin,
+    receiver: bool,
+) -> (String, Vec<(String, String)>) {
     let parameters = builtin
         .parameters
         .iter()
@@ -297,10 +314,16 @@ fn native_signature(builtin: &prelude::Builtin, receiver: bool) -> (String, Vec<
     let result = if builtin.result == Type::Unknown {
         String::new()
     } else {
-        format!(" -> {}", builtin.result)
+        format!(": {}", builtin.result)
+    };
+    let capabilities = builtin.capabilities();
+    let prefix = if capabilities.is_pure() {
+        "fn".to_owned()
+    } else {
+        format!("fn<{capabilities}>")
     };
     let label = format!(
-        "{name}({}){result}",
+        "{prefix} {name}({}){result}",
         parameters
             .iter()
             .map(|(_, label)| label.as_str())
@@ -424,7 +447,7 @@ fn applicable_signature(
                 return true;
             }
             let Some(parameter) = parameter else {
-                return matches!(label.as_deref(), Some("duration" | "ease"));
+                return false;
             };
             if parameter.ty.unresolved() {
                 return true;
@@ -438,46 +461,8 @@ fn applicable_signature(
         })
 }
 
-/// The canonical parser owns opening tags, including incomplete attributes.
-/// The replacement covers the entire utility token, rather than the identifier
-/// suffix following its last hyphen.
-fn markup_position(
-    syntax: &crate::workspace::Syntax,
-    offset: usize,
-) -> Option<(&sanim_lang::parser::MarkupOpening, Span)> {
-    if syntax
-        .highlights
-        .iter()
-        .any(|span| span.kind.as_ref() == "comment" && span.start <= offset && offset < span.end)
-    {
-        return None;
-    }
-    let opening = syntax
-        .markup
-        .iter()
-        .rev()
-        .find(|opening| opening.span.start <= offset && offset <= opening.span.end)?;
-    if opening.attributes.iter().any(|attribute| {
-        attribute
-            .value
-            .is_some_and(|value| value.start <= offset && offset <= value.end)
-    }) {
-        return None;
-    }
-    let span = opening
-        .attributes
-        .iter()
-        .find(|attribute| attribute.span.start <= offset && offset <= attribute.span.end)
-        .map_or(
-            Span {
-                start: offset,
-                end: offset,
-                ..Default::default()
-            },
-            |attribute| attribute.span,
-        );
-    Some((opening, span))
-}
+mod markup;
+use markup::attribute_position as markup_position;
 
 fn literal_completion(
     workspace: &Workspace,
@@ -568,7 +553,10 @@ fn literal_completion(
     if offset < span.start || offset > span.end {
         return None;
     }
-    let values = expected.string_literals()?;
+    let values = expected.string_literal_choices();
+    if values.is_empty() {
+        return None;
+    }
     Some(
         json!({"isIncomplete":false,"items":values.into_iter().map(|value| {
         let quoted=sanim_lang::core::template::quote_string(value);
@@ -581,6 +569,7 @@ pub(crate) fn completion(
     workspace: &Workspace,
     uri: &str,
     position: &Value,
+    trigger: Option<&str>,
 ) -> Result<Value, String> {
     let document = &workspace
         .documents
@@ -589,36 +578,17 @@ pub(crate) fn completion(
         .document;
     let offset = document.offset(position)?;
     let syntax = workspace.documents[uri].syntax();
+    if let Some(items) = markup::completion(document, &syntax, offset, workspace.snippet_support) {
+        return Ok(items);
+    }
     if let Some(items) = literal_completion(workspace, uri, offset, &syntax) {
         return Ok(items);
     }
-    if let Some((opening, span)) = markup_position(&syntax, offset) {
-        let prefix = &document.text[span.start..offset];
-        let mut items = sanim_lang::utilities::completions(&opening.name, prefix)
-            .into_iter()
-            .map(|utility| {
-                json!({
-                    "label":utility.token,"kind":20,"detail":utility.detail(),
-                    "documentation":{"kind":"markdown","value":utility.markdown()},
-                    "textEdit":{"range":document.range(span),"newText":utility.token},
-                })
-            })
-            .collect::<Vec<_>>();
-        if let Some(builtin) = prelude::builtin(&opening.name) {
-            items.extend(
-                builtin
-                    .parameters
-                    .iter()
-                    .filter(|parameter| parameter.name.starts_with(prefix))
-                    .map(|parameter| {
-                        json!({
-                            "label":parameter.name,"kind":10,"detail":parameter.ty.to_string(),
-                            "textEdit":{"range":document.range(span),"newText":parameter.name},
-                        })
-                    }),
-            );
-        }
-        return Ok(json!({"isIncomplete":false,"items":items}));
+    if markup::non_code(&syntax, offset) {
+        return Ok(json!({"isIncomplete":false,"items":[]}));
+    }
+    if trigger.is_some_and(|character| character != ".") {
+        return Ok(json!({"isIncomplete":false,"items":[]}));
     }
     let mut items = BTreeMap::new();
     if let Some((_, module)) = workspace.module(uri) {
@@ -658,7 +628,7 @@ pub(crate) fn completion(
         }
     }
     for builtin in prelude::builtins() {
-        items.entry(builtin.name.into()).or_insert_with(||json!({"label":builtin.name,"kind":3,"detail":builtin_signature(builtin.name).map(|(label,_)|label),"documentation":"Native Sanim operation. Optional duration= and ease= controls use the language's ordered timeline semantics."}));
+        items.entry(builtin.name.into()).or_insert_with(||json!({"label":builtin.name,"kind":3,"detail":builtin_signature(builtin.name).map(|(label,_)|label),"documentation":"Native Sanim operation."}));
     }
     for (name, definition) in prelude::types() {
         items.entry((*name).into()).or_insert_with(||json!({"label":name,"kind":7,"detail":definition.instantiate(vec![]).map(|ty|ty.to_string()).unwrap_or_else(|_|format!("type {name}"))}));
@@ -704,6 +674,153 @@ pub(crate) fn reflected_at(
         .cloned()
 }
 
+#[derive(Clone)]
+pub(crate) struct AnimationLocation {
+    pub span: Span,
+    pub binding: Option<String>,
+}
+pub(crate) fn animation_at(
+    workspace: &Workspace,
+    uri: &str,
+    position: &Value,
+) -> Option<AnimationLocation> {
+    let document = &workspace.documents.get(uri)?.document;
+    let offset = document.offset(position).ok()?;
+    let (_, module) = workspace.module(uri)?;
+    if let Some(symbol) = symbols(module, document.text.len())
+        .into_iter()
+        .find(|symbol| {
+            symbol.selection.start <= offset
+                && offset < symbol.selection.end
+                && symbol.ty == Some(Type::Animation)
+        })
+    {
+        return Some(AnimationLocation {
+            span: symbol.span,
+            binding: Some(symbol.name),
+        });
+    }
+    let mut result: Option<AnimationLocation> = None;
+    expressions(&module.ast, &mut |expression| {
+        let selected = match &expression.kind {
+            ExprKind::Call { callee, .. } => {
+                callee.span.start <= offset && offset < callee.span.end
+            }
+            ExprKind::Name(_) => expression.span.start <= offset && offset < expression.span.end,
+            _ => false,
+        };
+        if selected
+            && module
+                .checked
+                .result_types
+                .get(&(expression.span.start, expression.span.end))
+                == Some(&Type::Animation)
+            && result.as_ref().is_none_or(|found| {
+                expression.span.end - expression.span.start < found.span.end - found.span.start
+            })
+        {
+            if let ExprKind::Name(name) = &expression.kind
+                && let Some(symbol) = find_symbol(module, document.text.len(), name, offset)
+            {
+                result = Some(AnimationLocation {
+                    span: symbol.span,
+                    binding: Some(name.clone()),
+                });
+            } else {
+                result = Some(AnimationLocation {
+                    span: expression.span,
+                    binding: None,
+                });
+            }
+        }
+    });
+    result
+}
+
+impl AnimationLocation {
+    pub(crate) fn matches(&self, origin: &sanim_lang::core::plan::Origin) -> bool {
+        origin.location.span == self.span
+            || self.binding.as_ref().is_some_and(|name| {
+                origin.binding.as_deref() == Some(name.as_str())
+                    && self.span.start <= origin.location.span.start
+                    && origin.location.span.end <= self.span.end
+            })
+    }
+}
+pub(crate) fn animation_sizes<'a>(
+    receipts: impl Iterator<Item = &'a sanim_lang::core::plan::Receipt>,
+) -> Vec<String> {
+    const MAX_CONTEXTS: usize = 16;
+    let mut sizes = BTreeMap::<String, usize>::new();
+    for receipt in receipts {
+        let mut summary = format!(
+            "Duration: **{}**; sizing: `{}`",
+            receipt.resolved, receipt.requested
+        );
+        if let Some(parent) = receipt.parent {
+            summary.push_str(&format!(
+                "; parent: **{}**",
+                sanim_lang::core::plan::Extent::Finite(parent)
+            ));
+        }
+        *sizes.entry(summary).or_default() += 1;
+    }
+    let count = sizes.len();
+    let mut descriptions = sizes
+        .into_iter()
+        .take(MAX_CONTEXTS)
+        .map(|(summary, placements)| {
+            if placements > 1 {
+                format!("{summary} ({placements} placements)")
+            } else {
+                summary
+            }
+        })
+        .collect::<Vec<_>>();
+    if count > MAX_CONTEXTS {
+        descriptions.push(format!(
+            "{} additional sizing contexts",
+            count - MAX_CONTEXTS
+        ));
+    }
+    descriptions
+}
+pub(crate) fn animation_hover(
+    workspace: &mut Workspace,
+    uri: &str,
+    position: &Value,
+    hover: &mut Value,
+) {
+    let Some(location) = animation_at(workspace, uri, position) else {
+        return;
+    };
+    let source = workspace
+        .module(uri)
+        .map(|(analysis, _)| analysis.entry.clone());
+    let Some(layout) = workspace.animation_layout(uri) else {
+        return;
+    };
+    let descriptions = animation_sizes(layout.receipts.iter().filter(|receipt| {
+        receipt.origin.as_ref().is_some_and(|origin| {
+            source.as_deref() == Some(origin.location.source.as_ref()) && location.matches(origin)
+        })
+    }));
+    let detail = if descriptions.is_empty() {
+        layout.constraint.unwrap_or_default().to_owned()
+    } else {
+        descriptions.join("\n\n")
+    };
+    if detail.is_empty() {
+        return;
+    }
+    let document = &workspace.documents[uri].document;
+    if hover.is_null() {
+        *hover = json!({"contents":{"kind":"markdown","value":detail},"range":document.range(location.span)});
+    } else if let Some(value) = hover["contents"]["value"].as_str() {
+        hover["contents"]["value"] = format!("{value}\n\n{detail}").into();
+    }
+}
+
 pub(crate) fn hover(workspace: &Workspace, uri: &str, position: &Value) -> Result<Value, String> {
     let document = &workspace
         .documents
@@ -739,11 +856,10 @@ pub(crate) fn hover(workspace: &Workspace, uri: &str, position: &Value) -> Resul
                     .get(symbol.selection.start..symbol.selection.end)
                     == Some(symbol.name.as_str())
         });
-    let (label, mut effect_span, range, function_effect) = if let Some(symbol) = declaration {
+    let (label, range) = if let Some(symbol) = declaration {
         let clause = (symbol.kind == 12)
             .then(|| declaration_signature(module, &symbol.name, symbol.span))
             .flatten();
-        let effect = clause.map(|signature| signature.duration.clone());
         let display_type = clause
             .map(|signature| Type::Function(signature.clone()))
             .or(symbol.ty);
@@ -753,9 +869,7 @@ pub(crate) fn hover(workspace: &Workspace, uri: &str, position: &Value) -> Resul
                     .map(|ty| format!("{}: {ty}", symbol.name))
                     .unwrap_or(symbol.name),
             ),
-            symbol.span,
             symbol.selection,
-            effect,
         )
     } else if let Some(expression) = expression_at(&module.ast, offset) {
         let label = native_method(module, document.text.len(), &expression, offset)
@@ -781,135 +895,15 @@ pub(crate) fn hover(workspace: &Workspace, uri: &str, position: &Value) -> Resul
                 }
                 _ => None,
             });
-        (label, expression.span, expression.span, None)
+        (label, expression.span)
     } else {
         return Ok(Value::Null);
     };
-    expressions(&module.ast, &mut |node| {
-        if let ExprKind::Call { callee, .. } = &node.kind
-            && callee.span.start <= offset
-            && offset <= callee.span.end
-            && callee.span.end > callee.span.start
-        {
-            effect_span = node.span;
-        }
-    });
-    let effect = function_effect
-        .or_else(|| {
-            module
-                .checked
-                .durations
-                .iter()
-                .find(|node| {
-                    node.span.start == effect_span.start && node.span.end == effect_span.end
-                })
-                .map(|node| node.effect.clone())
-        })
-        .unwrap_or(TimelineEffect::Unknown);
-    let duration = duration_label(effect);
-    Ok(label.map_or(Value::Null,|label|json!({"contents":{"kind":"markdown","value":format!("```sanim\n{label}\n```\nTimeline duration: **{duration}**")},"range":document.range(range)})))
+    Ok(label.map_or(Value::Null,|label|json!({"contents":{"kind":"markdown","value":format!("```sanim\n{label}\n```")},"range":document.range(range)})))
 }
 
-pub(crate) fn definition(
-    workspace: &Workspace,
-    uri: &str,
-    position: &Value,
-) -> Result<Value, String> {
-    let document = &workspace
-        .documents
-        .get(uri)
-        .ok_or("document is not open")?
-        .document;
-    let offset = document.offset(position)?;
-    let Some((analysis, module)) = workspace.module(uri) else {
-        return Ok(Value::Null);
-    };
-    let Some(expression) = expression_at(&module.ast, offset) else {
-        return Ok(Value::Null);
-    };
-    let targets = match expression.kind {
-        ExprKind::Name(name) => definition_symbols(module, document.text.len(), &name, offset)
-            .into_iter()
-            .map(|symbol| (uri.to_owned(), document.range(symbol.selection)))
-            .collect::<Vec<_>>(),
-        ExprKind::Member(base, name) => {
-            if let ExprKind::Name(alias) = base.kind {
-                module
-                    .ast
-                    .statements
-                    .iter()
-                    .find_map(|statement| {
-                        let StatementKind::Import {
-                            path,
-                            alias: import_alias,
-                        } = &statement.kind
-                        else {
-                            return None;
-                        };
-                        if import_alias != &alias {
-                            return None;
-                        }
-                        let source = sanim_lang::source::resolve(&analysis.entry, path).ok()?;
-                        let imported = analysis.modules.get(&source)?;
-                        let imported_uri =
-                            workspace.uri_for_path(&analysis.root.join(&source)).ok()?;
-                        let document = Document::new(workspace.document_text(&imported_uri)?, 0);
-                        Some(
-                            definition_symbols(
-                                imported,
-                                document.text.len(),
-                                &name,
-                                document.text.len(),
-                            )
-                            .into_iter()
-                            .filter(|symbol| symbol.root)
-                            .map(|symbol| (imported_uri.clone(), document.range(symbol.selection)))
-                            .collect::<Vec<_>>(),
-                        )
-                    })
-                    .unwrap_or_default()
-            } else {
-                Vec::new()
-            }
-        }
-        _ => Vec::new(),
-    };
-    let mut targets = targets
-        .into_iter()
-        .map(|(uri, range)| json!({"uri":uri,"range":range}))
-        .collect::<Vec<_>>();
-    Ok(match targets.len() {
-        0 => Value::Null,
-        1 => targets.pop().expect("one definition"),
-        _ => json!(targets),
-    })
-}
-fn definition_symbols(
-    module: &AnalyzedModule,
-    length: usize,
-    name: &str,
-    offset: usize,
-) -> Vec<Symbol> {
-    let Some(symbol) = find_symbol(module, length, name, offset)
-        .filter(|symbol| symbol.selection.end > symbol.selection.start)
-    else {
-        return Vec::new();
-    };
-    if symbol
-        .ty
-        .as_ref()
-        .is_some_and(|ty| ty.signatures().len() > 1)
-    {
-        symbols(module, length)
-            .into_iter()
-            .filter(|candidate| {
-                candidate.kind == 12 && candidate.name == name && candidate.scope == symbol.scope
-            })
-            .collect()
-    } else {
-        vec![symbol]
-    }
-}
+mod navigation;
+pub(crate) use navigation::definition;
 
 pub(crate) fn document_symbols(workspace: &Workspace, uri: &str) -> Result<Value, String> {
     let document = &workspace
@@ -1067,18 +1061,11 @@ pub(crate) fn signature(
                 .join(", "),
             result.map(|ty| format!(" -> {ty}")).unwrap_or_default()
         );
-        let duration = module
-            .checked
-            .durations
-            .iter()
-            .find(|node| node.span.start == call.span.start && node.span.end == call.span.end)
-            .map(|node| &node.effect);
         vec![signature_information(
             label,
             &parameters,
             call.index,
             call.named.as_deref(),
-            duration,
         )]
     } else {
         let Some((name, callable)) =
@@ -1121,7 +1108,6 @@ pub(crate) fn signature(
                     &parameters,
                     call.index,
                     call.named.as_deref(),
-                    Some(&signature.duration),
                 )
             })
             .collect::<Vec<_>>()
@@ -1137,7 +1123,6 @@ fn signature_information(
     parameters: &[(String, String)],
     index: usize,
     named: Option<&str>,
-    duration: Option<&TimelineEffect>,
 ) -> Value {
     let active = named
         .and_then(|name| {
@@ -1147,20 +1132,11 @@ fn signature_information(
         })
         .unwrap_or(index)
         .min(parameters.len().saturating_sub(1));
-    let mut info = json!({"label":label,"parameters":parameters.iter().map(|(_,label)|json!({"label":label})).collect::<Vec<_>>(),"activeParameter":active});
-    if let Some(duration) = duration {
-        info["documentation"] =
-            json!({"kind":"markdown","value":format!("Timeline duration: **{duration}**")});
-    }
-    info
-}
-
-fn duration_label(effect: TimelineEffect) -> String {
-    effect.to_string()
+    json!({"label":label,"parameters":parameters.iter().map(|(_,label)|json!({"label":label})).collect::<Vec<_>>(),"activeParameter":active})
 }
 
 pub(crate) fn inlay_hints(
-    workspace: &Workspace,
+    workspace: &mut Workspace,
     uri: &str,
     range: &Value,
 ) -> Result<Value, String> {
@@ -1177,12 +1153,6 @@ pub(crate) fn inlay_hints(
     let Some((_, module)) = workspace.module(uri) else {
         return Ok(json!([]));
     };
-    let durations = module
-        .checked
-        .durations
-        .iter()
-        .map(|node| ((node.span.start, node.span.end), node.effect.clone()))
-        .collect::<BTreeMap<_, _>>();
     let mut hints = BTreeMap::new();
     for statement in &module.ast.statements {
         statement.visit(&mut |statement| {
@@ -1190,19 +1160,38 @@ pub(crate) fn inlay_hints(
                 && let Some(span)=statement.name_span
                 && let Some(ty)=module.checked.binding_types.get(&statement.span.start)
                 && span.end>=start&&span.end<=end {
-                hints.insert((span.end,0),json!({"position":document.position(span.end),"label":format!(": {}",crate::type_display::compact(module,ty)),"kind":1,"paddingRight":false,
-                    "tooltip":{"kind":"markdown","value":crate::type_display::tooltip(module,ty)}}));
-            }
-            let effect=if let StatementKind::Function {name,..}=&statement.kind {
-                declaration_signature(module,name,statement.span).map(|signature|signature.duration.clone())
-            } else {durations.get(&(statement.span.start,statement.span.end)).cloned()};
-            if let Some(effect)=effect.filter(|effect|!effect.is_zero()) {
-                let offset=document.text[..statement.span.end.min(document.text.len())].trim_end().len();
-                if offset>=start&&offset<=end {
-                    hints.insert((offset,1),json!({"position":document.position(offset),"label":format!("duration: {}",duration_label(effect)),"paddingLeft":true}));
+                let position = document.position(span.end);
+                let mut hint = json!({"position":position,"label":format!(": {}",crate::type_display::compact(module,ty)),"kind":1,"paddingRight":false,
+                    "tooltip":{"kind":"markdown","value":crate::type_display::tooltip(module,ty)}});
+                if let Some(annotation) = crate::type_display::annotation(module,ty) {
+                    hint["textEdits"] = json!([{"range":{"start":position,"end":position},"newText":format!(": {annotation}")}]);
                 }
+                hints.insert((span.end,0),hint);
             }
         });
+    }
+    let program_end = document.text.trim_end().len();
+    let program_position = document.position(program_end);
+    let entry = module.checked.output_type == Some(Type::Animation);
+    if entry
+        && start <= program_end
+        && program_end <= end
+        && let Some(layout) = workspace.animation_layout(uri)
+    {
+        let size = layout
+            .duration
+            .map(|duration| duration.to_string())
+            .unwrap_or_else(|| {
+                if layout
+                    .constraint
+                    .is_some_and(|constraint| constraint.contains("match_parent"))
+                {
+                    "match_parent".into()
+                } else {
+                    "unresolved".into()
+                }
+            });
+        hints.insert((program_end,1),json!({"position":program_position,"label":format!("duration: {size}"),"paddingLeft":true,"tooltip":"Total duration of the script's unassigned top-level animations."}));
     }
     Ok(json!(hints.into_values().collect::<Vec<_>>()))
 }

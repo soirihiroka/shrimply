@@ -6,6 +6,6 @@ edition = "2024"
 [dependencies]
 hashbrown.workspace = true
 shrimply-audio-engine = { workspace = true }
-shrimply-project-document = { workspace = true, default-features = true }
+shrimply-project-document = { workspace = true, features = ["editor"] }
 shrimply-math-core = { workspace = true }
 shrimply-math-media = { workspace = true }

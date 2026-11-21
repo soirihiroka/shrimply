@@ -1,5 +1,7 @@
 //! Shared font descriptors, native fallback, and application font registration.
+mod changes;
 mod descriptor;
+pub use changes::{FontChange, FontEpoch, subscribe};
 pub use descriptor::Font;
 
 /// Native outline commands shared by Sanim and the editor's 2D/3D text paths.
@@ -30,4 +32,18 @@ impl FontFamily {
             Self::Local { name } | Self::GoogleFonts { name } => name,
         }
     }
+}
+
+/// Immutable native text geometry, independent of the shaping backend.
+pub struct ShapedText {
+    /// Bounds and outline use the first-baseline origin (before any alignment).
+    pub bounds: [f64; 4],
+    pub outline: std::sync::Arc<Vec<TextSegment>>,
+    pub advance: f64,
+    /// Translation from Pango's top-left coordinate system to these outlines.
+    pub origin: [f64; 2],
+    pub missing_glyphs: i32,
+    pub color_glyphs: bool,
+    #[cfg(feature = "native")]
+    pub(crate) asset: Option<std::sync::Weak<Vec<u8>>>,
 }

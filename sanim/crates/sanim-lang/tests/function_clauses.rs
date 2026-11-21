@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 fn run(source: &str) -> Result<Prepared, sanim_core::Diagnostic> {
     let mut files = MemorySources::default();
-    files.insert("main.sanim", source);
+    files.insert("main.sanim", format!("{}\nAnimation()", source));
     Engine::default().prepare("main.sanim", &files, &BTreeMap::new())
 }
 
@@ -21,27 +21,29 @@ fn numeric_clauses_dispatch_at_closed_and_open_boundaries() {
 
 #[test]
 fn fixed_string_clauses_have_separate_bodies_and_durations() {
-    let prepared=run("fn delay(time:\"1s\"):Unit{wait(1s)}\nfn delay(time:\"2s\"):Unit{wait(2s)}\ndelay(\"1s\")\ndelay(\"2s\")").unwrap();
+    let prepared=run("fn delay(time:\"1s\"):Animation{return wait(1s)}\nfn delay(time:\"2s\"):Animation{return wait(2s)}\ndelay(\"1s\")\ndelay(\"2s\")").unwrap();
     assert_eq!(prepared.animation.duration, Fraction::from(3));
 }
 
 #[test]
 fn overlapping_and_uncovered_domains_explain_the_failure() {
-    let error = run("fn pick(n:Number < 2):Unit{wait(0s)}\nfn pick(n:Number >= 1):Unit{wait(0s)}")
-        .unwrap_err();
+    let error = run(
+        "fn<mut> pick(n:Number < 2):Unit{wait(0s)}\nfn<mut> pick(n:Number >= 1):Unit{wait(0s)}",
+    )
+    .unwrap_err();
     assert!(error.message.contains("ambiguous clauses"), "{error}");
-    let error=run("fn first(values:List<Number>):Unit{wait(0s)}\nfn first(values:List<String>):Unit{wait(0s)}").unwrap_err();
+    let error=run("fn<mut> first(values:List<Number>):Unit{wait(0s)}\nfn<mut> first(values:List<String>):Unit{wait(0s)}").unwrap_err();
     assert!(
         error.message.contains("ambiguous clauses"),
         "empty lists must not make dispatch ambiguous: {error}"
     );
     let error = run(
-        "fn pick(n:Int < 0):Unit{wait(0s)}\nfn pick(n:Int > 0):Unit{wait(0s)}\nmut n=0\npick(n)",
+        "fn<mut> pick(n:Int < 0):Unit{wait(0s)}\nfn<mut> pick(n:Int > 0):Unit{wait(0s)}\nmut n=0\npick(n)",
     )
     .unwrap_err();
     assert!(error.message.contains("clause"), "{error}");
     let error = run(
-        "fn pick(n:Int < 0):Unit{wait(0s)}\nfn pick(n:Int >= 0):Unit{wait(0s)}\nmut n=0.5\npick(n)",
+        "fn<mut> pick(n:Int < 0):Unit{wait(0s)}\nfn<mut> pick(n:Int >= 0):Unit{wait(0s)}\nmut n=0.5\npick(n)",
     )
     .unwrap_err();
     assert!(error.message.contains("clause"), "{error}");
@@ -70,7 +72,7 @@ fn inferred_read_integer_schema_survives_mutable_bindings() {
     files.insert("number.json", "4");
     files.insert(
         "main.sanim",
-        "mut value=read<Int>(\"number.json\")\nvalue=0.5",
+        "mut value=read<Int>(\"number.json\")\nvalue=0.5\nAnimation()",
     );
     let error = Engine::default()
         .prepare("main.sanim", &files, &BTreeMap::new())
@@ -95,7 +97,7 @@ fn generic_numeric_arithmetic_does_not_promise_literal_refinements() {
 
 #[test]
 fn generic_and_signal_clauses_use_the_canonical_call_path() {
-    let prepared=run("fn pick<T>(kind:\"left\",value:T):T{return value}\nfn pick<T>(kind:\"right\",value:T):T{return value}\nlet a=pick(\"left\",5)\nfn twice(sig value:Number < 0):sig Number{return value*2}\nfn twice(sig value:Number >= 0):sig Number{return value*2}\nmut input=2\nsig output=twice(input)\ninput=3\nlet b=output").unwrap();
+    let prepared=run("fn pick<T>(kind:\"left\",value:T):T{return value}\nfn pick<T>(kind:\"right\",value:T):T{return value}\nlet a=pick(\"left\",5)\nfn<sig> twice(sig value:Number < 0):sig Number{return value*2}\nfn<sig> twice(sig value:Number >= 0):sig Number{return value*2}\nmut input=2\nsig output=twice(input)\ninput=3\nlet b=output").unwrap();
     assert_eq!(
         prepared.bindings["a"].number().unwrap().value,
         Fraction::from(5)
@@ -107,16 +109,14 @@ fn generic_and_signal_clauses_use_the_canonical_call_path() {
 }
 
 #[test]
-fn duration_contract_annotation_is_typed_and_pure() {
-    run("@duration(1s)\nfn delay(time:\"one\"):Unit{wait(1s)}\n@duration(2s)\nfn delay(time:\"two\"):Unit{wait(2s)}\ndelay(\"one\")").unwrap();
-    assert!(run("@duration(1) fn bad():Unit{wait(0s)}").is_err());
-    assert!(run("@duration(wait(1s)) fn bad():Unit{wait(0s)}").is_err());
-    assert!(run("@duration(1s) let value=1").is_err());
+fn guarded_functions_return_composable_animation_values() {
+    let prepared=run("fn delay(time:\"one\"):Animation{return wait(1s)}\nfn delay(time:\"two\"):Animation{return wait(2s)}\ndelay(\"one\")\ndelay(\"two\")").unwrap();
+    assert_eq!(prepared.animation.duration, Fraction::from(3));
 }
 
 #[test]
-fn formatter_round_trips_refinements_and_contracts() {
-    let source = "@duration(1s) fn pause(i:Int<1):Unit{wait(1s)}\n@duration(2s) fn pause(i:Int>=1):Unit{wait(2s)}\npause(0)";
+fn formatter_round_trips_refinements_and_animation_returns() {
+    let source = "fn pause(i:Int<1):Animation{return wait(1s)}\nfn pause(i:Int>=1):Animation{return wait(2s)}\npause(0)";
     let formatted =
         sanim_lang::formatter::format_source("main.sanim", source, Default::default(), 200_000)
             .unwrap();
@@ -171,7 +171,7 @@ fn clause_overlap_analysis_obeys_the_existing_type_work_budget() {
         .map(|index| format!("fn choose(value:\"{index}\"):Number{{return {index}}}\n"))
         .collect::<String>();
     let mut files = MemorySources::default();
-    files.insert("main.sanim", source);
+    files.insert("main.sanim", format!("{}\nAnimation()", source));
     let mut engine = Engine::default();
     engine.limits.max_type_bytes = 4 * 1024;
     let error = engine

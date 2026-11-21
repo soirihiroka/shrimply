@@ -6,12 +6,7 @@ use std::{
     sync::Arc,
 };
 
-/// A source location in the same revision as its prepared animation.
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
-pub struct SourceLocation {
-    pub source: Arc<str>,
-    pub span: sanim_core::Span,
-}
+pub use sanim_core::SourceLocation;
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 pub struct ElementSource {

@@ -1,12 +1,10 @@
 use objc2::{rc::Retained, runtime::ProtocolObject};
 use objc2_metal::MTLTexture;
 use shrimply_math_core::Time;
-use shrimply_preview_render_core::{DecodedImage, FramePlan, Scene, Source};
+use shrimply_preview_render_core::{FramePlan, Scene, Source};
 use shrimply_project_document::project::Project;
-use shrimply_visual_frame::{GpuFrame, VideoFrame};
-use skia_safe::{AlphaType, ColorType, Image, ImageInfo};
+use skia_safe::Image;
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
 use std::sync::mpsc::{self, TryRecvError};
 use std::time::Duration;
 
@@ -125,9 +123,7 @@ pub(super) struct Compositor {
     queued: Option<FramePlan>,
     presented: Option<Presented>,
     revision: u64,
-    sources: HashMap<u32, shrimply_render_metal::Buffer>,
-    videos: HashMap<usize, shrimply_render_metal::ImportedFrame>,
-    used_videos: HashSet<usize>,
+    sources: super::sources::Sources,
     layered_sources: HashMap<(String, usize), shrimply_render_metal::Buffer>,
     used_layered_sources: HashSet<(String, usize)>,
     manim: Option<shrimply_manim_metal::Renderer>,
@@ -194,7 +190,14 @@ impl Compositor {
     }
 
     pub fn set_interaction(&mut self, playing: bool, scrubbing: bool) {
-        self.scene.set_interaction(playing, scrubbing);
+        use shrimply_preview_render_core::CompositeAccuracy;
+        self.scene.set_interaction(if playing {
+            CompositeAccuracy::CONTINUOUS_TIME_ACCURATE
+        } else if scrubbing {
+            CompositeAccuracy::BEST_EFFORT
+        } else {
+            CompositeAccuracy::FULLY_ACCURATE
+        });
     }
 
     pub fn set_sam2_analysis_target(
@@ -302,8 +305,7 @@ impl Compositor {
             self.compute = Some(shrimply_render_metal::Renderer::new()?);
         }
         let mut effect_submissions = Vec::new();
-        let mut used_sources = HashSet::new();
-        self.used_videos.clear();
+        self.sources.begin_frame();
         let mut used_manim = HashSet::new();
         self.used_layered_sources.clear();
         let started = std::time::Instant::now();
@@ -314,7 +316,6 @@ impl Compositor {
                 (plan.width, plan.height),
                 &external_masks,
                 &mut effect_submissions,
-                &mut used_sources,
                 &mut used_manim,
             )?
             else {
@@ -336,7 +337,6 @@ impl Compositor {
             (plan.width, plan.height),
             &external_masks,
             &mut effect_submissions,
-            &mut used_sources,
             &mut used_manim,
         )?;
         self.layered_sources
@@ -347,8 +347,7 @@ impl Compositor {
             return Ok(());
         };
         effect_submissions.append(&mut self.deferred_submissions);
-        self.sources.retain(|id, _| used_sources.contains(id));
-        self.videos.retain(|id, _| self.used_videos.contains(id));
+        self.sources.retain_used();
         self.manim_slots
             .retain(|item_id, _| used_manim.contains(item_id));
         if let Some(manim) = &mut self.manim {
@@ -393,7 +392,6 @@ impl Compositor {
         size: (u32, u32),
         external_masks: &ExternalMaskBuffers,
         effect_submissions: &mut Vec<shrimply_render_metal::Submission>,
-        used_sources: &mut HashSet<u32>,
         used_manim: &mut HashSet<uuid::Uuid>,
     ) -> Result<
         Option<
@@ -411,7 +409,6 @@ impl Compositor {
                     morph,
                     size,
                     external_masks,
-                    used_sources,
                     used_manim,
                     effect_submissions,
                 )?
@@ -427,7 +424,7 @@ impl Compositor {
                         .as_mut()
                         .expect("initialized Metal compositor")
                         .draw_vector(layer.render_size, |canvas| {
-                            frame.draw(canvas, &mut Default::default())
+                            frame.draw(canvas, &mut self.scene.expressions)
                         })?,
                     None,
                 ),
@@ -437,7 +434,6 @@ impl Compositor {
                         size,
                         external_masks,
                         effect_submissions,
-                        used_sources,
                         used_manim,
                     )?
                     else {
@@ -462,8 +458,20 @@ impl Compositor {
                     effect_submissions.push(submission);
                     (buffer, None)
                 }
-                Source::Image(image) => (self.image_buffer(image, used_sources)?, None),
-                Source::Video(video) => (self.video_buffer(video)?, None),
+                Source::Image(image) => (
+                    self.sources.image(
+                        self.compute.as_ref().expect("initialized Metal compositor"),
+                        image,
+                    )?,
+                    None,
+                ),
+                Source::Video(video) => (
+                    self.sources.video(
+                        self.compute.as_mut().expect("initialized Metal compositor"),
+                        video,
+                    )?,
+                    None,
+                ),
                 Source::LayeredImage(plan) => (
                     crate::layered_image::composite(
                         self.compute
@@ -600,120 +608,20 @@ impl Compositor {
                     parameters.rgba_pitch = packed_pitch;
                 }
             }
-            let mut state = shrimply_render_core::effects::SpatialState {
-                parameters,
-                transform: layer.transform,
-                texture_edges: [0.0; 4],
-                modifier_crop: [0.0; 4],
-                modifier_crop_pixels: [0.0; 4],
-            };
-            if let Some(stabilization) = &layer.stabilization {
-                (state, buffer) = super::effects::apply_stabilization(
-                    self.compute.as_mut().expect("initialized Metal compositor"),
-                    buffer,
-                    state,
-                    stabilization,
-                    layer.render_size,
-                    effect_submissions,
-                )?;
-            }
-            let mask_buffer = layer
-                .video_mask
-                .as_ref()
-                .map(|mask| match &mask.image {
-                    DecodedImage::Raster(image) => self.image_buffer(image, used_sources),
-                    DecodedImage::Video(video) => self.video_buffer(video),
-                })
-                .transpose()?;
             let renderer = self.compute.as_mut().expect("initialized Metal compositor");
-            let buffer = if let Some((mask, mask_buffer)) =
-                layer.video_mask.as_ref().zip(mask_buffer)
-            {
-                let input_size = (
-                    state.parameters.source_width,
-                    state.parameters.source_height,
-                );
-                let (mut parameters, _) = shrimply_render_core::effects::materialization(
-                    layer.parameters,
-                    mask.size.0,
-                    mask.size.1,
-                );
-                parameters.source_width = mask.image.width() as u32;
-                parameters.source_height = mask.image.height() as u32;
-                parameters.rgba_pitch = mask.image.width() as usize * size_of::<u32>();
-                parameters.inverse = shrimply_render_core::math::Mat3::IDENTITY;
-                parameters.sample_method = mask.sampling;
-                let (mask_buffer, submission) = renderer
-                    .composite_buffers(&[(parameters, mask_buffer)], mask.size.0, mask.size.1, 0)?
-                    .into_parts();
-                effect_submissions.push(submission);
-                super::alpha_mask::video(
-                    renderer,
-                    buffer,
-                    input_size,
-                    mask_buffer,
-                    mask.size,
-                    effect_submissions,
-                )?
-            } else {
-                buffer
-            };
-            let (mut state, buffer) = super::effects::apply_modifiers(
+            layers.push(super::effects::apply_layer(
                 renderer,
-                buffer,
-                state,
-                super::effects::ModifierRequest {
-                    operations: &layer.effects,
-                    size: layer.render_size,
-                    external_masks: super::effects::ExternalMasks {
-                        frames: external_masks,
-                        size,
-                        output_transform: layer.output_transform,
-                    },
+                layer,
+                (parameters, buffer),
+                super::effects::LayerResources {
+                    sources: &mut self.sources,
+                    external_masks,
+                    canvas_size: size,
                     sam2_target: self.sam2_analysis_target.as_ref(),
                     sam2_proxy: &mut self.sam2_proxy_buffer,
                 },
                 effect_submissions,
-            )?;
-            let mut buffer = buffer;
-            if let Some(samples) = &layer.motion_blur {
-                (state, buffer) = super::effects::apply_motion_blur(
-                    renderer,
-                    buffer,
-                    state,
-                    samples,
-                    layer.render_size,
-                    effect_submissions,
-                )?;
-            }
-            // Item transitions precede clip transitions, as in CUDA.
-            for stage in &layer.transitions {
-                state.transform = stage.transform * state.transform;
-                if let Some(effect) = stage.effect {
-                    (state, buffer) = super::effects::apply_transition(
-                        renderer,
-                        buffer,
-                        state,
-                        effect,
-                        layer.render_size,
-                        effect_submissions,
-                    )?;
-                }
-            }
-            state.transform = layer.output_transform * state.transform;
-            if let Some(mask) = &layer.alpha_mask {
-                buffer = super::alpha_mask::apply(
-                    renderer,
-                    buffer,
-                    (
-                        state.parameters.source_width,
-                        state.parameters.source_height,
-                    ),
-                    mask,
-                    effect_submissions,
-                )?;
-            }
-            layers.push((state.sampled(), buffer));
+            )?);
         }
         Ok(Some(layers))
     }
@@ -723,7 +631,6 @@ impl Compositor {
         morph: &shrimply_preview_render_core::RasterMorph,
         size: (u32, u32),
         external_masks: &ExternalMaskBuffers,
-        used_sources: &mut HashSet<u32>,
         used_manim: &mut HashSet<uuid::Uuid>,
         final_submissions: &mut Vec<shrimply_render_metal::Submission>,
     ) -> Result<
@@ -744,7 +651,6 @@ impl Compositor {
                     size,
                     external_masks,
                     &mut submissions,
-                    used_sources,
                     used_manim,
                 )?;
                 let target = self.materialize_morph_endpoint(
@@ -752,7 +658,6 @@ impl Compositor {
                     size,
                     external_masks,
                     &mut submissions,
-                    used_sources,
                     used_manim,
                 )?;
                 RasterMorphState::Materializing {
@@ -790,7 +695,7 @@ impl Compositor {
                 std::thread::Builder::new()
                     .name("preview-morph-flow".into())
                     .spawn(move || {
-                        let result = super::optical_flow::estimate_rgba(
+                        let result = shrimply_affine_l1_stabilization::flow_metal::estimate_rgba(
                             &source_bytes,
                             &target_bytes,
                             width,
@@ -901,7 +806,6 @@ impl Compositor {
         size: (u32, u32),
         external_masks: &ExternalMaskBuffers,
         submissions: &mut Vec<shrimply_render_metal::Submission>,
-        used_sources: &mut HashSet<u32>,
         used_manim: &mut HashSet<uuid::Uuid>,
     ) -> Result<MaterializedMorphEndpoint, String> {
         let Some(mut rendered) = self.render_layers(
@@ -909,7 +813,6 @@ impl Compositor {
             size,
             external_masks,
             submissions,
-            used_sources,
             used_manim,
         )?
         else {
@@ -932,64 +835,6 @@ impl Compositor {
             buffer,
             parameters: baked,
         })
-    }
-
-    fn video_buffer(
-        &mut self,
-        source: &Arc<VideoFrame>,
-    ) -> Result<shrimply_render_metal::Buffer, String> {
-        let key = Arc::as_ptr(source) as usize;
-        self.used_videos.insert(key);
-        if let Some(imported) = self.videos.get(&key) {
-            return Ok(imported.output.clone());
-        }
-        let imported = shrimply_render_metal::ImportedFrame::import(
-            self.compute.as_mut().expect("initialized Metal compositor"),
-            source.clone(),
-        )?;
-        let output = imported.output.clone();
-        self.videos.insert(key, imported);
-        Ok(output)
-    }
-
-    fn image_buffer(
-        &mut self,
-        image: &Image,
-        used_sources: &mut HashSet<u32>,
-    ) -> Result<shrimply_render_metal::Buffer, String> {
-        used_sources.insert(image.unique_id());
-        if let Some(buffer) = self.sources.get(&image.unique_id()) {
-            return Ok(buffer.clone());
-        }
-        let info = ImageInfo::new(
-            image.dimensions(),
-            ColorType::RGBA8888,
-            AlphaType::Unpremul,
-            None,
-        );
-        let row_bytes = image.width() as usize * size_of::<u32>();
-        let mut bytes = vec![
-            0;
-            row_bytes
-                .checked_mul(image.height() as usize)
-                .ok_or("Source image size overflow")?
-        ];
-        if !image.read_pixels(
-            &info,
-            &mut bytes,
-            row_bytes,
-            (0, 0),
-            skia_safe::image::CachingHint::Allow,
-        ) {
-            return Err("Could not read source pixels for the Metal compositor".into());
-        }
-        let buffer = self
-            .compute
-            .as_ref()
-            .expect("initialized Metal compositor")
-            .upload(&bytes)?;
-        self.sources.insert(image.unique_id(), buffer.clone());
-        Ok(buffer)
     }
 }
 

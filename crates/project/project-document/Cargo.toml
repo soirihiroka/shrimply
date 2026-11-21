@@ -4,11 +4,13 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
-default = ["editor"]
+default = ["editor", "preview"]
 editor = []
+preview = ["dep:shrimply-paint-edit-skia", "dep:shrimply-preview-provider-skia", "shrimply-visual-modifiers/preview", "shrimply-visual-modifiers/text-mesh"]
 
 [dependencies]
 shrimply-trust-core.workspace = true
+shrimply-resource-pipeline.workspace = true
 hashbrown.workspace = true
 icu_locale.workspace = true
 glam = { workspace = true, features = ["serde"] }
@@ -27,10 +29,10 @@ shrimply-math-core = { workspace = true }
 shrimply-math-geometry = { workspace = true }
 shrimply-asset = { workspace = true }
 shrimply-paint-model = { workspace = true }
-shrimply-paint-edit-skia = { workspace = true }
+shrimply-paint-edit-skia = { workspace = true, optional = true }
 shrimply-path-core.workspace = true
 shrimply-project-types = { workspace = true }
-shrimply-preview-provider-skia = { workspace = true }
+shrimply-preview-provider-skia = { workspace = true, optional = true }
 shrimply-3dgs-core = { workspace = true }
 shrimply-3d-control-core = { workspace = true }
 shrimply-transform-3d = { workspace = true }
@@ -39,7 +41,7 @@ shrimply-scene-3d = { workspace = true }
 shrimply-audio-modifiers = { workspace = true }
 shrimply-tts = { workspace = true }
 shrimply-background = { workspace = true }
-shrimply-visual-modifiers = { workspace = true }
+shrimply-visual-modifiers.workspace = true
 shrimply-video-generation = { workspace = true }
 tracing.workspace = true
 uuid = { workspace = true, features = ["v4", "serde"] }

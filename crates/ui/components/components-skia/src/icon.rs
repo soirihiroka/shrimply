@@ -1,7 +1,7 @@
-use hashbrown::HashMap;
+use cached::{Cached, stores::LruCache};
 use std::cell::RefCell;
 
-use skia_safe::{Canvas, FontMgr, Picture, PictureRecorder, svg};
+use skia_safe::{Canvas, Picture, PictureRecorder, svg};
 
 use super::{Color, Rect};
 
@@ -16,8 +16,10 @@ struct IconCacheKey {
     height: u32,
 }
 
+const MAX_ICON_CACHE_ENTRIES: usize = 256;
 thread_local! {
-    static ICONS: RefCell<HashMap<IconCacheKey, Option<Picture>>> = RefCell::new(HashMap::new());
+    static ICONS: RefCell<(u64,LruCache<IconCacheKey,Option<Picture>>)> = RefCell::new((0,
+        LruCache::builder().max_size(MAX_ICON_CACHE_ENTRIES).build().expect("valid icon cache size")));
 }
 
 include!(concat!(env!("OUT_DIR"), "/icons.rs"));
@@ -40,9 +42,14 @@ pub fn draw(canvas: &Canvas, icon: Icon, bounds: Rect, color: Color) {
 
     ICONS.with(|icons| {
         let mut icons = icons.borrow_mut();
-        let Some(picture) = icons.entry(key).or_insert_with(|| {
+        let generation = crate::skia_font::font_generation();
+        if icons.0 != generation {
+            icons.1.cache_clear();
+            icons.0 = generation;
+        }
+        let Some(picture) = icons.1.cache_get_or_set_with(key, || {
             let source = tint(icon_svg(icon.0), key);
-            let dom = match svg::Dom::from_str(&source, FontMgr::new()) {
+            let dom = match svg::Dom::from_str(&source, crate::skia_font::font_manager()) {
                 Ok(dom) => dom,
                 Err(error) => {
                     eprintln!("could not load bundled icon {}: {error:?}", icon.0);

@@ -1,6 +1,7 @@
 use super::{KeyframeSpan, ModifierModel, combine, ensure_timeline_value_ids, timeline_value_span};
 use hashbrown::HashSet;
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "preview")]
 use shrimply_preview_provider_skia::{
     Color, Cursor, CursorUpdate, PointerEvent, PreviewBuilder, PreviewContext, PreviewEditOutcome,
     PreviewEditSink, PreviewProvider, PreviewRefresh, PreviewResponse, PreviewTarget,
@@ -16,14 +17,19 @@ pub struct ScanlinesCrtModifier {
     pub mask_strength: TimelineValue<f32>,
 }
 
+#[cfg(feature = "preview")]
 const SPACING_COLOR: Color = Color::new(0.35, 0.82, 1.0, 1.0);
+#[cfg(feature = "preview")]
 const CURVATURE_COLOR: Color = Color::new(1.0, 0.82, 0.24, 1.0);
+#[cfg(feature = "preview")]
 const CURVATURE_SCALE: f32 = 0.25;
 #[derive(Clone, Copy)]
+#[cfg(feature = "preview")]
 enum CrtControl {
     Spacing,
     Curvature,
 }
+#[cfg(feature = "preview")]
 struct CrtPreview {
     target: PreviewTarget,
     original: ScanlinesCrtModifier,
@@ -34,7 +40,9 @@ struct CrtPreview {
     active: Option<CrtControl>,
     changed: bool,
 }
+#[cfg(feature = "preview")]
 impl ScanlinesCrtModifier {
+    #[cfg(feature = "preview")]
     pub(crate) fn preview_provider(
         &self,
         target: PreviewTarget,
@@ -66,6 +74,7 @@ impl ScanlinesCrtModifier {
         }))
     }
 }
+#[cfg(feature = "preview")]
 impl CrtPreview {
     fn points(&self) -> (glam::Vec2, [glam::Vec2; 2]) {
         let center = self.size * 0.5;
@@ -91,6 +100,7 @@ impl CrtPreview {
         }
     }
 }
+#[cfg(feature = "preview")]
 impl PreviewProvider for CrtPreview {
     fn on_draw(
         &mut self,
@@ -186,6 +196,7 @@ impl PreviewProvider for CrtPreview {
         }
     }
 }
+#[cfg(feature = "preview")]
 fn scalar_edit(changed: bool, commit: bool) -> PreviewResponse {
     if !changed {
         return PreviewResponse::handled();

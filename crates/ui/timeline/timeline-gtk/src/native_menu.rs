@@ -3,12 +3,9 @@ use gtk::glib::variant::ToVariant as _;
 use gtk::prelude::MenuModelExt as _;
 use shrimply_timeline_skia::{ContextMenu, ContextMenuEntry};
 
-pub struct MenuModel {
-    pub menu: gio::Menu,
-}
-
-pub fn menu_model(contract: &ContextMenu) -> MenuModel {
+pub fn menu_model(contract: &ContextMenu) -> gio::Menu {
     let menu = gio::Menu::new();
+    let mut control_index = 0;
     for entries in &contract.sections {
         let section = gio::Menu::new();
         for entry in entries {
@@ -33,7 +30,11 @@ pub fn menu_model(contract: &ContextMenu) -> MenuModel {
                 }
                 ContextMenuEntry::Control(_) => {
                     let menu_item = gio::MenuItem::new(None, None);
-                    menu_item.set_attribute_value("custom", Some(&"speed-control".to_variant()));
+                    menu_item.set_attribute_value(
+                        "custom",
+                        Some(&format!("control-{control_index}").to_variant()),
+                    );
+                    control_index += 1;
                     section.append_item(&menu_item);
                 }
             }
@@ -42,5 +43,5 @@ pub fn menu_model(contract: &ContextMenu) -> MenuModel {
             menu.append_section(None, &section);
         }
     }
-    MenuModel { menu }
+    menu
 }

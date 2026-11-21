@@ -4,12 +4,14 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+serde_json.workspace = true
+shrimply-components-core.workspace = true
 libc.workspace = true
 rusqlite = { workspace = true, features = ["bundled"] }
 shrimply-blender-core = { workspace = true }
 shrimply-math-color = { workspace = true }
 shrimply-math-core = { workspace = true }
-shrimply-project-document = { workspace = true, default-features = true }
+shrimply-project-document.workspace = true
 shrimply-recent-projects = { workspace = true }
 shrimply-compute-client = { workspace = true }
 shrimply-i18n = { workspace = true }

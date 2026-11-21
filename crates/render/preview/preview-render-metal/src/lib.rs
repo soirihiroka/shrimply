@@ -11,7 +11,8 @@ mod effects;
 #[path = "../../preview-render-core/src/gpu_layered_image.rs"]
 mod layered_image;
 pub mod modifier_cache;
-mod optical_flow;
+#[path = "../../preview-render-core/src/gpu_sources.rs"]
+mod sources;
 pub mod transparent_fill_analysis;
 pub use compositor::{render_png, render_png_cancelable};
 
@@ -615,6 +616,12 @@ fn worker(
             {
                 timing.reported = true;
                 if let Some(observer) = &shared.playback_observer {
+                    observer(
+                        shrimply_preview_provider_skia::performance::RenderEvent::Submitted {
+                            request_id: completed_request_id,
+                            position: frame.time,
+                        },
+                    );
                     observer(
                         shrimply_preview_provider_skia::performance::RenderEvent::Completed {
                             request_id: completed_request_id,

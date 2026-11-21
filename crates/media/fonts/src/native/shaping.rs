@@ -168,17 +168,8 @@ impl Key {
     }
 }
 
-pub struct ShapedText {
-    /// Bounds and outline use the first-baseline origin (before any alignment).
-    pub bounds: [f64; 4],
-    pub outline: Arc<Vec<TextSegment>>,
-    pub advance: f64,
-    /// Translation from Pango's top-left coordinate system to these outlines.
-    pub origin: [f64; 2],
-    pub missing_glyphs: i32,
-    pub color_glyphs: bool,
-    asset: Option<Weak<Vec<u8>>>,
-}
+pub use crate::ShapedText;
+
 pub struct Metrics {
     pub bounds: [f64; 4],
     pub advance: f64,

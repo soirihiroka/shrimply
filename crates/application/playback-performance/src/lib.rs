@@ -11,7 +11,7 @@ use std::thread;
 use std::time::Duration;
 use uuid::Uuid;
 
-pub use shrimply_preview_provider_skia::performance::RenderEvent;
+pub use shrimply_profiling::RenderEvent;
 
 const SLOW_FPS: u128 = 10;
 

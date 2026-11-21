@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+shrimply-preview-render-core.workspace = true
 shrimply-3dgs-core = { workspace = true }
 shrimply-preview-interaction-skia = { workspace = true }
 shrimply-surface-gl-skia = { workspace = true }
@@ -30,7 +31,7 @@ tracing.workspace = true
 uuid = { workspace = true, features = ["v4"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-shrimply-render-vulkan.workspace = true
+shrimply-render-vulkan = { workspace = true, default-features = true }
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 libloading.workspace = true

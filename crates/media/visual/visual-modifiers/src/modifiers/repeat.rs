@@ -4,12 +4,14 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use super::{KeyframeSpan, ModifierModel, combine, ensure_timeline_value_ids, timeline_value_span};
+#[cfg(feature = "preview")]
 use shrimply_preview_provider_skia::{
     Cursor, CursorUpdate, PointerEvent, PreviewBuilder, PreviewContext, PreviewEditOutcome,
     PreviewEditSink, PreviewProvider, PreviewRefresh, PreviewResponse, PreviewTarget,
 };
 use shrimply_property_model::timeline_value::*;
 
+#[cfg(feature = "preview")]
 use super::preview;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
@@ -120,6 +122,7 @@ impl ModifierModel for RepeatModifier {
 }
 
 #[derive(Clone)]
+#[cfg(feature = "preview")]
 struct RepeatPreview {
     target: PreviewTarget,
     snapshot: RepeatModifier,
@@ -134,6 +137,7 @@ struct RepeatPreview {
 }
 
 #[derive(Clone, Copy)]
+#[cfg(feature = "preview")]
 enum RepeatDrag {
     Step {
         map: glam::Mat3,
@@ -147,12 +151,14 @@ enum RepeatDrag {
 }
 
 #[derive(Clone, Copy)]
+#[cfg(feature = "preview")]
 enum RepeatValue {
     Step(glam::Vec2),
     Row(f32),
 }
 
 impl RepeatModifier {
+    #[cfg(feature = "preview")]
     pub(crate) fn preview_provider(
         &self,
         target: PreviewTarget,
@@ -180,6 +186,7 @@ impl RepeatModifier {
     }
 }
 
+#[cfg(feature = "preview")]
 impl RepeatPreview {
     fn center(&self) -> glam::Vec2 {
         self.size * 0.5
@@ -196,6 +203,7 @@ impl RepeatPreview {
     }
 }
 
+#[cfg(feature = "preview")]
 impl PreviewProvider for RepeatPreview {
     fn on_draw(
         &mut self,
@@ -301,6 +309,7 @@ impl PreviewProvider for RepeatPreview {
     }
 }
 
+#[cfg(feature = "preview")]
 fn repeat_edit(changed: bool, commit: bool) -> PreviewResponse {
     if !changed {
         return PreviewResponse::handled();
@@ -313,6 +322,7 @@ fn repeat_edit(changed: bool, commit: bool) -> PreviewResponse {
     })
 }
 
+#[cfg(feature = "preview")]
 fn update_repeat(
     modifier: &mut RepeatModifier,
     drag: &RepeatDrag,

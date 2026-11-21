@@ -24,10 +24,14 @@ impl Checker<'_> {
             Some(Type::List(inner, _)) => Some(inner.as_ref()),
             _ => None,
         };
+        let concrete_wanted = wanted.filter(|wanted| wanted.is_concrete());
         let mut inner = Type::Unknown;
         for item in items {
             let actual = self.expression(item, env, wanted, variables)?;
-            if let Some(wanted) = wanted {
+            // Context narrows literal fields, but unresolved T is checked only
+            // after the enclosing call infers its substitutions (or the binding
+            // checks its complete declared schema).
+            if let Some(wanted) = concrete_wanted {
                 self.expect(wanted, &actual, item.span)?;
             }
             if inner == Type::Unknown {
@@ -39,7 +43,7 @@ impl Checker<'_> {
                 self.type_budget.set(remaining);
                 if let Some(joined) = inner.join_list_lengths(&actual) {
                     inner = joined;
-                } else if let Some(wanted) = wanted {
+                } else if let Some(wanted) = concrete_wanted {
                     inner = self.copy_type(wanted, item.span)?;
                 } else {
                     self.expect(&inner, &actual, item.span)?;

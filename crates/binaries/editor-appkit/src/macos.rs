@@ -4,12 +4,15 @@ mod error_alert;
 mod fullscreen;
 mod inspector_split;
 mod layout;
+mod layout_split;
 mod loading;
 mod media;
+mod menu_sheet;
 mod menus;
 mod save;
 mod settings;
 mod timeline;
+mod transport;
 mod trust;
 
 use objc2::rc::Retained;
@@ -20,8 +23,8 @@ use objc2_app_kit::{
     NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate, NSBackingStoreType,
     NSButton, NSColorWell, NSControl, NSControlStateValueOff, NSControlStateValueOn, NSMenuItem,
     NSMenuItemValidation, NSPopUpButton, NSTextField, NSToolbar, NSToolbarDelegate,
-    NSToolbarDisplayMode, NSToolbarItem, NSWindow, NSWindowDelegate, NSWindowStyleMask,
-    NSWindowToolbarStyle,
+    NSToolbarDisplayMode, NSToolbarItem, NSUserInterfaceItemIdentification, NSWindow,
+    NSWindowDelegate, NSWindowStyleMask, NSWindowToolbarStyle,
 };
 use objc2_foundation::{
     MainThreadMarker, NSArray, NSNotification, NSObject, NSObjectProtocol, NSPoint, NSRect,
@@ -46,8 +49,7 @@ struct EditorIvars {
     window: OnceCell<Retained<NSWindow>>,
     layout: OnceCell<layout::Layout>,
     view_items: OnceCell<Vec<Retained<NSMenuItem>>>,
-    inspector_visible: Cell<bool>,
-    timeline_visible: Cell<bool>,
+    editor_layout: Cell<Option<shrimply_editor_state::preferences::EditorLayout>>,
     fullscreen_preview: Cell<bool>,
     fullscreen: RefCell<fullscreen::State>,
     settings_window: RefCell<Option<Retained<NSWindow>>>,
@@ -152,6 +154,28 @@ define_class!(
     }
 
     unsafe impl NSWindowDelegate for Editor {
+        #[unsafe(method(window:willPositionSheet:usingRect:))]
+        fn position_sheet(&self, window: &NSWindow, sheet: &NSWindow, rect: NSRect) -> NSRect {
+            if sheet.identifier().is_none_or(|identifier| identifier.to_string() != menu_sheet::IDENTIFIER) {
+                return rect;
+            }
+            let bounds = window.contentView().expect("sheet parent has content").bounds();
+            let content = sheet.contentView().expect("menu sheet has content");
+            let chrome = sheet.frame().size.height - content.frame().size.height;
+            let document_height = content.downcast_ref::<objc2_app_kit::NSScrollView>()
+                .and_then(|scroll| scroll.documentView())
+                .expect("menu sheet has a scrollable document").frame().size.height;
+            let size = objc2_foundation::NSSize::new(
+                bounds.size.width, document_height.min((bounds.size.height - chrome).max(0.0)),
+            );
+            if content.frame().size != size {
+                sheet.setContentSize(size);
+            }
+            // AppKit's attachment rectangle describes the sheet's top edge.
+            NSRect::new(NSPoint::new(0.0, sheet.frame().size.height.min(bounds.size.height)),
+                objc2_foundation::NSSize::new(bounds.size.width, 0.0))
+        }
+
         #[unsafe(method(windowWillClose:))]
         fn will_close(&self, _notification: &NSNotification) {
             if let Some(display_link) = self.ivars().display_link.get() { display_link.invalidate(); }
@@ -297,6 +321,15 @@ define_class!(
                 return;
             }
             let layout = self.ivars().layout.get().expect("layout installed");
+            let preferences = shrimply_editor_state::preferences::snapshot(&session.preferences);
+            if self.ivars().editor_layout.get() != Some(preferences.editor_layout) {
+                self.sync_panels();
+            }
+            let tools_hidden = self.ivars().fullscreen_preview.get()
+                || !preferences.preview_controls_visible;
+            if layout.preview_tools.isHidden() != tools_hidden {
+                layout.preview_tools.setHidden(tools_hidden);
+            }
             let inspector_errors = {
                 let _timing = shrimply_process_reporting::diagnostics::timing("Inspector polling and rebuild");
                 layout.inspector_controller.poll(self.mtm())
@@ -360,7 +393,8 @@ define_class!(
 
         #[unsafe(method(importMedia:))]
         fn import_media(&self, _sender: &NSObject) {
-            if let Err(error) = media::choose_files(&self.ivars().imports, self.ivars().session.get().expect("project loaded"), &[], self.mtm()) { self.show_error(&error); }
+            let session = self.ivars().session.get().expect("project loaded");
+            if let Err(error) = media::choose_files(&self.ivars().imports, session, &[], player_state::current_time(&session.player_state), self.mtm()) { self.show_error(&error); }
         }
 
         #[unsafe(method(undo:))]
@@ -620,14 +654,12 @@ define_class!(
 
         #[unsafe(method(toggleInspector:))]
         fn toggle_inspector(&self, _sender: &NSObject) {
-            self.ivars().inspector_visible.set(!self.ivars().inspector_visible.get());
-            self.sync_panels();
+            self.update_editor_layout(|layout| layout.inspector_visible = !layout.inspector_visible);
         }
 
         #[unsafe(method(toggleTimeline:))]
         fn toggle_timeline(&self, _sender: &NSObject) {
-            self.ivars().timeline_visible.set(!self.ivars().timeline_visible.get());
-            self.sync_panels();
+            self.update_editor_layout(|layout| layout.timeline_visible = !layout.timeline_visible);
         }
 
         #[unsafe(method(togglePreviewFullscreen:))]
@@ -859,20 +891,39 @@ impl Editor {
         );
     }
 
+    fn update_editor_layout(
+        &self,
+        update: impl FnOnce(&mut shrimply_editor_state::preferences::EditorLayout),
+    ) {
+        let session = self.ivars().session.get().expect("project loaded");
+        if let Err(error) =
+            shrimply_editor_state::preferences::update_editor_layout(&session.preferences, update)
+        {
+            self.show_error(&error);
+        }
+        self.sync_panels();
+    }
+
     fn sync_panels(&self) {
         let ivars = self.ivars();
         let layout = ivars.layout.get().expect("layout must exist");
         let fullscreen = ivars.fullscreen_preview.get();
+        let desired = shrimply_editor_state::preferences::snapshot(
+            &ivars.session.get().expect("project loaded").preferences,
+        )
+        .editor_layout;
+        ivars.editor_layout.set(Some(desired));
         layout
             .inspector
-            .set_collapsed(fullscreen || !ivars.inspector_visible.get());
+            .set_collapsed(fullscreen || !desired.inspector_visible);
         layout
             .timeline
-            .setCollapsed(fullscreen || !ivars.timeline_visible.get());
+            .setCollapsed(fullscreen || !desired.timeline_visible);
         self.sync_fullscreen_layout();
         layout.root.view().setNeedsLayout(true);
         layout.root.view().layoutSubtreeIfNeeded();
-        let timeline_active = !fullscreen && ivars.timeline_visible.get();
+        layout.root_split.restore();
+        let timeline_active = !fullscreen && desired.timeline_visible;
         for canvas in &layout.canvases {
             canvas.set_preview_fullscreen(fullscreen);
             if !timeline_active {
@@ -881,8 +932,8 @@ impl Editor {
         }
         if let Some(items) = ivars.view_items.get() {
             for (item, checked) in items.iter().zip([
-                ivars.inspector_visible.get(),
-                ivars.timeline_visible.get(),
+                desired.inspector_visible,
+                desired.timeline_visible,
                 fullscreen,
             ]) {
                 item.setState(if checked {
@@ -928,8 +979,7 @@ pub fn run(project: Option<&Path>) -> Result<bool, ()> {
         window: OnceCell::new(),
         layout: OnceCell::new(),
         view_items: OnceCell::new(),
-        inspector_visible: Cell::new(true),
-        timeline_visible: Cell::new(true),
+        editor_layout: Cell::new(None),
         fullscreen_preview: Cell::new(false),
         fullscreen: RefCell::new(fullscreen::State::default()),
         settings_window: RefCell::new(None),

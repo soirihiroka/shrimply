@@ -6,6 +6,7 @@ pub mod font;
 pub mod media;
 mod numpy;
 pub mod sqlite;
+pub mod texture;
 mod yaml;
 
 use sanim_core::{Color, Number, Type, Unit, Value};
@@ -29,7 +30,20 @@ pub fn resolve_pending(
     element: &mut sanim_core::Element,
     time: sanim_core::Fraction,
 ) -> Result<(), String> {
+    #[cfg(feature = "native-text")]
     code::view::resolve_pending(element, time)?;
+    #[cfg(not(feature = "native-text"))]
+    {
+        let _ = time;
+        if matches!(element.geometry.as_ref(), sanim_core::Geometry::Code { .. })
+            && requires_resolution(element)
+        {
+            return Err(
+                "CodeView layout requires native text support, which is unavailable in this build"
+                    .into(),
+            );
+        }
+    }
     font::resolve_pending(element)
 }
 
@@ -63,6 +77,9 @@ pub fn decode(path: &str, bytes: &[u8], ty: &Type, limits: Limits) -> Result<Val
         return Ok(Value::Font(sanim_core::Font::Asset(std::sync::Arc::new(
             bytes.to_vec(),
         ))));
+    }
+    if *ty == Type::Texture {
+        return texture::decode(bytes, limits).map(Value::Texture);
     }
     if let Type::Code(language) = ty {
         if limits.max_values == 0 {
@@ -316,36 +333,6 @@ fn convert(
             };
             Ok(Value::Fraction(fraction))
         }
-        Type::Vector(n, unit) => {
-            let values = value.as_array().filter(|v| v.len() == *n).ok_or_else(bad)?;
-            let unit = unit.unwrap_or(Unit::Number);
-            let values = values
-                .iter()
-                .enumerate()
-                .map(|(i, v)| {
-                    *budget = budget
-                        .checked_sub(1)
-                        .ok_or("decoded value limit exceeded")?;
-                    floating(v, unit).map_err(|e| format!("{path}[{i}]: {e}"))
-                })
-                .collect::<Result<Vec<_>, String>>()?;
-            Value::from_vector(values, unit)
-        }
-        Type::Matrix4 => {
-            let rows = value.as_array().filter(|v| v.len() == 4).ok_or_else(bad)?;
-            let mut matrix = [[0.0; 4]; 4];
-            for (i, row) in rows.iter().enumerate() {
-                let row = row.as_array().filter(|v| v.len() == 4).ok_or_else(bad)?;
-                for (j, v) in row.iter().enumerate() {
-                    *budget = budget
-                        .checked_sub(1)
-                        .ok_or("decoded value limit exceeded")?;
-                    matrix[i][j] =
-                        floating(v, Unit::Number).map_err(|e| format!("{path}[{i}][{j}]: {e}"))?;
-                }
-            }
-            Ok(Value::Matrix4(Box::new(matrix)))
-        }
         Type::Option(inner) if value.is_null() => {
             let _ = inner;
             Ok(Value::None)
@@ -505,25 +492,6 @@ pub fn to_json(value: &Value) -> Result<Json, String> {
             serde_json::json!({"variant":tag,"fields":fields.iter().map(to_json).collect::<Result<Vec<_>,_>>()?})
         }
         Value::Fraction(value) => Json::String(value.to_string()),
-        Value::Vec2(_) | Value::Vec3(_) | Value::Vec4(_) => {
-            let (values, unit) = value.vector()?;
-            Json::Array(
-                values
-                    .iter()
-                    .map(|v| {
-                        if unit == Unit::Number {
-                            serde_json::to_value(v).map_err(|e| e.to_string())
-                        } else {
-                            to_json(&Value::Number(Number {
-                                value: sanim_core::math::from_f64(*v)?,
-                                unit,
-                            }))
-                        }
-                    })
-                    .collect::<Result<_, String>>()?,
-            )
-        }
-        Value::Matrix4(matrix) => serde_json::to_value(matrix).map_err(|e| e.to_string())?,
         Value::List(_) | Value::Array { .. } => Json::Array(
             value
                 .list()?
@@ -573,22 +541,4 @@ pub(crate) fn expand_exponent(text: &str) -> Result<String, String> {
     } else {
         digits
     })
-}
-
-fn floating(value: &Json, unit: Unit) -> Result<f64, String> {
-    let value = match value {
-        Json::Number(value) => value.as_f64().ok_or("expected finite f64 component")?,
-        Json::String(value) => {
-            let number = Number::parse(value)?;
-            if number.unit != unit {
-                return Err(format!("expected {unit:?} vector component"));
-            }
-            sanim_core::math::to_f64(number.value)?
-        }
-        _ => return Err("expected numeric vector or matrix component".into()),
-    };
-    if !value.is_finite() {
-        return Err("vector and matrix components must be finite".into());
-    }
-    Ok(value)
 }

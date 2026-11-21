@@ -1,13 +1,17 @@
 use hashbrown::HashMap;
+mod av;
+mod staging;
+pub use staging::{StagedSource, stage_source, stage_source_in};
+#[cfg(test)]
+mod portable_tests;
 #[cfg(test)]
 mod sanim_tests;
+pub use av::{remux_to_mp4, video_dimensions};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
-use ffmpeg::{Rational, codec, encoder, format, media};
-use ffmpeg_next as ffmpeg;
-use glam::{UVec2, Vec2};
+use glam::UVec2;
 use shrimply_math_core::Fraction;
 use shrimply_resource_pipeline::{JobContext, Pipeline, Processor, Subscription};
 
@@ -22,10 +26,6 @@ use shrimply_visual_modifiers::{ModifierEffect, scene_3d::Scene3dModifierEffect}
 
 use shrimply_timeline_edit::{ItemKey, TrackKind, insert_sorted, next_group_id};
 
-type VideoSizes = Vec<UVec2>;
-type VideoSizeCache = Mutex<HashMap<AssetSnapshot, VideoSizes>>;
-
-static VIDEO_SIZE_CACHE: OnceLock<VideoSizeCache> = OnceLock::new();
 static INSPECTION_CACHE: OnceLock<Mutex<HashMap<InspectionKey, MediaInfo>>> = OnceLock::new();
 static INSPECTIONS: OnceLock<Pipeline<InspectionKey, MediaInspector>> = OnceLock::new();
 static INSPECTION_WORKERS: OnceLock<std::sync::mpsc::SyncSender<shrimply_resource_pipeline::Job>> =
@@ -55,7 +55,9 @@ impl Processor<InspectionKey> for MediaInspector {
     ) -> Result<Self::Output, String> {
         if matches!(
             file_kind(&key.path),
-            Some(FileKind::Python | FileKind::Blender)
+            Some(FileKind::Visual(
+                VisualMediaKind::Manim | VisualMediaKind::Blender
+            ))
         ) {
             shrimply_trust_core::approve_import(vec![key.path.clone()])?;
         }
@@ -65,7 +67,7 @@ impl Processor<InspectionKey> for MediaInspector {
             .expect("media inspection cache lock poisoned")
             .get(&key)
             .filter(|info| {
-                file_kind(&key.path) != Some(FileKind::Sanim)
+                file_kind(&key.path) != Some(FileKind::Visual(VisualMediaKind::Sanim))
                     && info.snapshot.ensure_current().is_ok()
             })
             .cloned()
@@ -91,20 +93,8 @@ impl Processor<InspectionKey> for MediaInspector {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FileKind {
-    Mp4,
-    Mov,
-    Mkv,
-    WebM,
-    Image,
-    Gif,
-    Svg,
-    Pdf,
-    Python,
-    Sanim,
-    Blender,
-    LayeredImage,
-    Obj,
-    Ply,
+    RemuxToMp4,
+    Visual(VisualMediaKind),
     Audio,
     Vtt,
 }
@@ -113,6 +103,7 @@ pub enum FileKind {
 pub enum VisualMediaKind {
     Video,
     Image,
+    AnimatedImage,
     Gif,
     Svg,
     Pdf,
@@ -132,7 +123,7 @@ pub struct MediaInfo {
     pub video_streams: usize,
     pub audio_streams: usize,
     pub visual_kind: Option<VisualMediaKind>,
-    pub video_sizes: VideoSizes,
+    pub video_sizes: Vec<UVec2>,
     pub video_fps: Option<Fraction>,
     pub layered_image_layers: Vec<LayerVisibility>,
     pub caption_cues: Vec<VttCue>,
@@ -191,69 +182,59 @@ pub fn request_inspection(
         .1
 }
 
-pub fn file_kind(path: &Path) -> Option<FileKind> {
+fn media_extension(path: &Path) -> Option<&str> {
     let extension = path.extension()?.to_str()?;
-    let extension = if extension.eq_ignore_ascii_case("part") {
-        Path::new(path.file_stem()?)
-            .extension()
-            .and_then(|extension| extension.to_str())?
+    if extension.eq_ignore_ascii_case("part") {
+        Path::new(path.file_stem()?).extension()?.to_str()
     } else {
-        extension
-    };
-    if extension.eq_ignore_ascii_case("mp4") {
-        Some(FileKind::Mp4)
-    } else if extension.eq_ignore_ascii_case("mov") {
-        Some(FileKind::Mov)
-    } else if extension.eq_ignore_ascii_case("mkv") {
-        Some(FileKind::Mkv)
-    } else if extension.eq_ignore_ascii_case("webm") {
-        Some(FileKind::WebM)
-    } else if image_extension(extension) {
-        Some(FileKind::Image)
-    } else if extension.eq_ignore_ascii_case("gif") {
-        Some(FileKind::Gif)
-    } else if extension.eq_ignore_ascii_case("svg") {
-        Some(FileKind::Svg)
-    } else if extension.eq_ignore_ascii_case("pdf") {
-        Some(FileKind::Pdf)
-    } else if extension.eq_ignore_ascii_case("py") {
-        Some(FileKind::Python)
-    } else if extension.eq_ignore_ascii_case("sanim") {
-        Some(FileKind::Sanim)
-    } else if extension.eq_ignore_ascii_case("blend") {
-        Some(FileKind::Blender)
-    } else if extension.eq_ignore_ascii_case("psd") || extension.eq_ignore_ascii_case("kra") {
-        Some(FileKind::LayeredImage)
-    } else if extension.eq_ignore_ascii_case("obj") || extension.eq_ignore_ascii_case("glb") {
-        Some(FileKind::Obj)
-    } else if extension.eq_ignore_ascii_case("ply") {
-        Some(FileKind::Ply)
-    } else if extension.eq_ignore_ascii_case("vtt") {
-        Some(FileKind::Vtt)
-    } else if audio_extension(extension) {
-        Some(FileKind::Audio)
-    } else {
-        None
+        Some(extension)
     }
 }
 
-pub fn direct_media_kind(kind: FileKind) -> bool {
-    matches!(
-        kind,
-        FileKind::Mp4
-            | FileKind::Mov
-            | FileKind::Image
-            | FileKind::Gif
-            | FileKind::Svg
-            | FileKind::Pdf
-            | FileKind::Python
-            | FileKind::Sanim
-            | FileKind::Blender
-            | FileKind::LayeredImage
-            | FileKind::Obj
-            | FileKind::Ply
-            | FileKind::Audio
-    )
+pub fn file_kind(path: &Path) -> Option<FileKind> {
+    use VisualMediaKind::*;
+    Some(match media_extension(path)?.to_ascii_lowercase().as_str() {
+        "mp4" | "mov" => FileKind::Visual(Video),
+        "mkv" | "webm" => FileKind::RemuxToMp4,
+        "gif" => FileKind::Visual(Gif),
+        "svg" => FileKind::Visual(Svg),
+        "pdf" => FileKind::Visual(Pdf),
+        "py" => FileKind::Visual(Manim),
+        "sanim" => FileKind::Visual(Sanim),
+        "blend" if shrimply_blender_core::SUPPORTED => FileKind::Visual(Blender),
+        "psd" | "kra" => FileKind::Visual(LayeredImage),
+        "obj" | "glb" => FileKind::Visual(Obj),
+        "ply" => FileKind::Visual(Gaussian),
+        "vtt" => FileKind::Vtt,
+        "jpg" | "jpeg" | "png" | "webp" | "avif" | "heif" | "heic" | "jxl" | "tif" | "tiff"
+        | "bmp" => FileKind::Visual(Image),
+        "aac" | "aiff" | "aif" | "alac" | "flac" | "m4a" | "mp3" | "ogg" | "opus" | "wav" => {
+            FileKind::Audio
+        }
+        _ => return None,
+    })
+}
+
+/// File-backed pictures that an interchange document can reference without running a generator.
+pub fn image_kind(path: &Path) -> Option<VisualMediaKind> {
+    use VisualMediaKind::*;
+    match file_kind(path)? {
+        FileKind::Visual(kind @ (Image | Gif | Svg | Pdf | LayeredImage)) => Some(kind),
+        _ => None,
+    }
+}
+
+/// Keep the source type when an interchange document references an offline image.
+pub fn image_reference(
+    path: &Path,
+    canvas_size: CanvasSize,
+    duration: Time,
+) -> Option<(VideoItemContent, Result<UVec2, String>)> {
+    let kind = image_kind(path)?;
+    Some(match inspect(path.to_owned(), canvas_size, duration) {
+        Ok(info) => (video_content_for_import(&info), Ok(info.video_sizes[0])),
+        Err(error) => (kind.content(&[]), Err(error)),
+    })
 }
 
 pub fn inspect(
@@ -265,7 +246,10 @@ pub fn inspect(
     let snapshot = source.snapshot()?;
     let path = snapshot.path();
     let file_kind = file_kind(path).ok_or_else(|| "unsupported file type".to_string())?;
-    if file_kind == FileKind::Sanim {
+    if file_kind == FileKind::RemuxToMp4 {
+        return Err("MKV/WebM must be remuxed to MP4 before timeline import".into());
+    }
+    if file_kind == FileKind::Visual(VisualMediaKind::Sanim) {
         let parent = path.parent().unwrap_or(Path::new("."));
         let entry = path
             .file_name()
@@ -277,18 +261,36 @@ pub fn inspect(
         engine.viewport.height = canvas_size.height.max(1);
         let report = engine
             .duration(entry, &sources, &std::collections::BTreeMap::new())
+            .or_else(|error| {
+                if error.code != "S138" {
+                    return Err(error);
+                }
+                engine.available_duration = Some(default_visual_duration.seconds);
+                engine.duration(entry, &sources, &std::collections::BTreeMap::new())
+            })
             .map_err(|e| e.to_string())?;
         snapshot.verify_current()?;
+        let duration = Time {
+            seconds: if report.indefinite {
+                report.duration.max(default_visual_duration.seconds)
+            } else if report.duration > Fraction::from(0) {
+                report.duration
+            } else {
+                default_visual_duration.seconds
+            },
+        };
+        shrimply_project_document::source_events::publish_import(
+            path,
+            canvas_size,
+            shrimply_project_document::source_events::Events {
+                duration,
+                index: report.event_index.clone(),
+            },
+        );
         return Ok(MediaInfo {
             source,
             snapshot,
-            duration: Time {
-                seconds: if report.duration > Fraction::from(0) {
-                    report.duration
-                } else {
-                    default_visual_duration.seconds
-                },
-            },
+            duration,
             visual_kind: Some(VisualMediaKind::Sanim),
             video_streams: 1,
             video_sizes: vec![UVec2::new(
@@ -322,9 +324,10 @@ pub fn inspect(
             caption_cues,
         });
     }
-    if matches!(file_kind, FileKind::Python | FileKind::Blender) {
+    if let FileKind::Visual(kind @ (VisualMediaKind::Manim | VisualMediaKind::Blender)) = file_kind
+    {
         shrimply_trust_core::require(path)?;
-        let duration = if file_kind == FileKind::Blender {
+        let duration = if kind == VisualMediaKind::Blender {
             Time {
                 seconds: shrimply_blender_core::file_duration(path)?,
             }
@@ -336,11 +339,7 @@ pub fn inspect(
             source,
             snapshot,
             duration,
-            visual_kind: Some(if file_kind == FileKind::Python {
-                VisualMediaKind::Manim
-            } else {
-                VisualMediaKind::Blender
-            }),
+            visual_kind: Some(kind),
             video_streams: 1,
             video_sizes: vec![UVec2::new(
                 canvas_size.width.max(1),
@@ -352,30 +351,70 @@ pub fn inspect(
             caption_cues: Vec::new(),
         });
     }
-    if file_kind == FileKind::Svg {
-        let size = snapshot
-            .read_to_string()
-            .ok()
-            .and_then(|svg| svg_native_size(&svg))
-            .unwrap_or_else(|| UVec2::new(canvas_size.width.max(1), canvas_size.height.max(1)));
+    if let FileKind::Visual(
+        kind @ (VisualMediaKind::Image | VisualMediaKind::Svg | VisualMediaKind::Gif),
+    ) = file_kind
+    {
+        use shrimply_drawing_skia::media::{self, animation::Animation};
+        let bytes = snapshot.read_bounded(media::MAX_SOURCE_BYTES)?;
+        let (visual_kind, [width, height], duration, video_fps) =
+            if let Some(mut animation) = Animation::probe(&bytes)? {
+                let actual = if animation.is_gif() {
+                    VisualMediaKind::Gif
+                } else {
+                    VisualMediaKind::AnimatedImage
+                };
+                if !matches!(
+                    (kind, actual),
+                    (VisualMediaKind::Gif, VisualMediaKind::Gif)
+                        | (VisualMediaKind::Image, VisualMediaKind::AnimatedImage)
+                ) {
+                    return Err(format!(
+                        "{} contents do not match its image type",
+                        path.display()
+                    ));
+                }
+                animation.frame_at(Time::ZERO)?;
+                (
+                    actual,
+                    animation.dimensions(),
+                    animation.duration,
+                    Some(animation.average_frame_rate()),
+                )
+            } else {
+                let prepared = media::prepare(Arc::new(bytes))?;
+                if !matches!(
+                    (kind, prepared.kind()),
+                    (VisualMediaKind::Image, media::Kind::Bitmap)
+                        | (VisualMediaKind::Svg, media::Kind::Svg)
+                ) {
+                    return Err(format!(
+                        "{} contents do not match its image type",
+                        path.display()
+                    ));
+                }
+                (kind, prepared.dimensions(), default_visual_duration, None)
+            };
+        snapshot.verify_current()?;
         return Ok(MediaInfo {
             source,
             snapshot,
-            duration: default_visual_duration,
-            visual_kind: Some(VisualMediaKind::Svg),
+            duration,
+            visual_kind: Some(visual_kind),
             video_streams: 1,
-            video_sizes: vec![size],
-            video_fps: None,
+            video_sizes: vec![UVec2::new(width, height)],
+            video_fps,
             audio_streams: 0,
             layered_image_layers: Vec::new(),
             caption_cues: Vec::new(),
         });
     }
-    if file_kind == FileKind::Pdf {
+    if file_kind == FileKind::Visual(VisualMediaKind::Pdf) {
         let pages = shrimply_pdf::page_sizes(snapshot.read()?)?;
         let first = pages
             .first()
             .expect("PDF inspection requires at least one page");
+        snapshot.verify_current()?;
         return Ok(MediaInfo {
             source,
             snapshot,
@@ -389,7 +428,7 @@ pub fn inspect(
             caption_cues: Vec::new(),
         });
     }
-    if file_kind == FileKind::LayeredImage {
+    if file_kind == FileKind::Visual(VisualMediaKind::LayeredImage) {
         let image = shrimply_layered_image_loader::load(source.clone())?;
         snapshot.ensure_current()?;
         let layered_image_layers = image
@@ -414,8 +453,11 @@ pub fn inspect(
             caption_cues: Vec::new(),
         });
     }
-    if matches!(file_kind, FileKind::Obj | FileKind::Ply) {
-        let visual_kind = if file_kind == FileKind::Ply {
+    if matches!(
+        file_kind,
+        FileKind::Visual(VisualMediaKind::Obj | VisualMediaKind::Gaussian)
+    ) {
+        let visual_kind = if file_kind == FileKind::Visual(VisualMediaKind::Gaussian) {
             shrimply_3dgs_core::RenderSession::load(&source)
                 .map_err(|error| format!("could not parse {}: {error}", path.display()))?;
             VisualMediaKind::Gaussian
@@ -451,223 +493,7 @@ pub fn inspect(
         });
     }
 
-    let input = format::input(path)
-        .map_err(|error| format!("could not open {}: {error}", path.display()))?;
-    let mut video_streams = 0;
-    let cached_video_sizes = VIDEO_SIZE_CACHE
-        .get_or_init(Mutex::default)
-        .lock()
-        .ok()
-        .and_then(|cache| cache.get(&snapshot).cloned());
-    let mut video_sizes = Vec::new();
-    let mut video_fps = None;
-    let mut audio_streams = 0;
-    let mut stream_duration_seconds = 0.0_f64;
-
-    for stream in input.streams() {
-        // Cover art is reported as video, but has no playback timestamps.
-        if stream
-            .disposition()
-            .contains(format::stream::Disposition::ATTACHED_PIC)
-        {
-            continue;
-        }
-        match stream.parameters().medium() {
-            media::Type::Video if file_kind != FileKind::Audio => {
-                video_streams += 1;
-                if video_fps.is_none() {
-                    let mut rate = stream.avg_frame_rate();
-                    if rate.numerator() <= 0 || rate.denominator() <= 0 {
-                        rate = stream.rate();
-                    }
-                    if rate.numerator() > 0 && rate.denominator() > 0 {
-                        video_fps = Some(Fraction::new_raw(
-                            u64::try_from(rate.numerator()).expect("positive video frame rate"),
-                            u64::try_from(rate.denominator()).expect("positive video frame rate"),
-                        ));
-                    }
-                }
-                if let Some(size) = cached_video_sizes
-                    .as_ref()
-                    .and_then(|sizes| sizes.get(video_streams - 1))
-                {
-                    video_sizes.push(*size);
-                } else if let Ok(decoder) =
-                    codec::context::Context::from_parameters(stream.parameters())
-                        .and_then(|context| context.decoder().video())
-                {
-                    video_sizes.push(UVec2::new(decoder.width(), decoder.height()));
-                } else {
-                    video_sizes.push(UVec2::ZERO);
-                }
-            }
-            media::Type::Audio => audio_streams += 1,
-            _ => {}
-        }
-        if stream.duration() > 0 {
-            stream_duration_seconds = stream_duration_seconds
-                .max(stream.duration() as f64 * rational_as_f64(stream.time_base()));
-        }
-    }
-
-    if video_streams == 0 && audio_streams == 0 {
-        return Err(format!("{} has no audio or video streams", path.display()));
-    }
-
-    let container_duration_seconds = if input.duration() > 0 {
-        input.duration() as f64 / 1_000_000.0
-    } else {
-        0.0
-    };
-    if cached_video_sizes.is_none()
-        && let Ok(mut cache) = VIDEO_SIZE_CACHE.get_or_init(Mutex::default).lock()
-    {
-        cache.insert(snapshot.clone(), video_sizes.clone());
-    }
-
-    let visual_kind = match file_kind {
-        FileKind::Image => Some(VisualMediaKind::Image),
-        FileKind::Gif => Some(VisualMediaKind::Gif),
-        FileKind::Mp4 | FileKind::Mov | FileKind::Mkv | FileKind::WebM if video_streams > 0 => {
-            Some(VisualMediaKind::Video)
-        }
-        _ => None,
-    };
-    if matches!(file_kind, FileKind::Image | FileKind::Gif) {
-        audio_streams = 0;
-        video_streams = video_streams.min(1);
-        video_sizes.truncate(video_streams);
-    }
-    let duration = match file_kind {
-        FileKind::Image => default_visual_duration,
-        FileKind::Gif => {
-            let source_duration =
-                Time::from_seconds_f64(container_duration_seconds.max(stream_duration_seconds));
-            if source_duration > Time::ZERO {
-                source_duration
-            } else {
-                default_visual_duration
-            }
-        }
-        _ => Time::from_seconds_f64(container_duration_seconds.max(stream_duration_seconds)),
-    };
-
-    snapshot.verify_current()?;
-    Ok(MediaInfo {
-        source,
-        snapshot,
-        duration,
-        visual_kind,
-        video_streams,
-        video_sizes,
-        video_fps,
-        audio_streams,
-        caption_cues: Vec::new(),
-        layered_image_layers: Vec::new(),
-    })
-}
-
-fn svg_native_size(svg: &str) -> Option<UVec2> {
-    let tag = svg_root_tag(svg)?;
-    let width = svg_attr(tag, "width").and_then(svg_length_px);
-    let height = svg_attr(tag, "height").and_then(svg_length_px);
-    let view_box = svg_attr(tag, "viewBox").and_then(svg_view_box_size);
-
-    match (width, height, view_box) {
-        (Some(width), Some(height), _) => Some(UVec2::new(size_px(width)?, size_px(height)?)),
-        (Some(width), None, Some(view_box)) if view_box.x > 0.0 => Some(UVec2::new(
-            size_px(width)?,
-            size_px(width * view_box.y / view_box.x)?,
-        )),
-        (None, Some(height), Some(view_box)) if view_box.y > 0.0 => Some(UVec2::new(
-            size_px(height * view_box.x / view_box.y)?,
-            size_px(height)?,
-        )),
-        (None, None, Some(view_box)) => {
-            Some(UVec2::new(size_px(view_box.x)?, size_px(view_box.y)?))
-        }
-        _ => None,
-    }
-}
-
-fn svg_root_tag(svg: &str) -> Option<&str> {
-    let start = svg.find("<svg")?;
-    let rest = &svg[start..];
-    let end = rest.find('>')?;
-    Some(&rest[..end])
-}
-
-fn svg_attr<'a>(tag: &'a str, name: &str) -> Option<&'a str> {
-    let mut rest = tag;
-    loop {
-        let index = rest.find(name)?;
-        let before = rest[..index].chars().next_back();
-        let after = rest[index + name.len()..].chars().next();
-        if before.is_some_and(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-            || after.is_some_and(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-        {
-            rest = &rest[index + name.len()..];
-            continue;
-        }
-
-        let mut value = rest[index + name.len()..].trim_start();
-        if !value.starts_with('=') {
-            rest = &rest[index + name.len()..];
-            continue;
-        }
-        value = value[1..].trim_start();
-        let quote = value.chars().next()?;
-        if quote != '"' && quote != '\'' {
-            return None;
-        }
-        value = &value[quote.len_utf8()..];
-        let end = value.find(quote)?;
-        return Some(&value[..end]);
-    }
-}
-
-fn svg_length_px(value: &str) -> Option<f32> {
-    let value = value.trim();
-    if value.ends_with('%') {
-        return None;
-    }
-    let number_end = value
-        .char_indices()
-        .take_while(|(_, c)| c.is_ascii_digit() || matches!(c, '.' | '+' | '-' | 'e' | 'E'))
-        .map(|(index, c)| index + c.len_utf8())
-        .last()?;
-    let number: f32 = value[..number_end].parse().ok()?;
-    if !number.is_finite() || number <= 0.0 {
-        return None;
-    }
-    let unit = value[number_end..].trim();
-    let scale = match unit {
-        "" | "px" => 1.0,
-        "in" => 96.0,
-        "cm" => 96.0 / 2.54,
-        "mm" => 96.0 / 25.4,
-        "pt" => 96.0 / 72.0,
-        "pc" => 16.0,
-        _ => return None,
-    };
-    Some(number * scale)
-}
-
-fn svg_view_box_size(value: &str) -> Option<Vec2> {
-    let values: Vec<f32> = value
-        .split(|c: char| c.is_ascii_whitespace() || c == ',')
-        .filter(|part| !part.is_empty())
-        .map(str::parse)
-        .collect::<Result<_, _>>()
-        .ok()?;
-    if values.len() != 4 || values.iter().any(|value| !value.is_finite()) {
-        return None;
-    }
-    (values[2] > 0.0 && values[3] > 0.0).then(|| Vec2::new(values[2], values[3]))
-}
-
-fn size_px(value: f32) -> Option<u32> {
-    (value.is_finite() && value > 0.0).then(|| value.ceil() as u32)
+    av::inspect(source, snapshot, file_kind)
 }
 
 pub fn apply_media_to_tracks(
@@ -684,10 +510,10 @@ pub fn apply_media_to_tracks(
         .snapped(step)
         .max(start.saturating_add(step));
     match kind {
-        TrackKind::Video => apply_video_to_tracks(project, info, track_indices, start, end),
-        TrackKind::Audio if info.visual_kind.is_some() => {
-            Err("visual files cannot be imported to audio tracks".to_string())
+        TrackKind::Caption if !info.caption_cues.is_empty() => {
+            apply_vtt_cues_to_tracks(project, &info.caption_cues, track_indices, start)
         }
+        TrackKind::Video => apply_video_to_tracks(project, info, track_indices, start, end),
         TrackKind::Audio => apply_audio_to_tracks(project, info, track_indices, start, end),
         TrackKind::Comment => {
             Err("visual and media files cannot be imported to comment tracks".to_string())
@@ -722,17 +548,27 @@ pub fn apply_vtt_cues_to_tracks(
     }
     let step = project.frame_step();
     let start = start.max(Time::ZERO).snapped(step);
+    let mut ranges = cues
+        .iter()
+        .map(|cue| {
+            let cue_start = start.saturating_add(cue.start).snapped(step);
+            let cue_end = start
+                .saturating_add(cue.end)
+                .snapped(step)
+                .max(cue_start.saturating_add(step));
+            (cue_start, cue_end, &cue.text)
+        })
+        .collect::<Vec<_>>();
+    ranges.sort_by_key(|(start, end, _)| (*start, *end));
+    if ranges.windows(2).any(|pair| pair[0].1 > pair[1].0) {
+        return Err("VTT cues overlap on the project frame grid; a single caption track cannot contain overlapping cues".into());
+    }
 
     for &track_index in track_indices {
         let Some(track) = project.caption_tracks.get(track_index) else {
             return Err(format!("caption track {} does not exist", track_index + 1));
         };
-        for cue in cues {
-            let item_start = start.saturating_add(cue.start).snapped(step);
-            let item_end = start
-                .saturating_add(cue.end)
-                .snapped(step)
-                .max(item_start.saturating_add(step));
+        for &(item_start, item_end, _) in &ranges {
             if timeline_search::collides(&track.items, item_start, item_end) {
                 return Err(format!(
                     "VTT import collides with caption track {}",
@@ -748,13 +584,8 @@ pub fn apply_vtt_cues_to_tracks(
         let Some(track) = project.caption_tracks.get_mut(track_index) else {
             continue;
         };
-        for cue in cues {
-            let item_start = start.saturating_add(cue.start).snapped(step);
-            let item_end = start
-                .saturating_add(cue.end)
-                .snapped(step)
-                .max(item_start.saturating_add(step));
-            let mut item = CaptionItem::new(item_start, item_end, cue.text.clone());
+        for &(item_start, item_end, text) in &ranges {
+            let mut item = CaptionItem::new(item_start, item_end, text.clone());
             item.group_id = group_id;
             let item_index = insert_sorted(&mut track.items, item);
             selection.push(ItemKey {
@@ -778,41 +609,6 @@ pub fn vtt_ranges(path: &Path) -> Result<Vec<(Time, Time)>, String> {
         .into_iter()
         .map(|cue| (cue.start, cue.end))
         .collect())
-}
-
-pub fn remux_mkv_to_mp4(input: &Path) -> Result<PathBuf, String> {
-    let file = remux_to_mp4(input, shrimply_resource_pipeline::CancelToken::default())?;
-    let path = file.path().to_path_buf();
-    file.keep();
-    Ok(path)
-}
-
-pub fn remux_to_mp4(
-    input: &Path,
-    cancellation: shrimply_resource_pipeline::CancelToken,
-) -> Result<OwnedFile, String> {
-    let mut path = input.with_extension("mp4");
-    loop {
-        match fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&path)
-        {
-            Ok(_) => break,
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                let mut name = input
-                    .file_stem()
-                    .ok_or("source has no filename")?
-                    .to_os_string();
-                name.push(format!("-{}.mp4", uuid::Uuid::new_v4()));
-                path = input.with_file_name(name);
-            }
-            Err(error) => return Err(format!("could not create {}: {error}", path.display())),
-        }
-    }
-    let output = OwnedFile::new(path);
-    remux(input, output.path(), cancellation)?;
-    Ok(output)
 }
 
 fn apply_video_to_tracks(
@@ -988,22 +784,31 @@ fn apply_audio_to_tracks(
 }
 
 pub fn video_content_for_import(info: &MediaInfo) -> VideoItemContent {
-    match info.visual_kind.unwrap_or(VisualMediaKind::Video) {
-        VisualMediaKind::Video => VideoItemContent::Media,
-        VisualMediaKind::Image => VideoItemContent::Image,
-        VisualMediaKind::Gif => VideoItemContent::Gif,
-        VisualMediaKind::Svg => VideoItemContent::Svg,
-        VisualMediaKind::Pdf => VideoItemContent::Pdf(Box::default()),
-        VisualMediaKind::Manim => VideoItemContent::Manim(Box::default()),
-        VisualMediaKind::Sanim => VideoItemContent::Sanim(Box::default()),
-        VisualMediaKind::Blender => VideoItemContent::Blender(Box::default()),
-        VisualMediaKind::LayeredImage => {
-            VideoItemContent::LayeredImage(Box::new(LayeredImageItem {
-                layers: info.layered_image_layers.clone(),
-            }))
+    info.visual_kind
+        .unwrap_or(VisualMediaKind::Video)
+        .content(&info.layered_image_layers)
+}
+
+impl VisualMediaKind {
+    fn content(self, layers: &[LayerVisibility]) -> VideoItemContent {
+        match self {
+            VisualMediaKind::Video => VideoItemContent::Media,
+            VisualMediaKind::Image => VideoItemContent::Image,
+            VisualMediaKind::Gif => VideoItemContent::Gif,
+            VisualMediaKind::AnimatedImage => VideoItemContent::AnimatedImage,
+            VisualMediaKind::Svg => VideoItemContent::Svg,
+            VisualMediaKind::Pdf => VideoItemContent::Pdf(Box::default()),
+            VisualMediaKind::Manim => VideoItemContent::Manim(Box::default()),
+            VisualMediaKind::Sanim => VideoItemContent::Sanim(Box::default()),
+            VisualMediaKind::Blender => VideoItemContent::Blender(Box::default()),
+            VisualMediaKind::LayeredImage => {
+                VideoItemContent::LayeredImage(Box::new(LayeredImageItem {
+                    layers: layers.to_vec(),
+                }))
+            }
+            VisualMediaKind::Obj => VideoItemContent::Obj(Box::default()),
+            VisualMediaKind::Gaussian => VideoItemContent::Gaussian(Box::default()),
         }
-        VisualMediaKind::Obj => VideoItemContent::Obj(Box::default()),
-        VisualMediaKind::Gaussian => VideoItemContent::Gaussian(Box::default()),
     }
 }
 
@@ -1022,7 +827,10 @@ pub fn modifiers_for_import(info: &MediaInfo) -> Vec<VisualModifier> {
 }
 
 pub fn repeat_strategy_for_import(info: &MediaInfo) -> RepeatStrategy {
-    if info.visual_kind == Some(VisualMediaKind::Gif) {
+    if matches!(
+        info.visual_kind,
+        Some(VisualMediaKind::Gif | VisualMediaKind::AnimatedImage)
+    ) {
         RepeatStrategy::Repeat
     } else {
         RepeatStrategy::Hold
@@ -1149,111 +957,6 @@ fn parse_vtt_timestamp(value: &str) -> Option<Time> {
             .saturating_mul(1_000_000_000)
             .saturating_add(fraction_nanos),
     ))
-}
-
-fn remux(
-    input: &Path,
-    output: &Path,
-    cancellation: shrimply_resource_pipeline::CancelToken,
-) -> Result<(), String> {
-    let interrupt = cancellation.clone();
-    let mut input_context =
-        format::input_with_interrupt(input, move || interrupt.is_cancelled())
-            .map_err(|error| format!("could not open {}: {error}", input.display()))?;
-    let mut output_context = format::output(output)
-        .map_err(|error| format!("could not create {}: {error}", output.display()))?;
-    let stream_count = input_context.nb_streams() as usize;
-    let mut stream_mapping = vec![-1; stream_count];
-    let mut input_time_bases = vec![Rational(0, 1); stream_count];
-    let mut output_index = 0;
-
-    for (input_index, input_stream) in input_context.streams().enumerate() {
-        let medium = input_stream.parameters().medium();
-        if !matches!(
-            medium,
-            media::Type::Audio | media::Type::Video | media::Type::Subtitle
-        ) {
-            continue;
-        }
-
-        stream_mapping[input_index] = output_index;
-        input_time_bases[input_index] = input_stream.time_base();
-        output_index += 1;
-
-        let mut output_stream = output_context
-            .add_stream(encoder::find(codec::Id::None))
-            .map_err(|error| format!("could not add output stream: {error}"))?;
-        output_stream.set_parameters(input_stream.parameters());
-        unsafe {
-            (*output_stream.parameters().as_mut_ptr()).codec_tag = 0;
-        }
-    }
-
-    output_context.set_metadata(input_context.metadata().to_owned());
-    output_context
-        .write_header()
-        .map_err(|error| format!("could not write {} header: {error}", output.display()))?;
-
-    loop {
-        if cancellation.is_cancelled() {
-            return Err("Media import was cancelled".into());
-        }
-        let mut packet = ffmpeg::Packet::empty();
-        match packet.read(&mut input_context) {
-            Ok(()) => {}
-            Err(ffmpeg::Error::Eof) => break,
-            Err(error) => {
-                return Err(format!(
-                    "could not read {} packet: {error}",
-                    input.display()
-                ));
-            }
-        }
-        let input_index = packet.stream();
-        let output_index = stream_mapping[input_index];
-        if output_index < 0 {
-            continue;
-        }
-        let output_stream = output_context
-            .stream(output_index as usize)
-            .ok_or_else(|| "remux output stream disappeared".to_string())?;
-        packet.rescale_ts(input_time_bases[input_index], output_stream.time_base());
-        packet.set_position(-1);
-        packet.set_stream(output_index as usize);
-        packet
-            .write_interleaved(&mut output_context)
-            .map_err(|error| format!("could not write {} packet: {error}", output.display()))?;
-    }
-
-    if cancellation.is_cancelled() {
-        return Err("Media import was cancelled".into());
-    }
-    output_context
-        .write_trailer()
-        .map_err(|error| format!("could not write {} trailer: {error}", output.display()))
-}
-
-fn rational_as_f64(value: Rational) -> f64 {
-    if value.denominator() == 0 {
-        0.0
-    } else {
-        value.numerator() as f64 / value.denominator() as f64
-    }
-}
-
-fn audio_extension(extension: &str) -> bool {
-    [
-        "aac", "aiff", "aif", "alac", "flac", "m4a", "mp3", "ogg", "opus", "wav",
-    ]
-    .iter()
-    .any(|candidate| extension.eq_ignore_ascii_case(candidate))
-}
-
-fn image_extension(extension: &str) -> bool {
-    matches!(
-        extension.to_ascii_lowercase().as_str(),
-        "jpg" | "jpeg" | "png" | "webp" | "avif"
-    )
 }
 
 pub struct OwnedFile {

@@ -13,7 +13,7 @@ const DEVICE_UUID_EXT: u32 = 0x9597;
 const DRIVER_UUID_EXT: u32 = 0x9598;
 
 pub(super) struct ImportedTexture {
-    _source: Texture,
+    pub source: Texture,
     memory: u32,
     semaphore: u32,
     pub texture: glow::NativeTexture,
@@ -105,7 +105,7 @@ impl ImportedTexture {
         let (memory_fd, allocation_size, semaphore_fd) = source.export()?;
         let texture = unsafe { gl.create_texture() }?;
         let mut imported = Self {
-            _source: source.clone(),
+            source: source.clone(),
             memory: 0,
             semaphore: 0,
             texture,

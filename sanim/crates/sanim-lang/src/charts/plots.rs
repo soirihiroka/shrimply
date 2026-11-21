@@ -66,7 +66,14 @@ pub(super) fn builtins(common: &[Parameter]) -> Vec<Builtin> {
                     p("include_zero", Type::Bool, false),
                 ]),
                 Kind::Polyline => parameters.extend([
-                    p("points", list(Type::Vector(2, Some(Unit::Length))), true),
+                    p(
+                        "points",
+                        list(Type::List(
+                            Box::new(Type::Numeric(Unit::Length)),
+                            sanim_core::ListLength::Exact(2),
+                        )),
+                        true,
+                    ),
                     p("width", length.clone(), false),
                 ]),
                 Kind::Legend => parameters.extend([
@@ -148,11 +155,14 @@ pub(super) fn builtins(common: &[Parameter]) -> Vec<Builtin> {
                 name,
                 parameters,
                 result: if matches!(kind, Kind::Range) {
-                    Type::Vector(2, Some(Unit::Number))
+                    Type::List(
+                        Box::new(Type::Numeric(Unit::Number)),
+                        sanim_core::ListLength::Exact(2),
+                    )
                 } else {
                     Type::Element
                 },
-                schedule: false,
+                state_effect: false,
                 timing: Default::default(),
                 content: Default::default(),
                 execute: Execution::Native(evaluate),
@@ -274,15 +284,15 @@ impl Chart<'_> {
         let vertices = points
             .iter()
             .map(|point| {
-                Ok(vec2(
+                vec2(
                     math::float_arithmetic("-", point[0], center[0])?,
                     math::float_arithmetic("-", point[1], center[1])?,
-                ))
+                )
             })
             .collect::<Result<Vec<_>, String>>()?;
         let mut values = vec![
             ("points", Value::List(vertices.into())),
-            ("position", vec2(center[0], center[1])),
+            ("position", vec2(center[0], center[1])?),
             ("fill", ink.clone()),
             ("opacity", scalar(opacity, Unit::Number)?),
         ];
@@ -379,10 +389,7 @@ fn evaluate(
             num(args, "padding", 0.05)?,
             boolean(args, "include_zero", false)?,
         )?;
-        return Ok(Value::Vec2(Vec2 {
-            values: bounds,
-            unit: Unit::Number,
-        }));
+        return Value::from_vector(bounds.to_vec(), Unit::Number);
     }
     let max_values = context.limits.data.max_values;
     let mut chart = Chart::new(name, args, context)?;
@@ -489,10 +496,13 @@ fn evaluate(
                     continue;
                 }
                 chart.shape(
-                    "Rect",
+                    "Box",
                     &format!("bin/{index}"),
                     [
-                        ("position", vec2((left + right) / 2., (top + baseline) / 2.)),
+                        (
+                            "position",
+                            vec2((left + right) / 2., (top + baseline) / 2.)?,
+                        ),
                         (
                             "width",
                             scalar((right - left).abs() * (1. - gap), Unit::Length)?,

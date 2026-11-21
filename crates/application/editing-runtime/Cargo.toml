@@ -14,7 +14,6 @@ serde_json.workspace = true
 skia-safe.workspace = true
 shrimply-editing-api.workspace = true
 shrimply-local-ipc.workspace = true
-shrimply-media-import.workspace = true
 shrimply-audio-engine.workspace = true
 shrimply-blender-core.workspace = true
 shrimply-asset.workspace = true

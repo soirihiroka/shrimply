@@ -9,9 +9,9 @@ use crate::{
     },
     scene::Scene,
 };
-use shrimply_editor_state::player_state::{self, ProjectChange, SharedPlayerState};
+use shrimply_player_core::{self as player_state, ProjectChange, SharedPlayerState};
 use shrimply_property_model::timeline_value::{TimelineBool, TimelineValue};
-use std::{cell::RefCell, path::PathBuf};
+use std::cell::RefCell;
 
 pub struct AudioRecording {
     pub key: TrackKey,
@@ -25,14 +25,22 @@ impl AudioRecording {
         project: &Project,
         player: &SharedPlayerState,
     ) -> Result<Self, String> {
+        Self::start_at(key, project, player, player_state::current_time(player))
+    }
+
+    pub fn start_at(
+        key: TrackKey,
+        project: &Project,
+        player: &SharedPlayerState,
+        position: Time,
+    ) -> Result<Self, String> {
         if project.audio_tracks.get(key.track_index).is_none() {
             return Err("Audio track no longer exists".into());
         }
-        let start = player_state::snapshot(player)
-            .position
-            .snapped(project.frame_step());
+        let start = position.snapped(project.frame_step());
         let recording = shrimply_audio_engine::recording::MicRecording::start()?;
         ensure_duration(player, start);
+        player_state::seek_time(player, start);
         player_state::set_playing(player, true);
         Ok(Self {
             key,
@@ -128,56 +136,7 @@ pub enum VideoRecordingCommand {
     Stop,
 }
 
-pub enum VideoRecordingEvent {
-    Ready { width: u32, height: u32 },
-    Cancelled,
-    Finished(Result<FinishedVideoRecording, String>),
-}
-
-pub struct FinishedVideoRecording {
-    path: Option<PathBuf>,
-    pub duration: Time,
-    pub width: u32,
-    pub height: u32,
-    pub alpha_track_id: Option<u32>,
-}
-
-impl FinishedVideoRecording {
-    pub fn new(
-        path: PathBuf,
-        duration: Time,
-        width: u32,
-        height: u32,
-        alpha_track_id: Option<u32>,
-    ) -> Self {
-        Self {
-            path: Some(path),
-            duration,
-            width,
-            height,
-            alpha_track_id,
-        }
-    }
-
-    fn path(&self) -> &std::path::Path {
-        self.path.as_deref().expect("recording file is owned")
-    }
-
-    fn keep(mut self) {
-        self.path.take();
-    }
-}
-
-impl Drop for FinishedVideoRecording {
-    fn drop(&mut self) {
-        if let Some(path) = self.path.take()
-            && let Err(error) = std::fs::remove_file(&path)
-            && error.kind() != std::io::ErrorKind::NotFound
-        {
-            tracing::warn!(path = %path.display(), %error, "Could not remove abandoned screen recording");
-        }
-    }
-}
+pub use shrimply_video_recording::{FinishedVideoRecording, VideoRecordingEvent};
 
 pub(crate) struct ActiveVideoRecording {
     track_id: uuid::Uuid,
@@ -188,7 +147,30 @@ pub(crate) struct ActiveVideoRecording {
 }
 
 impl Scene {
+    pub fn video_recording_in_progress(&self) -> bool {
+        self.active_video_recording
+            .as_ref()
+            .is_some_and(|active| !active.stopping)
+    }
+
+    pub fn video_recording_clock_active(&self) -> bool {
+        self.active_video_recording
+            .as_ref()
+            .is_some_and(|active| active.ready && !active.stopping)
+    }
+
     pub fn toggle_video_recording(&mut self, key: TrackKey) -> Result<(), String> {
+        self.toggle_video_recording_at(key, player_state::current_time(&self.player))
+    }
+
+    pub fn toggle_video_recording_at(
+        &mut self,
+        key: TrackKey,
+        position: Time,
+    ) -> Result<(), String> {
+        if !self.recording_available.1 {
+            return Err("Screen recording is unavailable".into());
+        }
         if key.kind != TrackKind::Video {
             return Err("Screen recording requires a video track".into());
         }
@@ -197,9 +179,7 @@ impl Scene {
             return Ok(());
         }
         let project = self.project.borrow();
-        let start = player_state::snapshot(&self.player)
-            .position
-            .snapped(project.frame_step());
+        let start = position.snapped(project.frame_step());
         let track = project
             .video_tracks
             .get(key.track_index)
@@ -307,7 +287,7 @@ impl Scene {
         }
     }
 
-    pub(crate) fn maintain_video_recording(&mut self) -> bool {
+    pub fn maintain_video_recording(&mut self) -> bool {
         let Some(active) = self.active_video_recording.as_ref() else {
             return false;
         };

@@ -33,6 +33,23 @@ cleanup:
   - "*.la"
 
 modules:
+  - name: spirv-tools
+    buildsystem: cmake-ninja
+    config-opts:
+      - -DSPIRV_SKIP_TESTS=ON
+      - -DSPIRV_WERROR=OFF
+    cleanup:
+      - "*"
+    sources:
+      - type: git
+        url: https://github.com/KhronosGroup/SPIRV-Tools.git
+        tag: v2026.4
+        commit: ef96ed763b43b59b33b31b362f09a02b729fa1c9
+      - type: git
+        url: https://github.com/KhronosGroup/SPIRV-Headers.git
+        commit: 496543121ce6419f23d6fa5d7194ba66c36212d2
+        dest: external/spirv-headers
+
   - name: level-zero
     buildsystem: cmake-ninja
     config-opts:
@@ -102,7 +119,7 @@ modules:
       - --disable-static
       - --enable-shared
       - --disable-doc
-      - --disable-programs
+      - --disable-ffplay
       - --enable-libfdk-aac
       - --enable-nonfree
       - --enable-libopus
@@ -113,8 +130,11 @@ modules:
       - --enable-gnutls
     sources:
       - type: archive
-        url: https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz
-        sha256: 8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e
+        path: '@SHRIMPLY_FFMPEG@'
+        strip-components: 0
+      - type: shell
+        commands:
+          - cp RELEASE FF_VERSION
 
   - name: poppler
     buildsystem: cmake-ninja
@@ -136,32 +156,6 @@ modules:
         url: https://poppler.freedesktop.org/poppler-26.08.0.tar.xz
         sha256: dc906e68cea698109706ac6aa3d2c9d4512fcfcac42d90b8afcda486d1b9abd0
 
-  - name: opencv
-    buildsystem: cmake-ninja
-    builddir: true
-    config-opts:
-      - -DCMAKE_BUILD_TYPE=Release
-      - -DCMAKE_INSTALL_LIBDIR=lib
-      - -DBUILD_LIST=core,imgproc,video,videoio,calib3d
-      - -DBUILD_SHARED_LIBS=ON
-      - -DBUILD_TESTS=OFF
-      - -DBUILD_PERF_TESTS=OFF
-      - -DBUILD_EXAMPLES=OFF
-      - -DBUILD_opencv_apps=OFF
-      - -DBUILD_opencv_python2=OFF
-      - -DBUILD_opencv_python3=OFF
-      - -DOPENCV_GENERATE_PKGCONFIG=ON
-      - -DWITH_CUDA=OFF
-      - -DWITH_GTK=OFF
-      - -DWITH_QT=OFF
-    sources:
-      - type: git
-        url: https://github.com/opencv/opencv.git
-        tag: 4.14.0
-        commit: 0654a42e19215ef25b1d367d822f3c630447e7c7
-      - type: patch
-        path: packaging/flatpak/opencv-ffmpeg9.patch
-
   - name: shrimply-gtk
     buildsystem: simple
     build-options:
@@ -174,6 +168,7 @@ modules:
         CARGO_TARGET_DIR: /run/ccache/cargo-target
         CARGO_UNSTABLE_CHECKSUM_FRESHNESS: "true"
         SHRIMPLY_BUILD_GIT_HASH: '@SHRIMPLY_GIT_HASH@'
+        SHRIMPLY_FFMPEG_PREFIX: /app
         # Link the bundled FFmpeg before the SDK's incompatible version.
         RUSTFLAGS: "-L native=/app/lib -C link-arg=-fuse-ld=lld"
         PATH: /run/host/usr/local/cargo/bin:/run/host/usr/local/cuda-12.9/bin:/usr/lib/sdk/llvm22/bin:/app/bin:/usr/bin

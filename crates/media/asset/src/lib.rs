@@ -3,7 +3,7 @@ pub mod remote;
 use std::fmt;
 use std::fs;
 use std::hash::{Hash, Hasher};
-use std::io::Write;
+use std::io::{Read, Write};
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -218,6 +218,26 @@ impl AssetSnapshot {
     pub fn read(&self) -> Result<Vec<u8>, String> {
         let bytes = fs::read(self.path())
             .map_err(|error| format!("could not read {}: {error}", self.path().display()))?;
+        self.verify_current()?;
+        Ok(bytes)
+    }
+
+    /// Enforce the limit while reading, including when a watched file grows after the snapshot.
+    pub fn read_bounded(&self, max_bytes: usize) -> Result<Vec<u8>, String> {
+        let len = usize::try_from(self.len())
+            .ok()
+            .filter(|len| *len <= max_bytes)
+            .ok_or_else(|| format!("{} exceeds its byte budget", self.path().display()))?;
+        let mut bytes = Vec::with_capacity(len);
+        fs::File::open(self.path())
+            .and_then(|file| {
+                file.take((max_bytes as u64).saturating_add(1))
+                    .read_to_end(&mut bytes)
+            })
+            .map_err(|error| format!("could not read {}: {error}", self.path().display()))?;
+        if bytes.len() > max_bytes {
+            return Err(format!("{} exceeds its byte budget", self.path().display()));
+        }
         self.verify_current()?;
         Ok(bytes)
     }

@@ -8,31 +8,33 @@ fn name<'a>(module: &'a AnalyzedModule, ty: &Type) -> Option<&'a str> {
         .iter()
         .find(|(name, schema)| !name.contains('.') && *schema == ty)
         .map(|(name, _)| name.as_str())
-        .or_else(|| {
-            prelude::types()
-                .iter()
-                .filter_map(|(name, definition)| match definition {
-                    prelude::TypeDefinition::Plain(schema)
-                        if matches!(schema, Type::Record(_)) && schema == ty =>
-                    {
-                        Some(*name)
-                    }
-                    _ => None,
-                })
-                // Prefer the structural constructor over convenience factories
-                // returning the same record (CodeRange rather than CodeLines).
-                .max_by_key(|name| {
-                    let Type::Record(fields) = ty else {
-                        return 0;
-                    };
-                    prelude::builtin(name).map_or(0, |builtin| {
-                        builtin
-                            .parameters
-                            .iter()
-                            .filter(|parameter| fields.contains_key(parameter.name))
-                            .count()
-                    })
-                })
+        .or_else(|| native_name(ty))
+}
+
+fn native_name(ty: &Type) -> Option<&'static str> {
+    prelude::types()
+        .iter()
+        .filter_map(|(name, definition)| match definition {
+            prelude::TypeDefinition::Plain(schema)
+                if matches!(schema, Type::Record(_)) && schema == ty =>
+            {
+                Some(*name)
+            }
+            _ => None,
+        })
+        // Prefer the structural constructor over convenience factories
+        // returning the same record (CodeRange rather than CodeLines).
+        .max_by_key(|name| {
+            let Type::Record(fields) = ty else {
+                return 0;
+            };
+            prelude::builtin(name).map_or(0, |builtin| {
+                builtin
+                    .parameters
+                    .iter()
+                    .filter(|parameter| fields.contains_key(parameter.name))
+                    .count()
+            })
         })
 }
 
@@ -72,9 +74,6 @@ pub(crate) fn compact(module: &AnalyzedModule, ty: &Type) -> String {
         Type::Series(inner) => format!("Series<{}>", compact(module, inner)),
         Type::Signal(inner) => format!("sig {}", compact(module, inner)),
         Type::DataFrame { row, .. } => format!("DataFrame<{}>", compact(module, row)),
-        Type::Vector(n, Some(unit)) => {
-            format!("Vec{n}<{}>", compact(module, &Type::Numeric(*unit)))
-        }
         Type::Union(types) => types
             .iter()
             .map(|ty| compact(module, ty))
@@ -84,18 +83,103 @@ pub(crate) fn compact(module: &AnalyzedModule, ty: &Type) -> String {
     }
 }
 
+/// Source annotations have stricter syntax than display labels (no ellipses or unit hints).
+/// Offer annotations only when the surface grammar can preserve their static capabilities.
+pub(crate) fn annotation(module: &AnalyzedModule, ty: &Type) -> Option<String> {
+    if let Some((name, _)) = module
+        .checked
+        .schemas
+        .iter()
+        .find(|(_, schema)| *schema == ty)
+    {
+        return Some(name.clone());
+    }
+    if let Some(name) = native_name(ty) {
+        return Some(name.into());
+    }
+    let inner = |ty: &Type| annotation(module, ty);
+    let container = |name: &str, ty: &Type| Some(format!("{name}<{}>", inner(ty)?));
+    match ty {
+        Type::Unknown | Type::Overloaded(_) | Type::Code(_) => None,
+        Type::Function(signature)
+            if signature.generics.is_empty() && signature.default_count == 0 =>
+        {
+            let parameters = signature
+                .parameters
+                .iter()
+                .map(|parameter| {
+                    Some(format!(
+                        "{}{}: {}",
+                        match parameter.kind {
+                            sanim_lang::ast::BindingKind::Let => "",
+                            sanim_lang::ast::BindingKind::Mut => "mut ",
+                            sanim_lang::ast::BindingKind::Sig => "sig ",
+                        },
+                        parameter.name,
+                        inner(&parameter.ty)?
+                    ))
+                })
+                .collect::<Option<Vec<_>>>()?;
+            Some(format!(
+                "fn({}): {}",
+                parameters.join(", "),
+                inner(&signature.result)?
+            ))
+        }
+        Type::Function(_) => None,
+        Type::Numeric(_) | Type::RefinedNumeric(_) => {
+            prelude::types().iter().find_map(|(name, definition)| {
+                matches!(definition, prelude::TypeDefinition::Plain(schema) if schema == ty)
+                    .then(|| (*name).into())
+            })
+        }
+        Type::List(ty, length) => Some(match length {
+            sanim_lang::core::ListLength::Unknown => format!("List<{}>", inner(ty)?),
+            sanim_lang::core::ListLength::Exact(length) => format!("List<{},{length}>", inner(ty)?),
+        }),
+        Type::Option(ty) => container("Option", ty),
+        Type::Array(ty) => container("Array", ty),
+        Type::Series(ty) => container("Series", ty),
+        Type::DataFrame { row, groups } if groups.is_empty() => container("DataFrame", row),
+        // Group keys carry capabilities that an ordinary DataFrame<T> annotation loses.
+        Type::DataFrame { .. } => None,
+        Type::Signal(ty) => Some(format!("sig ({})", inner(ty)?)),
+        Type::Union(types) => Some(
+            types
+                .iter()
+                .map(inner)
+                .collect::<Option<Vec<_>>>()?
+                .join(" | "),
+        ),
+        Type::Record(fields) => Some(format!(
+            "{{ {} }}",
+            fields
+                .iter()
+                .map(|(name, ty)| {
+                    let mut chars = name.chars();
+                    if !chars
+                        .next()
+                        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+                        || !chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+                    {
+                        return None;
+                    }
+                    Some(format!("{name}: {}", inner(ty)?))
+                })
+                .collect::<Option<Vec<_>>>()?
+                .join(", ")
+        )),
+        Type::Predicate => Some("Predicate".into()),
+        _ => Some(ty.to_string()),
+    }
+}
+
 fn expanded(module: &AnalyzedModule, ty: &Type, depth: usize) -> String {
     match ty {
         Type::StringLiteral(_) => ty.to_string(),
         Type::Overloaded(signatures) => signatures
             .iter()
-            .map(|signature| {
-                format!(
-                    "{}  # duration: {}",
-                    Type::Function(signature.clone()),
-                    signature.duration
-                )
-            })
+            .map(|signature| Type::Function(signature.clone()).to_string())
             .collect::<Vec<_>>()
             .join("\n"),
         Type::Record(fields) => {

@@ -175,7 +175,7 @@ impl InspectorController {
                 audio_modifier_evaluation_time(&project, &self.player_state, target)?
             }
             InspectorTarget::Item(address) => {
-                let position = player_state::snapshot(&self.player_state).position;
+                let position = crate::model::player_snapshot(&self.player_state).position;
                 project
                     .keyframe_time(address, position)
                     .ok_or_else(|| "the current item time is not available".to_string())?
@@ -1309,6 +1309,11 @@ impl InspectorController {
                 id,
             )?;
         }
+        self.audio_cache_transitions.borrow_mut().observe(
+            target.clone(),
+            id,
+            audio_cache_status(id),
+        );
         self.refresh_audio_inspector();
         Ok(())
     }

@@ -2,6 +2,8 @@
 mod watcher;
 use watcher::WatchedSources;
 mod notifications;
+mod pending;
+use pending::Pending;
 use sanim_core::{Diagnostic, Viewport};
 pub use sanim_lang;
 pub use sanim_lang::progress::{Phase, Progress, State};
@@ -25,6 +27,8 @@ pub struct Snapshot {
     pub revision: u64,
     /// Timing-only result for the pending source revision; prepared remains the last valid scene.
     pub planned_duration: Option<sanim_core::Fraction>,
+    /// Last valid source has an intrinsic indefinite extent, independent of its host crop.
+    pub indefinite: bool,
     pub prepared: Option<Arc<Prepared>>,
     pub diagnostic: Option<Diagnostic>,
     pub changed_elements: Arc<[String]>,
@@ -38,15 +42,15 @@ pub struct Snapshot {
 }
 #[derive(Clone, Default)]
 struct Configuration {
-    inputs: BTreeMap<String, serde_json::Value>,
+    inputs: Arc<BTreeMap<String, serde_json::Value>>,
     viewport: Viewport,
+    available_duration: Option<sanim_core::Fraction>,
 }
 enum Command {
     Changed,
     Refresh,
     FontsChanged,
     WatchError(String),
-    Inputs(u64, Configuration),
     Stop,
 }
 pub type Wake = Arc<dyn Fn() + Send + Sync>;
@@ -72,12 +76,11 @@ impl Observation {
 }
 
 pub struct Runtime {
-    commands: mpsc::SyncSender<Command>,
+    pending: Arc<Pending>,
     shared: Shared,
     worker: Option<thread::JoinHandle<()>>,
     progress_worker: Option<thread::JoinHandle<()>>,
     waker: Waker,
-    configuration: Mutex<Configuration>,
     stopping: Arc<AtomicBool>,
     _font_changes: sanim_data::font::FontChange,
 }
@@ -125,16 +128,18 @@ impl Runtime {
             }),
             Condvar::new(),
         ));
-        let (commands, receiver) = mpsc::sync_channel(32);
-        let font_changes = sanim_data::font::subscribe(Arc::new({
-            let commands = commands.clone();
-            move || {
-                // A full queue already guarantees another preparation. The
-                // session checks the latest font epoch after coalescing it.
-                let _ = commands.try_send(Command::FontsChanged);
-            }
+        let pending = Arc::new(Pending::new(Configuration {
+            viewport: viewport.clone(),
+            ..Default::default()
         }));
-        let sources = WatchedSources::new(root, &entry, commands.clone())?;
+        let font_changes = sanim_data::font::subscribe(Arc::new({
+            let pending = pending.clone();
+            move || pending.event(Command::FontsChanged)
+        }));
+        let sources = WatchedSources::new(root, &entry, {
+            let pending = pending.clone();
+            move |event| pending.event(event)
+        })?;
         let published = shared.clone();
         let waker = Waker::default();
         let worker_waker = waker.clone();
@@ -147,12 +152,9 @@ impl Runtime {
                 move || notifications::run(shared, waker, progress_receiver)
             })
             .map_err(|error| error.to_string())?;
-        let configuration = Configuration {
-            viewport: viewport.clone(),
-            ..Configuration::default()
-        };
         let stopping = Arc::new(AtomicBool::new(false));
         let worker_stopping = stopping.clone();
+        let worker_pending = pending.clone();
         let worker = thread::Builder::new()
             .name("sanim-runtime".into())
             .spawn(move || {
@@ -160,18 +162,17 @@ impl Runtime {
                     entry,
                     sources,
                     (limits, viewport, worker_stopping),
-                    receiver,
+                    worker_pending,
                     (published, worker_waker, progress_changes),
                 )
             })
             .map_err(|e| e.to_string())?;
         Ok(Self {
-            commands,
+            pending,
             shared,
             worker: Some(worker),
             progress_worker: Some(progress_worker),
             waker,
-            configuration: Mutex::new(configuration),
             stopping,
             _font_changes: font_changes,
         })
@@ -191,46 +192,70 @@ impl Runtime {
         }
     }
     pub fn reload(&self) -> Result<(), String> {
-        self.commands
-            .send(Command::Refresh)
-            .map_err(|_| "Sanim runtime stopped".into())
+        if self.stopping.load(Ordering::Acquire) {
+            return Err("Sanim runtime stopped".into());
+        }
+        self.pending.event(Command::Refresh);
+        Ok(())
     }
     /// Replace the complete reflected override snapshot. Missing keys reset to defaults.
     pub fn set_inputs(&self, inputs: BTreeMap<String, serde_json::Value>) -> Result<(), String> {
         self.configure(|configuration| {
-            configuration.inputs = inputs;
+            if configuration.inputs.as_ref() == &inputs {
+                return false;
+            }
+            configuration.inputs = Arc::new(inputs);
+            true
         })
     }
     pub fn set_viewport(&self, viewport: Viewport) -> Result<(), String> {
         viewport.validate()?;
         self.configure(|configuration| {
+            if configuration.viewport == viewport {
+                return false;
+            }
             configuration.viewport = viewport;
+            true
         })
     }
-    fn configure(&self, change: impl FnOnce(&mut Configuration)) -> Result<(), String> {
-        let mut configuration = self
-            .configuration
+    pub fn set_time_extent(&self, duration: Option<sanim_core::Fraction>) -> Result<(), String> {
+        if let Some(duration) = duration {
+            sanim_core::math::temporal::viewport(duration)?;
+        }
+        self.configure(|configuration| {
+            if configuration.available_duration == duration {
+                return false;
+            }
+            configuration.available_duration = duration;
+            true
+        })
+    }
+    fn configure(&self, change: impl FnOnce(&mut Configuration) -> bool) -> Result<(), String> {
+        let mut pending = self
+            .pending
+            .state
             .lock()
-            .expect("Sanim configuration poisoned");
-        let previous = configuration.viewport.clone();
-        let previous_inputs = configuration.inputs.clone();
-        change(&mut configuration);
-        if configuration.viewport == previous && configuration.inputs == previous_inputs {
+            .expect("Sanim pending state poisoned");
+        if self.stopping.load(Ordering::Acquire) {
+            return Err("Sanim runtime stopped".into());
+        }
+        if !change(&mut pending.configuration) {
             return Ok(());
         }
-        let serial = {
+        pending.serial = pending
+            .serial
+            .checked_add(1)
+            .expect("Sanim input generation overflow");
+        {
             let mut state = self.shared.0.lock().expect("Sanim runtime state poisoned");
-            state.requested_inputs += 1;
+            state.requested_inputs = pending.serial;
             state.preparing = true;
             state.progress.state = State::Running;
             state.reloading = state.prepared.is_some();
-            state.requested_inputs
-        };
-        let command = Command::Inputs(serial, configuration.clone());
-        drop(configuration);
-        self.commands
-            .send(command)
-            .map_err(|_| "Sanim runtime stopped".into())
+        }
+        drop(pending);
+        self.pending.wake.notify_one();
+        Ok(())
     }
     /// Useful for headless hosts; UI callers should read snapshot() without waiting.
     pub fn wait_for_change(&self, generation: u64, timeout: Duration) -> Snapshot {
@@ -246,8 +271,7 @@ impl Runtime {
 impl Drop for Runtime {
     fn drop(&mut self) {
         self.stopping.store(true, Ordering::Release);
-        // A full queue already wakes the worker; the stop flag prevents another job.
-        let _ = self.commands.try_send(Command::Stop);
+        self.pending.event(Command::Stop);
         let workers = [self.worker.take(), self.progress_worker.take()];
         let reentrant = workers
             .iter()
@@ -279,7 +303,7 @@ fn worker(
     entry: String,
     sources: WatchedSources,
     (limits, viewport, stopping): (Limits, Viewport, Arc<AtomicBool>),
-    receiver: mpsc::Receiver<Command>,
+    pending: Arc<Pending>,
     (shared, waker, progress_changes): (Shared, Waker, mpsc::SyncSender<()>),
 ) {
     let mut session = Session::new(&entry);
@@ -290,15 +314,36 @@ fn worker(
         viewport,
         ..Configuration::default()
     };
+    let mut applied = raw.clone();
     let mut input_serial = 0;
-    let mut dirty = true;
-    let mut input_dirty = false;
-    let mut watch_error = None;
     loop {
-        if stopping.load(Ordering::Acquire) {
+        let mut batch = pending
+            .take(input_serial, None)
+            .expect("blocking pending receive");
+        if !batch.stop && batch.error.is_none() && batch.source && batch.configuration.is_none() {
+            // Native editors can truncate/rewrite or atomically replace the same file.
+            const QUIET: Duration = Duration::from_millis(25);
+            const MAX_DEBOUNCE: Duration = Duration::from_millis(100);
+            let limit = Instant::now() + MAX_DEBOUNCE;
+            loop {
+                let timeout = QUIET.min(limit.saturating_duration_since(Instant::now()));
+                if timeout.is_zero() {
+                    break;
+                }
+                let Some(next) = pending.take(input_serial, Some(timeout)) else {
+                    break;
+                };
+                batch.merge(next);
+                if batch.stop || batch.error.is_some() || batch.configuration.is_some() {
+                    break;
+                }
+            }
+        }
+        if batch.stop || stopping.load(Ordering::Acquire) {
             return;
         }
-        if let Some(error) = watch_error.take() {
+        if let Some(error) = batch.error {
+            stopping.store(true, Ordering::Release);
             publish(&shared, &waker, |state| {
                 state.preparing = false;
                 state.progress.state = State::Failed;
@@ -311,7 +356,20 @@ fn worker(
             });
             return;
         }
-        if dirty {
+        if batch.refresh {
+            sources.invalidate_all();
+        }
+        let source_dirty =
+            batch.source || batch.refresh || batch.fonts && session.font_environment_changed();
+        let input_dirty = batch.configuration.is_some();
+        if let Some((serial, configuration)) = batch.configuration {
+            input_serial = serial;
+            raw = configuration;
+        }
+        if !source_dirty && !input_dirty {
+            continue;
+        }
+        {
             let started = Instant::now();
             let (previous_progress, previous_reloading, previous_generation) = {
                 let state = shared.0.lock().expect("Sanim runtime state poisoned");
@@ -341,23 +399,35 @@ fn worker(
                     let _ = progress_changes.try_send(());
                 }
             })));
+            let inputs_changed =
+                !Arc::ptr_eq(&raw.inputs, &applied.inputs) && raw.inputs != applied.inputs;
+            let layout_only =
+                input_dirty && !source_dirty && session.current().is_some() && !inputs_changed;
             if input_dirty {
+                session.engine.available_duration = raw.available_duration;
                 session.engine.viewport = raw.viewport.clone();
-                session.set_json_inputs(raw.inputs.clone());
-            }
-            let outcome = session.poll_with_duration(&sources, |duration| {
-                let changed = shared
-                    .0
-                    .lock()
-                    .expect("Sanim runtime state poisoned")
-                    .planned_duration
-                    != Some(duration);
-                if changed {
-                    publish(&shared, &waker, |state| {
-                        state.planned_duration = Some(duration)
-                    });
+                if inputs_changed {
+                    session.set_json_inputs(raw.inputs.as_ref().clone());
                 }
-            });
+            }
+            let outcome = if layout_only {
+                session.relayout(&raw.viewport, raw.available_duration)
+            } else {
+                session.poll_with_duration(&sources, |duration| {
+                    let changed = shared
+                        .0
+                        .lock()
+                        .expect("Sanim runtime state poisoned")
+                        .planned_duration
+                        != Some(duration);
+                    if changed {
+                        publish(&shared, &waker, |state| {
+                            state.planned_duration = Some(duration)
+                        });
+                    }
+                })
+            };
+            applied = raw.clone();
             if stopping.load(Ordering::Acquire) {
                 return;
             }
@@ -368,9 +438,10 @@ fn worker(
                     changed_elements,
                 } => publish(&shared, &waker, |s| {
                     s.planned_duration = Some(prepared.animation.duration);
+                    s.indefinite = prepared.natural_extent() == sanim_core::plan::Extent::Infinite;
                     s.revision = revision;
                     s.prepared = Some(prepared);
-                    s.diagnostic = None;
+                    s.diagnostic = session.last_error().cloned();
                     s.changed_elements = changed_elements.into();
                     s.applied_inputs = input_serial;
                     s.preparing = s.applied_inputs < s.requested_inputs;
@@ -424,6 +495,9 @@ fn worker(
                     state.diagnostic = diagnostic;
                     state.planned_duration = duration;
                     if state.diagnostic.is_none() {
+                        state.indefinite = session.current().is_some_and(|prepared| {
+                            prepared.natural_extent() == sanim_core::plan::Extent::Infinite
+                        });
                         state.prepared = session.current().cloned();
                     }
                     state.applied_inputs = input_serial;
@@ -452,88 +526,6 @@ fn worker(
                 }
             }
             sources.retain(session.dependencies());
-            input_dirty = false;
-            dirty = false;
-        }
-        match receiver.recv() {
-            Ok(Command::Stop) | Err(_) => break,
-            Ok(Command::WatchError(error)) => {
-                watch_error = Some(error);
-            }
-            Ok(Command::Inputs(serial, values)) => {
-                if serial > input_serial {
-                    raw = values;
-                    input_serial = serial;
-                }
-                input_dirty = true;
-                dirty = true;
-            }
-            Ok(Command::Changed) => dirty = true,
-            Ok(Command::Refresh) => {
-                sources.invalidate_all();
-                dirty = true;
-            }
-            Ok(Command::FontsChanged) => dirty |= session.font_environment_changed(),
-        }
-        // Coalesce already-queued writes and parameter updates into one revision.
-        while let Ok(command) = receiver.try_recv() {
-            match command {
-                Command::Stop => return,
-                Command::Changed => dirty = true,
-                Command::Refresh => {
-                    sources.invalidate_all();
-                    dirty = true;
-                }
-                Command::FontsChanged => dirty |= session.font_environment_changed(),
-                Command::WatchError(error) => {
-                    watch_error = Some(error);
-                }
-                Command::Inputs(serial, values) => {
-                    if serial > input_serial {
-                        raw = values;
-                        input_serial = serial;
-                    }
-                    input_dirty = true;
-                    dirty = true;
-                }
-            }
-        }
-        if watch_error.is_some() {
-            continue;
-        }
-        if dirty && !input_dirty {
-            // Editors commonly truncate then rewrite or replace a file. Wait
-            // briefly for the write burst to settle before accepting a revision.
-            const QUIET: Duration = Duration::from_millis(25);
-            const MAX_DEBOUNCE: Duration = Duration::from_millis(100);
-            let limit = Instant::now() + MAX_DEBOUNCE;
-            loop {
-                let timeout = QUIET.min(limit.saturating_duration_since(Instant::now()));
-                if timeout.is_zero() {
-                    break;
-                }
-                match receiver.recv_timeout(timeout) {
-                    Ok(Command::Stop) | Err(mpsc::RecvTimeoutError::Disconnected) => return,
-                    Ok(Command::Changed) => {}
-                    Ok(Command::Refresh) => {
-                        sources.invalidate_all();
-                    }
-                    Ok(Command::FontsChanged) => dirty |= session.font_environment_changed(),
-                    Ok(Command::WatchError(error)) => {
-                        watch_error = Some(error);
-                        break;
-                    }
-                    Ok(Command::Inputs(serial, values)) => {
-                        if serial > input_serial {
-                            raw = values;
-                            input_serial = serial;
-                        }
-                        input_dirty = true;
-                        break;
-                    }
-                    Err(mpsc::RecvTimeoutError::Timeout) => break,
-                }
-            }
         }
     }
 }

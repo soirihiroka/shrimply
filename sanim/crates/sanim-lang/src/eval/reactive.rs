@@ -29,7 +29,6 @@ pub(super) struct Cell {
     pub module: String,
     pub span: Span,
     pub sampled_at: Option<Fraction>,
-    pub creation_background_depth: usize,
 }
 #[derive(Clone, serde::Serialize)]
 pub(super) struct Signal {
@@ -40,7 +39,7 @@ pub(super) struct Signal {
     pub name: String,
     pub span: Span,
     pub ty: Arc<Type>,
-    pub types: BTreeMap<String, Type>,
+    pub types: TypeBindings,
     pub identity: Vec<String>,
     #[serde(skip)]
     pub source_calls: imbl::Vector<crate::SourceLocation>,
@@ -337,7 +336,7 @@ impl Runtime<'_, '_> {
         }
         let ty = self.binding_type(span)?;
         if kind==BindingKind::Sig && let ExprKind::Call{callee,..}=&expr.kind
-            && self.loaded.iter().find(|module|module.id==self.module).and_then(|module|crate::effects::lookup(callee,&module.checked.exports)).is_some_and(|ty|matches!(ty,Type::Function(signature) if matches!(signature.result.as_ref(),Type::Signal(_)))) {
+            && self.loaded.iter().find(|module|module.id==self.module).and_then(|module|crate::analysis::lookup(callee,module.checked.as_ref())).is_some_and(|ty|matches!(ty,Type::Function(signature) if matches!(signature.result.as_ref(),Type::Signal(_)))) {
             let Value::Signal(signal)=self.capture_signal(expr,env,&ty)? else{unreachable!("checked signal factory")};
             return Ok(Binding::Reactive(signal.id));
         }
@@ -356,7 +355,6 @@ impl Runtime<'_, '_> {
                 module: self.module.clone(),
                 span,
                 sampled_at: None,
-                creation_background_depth: self.background_depth,
             })
         } else {
             let mut names = BTreeSet::new();
@@ -419,9 +417,7 @@ impl Runtime<'_, '_> {
             ));
         };
         let list = matches!(cell.value, Value::List(_));
-        let timed = self.animation.reactive.has_cell(id)
-            || self.animation.list_views.has_cell(id)
-            || self.background_depth > 0 && cell.creation_background_depth != self.background_depth;
+        let timed = self.animation.reactive.has_cell(id) || self.animation.list_views.has_cell(id);
         if timed {
             if list {
                 self.ensure_list_cell(id, span)?;
@@ -444,7 +440,7 @@ impl Runtime<'_, '_> {
             validate_value(&cell.ty, &value)
                 .map_err(|e| self.error("S140", format!("cannot assign '{name}': {e}"), span))?;
         }
-        let (start, easing) = self.assignment_timing(expr);
+        let (start, easing) = (self.cursor, Easing::default());
         let unchanged = match (self.reactive.nodes.get(&id), &value, &delta) {
             (Some(Node::Cell(current)), Value::List(value), Some(delta))
                 if delta.cow_bytes == 0 =>
@@ -456,28 +452,6 @@ impl Runtime<'_, '_> {
             _ => false,
         };
         if unchanged {
-            if self.background_depth > 0 && timed {
-                // An explicit future event may override a main-thread write inserted earlier later.
-                if list {
-                    self.write_list_assignment(
-                        id,
-                        &value,
-                        start,
-                        delta.as_ref().map(|delta| &delta.edit),
-                        easing,
-                        span,
-                    )?;
-                } else {
-                    self.animation
-                        .reactive
-                        .write_cell(id, self.cursor, value)
-                        .map_err(|error| self.error("S140", error, span))?;
-                }
-                if let Some(Node::Cell(cell)) = self.reactive.nodes.get_mut(&id) {
-                    cell.sampled_at = Some(self.cursor);
-                }
-                self.reactive.touch();
-            }
             self.statistics.unchanged_writes += 1;
             return Ok(());
         }
@@ -620,7 +594,7 @@ impl Runtime<'_, '_> {
             &mut self.retained_bytes,
             &mut self.retained_items,
             self.limits.data.max_depth,
-            &mut self.retained_fonts,
+            &mut self.retained_resources,
         )
         .map_err(|e| self.error("S303", format!("preparation binding budget: {e}"), span))
     }
@@ -637,10 +611,6 @@ impl Runtime<'_, '_> {
 }
 
 impl Runtime<'_, '_> {
-    pub(super) fn function_mutates(&self, function: &Function) -> bool {
-        self.function_signature(function)
-            .is_some_and(|signature| signature.mutates)
-    }
     pub(super) fn instance_site(&self, span: Span) -> String {
         self.instance_paths
             .get(&self.module)
@@ -654,12 +624,31 @@ impl Runtime<'_, '_> {
 pub(super) fn instance_paths(module: &Module) -> BTreeMap<usize, String> {
     fn expression(expr: &Expr, path: &str, out: &mut BTreeMap<usize, String>) {
         let mut index = 0;
-        expr.visit(&mut |expr| {
+        expr.visit_while(&mut |expr| {
+            if let ExprKind::Function(declaration) = &expr.kind {
+                function(declaration, &format!("{path}.closure{index}"), out);
+                index += 1;
+            }
             if matches!(expr.kind, ExprKind::Call { .. }) {
                 out.insert(expr.span.start, format!("{path}.call{index}"));
                 index += 1;
             }
+            true
         });
+    }
+    fn function(statement: &Statement, path: &str, out: &mut BTreeMap<usize, String>) {
+        let StatementKind::Function {
+            parameters, body, ..
+        } = &statement.kind
+        else {
+            unreachable!("function AST")
+        };
+        for parameter in parameters {
+            if let Some(value) = &parameter.default {
+                expression(value, &format!("{path}.{}", parameter.name), out);
+            }
+        }
+        block(body, path, out);
     }
     fn block(body: &[Statement], parent: &str, out: &mut BTreeMap<usize, String>) {
         for (index, statement) in body.iter().enumerate() {
@@ -669,33 +658,8 @@ pub(super) fn instance_paths(module: &Module) -> BTreeMap<usize, String> {
                 | StatementKind::Assign { value, .. }
                 | StatementKind::Expr(value)
                 | StatementKind::Return(value) => expression(value, &path, out),
-                StatementKind::Animate {
-                    value,
-                    duration,
-                    easing,
-                    ..
-                } => {
-                    expression(value, &format!("{path}.target"), out);
-                    expression(duration, &format!("{path}.duration"), out);
-                    if let Some(easing) = easing {
-                        expression(easing, &format!("{path}.ease"), out);
-                    }
-                }
-                StatementKind::Function {
-                    name,
-                    parameters,
-                    body,
-                    ..
-                } => {
-                    let path = format!("fn.{name}");
-                    for parameter in parameters {
-                        let name = &parameter.name;
-                        let value = &parameter.default;
-                        if let Some(value) = value {
-                            expression(value, &format!("{path}.{name}"), out);
-                        }
-                    }
-                    block(body, &path, out);
+                StatementKind::Function { name, .. } => {
+                    function(statement, &format!("fn.{name}"), out);
                 }
                 StatementKind::If { condition, yes, no } => {
                     expression(condition, &path, out);
@@ -707,16 +671,9 @@ pub(super) fn instance_paths(module: &Module) -> BTreeMap<usize, String> {
                     expression(iterable, &format!("{path}.items"), out);
                     block(body, &path, out);
                 }
-                StatementKind::Repeat {
-                    count,
-                    period,
-                    body,
-                } => {
+                StatementKind::Repeat { count, body } => {
                     out.insert(statement.span.start, path.clone());
                     expression(count, &format!("{path}.count"), out);
-                    if let Some(period) = period {
-                        expression(period, &format!("{path}.period"), out);
-                    }
                     block(body, &path, out);
                 }
                 StatementKind::Match { value, cases } => {
@@ -725,7 +682,6 @@ pub(super) fn instance_paths(module: &Module) -> BTreeMap<usize, String> {
                         block(&case.body, &format!("{path}.case{index}"), out);
                     }
                 }
-                StatementKind::Background { body } => block(body, &path, out),
                 _ => {}
             }
         }
@@ -746,11 +702,16 @@ impl Runtime<'_, '_> {
                 return false;
             }
             if let ExprKind::Call { callee, args, .. } = &expr.kind {
-                mutates |= crate::effects::lookup(callee, &module.checked.exports)
+                mutates |= crate::analysis::lookup(callee, module.checked.as_ref())
                     .is_some_and(|ty| ty.signatures().iter().any(|signature| signature.mutates))
                     || crate::timing::builtin_call(callee, args, &module.checked.native_methods)
                         .is_some_and(|call| {
-                            crate::list_functions::callback_type(&call, &module.checked.exports)
+                            call.capabilities(module.checked.as_ref())
+                                .contains(sanim_core::FnCapability::Mut)
+                                || crate::list_functions::callback_type(
+                                    &call,
+                                    module.checked.as_ref(),
+                                )
                                 .is_some_and(|ty| {
                                     ty.signatures().iter().any(|signature| signature.mutates)
                                 })
@@ -759,100 +720,5 @@ impl Runtime<'_, '_> {
             !mutates
         });
         mutates
-    }
-    pub(super) fn statement_stateful(&self, statement: &Statement) -> bool {
-        match &statement.kind {
-            StatementKind::Bind { kind, value, .. } => {
-                *kind != BindingKind::Let || self.expression_mutates(value)
-            }
-            StatementKind::Assign { .. }
-            | StatementKind::Animate { .. }
-            | StatementKind::Background { .. } => true,
-            StatementKind::If { condition, yes, no } => {
-                self.expression_mutates(condition)
-                    || yes
-                        .iter()
-                        .chain(no)
-                        .any(|statement| self.statement_stateful(statement))
-            }
-            StatementKind::For { iterable, body, .. } => {
-                self.expression_mutates(iterable)
-                    || body
-                        .iter()
-                        .any(|statement| self.statement_stateful(statement))
-            }
-            StatementKind::Repeat {
-                count,
-                period,
-                body,
-            } => {
-                self.expression_mutates(count)
-                    || period
-                        .as_ref()
-                        .is_some_and(|expr| self.expression_mutates(expr))
-                    || body
-                        .iter()
-                        .any(|statement| self.statement_stateful(statement))
-            }
-            StatementKind::Match { value, cases } => {
-                self.expression_mutates(value)
-                    || cases.iter().any(|case| {
-                        case.body
-                            .iter()
-                            .any(|statement| self.statement_stateful(statement))
-                    })
-            }
-            StatementKind::Expr(expr) | StatementKind::Return(expr) => {
-                self.expression_mutates(expr)
-            }
-            _ => false,
-        }
-    }
-}
-
-impl Runtime<'_, '_> {
-    pub(super) fn expression_schedules(&self, expr: &Expr) -> bool {
-        let Some(module) = self.loaded.iter().find(|module| module.id == self.module) else {
-            return true;
-        };
-        let mut schedules = false;
-        expr.visit_while(&mut |expr| {
-            if self.observed_signal(expr).is_some() {
-                return false;
-            }
-            if let ExprKind::Call { callee, args, .. } = &expr.kind {
-                schedules |= crate::timing::builtin_call(
-                    callee,
-                    args,
-                    &self
-                        .loaded
-                        .iter()
-                        .find(|module| module.id == self.module)
-                        .expect("checked module")
-                        .checked
-                        .native_methods,
-                )
-                .is_some_and(|call| {
-                    call.schedules()
-                        || crate::list_functions::callback_type(&call, &module.checked.exports)
-                            .is_some_and(|ty| {
-                                ty.signatures().iter().any(|signature| signature.schedules)
-                            })
-                });
-                if let Some(ty) = crate::effects::lookup(callee, &module.checked.exports) {
-                    schedules |= ty.signatures().iter().any(|signature| {
-                        signature.schedules
-                            || !signature
-                                .parameters
-                                .iter()
-                                .any(|parameter| parameter.name == "duration")
-                                && crate::timing::envelope(args)
-                                    .is_some_and(|duration| !crate::timing::known_zero(duration))
-                    });
-                }
-            }
-            !schedules
-        });
-        schedules
     }
 }

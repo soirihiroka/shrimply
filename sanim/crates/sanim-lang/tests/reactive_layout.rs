@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 #[test]
 fn retained_row_width_reflows_its_children_and_supports_current_width_getters() {
     let mut files = MemorySources::default();
-    files.insert("main.sanim","mut container_width=100pt\nlet child=Circle(id=\"child\",radius=10pt)\nlet row=Box(flex_direction=\"row\",id=\"row\",width=container_width,height=40pt,children=[child],justify=Justify.End)\nadd(row)\nbackground {animate(container_width,to=200pt,duration=2s)}\nwait(2s)");
+    files.insert("main.sanim","mut container_width=100pt\nlet child=Box(id=\"child\", width=2*(10pt), height=2*(10pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nlet row=Box(flex_direction=\"row\",id=\"row\",width=container_width,height=40pt,children=[child],justify=Justify.End)\nAnimation(children=[row])\n<Animation absolute flow=\"sequence\">{animate(container_width,to=200pt,duration=2s)}</Animation>\nwait(2s)");
     let p = Engine::default()
         .prepare("main.sanim", &files, &BTreeMap::new())
         .unwrap();

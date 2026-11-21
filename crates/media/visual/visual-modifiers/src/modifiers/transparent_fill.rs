@@ -1,3 +1,5 @@
+#[cfg(feature = "preview")]
+use super::preview;
 use std::{
     collections::hash_map::DefaultHasher,
     hash::{Hash, Hasher},
@@ -6,6 +8,7 @@ use std::{
 use glam::Vec2;
 use hashbrown::HashSet;
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "preview")]
 use shrimply_preview_provider_skia::{
     Cursor, CursorUpdate, PointerButton, PointerEvent, PreviewBuilder, PreviewContext,
     PreviewEditOutcome, PreviewEditSink, PreviewProvider, PreviewRefresh, PreviewResponse,
@@ -14,7 +17,7 @@ use shrimply_preview_provider_skia::{
 use shrimply_property_model::timeline_value::TimelineValue;
 use uuid::Uuid;
 
-use super::{KeyframeSpan, ModifierModel, ensure_unique_id, preview};
+use super::{KeyframeSpan, ModifierModel, ensure_unique_id};
 
 pub const DEFAULT_MAXIMUM_GAP: u32 = 100;
 pub const MAXIMUM_GAP: u32 = 1_000;
@@ -27,6 +30,7 @@ pub struct TransparentFillPoint {
 }
 
 impl TransparentFillPoint {
+    #[cfg(feature = "preview")]
     fn new(position: Vec2) -> Self {
         Self {
             id: Uuid::new_v4(),
@@ -127,6 +131,7 @@ impl ModifierModel for TransparentFillModifier {
 }
 
 #[derive(Clone)]
+#[cfg(feature = "preview")]
 struct TransparentFillPreview {
     target: PreviewTarget,
     snapshot: TransparentFillModifier,
@@ -140,6 +145,7 @@ struct TransparentFillPreview {
 }
 
 impl TransparentFillModifier {
+    #[cfg(feature = "preview")]
     pub(crate) fn preview_provider(
         &self,
         target: PreviewTarget,
@@ -174,6 +180,7 @@ impl TransparentFillModifier {
     }
 }
 
+#[cfg(feature = "preview")]
 impl TransparentFillPreview {
     fn point(&self, screen: Vec2) -> Option<Vec2> {
         let item = preview::inverse_point(self.item_map, screen)?;
@@ -197,6 +204,7 @@ impl TransparentFillPreview {
     }
 }
 
+#[cfg(feature = "preview")]
 impl PreviewProvider for TransparentFillPreview {
     fn on_draw(
         &mut self,
@@ -323,6 +331,7 @@ impl PreviewProvider for TransparentFillPreview {
     }
 }
 
+#[cfg(feature = "preview")]
 fn fill_edit(changed: bool, commit: bool) -> PreviewResponse {
     if !changed {
         return PreviewResponse::handled();

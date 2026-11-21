@@ -7,6 +7,8 @@ use crate::InspectorTarget;
 
 pub mod metadata;
 
+pub const ARTWORK_PREVIEW_HEIGHT: u32 = 220;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MediaInfoPresentation {
     pub artwork: Option<MediaInfoArtwork>,
@@ -347,7 +349,7 @@ pub(crate) fn target_media(project: &Project, target: &InspectorTarget) -> Optio
         ItemRef::Video(item) if !matches!(item.content, VideoItemContent::FoldedSequence(_)) => {
             let selected = if matches!(
                 item.content,
-                VideoItemContent::Media | VideoItemContent::Gif
+                VideoItemContent::Media | VideoItemContent::Gif | VideoItemContent::AnimatedImage
             ) {
                 SourceMetadata::Video(item.track_id)
             } else {

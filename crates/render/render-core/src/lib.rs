@@ -1,5 +1,6 @@
 pub mod effects;
 pub mod math;
+pub const PREVIEW_FRAMES_IN_FLIGHT: usize = 2;
 extern crate self as shrimply_render_core;
 
 pub use shrimply_math_color::{Color, ColorCorrectionParams, LayerBlendMode};

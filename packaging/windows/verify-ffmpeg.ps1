@@ -2,10 +2,12 @@
 param(
     [string]$FfmpegRoot = $env:FFMPEG_DIR,
     [string]$OutputDir,
-    [switch]$RequireHardware
+    [switch]$RequireHardware,
+    [switch]$DevelopmentFilesOnly
 )
 
 $ErrorActionPreference = "Stop"
+$ffmpegVersion = (Get-Content (Join-Path $PSScriptRoot "../../external/ffmpeg/RELEASE") -Raw).Trim()
 
 if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT -or
     ![Environment]::Is64BitOperatingSystem) {
@@ -16,10 +18,20 @@ $root = (Resolve-Path (Join-Path $PSScriptRoot "../..")).Path
 if (!$FfmpegRoot) {
     $FfmpegRoot = Join-Path $root "target/windows-deps/installed/x64-windows"
 }
+$FfmpegRoot = [IO.Path]::GetFullPath($FfmpegRoot)
+foreach ($path in @("include/libavutil/ffversion.h", "lib/avutil.lib", "lib/avcodec.lib", "lib/avformat.lib")) {
+    if (!(Test-Path (Join-Path $FfmpegRoot $path))) {
+        throw "Missing FFmpeg development file: $path"
+    }
+}
+$versionHeader = Get-Content (Join-Path $FfmpegRoot "include/libavutil/ffversion.h")
+if ($versionHeader -notcontains "#define FFMPEG_VERSION `"$ffmpegVersion`"") {
+    throw "Expected FFmpeg $ffmpegVersion in $FfmpegRoot. Run packaging/windows/build-ffmpeg.ps1 -Manifest runtime."
+}
+if ($DevelopmentFilesOnly) { return }
 if (!$OutputDir) {
     $OutputDir = Join-Path $root "target/windows-deps/validation"
 }
-$FfmpegRoot = [IO.Path]::GetFullPath($FfmpegRoot)
 $OutputDir = [IO.Path]::GetFullPath($OutputDir)
 New-Item -ItemType Directory -Force $OutputDir | Out-Null
 
@@ -82,7 +94,7 @@ if (!(Test-Path $statusPath)) {
 }
 $status = Get-Content $statusPath -Raw
 foreach ($package in @(
-    @{ Name = "ffmpeg"; Version = "9.0.1" },
+    @{ Name = "ffmpeg"; Version = $ffmpegVersion },
     @{ Name = "fdk-aac"; Version = "2.0.3" },
     @{ Name = "ffnvcodec"; Version = "13.0.19.0" },
     @{ Name = "opus"; Version = "1.6.1" }
@@ -98,7 +110,7 @@ foreach ($package in @(
 }
 
 $version = Invoke-PinnedFfmpeg "version" @("-hide_banner", "-version")
-Assert-Contains $version '(?m)^ffmpeg version 9\.0\.1(?:\s|$)' "FFmpeg 9.0.1"
+Assert-Contains $version "(?m)^ffmpeg version $([regex]::Escape($ffmpegVersion))(?:\s|$)" "FFmpeg $ffmpegVersion"
 foreach ($option in @(
     "--toolchain=msvc",
     "--enable-shared",

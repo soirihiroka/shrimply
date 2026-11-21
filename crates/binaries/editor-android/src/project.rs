@@ -1,0 +1,925 @@
+//! The Android adapter owns the same validated Project and history as the desktop.
+//! Invoke this service on one native worker thread, never the Android UI thread.
+mod watch;
+use serde_json::{Value, json};
+use shrimply_math_core::Time;
+use shrimply_project_document::{self as document, Project};
+use shrimply_timeline_edit::selection_state;
+use std::{
+    cell::{Ref, RefCell},
+    fs,
+    path::{Path, PathBuf},
+    rc::Rc,
+    sync::Arc,
+};
+pub(crate) use watch::MirrorListener;
+
+pub(crate) struct ProjectBackend {
+    project: Option<Rc<RefCell<Project>>>,
+    path: Option<PathBuf>,
+    watcher: Option<watch::Watch>,
+    mirror_root: Option<String>,
+    mirror_listener: Option<MirrorListener>,
+    pub selection: selection_state::SharedSelectionState,
+    pub(crate) wake: Arc<dyn Fn() + Send + Sync>,
+    fingerprint: Option<String>,
+    status: Rc<RefCell<document::CommitStatus>>,
+    error: Option<String>,
+    active: bool,
+    pub revision: u64,
+    view_dirty: bool,
+    recents: Vec<Value>,
+    pub preferences: shrimply_preferences_core::SharedPreferences,
+}
+impl ProjectBackend {
+    pub fn new(
+        wake: impl Fn() + Send + Sync + 'static,
+        mirror_listener: Option<MirrorListener>,
+    ) -> Result<Self, String> {
+        let status = Rc::new(RefCell::new(document::CommitStatus::Idle));
+        let observed = status.clone();
+        document::connect_commit_status(move |value| *observed.borrow_mut() = value);
+        Ok(Self {
+            project: None,
+            path: None,
+            watcher: None,
+            mirror_root: None,
+            mirror_listener,
+            selection: selection_state::new(),
+            wake: Arc::new(wake),
+            fingerprint: None,
+            status,
+            error: None,
+            active: true,
+            revision: 0,
+            view_dirty: false,
+            recents: recent_presentations()?,
+            preferences: shrimply_preferences_core::open_with_defaults(),
+        })
+    }
+
+    pub fn project(&self) -> Option<Ref<'_, Project>> {
+        self.project.as_ref().map(|project| project.borrow())
+    }
+
+    pub fn path(&self) -> Option<&Path> {
+        self.path.as_deref()
+    }
+
+    pub fn shared_project(&self) -> Option<Rc<RefCell<Project>>> {
+        self.project.clone()
+    }
+
+    /// The shared playback owner supplies an already bounded timeline position.
+    /// This hot path must not scan or clone the immutable document.
+    pub fn cursor(&mut self, position: Time) {
+        if let Some(project) = &self.project {
+            let mut project = project.borrow_mut();
+            let next = Some(position.max(Time::ZERO));
+            self.view_dirty |= project.cursor_position != next;
+            project.cursor_position = next;
+        }
+    }
+
+    pub fn validate_target(&self, request: &Value) -> Result<(), String> {
+        if let Some(expected) = request.get("project_path") {
+            let expected = Path::new(expected.as_str().ok_or("project_path must be a string")?);
+            if self.path.as_deref() != Some(expected) {
+                return Err("the active project changed while this action was open; select its destination again".into());
+            }
+        }
+        Ok(())
+    }
+
+    pub fn dispatch(&mut self, request: &Value) -> Result<Value, String> {
+        self.validate_target(request)?;
+        match string(request, "op")? {
+            "status" => {}
+            "recents" => self.recents = recent_presentations()?,
+            "create" => {
+                if self.project.is_some() {
+                    return Err("close the current project before creating another project".into());
+                }
+                let path = PathBuf::from(string(request, "path")?);
+                string(request, "name")?;
+                let mut project = Project::default();
+                apply_settings(&mut project, request)?;
+                project.validate()?;
+                fs::create_dir_all(path.parent().ok_or("project path requires a directory")?)
+                    .map_err(|error| format!("could not create project directory: {error}"))?;
+                document::create_new_project_file(&path, &project)?;
+                self.open(&path, None)?;
+            }
+            "settings_schema" => return Ok(settings_schema()),
+            "settings" => {
+                self.edit("Change project settings", |project| {
+                    apply_settings(project, request)?;
+                    if request["repair_frame_grid"] == true {
+                        project.repair_frame_grid();
+                    }
+                    Ok(())
+                })?;
+                self.touch_recent()?;
+            }
+            "open" => self.open(
+                Path::new(string(request, "path")?),
+                request["mirror_root"].as_str().map(Path::new),
+            )?,
+            "close" => self.close()?,
+            "save" => self.save()?,
+            "save_as" => {
+                self.save()?;
+                let path = std::path::absolute(string(request, "path")?)
+                    .map_err(|error| error.to_string())?;
+                document::save_as(&path)?;
+                self.mirror_root = self
+                    .mirror_root
+                    .take()
+                    .filter(|root| path.starts_with(root));
+                self.path = Some(path);
+                self.observe_saved()?;
+                self.watch()?;
+                self.touch_recent()?;
+            }
+            "export" => {
+                self.save()?;
+                let directory = self
+                    .path
+                    .as_ref()
+                    .expect("open project path")
+                    .parent()
+                    .expect("project directory");
+                for asset in self.required()?.assets() {
+                    let source = asset.path().canonicalize().map_err(|error| {
+                        format!(
+                            "cannot export missing asset {}: {error}",
+                            asset.path().display()
+                        )
+                    })?;
+                    if !source.starts_with(directory) {
+                        return Err(format!(
+                            "cannot export {} outside the project folder; import or relocate it into the project before exporting",
+                            source.display()
+                        ));
+                    }
+                }
+                if let Some(path) = request.get("path") {
+                    let path =
+                        std::path::absolute(path.as_str().ok_or("export path must be a string")?)
+                            .map_err(|error| error.to_string())?;
+                    if path.parent() != self.path.as_ref().and_then(|path| path.parent()) {
+                        return Err("export the entire project folder, including media; a project file alone in another directory would break relative asset paths".into());
+                    }
+                    document::create_new_project_file(&path, &*self.required()?)?;
+                }
+            }
+            "undo" | "redo" => {
+                let redo = request["op"] == "redo";
+                self.reload()?;
+                let mut candidate = self.required()?.clone();
+                if document::change_history_saved(&mut candidate, redo)? {
+                    *self.project.as_ref().expect("open project").borrow_mut() = candidate;
+                    self.observe_saved()?;
+                    self.revision += 1;
+                }
+            }
+            "add_track" => {
+                let kind = track_kind(string(request, "kind")?)?;
+                self.edit("Add track", |project| {
+                    shrimply_timeline_edit::edit::create_track(
+                        project,
+                        &document::SequenceScopeId::root(),
+                        kind,
+                        true,
+                    )?;
+                    Ok(())
+                })?;
+            }
+            "toggle_track" => {
+                let kind = track_kind(string(request, "kind")?)?;
+                self.edit("Toggle track", |project| {
+                    let key = shrimply_timeline_edit::TrackKey {
+                        kind,
+                        track_index: target_index(project, kind, request)?,
+                    };
+                    let address =
+                        shrimply_timeline_edit::selection_state::track_address(project, key)
+                            .ok_or("track does not exist")?;
+                    let enabled = project.track(&address).expect("resolved track").enabled();
+                    shrimply_timeline_edit::edit::set_track_enabled(project, &address, !enabled)
+                })?;
+            }
+            "track_add" => {
+                use shrimply_timeline_edit::{TrackAddMenuEntry, track_add_menu};
+                let kind = track_kind(string(request, "kind")?)?;
+                let token = string(request, "action")?;
+                let action = track_add_menu(kind)
+                    .iter()
+                    .find_map(|entry| match entry {
+                        TrackAddMenuEntry::Action(action) if format!("{action:?}") == token => {
+                            Some(*action)
+                        }
+                        _ => None,
+                    })
+                    .ok_or("this action is not available for the selected track kind")?;
+                self.generated(request, kind, action)?;
+            }
+            "set_cursor" => {
+                let frame = request["frame"]
+                    .as_u64()
+                    .ok_or("frame must be a nonnegative integer")?;
+                let position = shrimply_math_core::time_from_frame(frame, self.required()?.fps)
+                    .ok_or("frame is outside the exact timeline range")?;
+                let duration = self.required()?.duration();
+                self.cursor(position.min(duration));
+            }
+            "remove_recent" => {
+                shrimply_recent_projects::remove(Path::new(string(request, "path")?))?;
+                self.recents = recent_presentations()?;
+            }
+            "clear_recents" => {
+                shrimply_recent_projects::clear()?;
+                self.recents.clear();
+            }
+            "import_file" => return self.import_file(request, None),
+            "reload" => {
+                self.reload()?;
+            }
+            operation => return Err(format!("unknown Android project operation '{operation}'")),
+        }
+        self.snapshot()
+    }
+
+    fn required(&self) -> Result<Ref<'_, Project>, String> {
+        self.project().ok_or_else(|| "open a project first".into())
+    }
+
+    fn generated(
+        &mut self,
+        request: &Value,
+        kind: shrimply_timeline_edit::TrackKind,
+        action: shrimply_timeline_edit::TrackAddAction,
+    ) -> Result<(), String> {
+        use shrimply_timeline_edit::{TrackAddAction, TrackAddSettings, TrackKey};
+        if action == TrackAddAction::Import {
+            return Err("choose a source file before adding imported media".into());
+        }
+        let text = if action == TrackAddAction::Comment {
+            Some(string(request, "text")?)
+        } else {
+            None
+        };
+        let (start, end) = self.interval(request)?;
+        let preferences = shrimply_preferences_core::snapshot(&self.preferences);
+        let item = self.edit("Add timeline item", |project| {
+            let key = TrackKey {
+                kind,
+                track_index: target_index(project, kind, request)?,
+            };
+            if key.track_index == 0 && selection_state::track_address(project, key).is_none() {
+                shrimply_timeline_edit::edit::create_track(
+                    project,
+                    &document::SequenceScopeId::root(),
+                    kind,
+                    true,
+                )?;
+            }
+            let settings = TrackAddSettings {
+                default_visual_duration: end.saturating_sub(start),
+                default_text_font_family: &preferences.default_text_font_family,
+            };
+            let item = shrimply_timeline_edit::insert_track_add(project, key, action, start, settings, text)?;
+            item.ok_or_else(|| "the destination is occupied or the track no longer exists; choose a gap before adding an item".to_owned())
+        })?;
+        selection_state::select_item_address(&self.selection, &*self.required()?, item);
+        Ok(())
+    }
+
+    pub fn position(&self, request: &Value) -> Result<Time, String> {
+        let project = self.required()?;
+        if let Some(position) = request.get("position").filter(|value| !value.is_null()) {
+            let position: Time = serde_json::from_value(position.clone())
+                .map_err(|error| format!("invalid insertion position: {error}"))?;
+            if !shrimply_math_core::fraction_is_finite(position.seconds) || position < Time::ZERO {
+                return Err("insertion position must be finite and nonnegative".into());
+            }
+            return Ok(position);
+        }
+        let start = request
+            .get("start_frame")
+            .map(|value| {
+                value
+                    .as_u64()
+                    .ok_or("start_frame must be a nonnegative integer")
+            })
+            .transpose()?
+            .map(|frame| {
+                shrimply_math_core::time_from_frame(frame, project.fps)
+                    .ok_or("start_frame exceeds timeline range")
+            })
+            .transpose()?
+            .unwrap_or(project.cursor_position.unwrap_or(Time::ZERO));
+        Ok(start)
+    }
+
+    fn interval(&self, request: &Value) -> Result<(Time, Time), String> {
+        let project = self.required()?;
+        let start = self.position(request)?;
+        let duration = request
+            .get("duration_frames")
+            .map(|value| {
+                value
+                    .as_u64()
+                    .ok_or("duration_frames must be a positive integer")
+            })
+            .transpose()?
+            .map(|frame| {
+                shrimply_math_core::time_from_frame(frame, project.fps)
+                    .ok_or("duration_frames exceeds timeline range")
+            })
+            .transpose()?
+            .unwrap_or_else(|| {
+                shrimply_preferences_core::snapshot(&self.preferences).default_visual_duration
+            });
+        if duration <= Time::ZERO {
+            return Err("item duration must be positive".into());
+        }
+        Ok((start, start.saturating_add(duration)))
+    }
+
+    fn edit<T>(
+        &mut self,
+        message: &str,
+        update: impl FnOnce(&mut Project) -> Result<T, String>,
+    ) -> Result<T, String> {
+        // The shared transaction persists before advancing the shared undo cursor
+        // or exposing the new model. Failed edits retain the previous project.
+        // An external save may precede its queued native watch notification.
+        self.reload()?;
+        let mut candidate = self.required()?.clone();
+        let value = update(&mut candidate)?;
+        candidate.ensure_ids();
+        document::commit_edit_saved(&candidate, message)?;
+        *self.project.as_ref().expect("open project").borrow_mut() = candidate;
+        self.observe_saved()?;
+        self.revision += 1;
+        Ok(value)
+    }
+
+    fn open(&mut self, path: &Path, mirror_root: Option<&Path>) -> Result<(), String> {
+        if self.project.is_some() {
+            return Err("close the current project before opening another project".into());
+        }
+        let path = path
+            .canonicalize()
+            .map_err(|error| format!("could not open {}: {error}", path.display()))?;
+        let mirror_root = mirror_root
+            .map(Path::canonicalize)
+            .transpose()
+            .map_err(|error| error.to_string())?;
+        if mirror_root
+            .as_ref()
+            .is_some_and(|root| !root.is_dir() || !path.starts_with(root))
+        {
+            return Err("project is outside the selected source folder".into());
+        }
+        let mirror_root = mirror_root
+            .map(|root| {
+                root.into_os_string()
+                    .into_string()
+                    .map_err(|_| "the mirror root must be a UTF-8 path")
+            })
+            .transpose()?;
+        if mirror_root.is_some() && self.mirror_listener.is_none() {
+            return Err("the document-provider mirror has no storage listener".into());
+        }
+        let prepared = document::prepare_project(&path).map_err(|error| match error {
+            document::ProjectLoadError::LockedByOtherInstance { owner } => {
+                format!("project is already open in process {}", owner.pid())
+            }
+            document::ProjectLoadError::Other(message) => message,
+        })?;
+        let project = document::activate_project(prepared);
+        self.project = Some(Rc::new(RefCell::new(project)));
+        self.path = Some(path);
+        self.mirror_root = mirror_root;
+        self.revision += 1;
+        if let Err(error) = self
+            .observe_saved()
+            .and_then(|_| self.watch())
+            .and_then(|_| self.touch_recent())
+        {
+            self.close()?;
+            return Err(error);
+        }
+        // Catch an external save between the canonical read and watcher setup.
+        // Once watching, later changes remain queued even if this read races.
+        if let Err(error) = self.reload() {
+            self.error = Some(error);
+        }
+        Ok(())
+    }
+
+    pub fn save(&mut self) -> Result<(), String> {
+        self.required()?;
+        self.reload()?;
+        if self.view_dirty {
+            document::save_view_state(&*self.required()?);
+        }
+        document::flush_history()?;
+        self.observe_saved()?;
+        document::poll_commit_status();
+        Ok(())
+    }
+
+    pub fn close(&mut self) -> Result<(), String> {
+        if self.project.is_none() {
+            return Ok(());
+        }
+        self.save()?;
+        document::shutdown_history()?;
+        self.watcher = None;
+        self.mirror_root = None;
+        document::release_project_lock(self.path.as_ref().expect("open project has a path"));
+        self.project = None;
+        self.selection = selection_state::new();
+        self.path = None;
+        self.fingerprint = None;
+        self.error = None;
+        self.view_dirty = false;
+        self.revision += 1;
+        self.recents = recent_presentations()?;
+        Ok(())
+    }
+
+    fn observe_saved(&mut self) -> Result<(), String> {
+        self.fingerprint = Some(
+            document::saved_project_fingerprint()
+                .ok_or("the active document has no canonical I/O receipt")?,
+        );
+        self.error = None;
+        self.view_dirty = false;
+        document::poll_commit_status();
+        Ok(())
+    }
+
+    fn touch_recent(&mut self) -> Result<(), String> {
+        let project = self.required()?;
+        shrimply_recent_projects::touch(
+            self.path.as_ref().expect("open path"),
+            &project.name,
+            &project.tags,
+        )?;
+        drop(project);
+        self.recents = recent_presentations()?;
+        Ok(())
+    }
+
+    fn watch(&mut self) -> Result<(), String> {
+        self.watcher = None;
+        if (self.active || self.mirror_root.is_some())
+            && let Some(path) = &self.path
+        {
+            self.watcher = Some(watch::Watch::new(
+                path,
+                self.mirror_root
+                    .as_deref()
+                    .zip(self.mirror_listener.clone()),
+                self.wake.clone(),
+            )?);
+        }
+        Ok(())
+    }
+
+    pub fn changed(&mut self) -> Result<bool, String> {
+        let flags = self.watcher.as_ref().map_or(0, watch::Watch::take);
+        let mut changed = false;
+        if flags & watch::PROJECT != 0 {
+            match self.reload() {
+                Ok(_) => changed = true,
+                Err(message) => {
+                    self.error = Some(message.clone());
+                    return Err(message);
+                }
+            }
+        }
+        if flags & watch::ASSETS != 0 && self.project.is_some() {
+            self.revision += 1;
+            changed = true;
+        }
+        Ok(changed)
+    }
+
+    fn reload(&mut self) -> Result<bool, String> {
+        let path = self.path.as_ref().ok_or("open a project first")?.clone();
+        let current = fingerprint(&path)?;
+        if self.fingerprint.as_ref() == Some(&current) {
+            return Ok(false);
+        }
+        // Shared Scene edits commit through the same document history. Its I/O
+        // receipt distinguishes our own completed save from an external edit.
+        if document::saved_project_fingerprint().as_ref() == Some(&current) {
+            self.fingerprint = Some(current);
+            return Ok(false);
+        }
+        // Validate before touching the live document or its history worker. A
+        // partially written/broken external project keeps the last good state.
+        let (mut candidate, loaded_fingerprint) =
+            document::load_project_snapshot_with_fingerprint(&path)?;
+        if fingerprint(&path)? != loaded_fingerprint {
+            return Err(
+                "project changed again while loading; waiting for its next complete save".into(),
+            );
+        }
+        if self.view_dirty {
+            let project = self.required()?;
+            candidate.cursor_position = project
+                .cursor_position
+                .map(|cursor| cursor.clamp(Time::ZERO, candidate.duration()));
+            candidate.timeline_zoom = project.timeline_zoom;
+        }
+        document::adopt_project_snapshot(&candidate, &loaded_fingerprint)?;
+        *self.project.as_ref().expect("open project").borrow_mut() = candidate;
+        self.fingerprint = Some(loaded_fingerprint);
+        self.error = None;
+        self.revision += 1;
+        self.touch_recent()?;
+        Ok(true)
+    }
+
+    pub fn active(&mut self, active: bool) -> Result<(), String> {
+        if !active && self.project.is_some() {
+            self.save()?;
+        }
+        self.active = active;
+        if self.mirror_root.is_none() {
+            self.watch()?;
+        }
+        if active && self.project.is_some() {
+            self.reload()?;
+        }
+        Ok(())
+    }
+
+    pub fn snapshot(&self) -> Result<Value, String> {
+        document::poll_commit_status();
+        let project = self.project().map(|project| json!({
+            "path":self.path, "name":project.name, "tags":project.tags,
+            "canvas_width":project.canvas_size.width, "canvas_height":project.canvas_size.height,
+            "fps":project.fps.to_string(), "duration_frames":project.duration().as_frame_ceil(project.fps),
+            "cursor_frame":project.cursor_position.unwrap_or(Time::ZERO).as_frame(project.fps),
+            "track_count":project.comment_tracks.len()+project.caption_tracks.len()+project.video_tracks.len()+project.audio_tracks.len(),
+            "visual_clip_count":project.video_tracks.iter().map(|track|track.items.len()).sum::<usize>(),
+        }));
+        let (state, save_error) = match &*self.status.borrow() {
+            document::CommitStatus::SavePending => ("pending", None),
+            document::CommitStatus::Saving | document::CommitStatus::InProgress(_) => {
+                ("saving", None)
+            }
+            document::CommitStatus::SaveFailed(message) => ("failed", Some(message.clone())),
+            document::CommitStatus::Idle => ("saved", None),
+        };
+        Ok(
+            json!({"project":project,"can_undo":self.project.is_some()&&document::can_undo(),"can_redo":self.project.is_some()&&document::can_redo(),"save_state":state,"save_error":save_error,"watch_error":self.error,"revision":self.revision,"recents":self.recents}),
+        )
+    }
+
+    pub fn stage_picked_file(
+        &self,
+        request: &Value,
+        source: Option<fs::File>,
+    ) -> Result<shrimply_media_import::StagedSource, String> {
+        let source_path = Path::new(
+            request["path"]
+                .as_str()
+                .ok_or("file selection requires a path")?,
+        );
+        let name = request["name"]
+            .as_str()
+            .or_else(|| source_path.file_name().and_then(|name| name.to_str()))
+            .ok_or("file selection requires a name")?;
+        let directory = self
+            .path()
+            .ok_or("open a project first")?
+            .parent()
+            .expect("project directory");
+        shrimply_media_import::stage_source(source_path, source, name, directory)
+    }
+
+    pub fn import_file(
+        &mut self,
+        request: &Value,
+        source_file: Option<fs::File>,
+    ) -> Result<Value, String> {
+        use shrimply_timeline_edit::TrackKind;
+        let source = Path::new(string(request, "path")?);
+        let name = request
+            .get("name")
+            .and_then(Value::as_str)
+            .or_else(|| source.file_name().and_then(|name| name.to_str()))
+            .ok_or("imported file needs a name")?;
+        if Path::new(name).file_name().and_then(|name| name.to_str()) != Some(name) {
+            return Err("imported file name must not contain a directory".into());
+        }
+        let file_kind =
+            shrimply_media_import::file_kind(Path::new(name)).ok_or("unsupported file type")?;
+        let remux = file_kind == shrimply_media_import::FileKind::RemuxToMp4;
+        let destinations: Vec<&Value> = if let Some(targets) = request
+            .get("import_targets")
+            .filter(|value| !value.is_null())
+        {
+            targets
+                .as_array()
+                .filter(|targets| !targets.is_empty())
+                .ok_or("import targets must be a nonempty list")?
+                .iter()
+                .collect()
+        } else {
+            request.get("kind").map(|_| request).into_iter().collect()
+        };
+        for target in &destinations {
+            let kind = track_kind(string(target, "kind")?)?;
+            let index = target_index(&*self.required()?, kind, target)?;
+            if index > 0
+                && shrimply_timeline_edit::selection_state::track_address(
+                    &*self.required()?,
+                    shrimply_timeline_edit::TrackKey {
+                        kind,
+                        track_index: index,
+                    },
+                )
+                .is_none()
+            {
+                return Err("the destination track no longer exists".into());
+            }
+        }
+        let (start, end) = self.interval(request)?;
+        if remux && request["remux_confirmed"] != true {
+            let mut prompt = remux_confirmation();
+            prompt["position"] = json!(start);
+            return Ok(prompt);
+        }
+        let mut staged = self.stage_picked_file(request, source_file)?;
+        let mut inspected_snapshot = None;
+        let project_path = self.path.as_ref().expect("open project path").clone();
+        let result = (|| {
+            let original =
+                inspected_snapshot.insert(shrimply_asset::Asset::new(&staged.path).snapshot()?);
+            if remux {
+                let output = shrimply_media_import::remux_to_mp4(&staged.path, Default::default())?;
+                original.verify_current()?;
+                let inspected = shrimply_asset::Asset::new(output.path()).snapshot()?;
+                // Only the descriptor copy is ours. A pre-existing project source is retained.
+                self.discard_staged(&staged, Some(original))?;
+                staged = shrimply_media_import::StagedSource {
+                    path: output.path().to_owned(),
+                    created: true,
+                };
+                inspected_snapshot = Some(inspected);
+                output.keep();
+            }
+            self.edit("Import file", |project| {
+                use shrimply_editing_api::{imports, preview};
+                let mut targets = Vec::new();
+                for target in &destinations {
+                    let kind = track_kind(string(target, "kind")?)?;
+                    if kind == TrackKind::Comment {
+                        return Err("media destination must be caption, video, or audio".into());
+                    }
+                    let key = shrimply_timeline_edit::TrackKey {
+                        kind,
+                        track_index: target_index(project, kind, target)?,
+                    };
+                    if key.track_index == 0
+                        && shrimply_timeline_edit::selection_state::track_address(project, key)
+                            .is_none()
+                    {
+                        shrimply_timeline_edit::edit::create_track(
+                            project,
+                            &document::SequenceScopeId::root(),
+                            kind,
+                            true,
+                        )?;
+                    }
+                    let address =
+                        shrimply_timeline_edit::selection_state::track_address(project, key)
+                            .ok_or("the destination track no longer exists")?;
+                    targets.push(shrimply_editing_api::query::protocol_track_address(
+                        &address,
+                    ));
+                }
+                let collision = if targets.is_empty() { "new_track" } else { "reject" };
+                let frame = start.as_frame(project.fps);
+                let request = preview::edit_request("insert_files", json!({
+                    "files":[{"source":staged.path,"targets":targets}], "frame":frame, "link":true, "collision":collision,
+                }))?.expect("insert_files is a shared edit operation");
+                let mut prepared = imports::prepare(
+                    project.clone(),
+                    &request,
+                    frame,
+                    document::SequenceScopeId::root(),
+                    end.saturating_sub(start),
+                    &project_path,
+                )?;
+                prepared.promote()?;
+                *project = prepared.project;
+                Ok(())
+            })
+        })();
+        if let Err(error) = &result {
+            self.discard_staged(&staged, inspected_snapshot.as_ref())
+                .map_err(|cleanup| format!("{error}; {cleanup}"))?;
+        }
+        result?;
+        self.snapshot()
+    }
+
+    pub fn discard_staged(
+        &self,
+        staged: &shrimply_media_import::StagedSource,
+        snapshot: Option<&shrimply_asset::AssetSnapshot>,
+    ) -> Result<(), String> {
+        if !staged.created {
+            return Ok(());
+        }
+        // A save can fail after commit, or another writer can replace the file.
+        // Only the unreferenced, unchanged file owned by this operation is ours.
+        if self
+            .required()?
+            .assets()
+            .iter()
+            .any(|asset| asset.path() == staged.path)
+            || snapshot.is_some_and(|snapshot| snapshot.verify_current().is_err())
+        {
+            return Err(
+                "imported path was retained because it is now referenced or changed externally"
+                    .into(),
+            );
+        }
+        fs::remove_file(&staged.path).map_err(|error| {
+            format!(
+                "could not remove failed import {}: {error}",
+                staged.path.display()
+            )
+        })
+    }
+}
+
+pub(super) fn remux_confirmation() -> Value {
+    let prompt = shrimply_timeline_skia::external_content::remux_prompt();
+    json!({"confirmation": {"title": prompt.title, "body": prompt.body,
+        "confirm_label": prompt.confirm, "cancel_label": prompt.cancel}})
+}
+
+/// Native date formatting and filesystem metadata are refreshed with history,
+/// never from the editor's per-frame status/preview publication path.
+fn recent_presentations() -> Result<Vec<Value>, String> {
+    use shrimply_components_core::presentation::{
+        RecentProjectAction, recent_project_info, recent_project_subtitle,
+    };
+    #[cfg(target_os = "android")]
+    let format_date = crate::localization::format_date;
+    #[cfg(not(target_os = "android"))]
+    let format_date: fn(i64) -> Option<String> = |_| None;
+    shrimply_recent_projects::load()?.into_iter().map(|recent| {
+        let date = recent.modified_at.and_then(format_date);
+        let info = recent_project_info(&recent.name,&recent.path.to_string_lossy(),date.as_deref());
+        let info = json!({"title":info.title,"close_label":info.close_label,"fields":info.fields.into_iter().map(|field|json!({"label":field.label,"value":field.value,"action":field.action.map(|action|json!({"label":action.label(),"icon":action.icon(),"service":action.service(),"path":recent.path}))})).collect::<Vec<_>>()});
+        let menu = RecentProjectAction::ALL.into_iter().map(|action| {
+            let mut item = json!({"label":action.label(),"icon":action.icon(),"service":action.service()});
+            match action {
+                RecentProjectAction::Info => item["info"] = info.clone(),
+                RecentProjectAction::ShowInFiles => item["path"] = json!(recent.path),
+                RecentProjectAction::Delete => item["command"] = json!({"op":"remove_recent","path":recent.path}),
+            }
+            item
+        }).collect::<Vec<_>>();
+        let mut item = serde_json::to_value(&recent).map_err(|error|error.to_string())?;
+        item["last_edited"] = json!(recent_project_subtitle(date.as_deref()));
+        item["menu_label"] = json!(shrimply_i18n::text(shrimply_components_core::presentation::RECENT_PROJECT_MENU_LABEL));
+        item["menu"] = json!(menu);
+        Ok(item)
+    }).collect()
+}
+
+impl Drop for ProjectBackend {
+    fn drop(&mut self) {
+        self.close()
+            .expect("flush and close Android project before releasing its owner");
+    }
+}
+
+fn string<'a>(request: &'a Value, key: &str) -> Result<&'a str, String> {
+    request[key]
+        .as_str()
+        .ok_or_else(|| format!("'{key}' must be a string"))
+}
+
+fn track_kind(name: &str) -> Result<shrimply_timeline_edit::TrackKind, String> {
+    use shrimply_timeline_edit::TrackKind;
+    match name {
+        "comment" => Ok(TrackKind::Comment),
+        "caption" => Ok(TrackKind::Caption),
+        "video" => Ok(TrackKind::Video),
+        "audio" => Ok(TrackKind::Audio),
+        _ => Err("track kind must be comment, caption, video, or audio".into()),
+    }
+}
+
+pub(super) fn target_index(
+    project: &Project,
+    kind: shrimply_timeline_edit::TrackKind,
+    request: &Value,
+) -> Result<usize, String> {
+    if let Some(id) = request.get("track_id") {
+        let id: uuid::Uuid = id
+            .as_str()
+            .ok_or("track_id must be a UUID string")?
+            .parse()
+            .map_err(|_| "track_id must be a valid UUID")?;
+        let index = project.root_track_index(kind, id);
+        return index.ok_or_else(|| {
+            "the selected track no longer exists; choose its destination again".into()
+        });
+    }
+    usize::try_from(
+        request
+            .get("track")
+            .map(|value| value.as_u64().ok_or("track must be a nonnegative index"))
+            .transpose()?
+            .unwrap_or(0),
+    )
+    .map_err(|_| "track index is too large".into())
+}
+
+fn apply_settings(project: &mut Project, request: &Value) -> Result<(), String> {
+    if let Some(name) = request.get("name") {
+        let name = name.as_str().ok_or("project name must be a string")?.trim();
+        if name.is_empty() {
+            return Err("project name cannot be empty".into());
+        }
+        project.name = name.into();
+    }
+    let frame_rate = request
+        .get("fps")
+        .map(|value| {
+            value
+                .as_str()
+                .ok_or("fps must be an exact string, for example 30 or 30000/1001")?
+                .parse()
+                .map_err(|_| "invalid exact project frame rate")
+        })
+        .transpose()?
+        .unwrap_or(project.fps);
+    let mut canvas_size = project.canvas_size;
+    for (key, dimension) in [
+        ("canvas_width", &mut canvas_size.width),
+        ("canvas_height", &mut canvas_size.height),
+    ] {
+        if let Some(value) = request.get(key) {
+            *dimension = u32::try_from(
+                value
+                    .as_u64()
+                    .ok_or_else(|| format!("{key} must be a positive integer"))?,
+            )
+            .map_err(|_| format!("{key} is too large"))?;
+        }
+    }
+    project.set_video_settings(canvas_size, frame_rate)?;
+    if let Some(value) = request.get("tags") {
+        let tags: Vec<String> =
+            serde_json::from_value(value.clone()).map_err(|_| "tags must be a list of strings")?;
+        project.tags = document::normalize_tags(&tags);
+    }
+    Ok(())
+}
+
+fn settings_schema() -> Value {
+    let defaults = Project::default();
+    json!({
+        "defaults":{"name":defaults.name,"canvas_width":defaults.canvas_size.width,"canvas_height":defaults.canvas_size.height,"fps":defaults.fps.to_string(),"tags":defaults.tags},
+        "min_canvas_dimension":document::MIN_CANVAS_DIMENSION,
+        "max_canvas_dimension":document::MAX_CANVAS_DIMENSION,
+        "presets":document::PROJECT_PRESETS.iter().map(|preset|json!({"label":preset.label,"canvas_width":preset.canvas_size.width,"canvas_height":preset.canvas_size.height,"fps":preset.fps.to_string()})).collect::<Vec<_>>(),
+        "track_add":([("comment",shrimply_timeline_edit::TrackKind::Comment),("caption",shrimply_timeline_edit::TrackKind::Caption),("video",shrimply_timeline_edit::TrackKind::Video),("audio",shrimply_timeline_edit::TrackKind::Audio)].into_iter().map(|(kind_name,kind)| {
+            let entries = shrimply_timeline_edit::track_add_menu(kind).iter().map(|entry|match entry {
+                shrimply_timeline_edit::TrackAddMenuEntry::Separator => json!({"separator":true}),
+                shrimply_timeline_edit::TrackAddMenuEntry::Action(action) => json!({"action":format!("{action:?}"),"label":action.label(kind),"icon":action.icon(),"needs_file":*action==shrimply_timeline_edit::TrackAddAction::Import,"needs_text":*action==shrimply_timeline_edit::TrackAddAction::Comment}),
+            }).collect::<Vec<_>>();
+            (kind_name,entries)
+        }).collect::<std::collections::BTreeMap<_,_>>()),
+        "frame_rates":document::project::frame_rate_choices(defaults.fps).into_iter().map(|(value,label)|json!({"label":label,"value":value.to_string()})).collect::<Vec<_>>()
+    })
+}
+
+fn fingerprint(path: &Path) -> Result<String, String> {
+    let mut file = fs::File::open(path)
+        .map_err(|error| format!("could not read {}: {error}", path.display()))?;
+    let mut hash = shrimply_resource_pipeline::fingerprint::Writer::default();
+    std::io::copy(&mut file, &mut hash)
+        .map_err(|error| format!("could not read project: {error}"))?;
+    Ok(hash.finish())
+}
+
+#[cfg(test)]
+pub(crate) mod tests;

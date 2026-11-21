@@ -7,7 +7,7 @@ impl Runtime<'_, '_> {
         entry: &crate::cache::CachedValue,
         span: Span,
     ) -> Result<(), Diagnostic> {
-        if entry.sources.is_empty() || self.duration_only {
+        if entry.sources.is_empty() {
             return Ok(());
         }
         let mut bytes = 0usize;
@@ -67,7 +67,7 @@ impl Runtime<'_, '_> {
         let Value::Element(element) = value else {
             return Ok(());
         };
-        if self.duration_only || self.element_sources.contains_key(&element.id) {
+        if self.element_sources.contains_key(&element.id) {
             return Ok(());
         }
         let source = Arc::new(crate::ElementSource {

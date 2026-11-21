@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- From the bundled Adwaita symbolic SVG; LGPL-3.0-or-later or CC-BY-SA-3.0. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="16dp" android:height="16dp" android:viewportWidth="16" android:viewportHeight="16">
+    <path android:fillColor="#FFFFFFFF" android:fillAlpha="1.0" android:fillType="nonZero" android:pathData="m 11.5 1 c -1.921875 0 -3.5 1.578125 -3.5 3.5 s 1.578125 3.5 3.5 3.5 s 3.5 -1.578125 3.5 -3.5 s -1.578125 -3.5 -3.5 -3.5 z m 0 2 c 0.839844 0 1.5 0.660156 1.5 1.5 s -0.660156 1.5 -1.5 1.5 s -1.5 -0.660156 -1.5 -1.5 s 0.660156 -1.5 1.5 -1.5 z m 0 0" />
+    <path android:fillColor="#FFFFFFFF" android:fillAlpha="1.0" android:fillType="nonZero" android:pathData="m 4.5 8 c -1.921875 0 -3.5 1.578125 -3.5 3.5 s 1.578125 3.5 3.5 3.5 c 1.386719 0 2.59375 -0.820312 3.15625 -2 h 5.84375 c 0.832031 0 1.5 -0.667969 1.5 -1.5 s -0.667969 -1.5 -1.5 -1.5 h -5.84375 c -0.5625 -1.179688 -1.769531 -2 -3.15625 -2 z m 0 2 c 0.839844 0 1.5 0.660156 1.5 1.5 s -0.660156 1.5 -1.5 1.5 s -1.5 -0.660156 -1.5 -1.5 s 0.660156 -1.5 1.5 -1.5 z m 0 0" />
+    <path android:fillColor="#FFFFFFFF" android:fillAlpha="0.34902" android:fillType="nonZero" android:pathData="m 2.5 3 c -0.832031 0 -1.5 0.667969 -1.5 1.5 s 0.667969 1.5 1.5 1.5 h 4.765625 c -0.171875 -0.480469 -0.261719 -0.988281 -0.265625 -1.5 c 0 -0.511719 0.09375 -1.019531 0.265625 -1.5 z m 0 0" />
+</vector>

@@ -3,6 +3,7 @@ use shrimply_math_core::{Time, fraction_new};
 use shrimply_preview_render_vulkan::Compositor;
 use shrimply_project_document::project::*;
 use shrimply_property_model::timeline_value::TimelineValue;
+use shrimply_video_decoder::{DecoderBackend, NextFrame, VideoDecoderSession};
 use shrimply_visual_modifiers::{
     ModifierEffect, ModifierModel, RasterModifierEffect, VectorModifierEffect, scene_3d,
 };
@@ -809,148 +810,126 @@ fn validate(
     if exported != FRAMES as u64 {
         return Err(format!("Exported {exported} frames, expected {FRAMES}"));
     }
-    let mut input = ffmpeg_next::format::input(&path).map_err(|e| e.to_string())?;
-    let video = input
-        .streams()
-        .best(ffmpeg_next::media::Type::Video)
-        .ok_or("Export has no video stream")?;
-    if video.parameters().id() != ffmpeg_next::codec::Id::H264 {
-        return Err("Export did not use H.264".into());
-    }
-    let index = video.index();
-    let mut decoder = ffmpeg_next::codec::Context::from_parameters(video.parameters())
-        .map_err(|e| e.to_string())?
-        .decoder()
-        .video()
-        .map_err(|e| e.to_string())?;
-    let mut scaler = ffmpeg_next::software::scaling::Context::get(
-        decoder.format(),
-        WIDTH,
-        HEIGHT,
-        ffmpeg_next::format::Pixel::RGBA,
-        WIDTH,
-        HEIGHT,
-        ffmpeg_next::software::scaling::flag::Flags::BILINEAR,
-    )
-    .map_err(|e| e.to_string())?;
-    let mut reference_encoder = ffmpeg_next::software::scaling::Context::get(
-        ffmpeg_next::format::Pixel::RGBA,
-        WIDTH,
-        HEIGHT,
-        decoder.format(),
-        WIDTH,
-        HEIGHT,
-        ffmpeg_next::software::scaling::flag::Flags::AREA,
-    )
-    .map_err(|error| error.to_string())?;
-    // Compare against an independent CPU 4:2:0 round trip. Direct RGB comparison
-    // incorrectly treats unavoidable chroma loss on warped checkerboards as a bug.
-    for (context, input_range, output_range) in
-        [(&mut scaler, 0, 1), (&mut reference_encoder, 1, 0)]
-    {
-        unsafe {
-            let coefficients =
-                ffmpeg_next::sys::sws_getCoefficients(ffmpeg_next::sys::SWS_CS_ITU709);
-            let result = ffmpeg_next::sys::sws_setColorspaceDetails(
-                context.as_mut_ptr(),
-                coefficients,
-                input_range,
-                coefficients,
-                output_range,
-                0,
-                1 << 16,
-                1 << 16,
-            );
-            if result < 0 {
-                return Err("Configure export verification color conversion".into());
+    let mut decoder = VideoDecoderSession::open(
+        &Asset::new(path).snapshot()?,
+        0,
+        |parameters| {
+            if parameters.id() != ffmpeg_next::codec::Id::H264 {
+                return Err("Export did not use H.264".into());
             }
-        }
-    }
+            DecoderBackend::hardware_for_readback(parameters)
+        },
+        None,
+    )?;
     let mut decoded = 0;
     let mut maximum_error_milli = 0;
-    let mut receive = |decoder: &mut ffmpeg_next::decoder::Video| -> Result<(), String> {
-        loop {
-            let mut frame = ffmpeg_next::frame::Video::empty();
-            match decoder.receive_frame(&mut frame) {
-                Ok(()) => {}
-                Err(ffmpeg_next::Error::Eof) => break,
-                Err(ffmpeg_next::Error::Other { errno }) if errno == ffmpeg_next::error::EAGAIN => {
-                    break;
-                }
-                Err(error) => return Err(format!("Decode exported video: {error}")),
-            }
-            if frame.width() != WIDTH || frame.height() != HEIGHT {
-                return Err("Exported frame dimensions changed".into());
-            }
-            if let Some(capture) = [0, FRAMES / 2, FRAMES - 1]
-                .iter()
-                .position(|&index| index == decoded)
+    while let NextFrame::Frame((_, frame)) = decoder.next_frame([None, None])? {
+        if frame.native().width() != WIDTH || frame.native().height() != HEIGHT {
+            return Err("Exported frame dimensions changed".into());
+        }
+        if let Some(capture) = [0, FRAMES / 2, FRAMES - 1]
+            .iter()
+            .position(|&index| index == decoded)
+        {
+            let downloaded = frame.download()?;
+            let frame = downloaded.as_ref().unwrap_or_else(|| frame.native());
+            let mut scaler = ffmpeg_next::software::scaling::Context::get(
+                frame.format(),
+                WIDTH,
+                HEIGHT,
+                ffmpeg_next::format::Pixel::RGBA,
+                WIDTH,
+                HEIGHT,
+                ffmpeg_next::software::scaling::flag::Flags::BILINEAR,
+            )
+            .map_err(|e| e.to_string())?;
+            let mut reference_encoder = ffmpeg_next::software::scaling::Context::get(
+                ffmpeg_next::format::Pixel::RGBA,
+                WIDTH,
+                HEIGHT,
+                frame.format(),
+                WIDTH,
+                HEIGHT,
+                ffmpeg_next::software::scaling::flag::Flags::AREA,
+            )
+            .map_err(|error| error.to_string())?;
+            // Compare against an independent CPU 4:2:0 round trip. Direct RGB comparison
+            // incorrectly treats unavoidable chroma loss on warped checkerboards as a bug.
+            for (context, input_range, output_range) in
+                [(&mut scaler, 0, 1), (&mut reference_encoder, 1, 0)]
             {
-                let mut rgba = ffmpeg_next::frame::Video::empty();
-                scaler.run(&frame, &mut rgba).map_err(|e| e.to_string())?;
-                let mut reference =
-                    ffmpeg_next::frame::Video::new(ffmpeg_next::format::Pixel::RGBA, WIDTH, HEIGHT);
-                let stride = reference.stride(0);
-                reference.data_mut(0).fill(0);
-                for (row, expected) in reference
-                    .data_mut(0)
-                    .chunks_exact_mut(stride)
-                    .zip(captures[capture].chunks_exact(WIDTH as usize * 4))
-                {
-                    for (pixel, expected) in row.chunks_exact_mut(4).zip(expected.chunks_exact(4)) {
-                        for channel in 0..3 {
-                            pixel[channel] = (u16::from(expected[channel]) * u16::from(expected[3])
-                                / u16::from(u8::MAX))
-                                as u8;
-                        }
-                        pixel[3] = u8::MAX;
+                unsafe {
+                    let coefficients =
+                        ffmpeg_next::sys::sws_getCoefficients(ffmpeg_next::sys::SWS_CS_ITU709);
+                    let result = ffmpeg_next::sys::sws_setColorspaceDetails(
+                        context.as_mut_ptr(),
+                        coefficients,
+                        input_range,
+                        coefficients,
+                        output_range,
+                        0,
+                        1 << 16,
+                        1 << 16,
+                    );
+                    if result < 0 {
+                        return Err("Configure export verification color conversion".into());
                     }
-                }
-                let mut chroma = ffmpeg_next::frame::Video::empty();
-                reference_encoder
-                    .run(&reference, &mut chroma)
-                    .map_err(|e| e.to_string())?;
-                let mut expected = ffmpeg_next::frame::Video::empty();
-                scaler
-                    .run(&chroma, &mut expected)
-                    .map_err(|e| e.to_string())?;
-                let mut difference = 0_u64;
-                for (row, expected) in rgba
-                    .data(0)
-                    .chunks_exact(rgba.stride(0))
-                    .zip(expected.data(0).chunks_exact(expected.stride(0)))
-                {
-                    for (actual, expected) in row[..WIDTH as usize * 4]
-                        .chunks_exact(4)
-                        .zip(expected.chunks_exact(4))
-                    {
-                        for channel in 0..3 {
-                            difference += u64::from(actual[channel].abs_diff(expected[channel]));
-                        }
-                    }
-                }
-                const MAX_AVERAGE_COLOR_ERROR: u64 = 12;
-                let samples = u64::from(WIDTH) * u64::from(HEIGHT) * 3;
-                maximum_error_milli = maximum_error_milli.max(difference * 1000 / samples);
-                if difference > samples * MAX_AVERAGE_COLOR_ERROR {
-                    return Err(format!(
-                        "Export differs from preview at frame {decoded}: {} milli-levels mean color error",
-                        difference * 1000 / samples
-                    ));
                 }
             }
-            decoded += 1;
+            let mut rgba = ffmpeg_next::frame::Video::empty();
+            scaler.run(frame, &mut rgba).map_err(|e| e.to_string())?;
+            let mut reference =
+                ffmpeg_next::frame::Video::new(ffmpeg_next::format::Pixel::RGBA, WIDTH, HEIGHT);
+            let stride = reference.stride(0);
+            reference.data_mut(0).fill(0);
+            for (row, expected) in reference
+                .data_mut(0)
+                .chunks_exact_mut(stride)
+                .zip(captures[capture].chunks_exact(WIDTH as usize * 4))
+            {
+                for (pixel, expected) in row.chunks_exact_mut(4).zip(expected.chunks_exact(4)) {
+                    for channel in 0..3 {
+                        pixel[channel] = (u16::from(expected[channel]) * u16::from(expected[3])
+                            / u16::from(u8::MAX)) as u8;
+                    }
+                    pixel[3] = u8::MAX;
+                }
+            }
+            let mut chroma = ffmpeg_next::frame::Video::empty();
+            reference_encoder
+                .run(&reference, &mut chroma)
+                .map_err(|e| e.to_string())?;
+            let mut expected = ffmpeg_next::frame::Video::empty();
+            scaler
+                .run(&chroma, &mut expected)
+                .map_err(|e| e.to_string())?;
+            let mut difference = 0_u64;
+            for (row, expected) in rgba
+                .data(0)
+                .chunks_exact(rgba.stride(0))
+                .zip(expected.data(0).chunks_exact(expected.stride(0)))
+            {
+                for (actual, expected) in row[..WIDTH as usize * 4]
+                    .chunks_exact(4)
+                    .zip(expected.chunks_exact(4))
+                {
+                    for channel in 0..3 {
+                        difference += u64::from(actual[channel].abs_diff(expected[channel]));
+                    }
+                }
+            }
+            const MAX_AVERAGE_COLOR_ERROR: u64 = 12;
+            let samples = u64::from(WIDTH) * u64::from(HEIGHT) * 3;
+            maximum_error_milli = maximum_error_milli.max(difference * 1000 / samples);
+            if difference > samples * MAX_AVERAGE_COLOR_ERROR {
+                return Err(format!(
+                    "Export differs from preview at frame {decoded}: {} milli-levels mean color error",
+                    difference * 1000 / samples
+                ));
+            }
         }
-        Ok(())
-    };
-    for (stream, packet) in input.packets() {
-        if stream.index() == index {
-            decoder.send_packet(&packet).map_err(|e| e.to_string())?;
-            receive(&mut decoder)?;
-        }
+        decoded += 1;
     }
-    decoder.send_eof().map_err(|e| e.to_string())?;
-    receive(&mut decoder)?;
     if decoded != FRAMES {
         return Err(format!(
             "Decoded {decoded} exported frames, expected {FRAMES}"

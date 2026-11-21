@@ -432,7 +432,7 @@ fn interpolation_index(interpolation: Interpolation) -> usize {
 
 impl InspectorController {
     pub fn resolved_transform(&self, target: &InspectorTarget) -> Option<ResolvedTransform> {
-        let position = shrimply_editor_state::player_state::snapshot(&self.player_state).position;
+        let position = crate::model::player_snapshot(&self.player_state).position;
         let project = self.project.borrow();
         let (item, position) = transform_item_at(&project, target, position)?;
         Some(shrimply_project_evaluation::resolve_item_base_transform(
@@ -471,7 +471,7 @@ impl InspectorController {
         ) {
             graphs.push((ScalarField::RotationDegrees.path().to_string(), graph));
         }
-        let player = shrimply_editor_state::player_state::snapshot(&self.player_state);
+        let player = crate::model::player_snapshot(&self.player_state);
         let audio =
             self.audio_sampler
                 .borrow_mut()

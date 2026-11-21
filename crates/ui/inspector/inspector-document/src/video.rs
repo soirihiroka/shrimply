@@ -51,7 +51,7 @@ fn item(card: shrimply_inspector_core::VideoCard) -> InspectorListItem {
     inspector_item(card).boxed()
 }
 
-fn inspector_item(card: shrimply_inspector_core::VideoCard) -> InspectorItem {
+pub fn inspector_item(card: shrimply_inspector_core::VideoCard) -> InspectorItem {
     let mut item = InspectorItem::new(card.key, card.title, card.section);
     item.actions = card
         .actions

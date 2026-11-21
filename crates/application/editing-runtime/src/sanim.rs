@@ -107,6 +107,20 @@ pub(super) async fn get_sanim_clip(
         parameters_ready: state.prepared.is_some(),
         preparing: state.preparing,
         parameters,
+        temporal_layout: state
+            .prepared
+            .as_ref()
+            .map(|prepared| {
+                prepared
+                    .temporal_layout
+                    .iter()
+                    .filter(|receipt| receipt.origin.is_some())
+                    .map(serde_json::to_value)
+                    .collect::<Result<Vec<_>, _>>()
+            })
+            .transpose()
+            .map_err(|error| error.to_string())?
+            .unwrap_or_default(),
         error,
     })
     .map_err(|e| e.to_string())

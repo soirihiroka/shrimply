@@ -8,10 +8,13 @@ use crate::{InspectorController, InspectorTarget, model_catalog::ModelCatalog};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct EditorPresentation {
+    pub server_url: String,
+    pub generation: GenerationPresentation,
     pub models: Vec<TtsChoice>,
     pub model: Option<TtsModel>,
     pub controls: Vec<TtsEditorControl>,
     pub generated: bool,
+    pub loading: bool,
     pub catalog_status: String,
     pub can_retry: bool,
 }
@@ -31,7 +34,7 @@ struct Job {
 }
 
 #[derive(Default)]
-pub(crate) struct Runtime {
+pub struct Runtime {
     catalog: ModelCatalog<TtsModel>,
     jobs: HashMap<InspectorTarget, Job>,
 }
@@ -48,44 +51,33 @@ impl InspectorController {
         runtime
             .jobs
             .retain(|owner, job| owner == target || job.task.is_some());
-        let state = runtime
-            .catalog
-            .request(server_url, None, super::available_models);
-        let can_retry = matches!(&state, Some(Err(_)));
-        let (models, mut catalog_status) = match state {
-            None => (Vec::new(), "Loading text-to-speech models…".to_string()),
-            Some(Err(error)) => (Vec::new(), error),
-            Some(Ok(models)) if models.is_empty() => {
-                (models, "No text-to-speech models available".to_string())
+        let mut configured = settings.clone();
+        let mut presentation = runtime.configuration(
+            &mut configured,
+            server_url,
+            remembered,
+            ConfigurationKind::Regular,
+        );
+        presentation.generated = generated;
+        if let Some(job) = runtime.jobs.get(target) {
+            presentation.generation = job.presentation.clone();
+            if job.task.is_some() {
+                // An active request keeps its original model when server preferences change.
+                presentation.models = vec![TtsChoice {
+                    value: job.model.id.clone(),
+                    label: job.model.label.clone(),
+                }];
+                presentation.controls = super::editor_controls(
+                    &super::synchronized_settings(&settings, &job.model),
+                    &job.model,
+                );
+                presentation.model = Some(job.model.clone());
+                presentation.loading = false;
+                presentation.catalog_status.clear();
+                presentation.can_retry = false;
             }
-            Some(Ok(models)) => (models, String::new()),
-        };
-        let model = match settings.model.as_deref() {
-            Some(id) => models.iter().find(|model| model.id == id),
-            None => super::selected_model(&models, &settings, remembered),
         }
-        .cloned();
-        if model.is_none() && !models.is_empty() {
-            catalog_status =
-                "Saved model is unavailable. Choose a text-to-speech model.".to_string();
-        }
-        let controls = model.as_ref().map_or_else(Vec::new, |model| {
-            super::editor_controls(&super::synchronized_settings(&settings, model), model)
-        });
-        Ok(EditorPresentation {
-            models: models
-                .iter()
-                .map(|model| TtsChoice {
-                    value: model.id.clone(),
-                    label: model.label.clone(),
-                })
-                .collect(),
-            model,
-            controls,
-            generated,
-            catalog_status,
-            can_retry,
-        })
+        Ok(presentation)
     }
 
     pub fn select_tts_model(
@@ -94,22 +86,15 @@ impl InspectorController {
         server_url: &str,
         id: &str,
     ) -> Result<(), String> {
-        let models = self
-            .tts_runtime
-            .borrow_mut()
-            .catalog
-            .request(server_url, None, super::available_models)
-            .ok_or_else(|| "Text-to-speech models are still loading".to_string())??;
-        let model = models
-            .iter()
-            .find(|model| model.id == id)
-            .ok_or_else(|| "Selected text-to-speech model is unavailable".to_string())?;
-        let (settings, _) = self.tts_settings(target)?;
-        self.set_tts_settings(
-            target,
-            super::synchronized_settings(&settings, model),
-            false,
-        )
+        self.ensure_tts_editable(target)?;
+        let (mut settings, _) = self.tts_settings(target)?;
+        self.tts_runtime.borrow_mut().select_configuration_model(
+            &mut settings,
+            server_url,
+            id,
+            ConfigurationKind::Regular,
+        )?;
+        self.set_tts_settings(target, settings, false)
     }
 
     pub fn edit_tts_input(
@@ -119,15 +104,8 @@ impl InspectorController {
         key: &str,
         edit: TtsInputEdit,
     ) -> Result<bool, String> {
+        self.ensure_tts_editable(target)?;
         let mut settings = self.tts_model_settings(target, model)?;
-        if model
-            .inputs
-            .iter()
-            .find(|input| input.key() == key)
-            .is_some_and(|input| !shrimply_tts::is_visible(input, &settings.inputs))
-        {
-            return Err("Text-to-speech input is no longer visible".to_string());
-        }
         let live = super::edit_input(&mut settings, model, key, edit)?;
         self.set_tts_settings(target, settings, live)?;
         Ok(live)
@@ -149,6 +127,19 @@ impl InspectorController {
             .unwrap_or_default()
     }
 
+    pub fn cancel_tts_generation(&self, target: &InspectorTarget) -> Result<(), String> {
+        let mut runtime = self.tts_runtime.borrow_mut();
+        let job = runtime
+            .jobs
+            .get_mut(target)
+            .filter(|job| job.task.is_some())
+            .ok_or("Text-to-speech generation is not running")?;
+        job.task.as_ref().expect("active generation").cancel();
+        job.presentation.cancelling = true;
+        job.presentation.status = "Cancelling…".to_string();
+        Ok(())
+    }
+
     pub fn toggle_tts_generation(
         &self,
         target: &InspectorTarget,
@@ -156,13 +147,13 @@ impl InspectorController {
         model: &TtsModel,
     ) -> Result<(), String> {
         let mut runtime = self.tts_runtime.borrow_mut();
-        if let Some(job) = runtime.jobs.get_mut(target)
-            && let Some(task) = &job.task
+        if runtime
+            .jobs
+            .get(target)
+            .is_some_and(|job| job.task.is_some())
         {
-            task.cancel();
-            job.presentation.cancelling = true;
-            job.presentation.status = "Cancelling…".to_string();
-            return Ok(());
+            drop(runtime);
+            return self.cancel_tts_generation(target);
         }
         let settings = self.tts_model_settings(target, model)?;
         self.set_tts_settings(target, settings.clone(), false)?;
@@ -192,6 +183,7 @@ impl InspectorController {
                 match event {
                     GenerationEvent::Progress(status) => {
                         if !job.presentation.cancelling {
+                            changed |= job.presentation.status != status;
                             job.presentation.status = status;
                         }
                     }
@@ -235,6 +227,13 @@ impl InspectorController {
         changed
     }
 
+    fn ensure_tts_editable(&self, target: &InspectorTarget) -> Result<(), String> {
+        if self.tts_generation(target).running {
+            return Err("Text-to-speech generation is running".into());
+        }
+        Ok(())
+    }
+
     fn tts_settings(&self, target: &InspectorTarget) -> Result<(TtsSettings, bool), String> {
         let InspectorTarget::Item(address @ ItemAddress::Audio { .. }) = target else {
             return Err("Text-to-speech target is not an audio item".to_string());
@@ -259,5 +258,142 @@ impl InspectorController {
             return Err("Text-to-speech model changed; edit the current inspector".to_string());
         }
         Ok(super::synchronized_settings(&settings, model))
+    }
+}
+
+#[derive(Clone, Copy)]
+pub enum ConfigurationKind {
+    Regular,
+    Caption,
+}
+
+pub struct EditorActions<'a> {
+    pub model_sensitive: bool,
+    pub inputs_sensitive: bool,
+    pub generate_sensitive: bool,
+    pub generate_visible: bool,
+    pub generate_label: &'static str,
+    pub status: &'a str,
+    pub busy: bool,
+}
+
+impl EditorPresentation {
+    pub fn actions(&self) -> EditorActions<'_> {
+        EditorActions {
+            model_sensitive: !self.generation.running && !self.models.is_empty(),
+            inputs_sensitive: !self.generation.running,
+            generate_sensitive: self.model.is_some() && !self.generation.cancelling,
+            generate_visible: self.model.is_some(),
+            generate_label: if self.generation.running {
+                super::CANCEL_LABEL
+            } else if self.generated {
+                super::REGENERATE_LABEL
+            } else {
+                super::GENERATE_LABEL
+            },
+            status: if !self.generation.status.is_empty() {
+                &self.generation.status
+            } else if !self.catalog_status.is_empty() {
+                &self.catalog_status
+            } else {
+                super::READY_STATUS
+            },
+            busy: self.loading || self.generation.running,
+        }
+    }
+}
+
+impl Runtime {
+    pub fn poll_catalog(&mut self) -> bool {
+        self.catalog.poll()
+    }
+    pub fn retry_models(&mut self, server_url: &str) {
+        self.catalog.retry_failed(server_url);
+    }
+
+    pub fn configuration(
+        &mut self,
+        settings: &mut TtsSettings,
+        server_url: &str,
+        remembered: &str,
+        kind: ConfigurationKind,
+    ) -> EditorPresentation {
+        let state = self
+            .catalog
+            .request(server_url, None, super::available_models);
+        let can_retry = matches!(&state, Some(Err(_)));
+        let loading = state.is_none();
+        let (mut models, mut catalog_status) = match state {
+            None => (Vec::new(), "Loading text-to-speech models…".to_string()),
+            Some(Err(error)) => (Vec::new(), error),
+            Some(Ok(models)) => (models, String::new()),
+        };
+        if matches!(kind, ConfigurationKind::Caption) {
+            models.retain(shrimply_tts::is_caption_model);
+        }
+        if !loading && !can_retry && models.is_empty() {
+            catalog_status = match kind {
+                ConfigurationKind::Regular => "No text-to-speech models available",
+                ConfigurationKind::Caption => {
+                    "The server does not provide a text-to-speech model with caption timing"
+                }
+            }
+            .to_string();
+        }
+        let model = match (&settings.model, kind) {
+            (Some(id), ConfigurationKind::Regular) => models.iter().find(|model| model.id == *id),
+            _ => super::selected_model(&models, settings, remembered),
+        }
+        .cloned();
+        if let Some(model) = &model {
+            *settings = super::synchronized_settings(settings, model);
+        } else if !models.is_empty() {
+            catalog_status =
+                "Saved model is unavailable. Choose a text-to-speech model.".to_string();
+        }
+        let controls = model.as_ref().map_or_else(Vec::new, |model| match kind {
+            ConfigurationKind::Regular => super::editor_controls(settings, model),
+            ConfigurationKind::Caption => super::caption_editor_controls(settings, model),
+        });
+        EditorPresentation {
+            server_url: server_url.to_owned(),
+            generation: Default::default(),
+            models: models
+                .iter()
+                .map(|model| TtsChoice {
+                    value: model.id.clone(),
+                    label: model.label.clone(),
+                })
+                .collect(),
+            model,
+            controls,
+            generated: false,
+            loading,
+            catalog_status,
+            can_retry,
+        }
+    }
+
+    pub fn select_configuration_model(
+        &mut self,
+        settings: &mut TtsSettings,
+        server_url: &str,
+        id: &str,
+        kind: ConfigurationKind,
+    ) -> Result<(), String> {
+        let models = self
+            .catalog
+            .request(server_url, None, super::available_models)
+            .ok_or("Text-to-speech models are still loading")??;
+        let model = models
+            .iter()
+            .find(|model| {
+                model.id == id
+                    && (matches!(kind, ConfigurationKind::Regular)
+                        || shrimply_tts::is_caption_model(model))
+            })
+            .ok_or("Selected text-to-speech model is unavailable")?;
+        *settings = super::synchronized_settings(settings, model);
+        Ok(())
     }
 }

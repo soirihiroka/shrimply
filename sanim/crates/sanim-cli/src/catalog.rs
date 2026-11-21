@@ -8,6 +8,26 @@ pub struct Command {
 
 pub const COMMANDS: &[Command] = &[
     Command {
+        name: "voxel-watch",
+        summary: "Watch voxel source/textures using native events and retain GPU resources between edits (also: voxel watch)",
+    },
+    Command {
+        name: "voxel-render",
+        summary: "Render an independent voxel scene to PNG (also: voxel render)",
+    },
+    Command {
+        name: "voxel-inspect",
+        summary: "Inspect one sampled voxel state from named camera angles (also: voxel inspect)",
+    },
+    Command {
+        name: "voxel-pick",
+        summary: "Resolve a view pixel to its voxel, face, material and distance (also: voxel pick)",
+    },
+    Command {
+        name: "voxel-video",
+        summary: "Render a voxel animation to H.264 MP4 (also: voxel video)",
+    },
+    Command {
         name: "fmt",
         summary: "Format Sanim source with the canonical parser; check or atomically write on request",
     },
@@ -52,6 +72,106 @@ pub struct OptionDefinition {
 }
 
 pub const OPTIONS: &[OptionDefinition] = &[
+    OptionDefinition {
+        name: "reconstruction",
+        kind: "string",
+        summary: "Voxel image reconstruction: off, spatial (default), or temporal; filters lighting while preserving texture detail",
+    },
+    OptionDefinition {
+        name: "spatial-passes",
+        kind: "integer",
+        summary: "Edge-aware lighting-filter passes, 0..=3",
+    },
+    OptionDefinition {
+        name: "history-frames",
+        kind: "integer",
+        summary: "Temporal reconstruction sample window, 1..=32; retains one bounded history",
+    },
+    OptionDefinition {
+        name: "antialias",
+        kind: "integer",
+        summary: "Voxel primary visibility samples per pixel, 1..=4 (default 2); path tracing uses its path samples",
+    },
+    OptionDefinition {
+        name: "shadows",
+        kind: "string",
+        summary: "Voxel key shadows: auto, off, hard, or soft (auto: flat off, path traced soft)",
+    },
+    OptionDefinition {
+        name: "shadow-strength",
+        kind: "number",
+        summary: "Voxel shadow strength, 0..=1",
+    },
+    OptionDefinition {
+        name: "shadow-samples",
+        kind: "integer",
+        summary: "Voxel key visibility rays per shading sample, 1..=8",
+    },
+    OptionDefinition {
+        name: "ao",
+        kind: "string",
+        summary: "Voxel ambient occlusion: auto, off, local, or ray-traced (auto: flat local, path traced off)",
+    },
+    OptionDefinition {
+        name: "ao-strength",
+        kind: "number",
+        summary: "Voxel ambient occlusion strength, 0..=1",
+    },
+    OptionDefinition {
+        name: "ao-distance",
+        kind: "number",
+        summary: "Ray-traced ambient occlusion radius in voxel cells",
+    },
+    OptionDefinition {
+        name: "ao-samples",
+        kind: "integer",
+        summary: "Ambient occlusion rays per primary shading sample, 1..=16",
+    },
+    OptionDefinition {
+        name: "exposure",
+        kind: "number",
+        summary: "Voxel foreground exposure in stops, -16..=16; background unchanged",
+    },
+    OptionDefinition {
+        name: "sun-diameter",
+        kind: "string",
+        summary: "Voxel sun's angular diameter, e.g. 8deg; larger sources produce softer shadows",
+    },
+    OptionDefinition {
+        name: "sun-strength",
+        kind: "string",
+        summary: "Voxel key-light strength; finite nonnegative number",
+    },
+    OptionDefinition {
+        name: "environment-strength",
+        kind: "string",
+        summary: "Voxel sky-fill strength, independent of the visible background",
+    },
+    OptionDefinition {
+        name: "mode",
+        kind: "string",
+        summary: "Voxel rendering: flat (fast default) or path-traced (bounded Monte Carlo lighting)",
+    },
+    OptionDefinition {
+        name: "bounces",
+        kind: "integer",
+        summary: "Path-traced voxel light-bounce limit",
+    },
+    OptionDefinition {
+        name: "views",
+        kind: "string",
+        summary: "voxel inspect: comma-separated front,back,left,right,top,bottom,isometric",
+    },
+    OptionDefinition {
+        name: "view",
+        kind: "string",
+        summary: "Override the voxel camera with one named, fitted inspection view",
+    },
+    OptionDefinition {
+        name: "pixel",
+        kind: "string",
+        summary: "voxel pick: output pixel X,Y, with origin at the image top-left",
+    },
     OptionDefinition {
         name: "check",
         kind: "boolean",
@@ -108,9 +228,14 @@ pub const OPTIONS: &[OptionDefinition] = &[
         summary: "PNG or MP4 destination (required for render/video/watch)",
     },
     OptionDefinition {
+        name: "duration",
+        kind: "string",
+        summary: "External time viewport, e.g. 10s (required for indefinite video)",
+    },
+    OptionDefinition {
         name: "ffmpeg",
         kind: "string",
-        summary: "FFmpeg executable for video (default ffmpeg)",
+        summary: "Override the project FFmpeg executable for video",
     },
     OptionDefinition {
         name: "frame",
@@ -150,7 +275,12 @@ pub const OPTIONS: &[OptionDefinition] = &[
     OptionDefinition {
         name: "samples",
         kind: "integer",
-        summary: "Requested cold/warm profile sample count (default 30, maximum 10000)",
+        summary: "Profile sample count, or voxel path-tracing light samples per pixel",
+    },
+    OptionDefinition {
+        name: "max-native-work",
+        kind: "integer",
+        summary: "Bound cumulative native algorithm work independently of interpreted DSL operations",
     },
     OptionDefinition {
         name: "warn-operations",
@@ -169,11 +299,42 @@ pub(crate) fn options_for(command: &str) -> impl Iterator<Item = &'static Option
         "check" | "write" => command == "fmt",
         "check-format" => matches!(command, "lint" | "check"),
         "indent-width" | "line-width" | "tabs" => matches!(command, "fmt" | "lint" | "check"),
-        "output" => matches!(command, "render" | "video" | "watch"),
-        "ffmpeg" => command == "video",
-        "frame" | "time" => matches!(command, "render" | "watch"),
-        "cycles" => command == "watch",
-        "samples" => command == "profile",
+        "views" => command == "voxel-inspect",
+        "view" => command.starts_with("voxel-"),
+        "pixel" => command == "voxel-pick",
+        "output" => matches!(
+            command,
+            "render"
+                | "video"
+                | "watch"
+                | "voxel-render"
+                | "voxel-video"
+                | "voxel-inspect"
+                | "voxel-watch"
+        ),
+        "ffmpeg" => matches!(command, "video" | "voxel-video"),
+        "duration" => command != "fmt",
+        "frame" | "time" => matches!(
+            command,
+            "render" | "watch" | "voxel-render" | "voxel-inspect" | "voxel-pick" | "voxel-watch"
+        ),
+        "cycles" => matches!(command, "watch" | "voxel-watch"),
+        "mode"
+        | "bounces"
+        | "sun-diameter"
+        | "sun-strength"
+        | "environment-strength"
+        | "shadows"
+        | "shadow-strength"
+        | "shadow-samples"
+        | "ao"
+        | "ao-strength"
+        | "ao-distance"
+        | "ao-samples"
+        | "exposure" => command.starts_with("voxel-") && command != "voxel-pick",
+        "samples" => {
+            command == "profile" || command.starts_with("voxel-") && command != "voxel-pick"
+        }
         "set" => !matches!(command, "fmt" | "lint"),
         "json" => true,
         _ => command != "fmt",
@@ -191,10 +352,10 @@ pub fn schema(command: &str) -> Result<Value, String> {
     }))).collect::<serde_json::Map<_,_>>();
     Ok(json!({
         "command":format!("shrimply sanim {}",definition.name),
-        "summary":definition.summary,"project_required":false,"read_only":!matches!(command,"render"|"video"|"watch"|"fmt"),
+        "summary":definition.summary,"project_required":false,"read_only":!matches!(command,"render"|"video"|"watch"|"fmt"|"voxel-render"|"voxel-video"|"voxel-inspect"|"voxel-watch"),
         "request":{"type":"object","properties":properties},
         "positional":{"file":{"type":"string","required":true,"description":"Sanim entry file; resources resolve relative to its directory"}},
-        "output_required":matches!(command,"render"|"video"|"watch"),
+        "output_required":matches!(command,"render"|"video"|"watch"|"voxel-render"|"voxel-video"|"voxel-watch"),
         "diagnostics":"code, severity, source, span, message; exit 1 on errors or denied warnings, exit 2 on invalid arguments",
         "evaluation":if matches!(command,"check"|"inspect") { "full" } else if matches!(command,"lint"|"fmt") { "static" } else { "demand" }
     }))

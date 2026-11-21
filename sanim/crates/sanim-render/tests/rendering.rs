@@ -10,7 +10,7 @@ fn scene_in(source: &str, width: u32, height: u32) -> Scene {
     let mut files = MemorySources::default();
     files.insert(
         "main.sanim",
-        format!("bg(Color(\"transparent\"))\n{source}"),
+        format!("bg(Color(\"transparent\"))\n{source}\nAnimation()"),
     );
     Scene::new(
         Engine::new(sanim_core::Viewport {
@@ -31,7 +31,11 @@ fn renders_actual_circle_pixels_and_png() {
         sanim_core::Animation::default().background,
         sanim_core::Color::parse("window_bg_dark").unwrap()
     );
-    let scene = scene_in("add(Circle(radius= 10pt, fill= Color(\"red\")))\n", 64, 64);
+    let scene = scene_in(
+        "Animation(children=[Box(fill=Color(\"red\"), width=2*(10pt), height=2*(10pt), radius=\"full\", x_align=Align.Center, y_align=Align.Center)])\n",
+        64,
+        64,
+    );
     let frame = Renderer::default()
         .render(
             &scene,
@@ -49,7 +53,7 @@ fn renders_actual_circle_pixels_and_png() {
 #[test]
 fn output_resizing_preserves_relative_position() {
     let scene = scene_in(
-        "add(Circle(radius= 5pt, fill= Color(\"blue\"), position= Vec2(-25%, 0%)))\n",
+        "Animation(children=[Box(fill=Color(\"blue\"), position=[-25%, 0%], width=2*(5pt), height=2*(5pt), radius=\"full\", x_align=Align.Center, y_align=Align.Center)])\n",
         64,
         64,
     );
@@ -66,7 +70,9 @@ fn output_resizing_preserves_relative_position() {
 }
 #[test]
 fn same_frame_reuses_cache() {
-    let scene = scene("add(Rect())\n");
+    let scene = scene(
+        "Animation(children=[Box(width=64pt, height=64pt, fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)])\n",
+    );
     let mut renderer = Renderer::default();
     let options = Options::for_animation(scene.animation());
     let first = renderer
@@ -81,7 +87,11 @@ fn same_frame_reuses_cache() {
 
 #[test]
 fn render_work_limits_apply_to_compositing() {
-    let scene = scene_in("add(Box(children= [Circle()], opacity= 0.5))\n", 64, 64);
+    let scene = scene_in(
+        "Animation(children=[Box(children= [Box(width=2*(32pt), height=2*(32pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)], opacity= 0.5)])\n",
+        64,
+        64,
+    );
     let mut options = Options::for_animation(scene.animation());
     options.max_work = 10;
     assert!(
@@ -94,7 +104,7 @@ fn render_work_limits_apply_to_compositing() {
 #[test]
 fn cached_frames_respect_changed_work_limits() {
     let scene = scene_in(
-        "add(Box(children= [Circle(radius= 2pt)], opacity= 0.5))\n",
+        "Animation(children=[Box(children= [Box(width=2*(2pt), height=2*(2pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)], opacity= 0.5)])\n",
         16,
         16,
     );
@@ -113,7 +123,7 @@ fn cached_frames_respect_changed_work_limits() {
 #[test]
 fn box_opacity_applies_after_overlapping_descendants_composite() {
     let scene = scene_in(
-        "let a = Rect(width= 16pt, height= 16pt, fill= Color(\"red\"))\nlet b = Rect(width= 16pt, height= 16pt, fill= Color(\"blue\"))\nlet overlay=Rect(width=16pt,height=16pt,fill=Color(\"transparent\"),children=[a,b])\nadd(Box(children=[overlay],width=16pt,height=16pt,opacity=0.5))\n",
+        "let a = Box(position_mode=\"absolute\",width=16pt, height=16pt, fill=Color(\"red\"), x_align=Align.Center, y_align=Align.Center)\nlet b = Box(position_mode=\"absolute\",width=16pt, height=16pt, fill=Color(\"blue\"), x_align=Align.Center, y_align=Align.Center)\nlet overlay=Box(width=16pt, height=16pt, fill=Color(\"transparent\"), children=[a,b], x_align=Align.Center, y_align=Align.Center)\nAnimation(children=[Box(children=[overlay],width=16pt,height=16pt,opacity=0.5)])\n",
         16,
         16,
     );
@@ -131,7 +141,9 @@ fn box_opacity_applies_after_overlapping_descendants_composite() {
 }
 #[test]
 fn pixel_budget_rejects_large_surfaces() {
-    let scene = scene("add(Circle())\n");
+    let scene = scene(
+        "Animation(children=[Box(width=2*(32pt), height=2*(32pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)])\n",
+    );
     let mut options = Options::for_animation(scene.animation());
     options.max_pixels = 1;
     assert!(
@@ -144,7 +156,7 @@ fn pixel_budget_rejects_large_surfaces() {
 #[test]
 fn later_motion_frame_changes_pixels() {
     let scene = scene_in(
-        "let marker = Circle(radius= 4pt, position= Vec2(-25%, 0%))\nMoveTo(marker, Vec2(25%, 0%), duration=1s, ease=\"linear\")\n",
+        "let marker = Box(position=[-25%, 0%], width=2*(4pt), height=2*(4pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nmarker.move_to([25%, 0%], duration=1s, ease=\"linear\")\n",
         64,
         64,
     );
@@ -162,7 +174,7 @@ fn later_motion_frame_changes_pixels() {
 #[test]
 fn skia_recording_clips_overflow_when_replayed_after_a_host_transform() {
     let scene = scene_in(
-        "add(Rect(width=100pt,height=100pt,fill=Color(\"red\")))",
+        "Animation(children=[Box(width=100pt, height=100pt, fill=Color(\"red\"), x_align=Align.Center, y_align=Align.Center)])",
         16,
         16,
     );
@@ -188,7 +200,7 @@ fn pango_shaped_outlines_render_without_retaining_font_objects() {
         "font.ttf",
         include_bytes!("../../../examples/assets/DejaVuSansCondensed-subset.ttf").as_slice(),
     );
-    files.insert("main.sanim","bg(Color(\"transparent\"))\nlet font=read<Font>(\"font.ttf\")\nlet label=Text(\"AV ffi السلام\",font=font,font_size=24pt,fill=Color(\"white\"))\nWrite(label, duration=1s, ease=\"linear\")");
+    files.insert("main.sanim","bg(Color(\"transparent\"))\nlet font=read<Font>(\"font.ttf\")\nlet label=Text(\"AV ffi السلام\",font=font,font_size=24pt,fill=Color(\"white\"))\nlabel.write(duration=1s, ease=\"linear\")\nAnimation()");
     let prepared = Engine::new(sanim_core::Viewport {
         width: 240,
         height: 96,
@@ -224,7 +236,7 @@ fn pango_shaped_outlines_render_without_retaining_font_objects() {
 #[test]
 fn create_draws_a_line_segment_instead_of_fading_the_whole_line() {
     let scene = scene_in(
-        "let line=Line(end=Vec2(40pt,0pt),width=4pt,fill=Color(\"red\"))\nCreate(line, duration=1s, ease=\"linear\")",
+        "let line=Line(end=[40pt, 0pt],width=4pt,fill=Color(\"red\"))\nline.create(duration=1s, ease=\"linear\")",
         64,
         64,
     );
@@ -251,10 +263,10 @@ fn create_draws_a_line_segment_instead_of_fading_the_whole_line() {
 #[test]
 fn write_traces_then_fills_and_inverse_returns_to_empty() {
     let mut renderer = Renderer::default();
-    for (forward, reverse) in [("Create", "Uncreate"), ("Write", "Unwrite")] {
+    for (forward, reverse) in [("create", "uncreate"), ("write", "unwrite")] {
         let scene = scene_in(
             &format!(
-                "let shape=Rect(width=32pt,height=32pt,fill=Color(\"red\"))\n{forward}(shape,duration=1s,ease=\"linear\")\n{reverse}(shape,duration=1s,ease=\"linear\")"
+                "let shape=Box(width=32pt, height=32pt, fill=Color(\"red\"), x_align=Align.Center, y_align=Align.Center)\nshape.{forward}(duration=1s,ease=\"linear\")\nshape.{reverse}(duration=1s,ease=\"linear\")"
             ),
             64,
             64,
@@ -269,7 +281,7 @@ fn write_traces_then_fills_and_inverse_returns_to_empty() {
             quarter.rgba.chunks_exact(4).any(|p| p[3] >= 127),
             "a reveal must expose solid pixels, not fade everything"
         );
-        if forward == "Write" {
+        if forward == "write" {
             assert_eq!(
                 quarter.rgba[(32 * 64 + 32) * 4 + 3],
                 0,
@@ -294,7 +306,7 @@ fn write_traces_then_fills_and_inverse_returns_to_empty() {
 #[test]
 fn group_write_reveals_children_without_changing_their_layout() {
     let scene = scene_in(
-        "let group=Box(flex_direction=\"row\",children=[Rect(width=16pt,height=16pt),Circle(radius=8pt)],gap=8pt)\nWrite(group, duration=1s, ease=\"linear\")",
+        "let group=Box(flex_direction=\"row\",children=[Box(width=16pt, height=16pt, fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center),Box(width=2*(8pt), height=2*(8pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)],gap=8pt)\ngroup.write(duration=1s, ease=\"linear\")",
         64,
         64,
     );
@@ -320,7 +332,7 @@ fn group_write_reveals_children_without_changing_their_layout() {
 #[test]
 fn grow_and_shrink_render_centered_without_zero_scale_artifacts() {
     let scene = scene_in(
-        "let shape=Rect(width=32pt,height=32pt)\nGrowFromCenter(shape, duration=1s, ease=\"linear\")\nShrinkToCenter(shape, duration=1s, ease=\"linear\")",
+        "let shape=Box(width=32pt, height=32pt, fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nshape.grow_from_center(duration=1s, ease=\"linear\")\nshape.shrink_to_center(duration=1s, ease=\"linear\")",
         64,
         64,
     );
@@ -343,7 +355,11 @@ fn grow_and_shrink_render_centered_without_zero_scale_artifacts() {
 
 #[test]
 fn style_timing_and_viewport_hot_edits_reuse_paths_but_geometry_edits_do_not() {
-    let original = scene_in("add(Rect(width=32pt,height=24pt))", 64, 64);
+    let original = scene_in(
+        "Animation(children=[Box(width=32pt, height=24pt, fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)])",
+        64,
+        64,
+    );
     let mut renderer = Renderer::default();
     let animation = original.animation().clone();
     let first = renderer.prepare(animation.clone()).unwrap();
@@ -407,7 +423,7 @@ fn style_timing_and_viewport_hot_edits_reuse_paths_but_geometry_edits_do_not() {
 
 #[test]
 fn full_geometry_validation_rejects_nonfinite_path_measurements() {
-    let mut animation = scene_in("add(Line(end=Vec2(1pt,1pt)))", 64, 64)
+    let mut animation = scene_in("Animation(children=[Line(end=[1pt, 1pt])])", 64, 64)
         .animation()
         .clone();
     animation.layers[0].element.geometry = sanim_core::Geometry::Line {
@@ -425,10 +441,10 @@ fn full_geometry_validation_rejects_nonfinite_path_measurements() {
 
 #[test]
 fn overlapping_trace_and_fill_preserve_element_opacity() {
-    for kind in ["Create", "Write"] {
+    for kind in ["create", "write"] {
         let scene = scene_in(
             &format!(
-                "let shape=Rect(width=32pt,height=32pt,opacity=0.5)\n{kind}(shape,duration=1s,ease=\"linear\")"
+                "let shape=Box(width=32pt, height=32pt, opacity=0.5, fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nshape.{kind}(duration=1s,ease=\"linear\")"
             ),
             64,
             64,
@@ -472,7 +488,7 @@ fn cached_multicontour_reveals_preserve_gaps_and_reverse_order() {
 #[test]
 fn retained_dimension_samples_draw_their_current_paths_and_allow_reverse_seeks() {
     let scene = scene_in(
-        "mut extent=10pt\nsig breadth=extent\nadd(Rect(id=\"box\",width=breadth,height=10pt,fill=Color(\"red\")))\nbackground {animate(extent,to=20pt,duration=2s)}\nwait(2s)",
+        "mut extent=10pt\nsig breadth=extent\nAnimation(children=[Box(id=\"box\", width=breadth, height=10pt, fill=Color(\"red\"), x_align=Align.Center, y_align=Align.Center)])\n<Animation absolute flow=\"sequence\">{animate(extent,to=20pt,duration=2s)}</Animation>\nwait(2s)",
         64,
         64,
     );
@@ -496,7 +512,7 @@ fn retained_dimension_samples_draw_their_current_paths_and_allow_reverse_seeks()
 #[test]
 fn animated_rectangle_corner_radius_changes_real_corner_pixels_and_reverse_seeks() {
     let scene = scene_in(
-        "mut corner=0pt\nsig rounding=corner\nadd(Rect(id=\"box\",width=20pt,height=20pt,radius=rounding,fill=Color(\"red\")))\nbackground {animate(corner,to=10pt,duration=2s)}\nwait(2s)",
+        "mut corner=0pt\nsig rounding=corner\nAnimation(children=[Box(id=\"box\", width=20pt, height=20pt, radius=rounding, fill=Color(\"red\"), x_align=Align.Center, y_align=Align.Center)])\n<Animation absolute flow=\"sequence\">{animate(corner,to=10pt,duration=2s)}</Animation>\nwait(2s)",
         64,
         64,
     );

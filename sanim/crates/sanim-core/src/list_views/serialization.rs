@@ -75,7 +75,7 @@ impl TryFrom<ListViewsData> for ListViews {
                                 .into(),
                         );
                     }
-                    math::timeline_end(
+                    math::temporal::writer_end(
                         event.start,
                         math::arithmetic("-", event.end, event.start)?,
                     )?;

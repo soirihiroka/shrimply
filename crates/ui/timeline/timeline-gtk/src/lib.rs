@@ -66,7 +66,6 @@ pub use shrimply_timeline_skia::timeline_operation;
 mod track_controls;
 pub use shrimply_timeline_skia::view;
 
-use drawing::row_screen_y;
 use frame::timeline_gtk;
 use recording::handle_video_recording;
 use renderer::{TimelinePainter, TimelineRenderer};
@@ -140,9 +139,33 @@ pub fn new(
             }
         },
     );
+    let sidebar = timeline_sidebar(&area, &preferences);
+    let sidebar_width = sidebar.measure(gtk::Orientation::Horizontal, -1).1;
+    let tools_clip = gtk::ScrolledWindow::builder()
+        .hscrollbar_policy(gtk::PolicyType::External)
+        .vscrollbar_policy(gtk::PolicyType::Never)
+        .propagate_natural_width(false)
+        .min_content_width(0)
+        .width_request(sidebar_width)
+        .child(&sidebar)
+        .build();
+    let audio_meter = audio_meter_gtk::new(move || audio_levels.take_peaks());
+    let meter_width = shrimply_components_skia::audio_meter::DEFAULT_WIDTH;
+    let meter_clip = gtk::ScrolledWindow::builder()
+        .hscrollbar_policy(gtk::PolicyType::External)
+        .vscrollbar_policy(gtk::PolicyType::Never)
+        .propagate_natural_width(false)
+        .min_content_width(0)
+        .width_request(meter_width)
+        .child(&audio_meter)
+        .build();
+    let render_tools_clip = tools_clip.downgrade();
+    let render_meter_clip = meter_clip.downgrade();
     let render_runtime = runtime.clone();
     let render_project = project.clone();
     let render_player_state = player_state.clone();
+    let render_selection_state = selection_state.clone();
+    let render_preferences = preferences.clone();
     area.connect_render(move |area, _| {
         if let Some(error) = area.error() {
             tracing::error!("Timeline GLArea error: {error}");
@@ -215,8 +238,10 @@ pub fn new(
         }
         let requests = runtime.scene.take_requests();
         let pending_audio_record = requests.audio_record;
-        if let Some(key) = pending_audio_record
-            && let Err(error) = runtime.scene.toggle_audio_recording(key)
+        if let Some(request) = pending_audio_record
+            && let Err(error) = runtime
+                .scene
+                .toggle_audio_recording_at(request.key, request.position)
         {
             interaction::show_error_dialog(area, "Could not record audio", &error);
         }
@@ -228,8 +253,33 @@ pub fn new(
         };
         let pending_track_add_menu = requests.track_add;
         let pending_pause_playback = requests.pause_playback;
+        let pending_context_menu = requests.context_menu;
         let track_controls_animating = runtime.scene.animating();
+        let tools_width =
+            (f64::from(sidebar_width) * runtime.scene.tools_progress()).round() as i32;
+        let monitor_width =
+            (f64::from(meter_width) * runtime.scene.audio_monitor_progress()).round() as i32;
         drop(runtime);
+        if let Some(clip) = render_tools_clip.upgrade() {
+            clip.set_visible(tools_width > 0);
+            clip.set_width_request(tools_width);
+        }
+        if let Some(clip) = render_meter_clip.upgrade() {
+            clip.set_visible(monitor_width > 0);
+            clip.set_width_request(monitor_width);
+        }
+
+        if let Some(request) = pending_context_menu {
+            interaction::show_timeline_item_context_menu(
+                area,
+                &render_project,
+                &render_player_state,
+                &render_selection_state,
+                &render_runtime,
+                &render_preferences,
+                request,
+            );
+        }
 
         if pause_for_video_recording || pending_pause_playback {
             shrimply_process_reporting::crash::set_context(format!(
@@ -243,7 +293,7 @@ pub fn new(
             interaction::start_timeline_animation_tick(area, render_runtime.clone());
         }
         if let Some(request) = pending_track_add_menu {
-            show_track_add_menu(area, &render_project, &render_runtime, request);
+            show_track_add_menu(area, &render_runtime, request);
         }
 
         glib::Propagation::Stop
@@ -264,20 +314,17 @@ pub fn new(
         runtime.renderer.destroy();
     });
 
-    let sidebar = timeline_sidebar(&area, &preferences);
     let timeline = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-    timeline.append(&sidebar);
+    timeline.append(&tools_clip);
     timeline.append(&area);
 
     let split = gtk::Paned::new(gtk::Orientation::Horizontal);
     split.set_wide_handle(false);
     split.set_start_child(Some(&timeline));
-    split.set_end_child(Some(&audio_meter_gtk::new(move || {
-        audio_levels.take_peaks()
-    })));
+    split.set_end_child(Some(&meter_clip));
     split.set_resize_start_child(true);
     split.set_resize_end_child(false);
     split.set_shrink_start_child(false);
-    split.set_shrink_end_child(false);
+    split.set_shrink_end_child(true);
     split.upcast()
 }

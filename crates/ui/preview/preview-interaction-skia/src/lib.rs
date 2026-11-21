@@ -5,3 +5,5 @@ pub mod geometry;
 pub mod guides;
 pub mod navigation;
 pub mod provider;
+
+pub mod surface;

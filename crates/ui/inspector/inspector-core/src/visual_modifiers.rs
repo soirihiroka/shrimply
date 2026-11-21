@@ -1628,8 +1628,8 @@ impl InspectorController {
         key: &str,
     ) -> Result<uuid::Uuid, String> {
         let address = video_address(target)?;
-        let position = player_state::snapshot(&self.player_state).position;
-        let revision = player_state::snapshot(&self.player_state).revision;
+        let position = crate::model::player_snapshot(&self.player_state).position;
+        let revision = crate::model::player_snapshot(&self.player_state).revision;
         let mut project = self.project.borrow_mut();
         let audio = self
             .audio_sampler

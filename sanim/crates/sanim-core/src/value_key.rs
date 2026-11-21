@@ -41,6 +41,20 @@ impl Serialize for ValueKey<'_> {
                 content: &'a str,
             },
             Record(Fields<'a>),
+            VoxelGrid(u64),
+            VoxelMaterial {
+                color: u32,
+                faces: [Option<u64>; 6],
+                emission: u32,
+                #[serde(skip_serializing_if = "Option::is_none")]
+                optics: Option<[u32; 10]>,
+                #[serde(skip_serializing_if = "Option::is_none")]
+                geometry: Option<sanim_voxel::MaterialGeometry>,
+            },
+            Texture(u64),
+            VoxelLayout([u8; 32]),
+            Density([u8; 32]),
+            Curve(u64),
             Some(ValueKey<'a>),
             Variant {
                 ty: &'a Type,
@@ -63,6 +77,21 @@ impl Serialize for ValueKey<'_> {
                 content: values.fingerprint(),
             },
             Value::Record(fields) => Key::Record(Fields(fields)),
+            Value::VoxelGrid(volume) => Key::VoxelGrid(volume.revision()),
+            Value::VoxelMaterial(material) => Key::VoxelMaterial {
+                color: material.color(),
+                faces: material
+                    .faces()
+                    .each_ref()
+                    .map(|face| face.as_ref().map(|texture| texture.revision())),
+                emission: material.emission().to_bits(),
+                optics: (!material.optics().is_default()).then(|| material.optics().cache_key()),
+                geometry: (!material.geometry().is_default()).then_some(material.geometry()),
+            },
+            Value::Texture(texture) => Key::Texture(texture.revision()),
+            Value::VoxelLayout(node) => Key::VoxelLayout(node.fingerprint()),
+            Value::Density(field) => Key::Density(field.fingerprint()),
+            Value::Curve(curve) => Key::Curve(curve.revision()),
             Value::Some(value) => Key::Some(ValueKey(value)),
             Value::Variant { ty, tag, fields } => Key::Variant {
                 ty,

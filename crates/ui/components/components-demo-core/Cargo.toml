@@ -9,5 +9,5 @@ shrimply-property-model = { workspace = true }
 shrimply-math-interpolation = { workspace = true }
 shrimply-keyframe-graph-skia = { workspace = true }
 shrimply-math-core = { workspace = true }
-shrimply-visual-modifiers = { workspace = true }
+shrimply-visual-modifiers = { workspace = true, default-features = true }
 uuid.workspace = true

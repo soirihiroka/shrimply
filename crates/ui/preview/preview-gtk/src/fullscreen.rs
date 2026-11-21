@@ -26,7 +26,7 @@ struct PreviewFullscreenRestore {
     window: gtk::Window,
     toolbar_view: Option<(adw::ToolbarView, bool)>,
     hidden_widgets: Vec<(gtk::Widget, bool)>,
-    side_controls_visible: bool,
+    overlay_sidebar: Option<(adw::OverlaySplitView, bool)>,
     controls_visible: bool,
     controls_halign: gtk::Align,
     controls_valign: gtk::Align,
@@ -45,6 +45,7 @@ pub(super) struct Widgets {
     pub(super) left_bar: gtk::Box,
     pub(super) button: gtk::Button,
     pub(super) video_surface: PreviewController,
+    pub(super) preferences: preferences_store::SharedPreferences,
 }
 
 #[derive(Clone)]
@@ -66,6 +67,14 @@ pub(super) fn attach(widgets: Widgets, player_state: SharedPlayerState) {
         hide_generation: Rc::new(Cell::new(0u64)),
         motion: Rc::new(ControlsMotion::default()),
     };
+
+    let side_controls = widgets.side_controls.downgrade();
+    let active = state.active.clone();
+    preferences_store::connect(&widgets.preferences, move |preferences| {
+        if let Some(side_controls) = side_controls.upgrade() {
+            side_controls.set_visible(preferences.preview_controls_visible && !active.get());
+        }
+    });
 
     attach_fullscreen_controls_motion(&widgets, &state);
     attach_fullscreen_escape_key(&widgets, &state);
@@ -103,12 +112,24 @@ fn enter_preview_fullscreen(widgets: &Widgets, state: &PreviewFullscreenState) {
     if let Some(timeline) = top_paned
         .as_ref()
         .and_then(|paned| paned.parent())
-        .and_then(|parent| parent.downcast::<gtk::Paned>().ok())
+        .and_then(|parent| parent.ancestor(gtk::Paned::static_type()))
+        .and_downcast::<gtk::Paned>()
         .and_then(|paned| paned.end_child())
     {
         hidden_widgets.push((timeline.clone(), timeline.get_visible()));
         timeline.set_visible(false);
     }
+
+    let overlay_sidebar = widgets
+        .layout
+        .ancestor(adw::OverlaySplitView::static_type())
+        .and_downcast::<adw::OverlaySplitView>()
+        .filter(|split| split.sidebar().is_some())
+        .map(|split| {
+            let shown = split.shows_sidebar();
+            split.set_show_sidebar(false);
+            (split, shown)
+        });
 
     let toolbar_view = toolbar_view_ancestor(widgets.layout.upcast_ref()).map(|toolbar_view| {
         let reveal_top_bars = toolbar_view.reveals_top_bars();
@@ -117,7 +138,6 @@ fn enter_preview_fullscreen(widgets: &Widgets, state: &PreviewFullscreenState) {
     });
 
     let controls_visible = widgets.controls.get_visible();
-    let side_controls_visible = widgets.side_controls.get_visible();
     let controls_halign = widgets.controls.halign();
     let controls_valign = widgets.controls.valign();
     let controls_hexpand = widgets.controls.hexpands();
@@ -143,7 +163,7 @@ fn enter_preview_fullscreen(widgets: &Widgets, state: &PreviewFullscreenState) {
         window: window.clone(),
         toolbar_view,
         hidden_widgets,
-        side_controls_visible,
+        overlay_sidebar,
         controls_visible,
         controls_halign,
         controls_valign,
@@ -199,7 +219,10 @@ fn restore_preview_fullscreen(
     widgets.controls.set_vexpand(restore.controls_vexpand);
     widgets
         .side_controls
-        .set_visible(restore.side_controls_visible);
+        .set_visible(preferences_store::snapshot(&widgets.preferences).preview_controls_visible);
+    if let Some((sidebar, shown)) = restore.overlay_sidebar {
+        sidebar.set_show_sidebar(shown);
+    }
     widgets.left_bar.set_visible(restore.left_bar_visible);
     if !restore.controls_had_osd_class {
         widgets.controls.remove_css_class("osd");

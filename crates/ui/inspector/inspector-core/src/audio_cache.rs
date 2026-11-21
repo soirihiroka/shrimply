@@ -182,6 +182,24 @@ pub fn audio_cache_control(status: CacheStatus) -> CacheControlPresentation {
 }
 
 impl crate::InspectorController {
+    pub(crate) fn poll_audio_caches(&self) -> bool {
+        let project = self.project.borrow();
+        let mut active = self.audio_cache_transitions.borrow_mut();
+        active.retain(|target, id| {
+            crate::audio_modifiers::audio_item_address(&target)
+                .ok()
+                .and_then(|address| project.audio_item(address))
+                .is_some_and(|item| item.modifiers.iter().any(|modifier| modifier.id == id))
+        });
+        let poll = active.poll(|_, id| audio_cache_status(id));
+        drop(active);
+        drop(project);
+        if !poll.finished.is_empty() {
+            self.refresh_audio_cache();
+        }
+        poll.changed
+    }
+
     pub fn cache_status(
         &self,
         target: &crate::InspectorTarget,

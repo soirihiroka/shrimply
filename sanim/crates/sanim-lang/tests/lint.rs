@@ -27,7 +27,7 @@ fn lint_checks_types_without_opening_runtime_resources() {
             .prepare("main.sanim", &sources, &Default::default())
             .is_err()
     );
-    sources.insert("main.sanim", "let wrong:Number=\"text\"");
+    sources.insert("main.sanim", "let wrong:Number=\"text\"\nAnimation()");
     let error = engine.lint("main.sanim", &sources).unwrap_err();
     assert_eq!(error.source, "main.sanim");
     assert!(error.span.line > 0);
@@ -36,7 +36,7 @@ fn lint_checks_types_without_opening_runtime_resources() {
 #[test]
 fn lint_uses_imports_and_visits_nested_functions_once() {
     let mut sources = MemorySources::default();
-    sources.insert("lib.sanim", "fn load():List<Number> {repeat 3 {let values=read<List<Number>>(\"missing.json\")} return []}");
+    sources.insert("lib.sanim", "fn<ref> load():List<Number> {repeat 3 {let values=read<List<Number>>(\"missing.json\")} return []}");
     sources.insert("main.sanim", "import \"lib.sanim\" as lib\nwait(1s)");
     let report = Engine::default().lint("main.sanim", &sources).unwrap();
     assert_eq!(report.dependencies.len(), 2);

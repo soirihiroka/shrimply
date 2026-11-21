@@ -18,11 +18,11 @@ class Other:
     def push(self, value):
         return value
 </CodeView>
-add(code)
+Animation(children=[code])
 "#;
 fn prepare(body: &str) -> Result<Prepared, sanim_core::Diagnostic> {
     let mut files = MemorySources::default();
-    files.insert("main.sanim", format!("{VIEW}\n{body}"));
+    files.insert("main.sanim", format!("{VIEW}\n{body}\nAnimation()"));
     Engine::default().prepare("main.sanim", &files, &Default::default())
 }
 fn selected(prepared: &Prepared, name: &str) -> Range {
@@ -32,8 +32,8 @@ fn selected(prepared: &Prepared, name: &str) -> Range {
 #[test]
 fn named_range_methods_are_typed_and_fold_exactly_one_node_with_nested_choices_retained() {
     let prepared = prepare(
-        r#"fn close(selected: CodeRange): Unit {
-    selected.fold(duration=100ms)
+        r#"fn close(selected: CodeRange): Animation {
+    return selected.fold(duration=100ms)
 }
 let method: CodeRange=code.range(name="WorkQueue.push")
 let nested=code.range(line=3,column=9)
@@ -118,7 +118,7 @@ fn line_character_and_regex_queries_share_unicode_coordinates_and_within_semanti
     files.insert(
         "main.sanim",
         r#"let code=CodeView(code=r"αβ\nred red\ntail",lang="plain")
-add(code)
+Animation(children=[code])
 let letter=code.range(character=2)
 let point=code.range(line=2,column=5)
 let part=code.range(line=2,column=5,length=3)
@@ -203,7 +203,7 @@ fn bound_ranges_reject_cross_view_stale_revision_and_unadded_owner_in_full_and_d
             (
                 r#"let selected=code.range(name="WorkQueue.push")
 let other=CodeView(code=r"def other():\n    return 1",lang="python")
-add(other)
+Animation(children=[other])
 other.fold(range=selected,duration=0s)"#,
                 "belongs to",
             ),
@@ -215,7 +215,7 @@ selected.fold(duration=0s)"#,
             ),
         ] {
             let mut files = MemorySources::default();
-            files.insert("main.sanim", format!("{VIEW}\n{body}"));
+            files.insert("main.sanim", format!("{VIEW}\n{body}\nAnimation()"));
             let mut engine = Engine::default();
             engine.preparation = preparation;
             let error = engine
@@ -227,15 +227,15 @@ selected.fold(duration=0s)"#,
     let mut files = MemorySources::default();
     files.insert(
         "main.sanim",
-        r#"let code=<CodeView lang="python">def f():
-    return 1</CodeView>
-let selected=code.range(name="f")
-selected.fold()"#,
+        "let code=<CodeView lang=\"python\">def f():\n    return 1</CodeView>\nlet selected=code.range(name=\"f\")\nselected.fold()\nAnimation()",
     );
     let error = Engine::default()
         .prepare("main.sanim", &files, &Default::default())
         .unwrap_err();
-    assert!(error.message.contains("add(view)"), "{error}");
+    assert!(
+        error.message.contains("Animation(children=[view"),
+        "{error}"
+    );
 }
 
 #[test]
@@ -267,7 +267,7 @@ fn folding_a_shared_boundary_without_any_complete_body_line_fails_clearly() {
         r#"let code=<CodeView lang="javascript">function one() {
 return 1;} function two() {
 return 2;}</CodeView>
-add(code)
+Animation(children=[code])
 code.range(name="one").fold(duration=0s)"#,
     );
     let error = Engine::default()
@@ -285,6 +285,7 @@ fn regex_empty_matches_advance_and_repeated_suffix_searches_are_work_bounded() {
     files.insert("main.sanim",format!("let code=CodeView(code=r\"{}\",lang=\"plain\")\nlet found=code.ranges(regex=r\"a{{1000}}z|a\")\nwait(1s)","a".repeat(200)));
     let mut engine = Engine::default();
     engine.limits.max_operations = 5_000;
+    engine.limits.max_native_work = 5_000;
     let error = engine
         .prepare("main.sanim", &files, &Default::default())
         .unwrap_err();
@@ -333,7 +334,7 @@ fn named_single_line_declarations_are_exact_ranges_and_remain_stylable_but_not_f
         ),
     ] {
         let mut files = MemorySources::default();
-        files.insert("main.sanim", format!("let code=CodeView(code=r\"{source}\",lang=\"{language}\")\nadd(code)\nlet selected=code.range(name=\"{name}\")\nselected.style(style=CodeStyle(underline=true),duration=0s)\nwait(1s)"));
+        files.insert("main.sanim", format!("let code=CodeView(code=r\"{source}\",lang=\"{language}\")\nAnimation(children=[code])\nlet selected=code.range(name=\"{name}\")\nselected.style(style=CodeStyle(underline=true),duration=0s)\nwait(1s)"));
         let prepared = Engine::default()
             .prepare("main.sanim", &files, &Default::default())
             .unwrap();
@@ -344,7 +345,7 @@ fn named_single_line_declarations_are_exact_ranges_and_remain_stylable_but_not_f
             "{language}"
         );
         assert_eq!(prepared.animation.code_views["code"].options.spans.len(), 1);
-        files.insert("main.sanim", format!("let code=CodeView(code=r\"{source}\",lang=\"{language}\")\nadd(code)\ncode.range(name=\"{name}\").fold(duration=0s)"));
+        files.insert("main.sanim", format!("let code=CodeView(code=r\"{source}\",lang=\"{language}\")\nAnimation(children=[code])\ncode.range(name=\"{name}\").fold(duration=0s)"));
         let error = Engine::default()
             .prepare("main.sanim", &files, &Default::default())
             .unwrap_err();
@@ -392,7 +393,7 @@ fn line_character_and_regex_queries_share_unicode_and_crlf_coordinates() {
         "main.sanim",
         r#"
 let code=<CodeView src="sample.txt" lang="plain"/>
-add(code)
+Animation(children=[code])
 let beta_line=code.range(line=1,column=3,length=1)
 let beta_character=code.range(character=3)
 let beta_regex=code.range(regex="β")

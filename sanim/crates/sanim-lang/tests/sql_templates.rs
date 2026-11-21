@@ -3,7 +3,7 @@ use sanim_lang::{Engine, MemorySources};
 use std::collections::BTreeMap;
 fn prepare(code: &str) -> Result<sanim_lang::Prepared, sanim_core::Diagnostic> {
     let mut sources = MemorySources::default();
-    sources.insert("main.sanim", code);
+    sources.insert("main.sanim", format!("{}\nAnimation()", code));
     Engine::default().prepare("main.sanim", &sources, &BTreeMap::new())
 }
 fn check(code: &str) {
@@ -210,23 +210,23 @@ assert(query<Number>(live,tables={samples=rows})==[3])
     );
 }
 #[test]
-fn templates_preserve_timeline_effects_of_each_hole_in_source_order() {
+fn templates_preserve_stateful_hole_evaluation_order_without_implicit_timing() {
     let p = prepare(
         r#"
 mut count=0
-fn next():Number {wait(100ms);count=count+1;return count}
+fn<mut, ref> next():Number {count=count+1;return count}
 let statement=Sql("SELECT {next()}+{next()}")
 assert(query<Number>(statement,tables={})==[3])
 wait(100ms)
 "#,
     )
     .unwrap();
-    assert_eq!(p.animation.duration, sanim_core::Fraction::new(3u64, 10u64));
+    assert_eq!(p.animation.duration, sanim_core::Fraction::new(1u64, 10u64));
     let mut sources = MemorySources::default();
     sources.insert(
         "main.sanim",
         r#"
-fn next():Number {wait(100ms);return 1}
+fn next():Number {return 1}
 let statement:Template="SELECT {next()}+{next()}"
 wait(100ms)
 "#,
@@ -234,7 +234,7 @@ wait(100ms)
     let report = Engine::default()
         .duration("main.sanim", &sources, &BTreeMap::new())
         .unwrap();
-    assert_eq!(report.duration, sanim_core::Fraction::new(3u64, 10u64));
+    assert_eq!(report.duration, sanim_core::Fraction::new(1u64, 10u64));
 }
 #[test]
 fn changes_to_bound_values_reuse_the_database_and_invalidate_results_correctly() {
@@ -248,13 +248,13 @@ let result=query<Number>(statement,tables={{samples=rows}})
 "#
         )
     };
-    sources.insert("main.sanim", code(1));
+    sources.insert("main.sanim", format!("{}\nAnimation()", code(1)));
     let mut engine = Engine::default();
     let first = engine
         .prepare("main.sanim", &sources, &BTreeMap::new())
         .unwrap();
     assert_eq!(first.bindings["result"].list().unwrap().len(), 3);
-    sources.insert("main.sanim", code(3));
+    sources.insert("main.sanim", format!("{}\nAnimation()", code(3)));
     let changed = engine
         .prepare("main.sanim", &sources, &BTreeMap::new())
         .unwrap();
@@ -267,8 +267,8 @@ let result=query<Number>(statement,tables={{samples=rows}})
 fn template_holes_observe_signal_returning_calls_as_typed_values() {
     check(
         r####"
-fn twice(sig value:Number):sig Number {return value*2}
-fn format_value():sig String {return "03d"}
+fn<sig> twice(sig value:Number):sig Number {return value*2}
+fn<sig> format_value():sig String {return "03d"}
 mut source=3
 assert("value={twice(source)}"=="value=6")
 assert("{twice(source):{format_value()}}"=="006")

@@ -1,4 +1,5 @@
 $ErrorActionPreference = "Stop"
+$ffmpegVersion = (Get-Content (Join-Path $PSScriptRoot "../../external/ffmpeg/RELEASE") -Raw).Trim()
 
 $root = (Resolve-Path (Join-Path $PSScriptRoot "../..")).Path
 $archive = Join-Path $root "dist/shrimply-windows-x86_64.zip"
@@ -19,12 +20,15 @@ $ffmpegDlls = @(
     "fdk-aac.dll",
     "opus.dll"
 )
-$ffmpegNotices = @(
+$requiredNotices = @(
     "ffmpeg.txt",
     "fdk-aac.txt",
     "nv-codec-headers.txt",
     "opus.txt",
-    "ffmpeg-build-configuration.txt"
+    "ffmpeg-build-configuration.txt",
+    "OpenCV-Vision.txt",
+    "GTK-Pango-Color.txt",
+    "GTK-Pango-Color-NOTICE.txt"
 )
 
 function Assert-PeX64([string]$path) {
@@ -58,20 +62,25 @@ function Inspect-Imports([string]$directory) {
 }
 
 function Assert-FfmpegPackage([string]$directory) {
+    $cli = Join-Path $directory "shrimply-ffmpeg.exe"
+    $version = & $cli -version
+    if ($LASTEXITCODE -ne 0 -or $version[0] -notmatch "^ffmpeg version $([regex]::Escape($ffmpegVersion))(?:\s|$)") {
+        throw "Packaged FFmpeg executable does not report $ffmpegVersion"
+    }
     foreach ($name in $ffmpegDlls) {
         if (!(Test-Path (Join-Path $directory $name))) {
             throw "Packaged FFmpeg runtime is missing $name"
         }
     }
     $licenses = Join-Path $directory "licenses"
-    foreach ($name in $ffmpegNotices) {
+    foreach ($name in $requiredNotices) {
         if (!(Test-Path (Join-Path $licenses $name))) {
-            throw "Packaged FFmpeg notice is missing $name"
+            throw "Packaged dependency notice is missing $name"
         }
     }
     $configuration = Get-Content (Join-Path $licenses "ffmpeg-build-configuration.txt") -Raw
     foreach ($value in @(
-        "ffmpeg version 9.0.1",
+        "ffmpeg version $ffmpegVersion",
         "--enable-nonfree",
         "--enable-libfdk-aac",
         "--enable-libopus",

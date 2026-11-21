@@ -75,7 +75,7 @@ fn native_sanim_syntax_error_is_clip_local_when_saved_project_opens() {
         "the diagnostic stays available to the editor"
     );
     let generation = source.runtime.snapshot().generation;
-    fixture.write("add(Circle(radius=10pt,fill=Color(\"red\")))\nwait(1s)");
+    fixture.write("Animation(children=[Box(fill=Color(\"red\"), width=2*(10pt), height=2*(10pt), radius=\"full\", x_align=Align.Center, y_align=Align.Center)])\nwait(1s)");
     let deadline = Instant::now() + Duration::from_secs(5);
     let mut state = source.runtime.snapshot();
     while (state.prepared.is_none() || state.preparing || state.generation == generation)
@@ -140,7 +140,7 @@ fn native_sanim_missing_source_directory_does_not_prevent_project_open() {
         Status::Failed(_)
     ));
     std::fs::create_dir_all(item.file.path().parent().unwrap()).unwrap();
-    std::fs::write(item.file.path(), "add(Circle(radius=10pt))\nwait(1s)").unwrap();
+    std::fs::write(item.file.path(), "Animation(children=[Box(width=2*(10pt), height=2*(10pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)])\nwait(1s)").unwrap();
     let deadline = Instant::now() + Duration::from_secs(5);
     let mut state = source.runtime.snapshot();
     while (state.prepared.is_none() || state.preparing || state.diagnostic.is_some())

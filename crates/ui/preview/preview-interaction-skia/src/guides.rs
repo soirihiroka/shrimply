@@ -72,9 +72,19 @@ pub struct GuideInput {
     origin: Option<GlamVec2>,
     moved: bool,
     cursor: GuideCursor,
+    history_revision: Option<u64>,
 }
 
 impl GuideInput {
+    fn synchronize_history(&mut self) {
+        if self.history_revision.is_some_and(|revision| {
+            revision != shrimply_project_document::project::history_revision()
+        }) {
+            self.drag = None;
+            self.reset();
+        }
+    }
+
     pub fn pointer_move(
         &mut self,
         guides: &mut PreviewGuides,
@@ -82,6 +92,7 @@ impl GuideInput {
         visible: bool,
         position: GlamVec2,
     ) {
+        self.synchronize_history();
         if let Some(drag) = self.drag {
             self.moved |= self.origin.is_some_and(|origin| origin != position);
             drag.update(guides, viewport, position);
@@ -97,6 +108,7 @@ impl GuideInput {
         visible: bool,
         position: GlamVec2,
     ) -> bool {
+        self.synchronize_history();
         if !visible || self.drag.is_some() {
             return false;
         }
@@ -104,6 +116,7 @@ impl GuideInput {
             return false;
         };
         self.drag = Some(drag);
+        self.history_revision = Some(shrimply_project_document::project::history_revision());
         self.origin = Some(position);
         self.moved = false;
         self.cursor = drag.cursor();
@@ -116,6 +129,7 @@ impl GuideInput {
         viewport: PreviewViewport,
         position: GlamVec2,
     ) -> Option<bool> {
+        self.synchronize_history();
         let drag = self.drag.take()?;
         let changed = drag.finish(guides, viewport, position, self.moved);
         self.reset();
@@ -123,6 +137,7 @@ impl GuideInput {
     }
 
     pub fn pointer_cancel(&mut self, guides: &mut PreviewGuides) -> bool {
+        self.synchronize_history();
         let Some(drag) = self.drag.take() else {
             return false;
         };
@@ -146,6 +161,7 @@ impl GuideInput {
     }
 
     fn reset(&mut self) {
+        self.history_revision = None;
         self.origin = None;
         self.moved = false;
         self.cursor = GuideCursor::Default;

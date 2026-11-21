@@ -1,6 +1,6 @@
 use objc2::ClassType;
 use objc2::rc::{Retained, Weak};
-use objc2_app_kit::{NSAlert, NSAlertFirstButtonReturn, NSStackView, NSView, NSWorkspace};
+use objc2_app_kit::{NSAlert, NSAlertSecondButtonReturn, NSStackView, NSView, NSWorkspace};
 use objc2_foundation::{MainThreadMarker, NSArray, NSString, NSURL};
 use shrimply_components_appkit::{
     ActionButton, ColorPicker, MultilineTextInput, Number2Picker, Number3Picker, NumberPicker,
@@ -12,10 +12,7 @@ use shrimply_inspector_core::{
     InspectorTarget,
 };
 use shrimply_math_color::Color;
-use shrimply_math_core::{Fraction, fraction_as_f64, fraction_new};
-use shrimply_project_document::project::{
-    COMMON_FRAME_RATES, CanvasSize, MAX_CANVAS_DIMENSION, MIN_CANVAS_DIMENSION,
-};
+use shrimply_math_core::{Fraction, fraction_new};
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
@@ -37,7 +34,11 @@ pub(super) struct Context {
 impl Context {
     pub fn apply(&self, action: &BasicInspectorAction) {
         self.end_editing();
-        self.refresh(self.controller.apply_basic_action(&self.target, action));
+        self.refresh(
+            self.controller
+                .apply_basic_action(&self.target, action)
+                .map(|_| ()),
+        );
     }
 
     pub(super) fn finish(&self, result: Result<(), String>) {
@@ -303,38 +304,11 @@ fn editor_view(
                     super::files::select(&context, action, selection, mtm);
                     return;
                 }
-                match edited.action {
-                    Some(shrimply_inspector_core::InspectorControlAction::ToggleCameraAnalysis) => {
-                        let server_url = context.server_url.borrow().clone();
-                        context.refresh(
-                            context
-                                .controller
-                                .toggle_camera_analysis(&context.target, server_url),
-                        );
-                        return;
-                    }
-                    Some(shrimply_inspector_core::InspectorControlAction::ToggleSam2Analysis {
-                        modifier_id,
-                        ..
-                    }) => {
-                        let server_url = context.server_url.borrow().clone();
-                        context.refresh(context.controller.toggle_sam2_analysis(
-                            &context.target,
-                            modifier_id,
-                            server_url,
-                        ));
-                        return;
-                    }
-                    _ => {}
-                }
-                let result = edited
-                    .action
-                    .ok_or_else(|| "inspector action is unavailable".to_string())
-                    .and_then(|action| {
-                        context
-                            .controller
-                            .trigger_video_control_action(&context.target, action)
-                    });
+                let result = context.controller.activate_control(
+                    &context.target,
+                    &edited,
+                    &context.server_url.borrow(),
+                );
                 context.refresh(result);
             };
             let button: Retained<objc2_app_kit::NSButton> =
@@ -371,7 +345,7 @@ fn editor_view(
 
 // NumberPicker builders gate their own custom mouse handling. Native editors
 // keep their normal component and use AppKit's disabled/editable state.
-fn disable_native_controls(view: &NSView) {
+pub(super) fn disable_native_controls(view: &NSView) {
     if let Some(control) = view.downcast_ref::<objc2_app_kit::NSControl>() {
         control.setEnabled(false);
     }
@@ -647,82 +621,80 @@ fn project_settings(
     context: &Context,
     mtm: MainThreadMarker,
 ) -> Retained<NSView> {
-    let initial_width = component_f64(control, 0).round() as u32;
-    let initial_height = component_f64(control, 1).round() as u32;
-    let initial_frame_rate = fraction_new(component_i64(control, 2), component_i64(control, 3));
-    let width = Rc::new(Cell::new(initial_width));
-    let height = Rc::new(Cell::new(initial_height));
-    let frame_rate = Rc::new(Cell::new(initial_frame_rate));
+    use shrimply_inspector_core::project as shared;
+    let model = control
+        .project_settings
+        .as_ref()
+        .expect("shared project settings model");
     let actions = row_stack(6.0, mtm);
-    actions.setHidden(true);
-    let update_actions: Rc<dyn Fn()> = Rc::new({
-        let width = width.clone();
-        let height = height.clone();
-        let frame_rate = frame_rate.clone();
-        let actions = actions.clone();
-        move || {
-            actions.setHidden(
-                width.get() == initial_width
-                    && height.get() == initial_height
-                    && frame_rate.get() == initial_frame_rate,
-            );
-        }
-    });
-    let resolution = Number2Picker::builder(f64::from(width.get()), f64::from(height.get()))
-        .minimum(f64::from(MIN_CANVAS_DIMENSION))
-        .maximum(f64::from(MAX_CANVAS_DIMENSION))
-        .drag_step(1.0)
-        .digits(0)
-        .first_prefix("W")
-        .second_prefix("H")
-        .unit_name("px")
-        .on_change({
-            let width = width.clone();
-            let height = height.clone();
-            let update_actions = update_actions.clone();
-            move |values, _| {
-                width.set(values[0].round() as u32);
-                height.set(values[1].round() as u32);
-                update_actions();
-            }
-        })
-        .build_with_handles(mtm);
-    let mut choices = COMMON_FRAME_RATES
-        .iter()
-        .map(|rate| StringChoice {
-            value: rate_key(rate.value),
-            label: rate.label.to_string(),
-        })
-        .collect::<Vec<_>>();
-    if !COMMON_FRAME_RATES
-        .iter()
-        .any(|rate| rate.value == frame_rate.get())
-    {
-        choices.push(StringChoice {
-            value: rate_key(frame_rate.get()),
-            label: fraction_as_f64(frame_rate.get()).to_string(),
-        });
+    actions.setHidden(!model.dirty);
+    let resolution = &model.resolution;
+    let [width_prefix, height_prefix] = resolution.prefixes.as_slice() else {
+        panic!("resolution prefixes")
+    };
+    let mut picker =
+        Number2Picker::builder(component_f64(resolution, 0), component_f64(resolution, 1))
+            .minimum(resolution.number.minimum)
+            .maximum(resolution.number.maximum)
+            .drag_step(resolution.number.drag_step)
+            .digits(
+                resolution
+                    .number
+                    .digits
+                    .try_into()
+                    .expect("nonnegative digits"),
+            )
+            .first_prefix(width_prefix)
+            .second_prefix(height_prefix);
+    if resolution.lock {
+        picker = picker.enable_lock();
     }
-    let fps = StringSelector::new(
-        &rate_key(frame_rate.get()),
-        choices,
-        {
-            let frame_rate = frame_rate.clone();
-            let update_actions = update_actions.clone();
-            move |value| {
-                frame_rate.set(parse_rate(&value));
-                update_actions();
-            }
-        },
-        mtm,
-    );
+    let dimensions =
+        picker
+            .on_change({
+                let context = context.clone();
+                let actions = actions.clone();
+                move |values, _| {
+                    context.finish(context.controller.stage_project_dimensions(
+                        values[0].round() as u32,
+                        values[1].round() as u32,
+                    ));
+                    actions.setHidden(!context.controller.project_settings_presentation().dirty);
+                }
+            })
+            .build_with_handles(mtm);
+    let rate = &model.frame_rate;
+    let fps =
+        StringSelector::new(
+            &rate.value,
+            rate.values
+                .iter()
+                .zip(&rate.labels)
+                .map(|(value, label)| StringChoice {
+                    value: value.clone(),
+                    label: label.clone(),
+                })
+                .collect(),
+            {
+                let context = context.clone();
+                let actions = actions.clone();
+                move |value| {
+                    context.finish(context.controller.stage_project_frame_rate(
+                        value.parse().expect("shared frame rate choice"),
+                    ));
+                    actions.setHidden(!context.controller.project_settings_presentation().dirty);
+                }
+            },
+            mtm,
+        );
     actions.addArrangedSubview(&NSView::new(mtm));
     let discard = ActionButton::new(
-        "Discard",
+        shrimply_i18n::text(shared::SETTINGS_DISCARD).as_ref(),
         {
             let context = context.clone();
             move || {
                 context.end_editing();
+                context.controller.discard_project_settings();
                 context.force_rebuild.set(true);
                 context.dirty.set(true);
             }
@@ -731,29 +703,32 @@ fn project_settings(
     );
     actions.addArrangedSubview(discard.view());
     let apply = ActionButton::new(
-        "Apply",
+        shrimply_i18n::text(shared::SETTINGS_APPLY).as_ref(),
         {
             let context = context.clone();
             move || {
                 context.end_editing();
-                if !confirm_project_settings() {
-                    return;
+                if confirm_project_settings() {
+                    context.refresh(context.controller.apply_staged_project_settings());
                 }
-                context.refresh(context.controller.apply_project_settings(
-                    CanvasSize {
-                        width: width.get(),
-                        height: height.get(),
-                    },
-                    frame_rate.get(),
-                ));
             }
         },
         mtm,
     );
     actions.addArrangedSubview(apply.view());
     let column = shrimply_components_appkit::column_stack(8.0, mtm);
-    column_append_intrinsic(&column, &control_row("Resolution", &resolution.widget, mtm));
-    column_append_intrinsic(&column, &control_row("Frame rate", fps.view(), mtm));
+    column_append_intrinsic(
+        &column,
+        &control_row(shrimply_i18n::text(&rate.label).as_ref(), fps.view(), mtm),
+    );
+    column_append_intrinsic(
+        &column,
+        &control_row(
+            shrimply_i18n::text(&resolution.label).as_ref(),
+            &dimensions.widget,
+            mtm,
+        ),
+    );
     column_append_intrinsic(&column, &actions);
     column.into_super()
 }
@@ -827,24 +802,6 @@ fn color_components(control: &InspectorControl) -> [u8; 4] {
     })
 }
 
-fn rate_key(rate: Fraction) -> String {
-    format!(
-        "{}/{}",
-        shrimply_math_core::fraction_numerator(rate),
-        shrimply_math_core::fraction_denominator(rate)
-    )
-}
-
-fn parse_rate(value: &str) -> Fraction {
-    let (numerator, denominator) = value
-        .split_once('/')
-        .unwrap_or_else(|| panic!("invalid frame rate choice: {value}"));
-    fraction_new(
-        numerator.parse().expect("frame rate numerator"),
-        denominator.parse().expect("frame rate denominator"),
-    )
-}
-
 fn show_error(error: &str) {
     let mtm = MainThreadMarker::new().expect("inspector actions run on the main thread");
     let alert = NSAlert::new(mtm);
@@ -893,13 +850,20 @@ fn beat_detection(
 fn confirm_project_settings() -> bool {
     let mtm = MainThreadMarker::new().expect("inspector actions run on the main thread");
     let alert = NSAlert::new(mtm);
-    alert.setMessageText(&NSString::from_str("Change Project Settings?"));
-    alert.setInformativeText(&NSString::from_str(
-        "Changing the frame rate or resolution can affect timing, visual layout, and rendered output.",
+    use shrimply_inspector_core::project as shared;
+    alert.setMessageText(&NSString::from_str(
+        shrimply_i18n::text(shared::SETTINGS_TITLE).as_ref(),
     ));
-    alert.addButtonWithTitle(&NSString::from_str("Apply"));
-    alert.addButtonWithTitle(&NSString::from_str("Cancel"));
-    alert.runModal() == NSAlertFirstButtonReturn
+    alert.setInformativeText(&NSString::from_str(
+        shrimply_i18n::text(shared::SETTINGS_WARNING).as_ref(),
+    ));
+    alert.addButtonWithTitle(&NSString::from_str(
+        shrimply_i18n::text(shared::SETTINGS_CANCEL).as_ref(),
+    ));
+    alert.addButtonWithTitle(&NSString::from_str(
+        shrimply_i18n::text(shared::SETTINGS_APPLY).as_ref(),
+    ));
+    alert.runModal() == NSAlertSecondButtonReturn
 }
 
 fn cache_button(

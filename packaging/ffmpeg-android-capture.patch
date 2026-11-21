@@ -1,0 +1,90 @@
+--- a/libavcodec/mediacodecenc.c
++++ b/libavcodec/mediacodecenc.c
+@@ -30,6 +30,7 @@
+ #include "libavutil/mem.h"
+ #include "libavutil/opt.h"
+ #include "libavutil/thread.h"
++#include "libavutil/time.h"
+ 
+ #include "avcodec.h"
+ #include "bsf.h"
+@@ -83,6 +84,9 @@
+     int level;
+     int pts_as_dts;
+     int extract_extradata;
++    int screen_capture;
++    int64_t capture_stop_us;
++    int capture_output_eos;
+     // Ref. MediaFormat KEY_OPERATING_RATE
+     int operating_rate;
+     int async_mode;
+@@ -597,7 +601,12 @@
+         av_log(avctx, AV_LOG_DEBUG, "Set i-frame-interval to %d\n", gop);
+     }
+ 
+-    ff_AMediaFormat_setInt32(format, "frame-rate", s->fps);
++    if (s->screen_capture) {
++        ff_AMediaFormat_setFloat(format, "frame-rate", av_q2d(avctx->framerate));
++        ff_AMediaFormat_setFloat(format, "max-fps-to-encoder", av_q2d(avctx->framerate));
++    } else {
++        ff_AMediaFormat_setInt32(format, "frame-rate", s->fps);
++    }
+     ff_AMediaFormat_setInt32(format, "i-frame-interval", gop);
+ 
+     ret = ff_AMediaCodecProfile_getProfileFromAVCodecContext(avctx);
+@@ -731,6 +740,9 @@
+     int ret;
+     int extradata_size = 0;
+ 
++    if (s->capture_output_eos)
++        return AVERROR_EOF;
++
+     ret = mediacodec_get_output_index(avctx, &index, &out_info);
+     if (ret < 0)
+         return ret;
+@@ -751,8 +763,14 @@
+     if (index < 0)
+         return AVERROR_EXTERNAL;
+ 
+-    if (out_info.flags & ff_AMediaCodec_getBufferFlagEndOfStream(codec))
+-        return AVERROR_EOF;
++    if (out_info.flags & ff_AMediaCodec_getBufferFlagEndOfStream(codec)) {
++        if (!s->screen_capture || !out_info.size) {
++            ff_AMediaCodec_releaseOutputBuffer(codec, index, false);
++            return AVERROR_EOF;
++        }
++        // Some encoders flag the final nonempty output buffer with EOS.
++        s->capture_output_eos = 1;
++    }
+ 
+     out_buf = ff_AMediaCodec_getOutputBuffer(codec, index, &out_size);
+     if (!out_buf) {
+@@ -852,12 +870,18 @@
+     uint32_t flags = 0;
+     int ret;
+ 
+-    if (s->eof_sent)
++    if (s->eof_sent) {
++        // A stalled surface encoder must not keep the foreground capture service alive.
++        if (s->screen_capture && av_gettime_relative() - s->capture_stop_us >= 5 * AV_TIME_BASE)
++            return AVERROR(ETIMEDOUT);
+         return 0;
++    }
+ 
+     if (s->window) {
+         if (!frame) {
+             s->eof_sent = 1;
++            if (s->screen_capture)
++                s->capture_stop_us = av_gettime_relative();
+             return ff_AMediaCodec_signalEndOfInputStream(codec);
+         }
+ 
+@@ -1100,6 +1124,8 @@
+                     OFFSET(use_ndk_codec), AV_OPT_TYPE_BOOL, {.i64 = -1}, -1, 1, VE },                      \
+     { "ndk_async", "Try NDK MediaCodec in async mode",                                                      \
+                     OFFSET(async_mode), AV_OPT_TYPE_BOOL, {.i64 = 0}, 0, 1, VE },                           \
++    { "screen_capture", "Configure a live input Surface and bounded drain",                              \
++                    OFFSET(screen_capture), AV_OPT_TYPE_BOOL, {.i64 = 0}, 0, 1, VE },                        \
+     { "codec_name", "Select codec by name",                                                                 \
+                     OFFSET(name), AV_OPT_TYPE_STRING, {0}, 0, 0, VE },                                      \
+     { "bitrate_mode", "Bitrate control method",                                                             \

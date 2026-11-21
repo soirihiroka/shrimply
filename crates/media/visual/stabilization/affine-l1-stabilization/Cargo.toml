@@ -3,12 +3,34 @@ name = "shrimply-affine-l1-stabilization"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+nvidia = ["dep:shrimply-render-kernels-cuda", "dep:shrimply-gpu-cuda", "dep:shrimply-gpu-cuda-memory", "dep:shrimply-nvidia-optical-flow"]
+
 [dependencies]
-shrimply-gpu-cuda.workspace = true
+shrimply-gpu-cuda = { workspace = true, optional = true }
+shrimply-render-kernels-cuda = { workspace = true, optional = true }
 good_lp.workspace = true
 glam.workspace = true
-opencv.workspace = true
+shrimply-vision.workspace = true
+shrimply-video-decoder.workspace = true
+shrimply-asset.workspace = true
+ffmpeg-next.workspace = true
 shrimply-math-core = { workspace = true }
-shrimply-gpu-cuda-memory = { workspace = true }
-shrimply-nvidia-optical-flow = { workspace = true }
+shrimply-math-geometry.workspace = true
+shrimply-gpu-cuda-memory = { workspace = true, optional = true }
+shrimply-nvidia-optical-flow = { workspace = true, optional = true }
 tracing.workspace = true
+
+[target.'cfg(any(target_os = "linux", target_os = "android"))'.dependencies]
+shrimply-render-vulkan = { workspace = true, features = ["renderer"] }
+
+[target.'cfg(target_os = "android")'.dependencies]
+highs-sys = { version = "1.15.0", default-features = false, features = ["discover"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+shrimply-render-metal.workspace = true
+objc2.workspace = true
+objc2-core-video.workspace = true
+objc2-core-ml.workspace = true
+objc2-vision.workspace = true
+objc2-foundation.workspace = true

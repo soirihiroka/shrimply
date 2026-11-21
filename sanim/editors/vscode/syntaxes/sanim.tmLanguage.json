@@ -177,6 +177,26 @@
     "declarations": {
       "patterns": [
         {
+          "match": "\\b(fn)\\s*(<[^<>\\n]+>)\\s+([A-Za-z_]\\w*)",
+          "captures": {
+            "1": {
+              "name": "keyword.declaration.function.sanim"
+            },
+            "2": {
+              "name": "meta.function-capabilities.sanim",
+              "patterns": [
+                {
+                  "name": "storage.modifier.sanim",
+                  "match": "\\b(?:mut|sig|ref)\\b"
+                }
+              ]
+            },
+            "3": {
+              "name": "entity.name.function.sanim"
+            }
+          }
+        },
+        {
           "match": "\\b(fn)\\s+([A-Za-z_]\\w*)",
           "captures": {
             "1": {
@@ -186,6 +206,10 @@
               "name": "entity.name.function.sanim"
             }
           }
+        },
+        {
+          "name": "keyword.declaration.function.sanim",
+          "match": "\\bfn\\b"
         },
         {
           "match": "\\b(type|enum)\\s+([A-Za-z_]\\w*)",
@@ -204,7 +228,7 @@
       "patterns": [
         {
           "name": "keyword.control.sanim",
-          "match": "\\b(?:let|mut|sig|reflect|background|animate|import|as|if|else|for|in|return|match|case|and|or|not|repeat|every|timer)\\b"
+          "match": "\\b(?:let|mut|sig|reflect|import|as|if|else|for|in|return|match|case|and|or|not|repeat)\\b"
         },
         {
           "name": "constant.language.sanim",
@@ -230,6 +254,10 @@
     },
     "calls": {
       "patterns": [
+        {
+          "name": "entity.name.function.sanim",
+          "match": "(?<=\\.)[a-z_][a-z0-9_]*(?=\\s*\\()"
+        },
         {
           "name": "support.function.sanim",
           "match": "\\b[A-Za-z_]\\w*(?=\\s*(?:<[^>\\n]+>)?\\s*\\()"

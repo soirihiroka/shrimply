@@ -3,7 +3,7 @@ use sanim_lang::{Engine, MemorySources, Preparation};
 
 fn files(source: &str) -> MemorySources {
     let mut files = MemorySources::default();
-    files.insert("main.sanim", source);
+    files.insert("main.sanim", format!("{}\nAnimation()", source));
     files
 }
 fn prepare(source: &str) -> sanim_lang::Prepared {
@@ -184,8 +184,8 @@ fn callbacks_are_invoked_once_and_early_exit_preserves_mutations() {
                 "main.sanim",
                 &files(
                     r#"mut calls=0
-fn counted(value:Number):Number {calls=calls+1;return value*2}
-fn matches(value:Number):Bool {calls=calls+1;return value==2}
+fn<mut, ref> counted(value:Number):Number {calls=calls+1;return value*2}
+fn<mut, ref> matches(value:Number):Bool {calls=calls+1;return value==2}
 let mapped=[1,2,3].map(counted)
 assert(calls==3)
 let found=[1,2,3].find(matches)
@@ -211,40 +211,32 @@ wait(1s)"#,
 }
 
 #[test]
-fn timed_callbacks_use_the_canonical_timeline_and_bounded_outer_envelopes() {
-    let source = r#"fn double(value:Number):Number {wait(100ms);return value*2}
-let mapped=[1,2,3].map(double)
-assert(mapped==[2,4,6])
+fn callbacks_return_animation_values_for_explicit_temporal_composition() {
+    let source = r#"fn step(value:Number):Animation{return wait(100ms)}
+let scenes=[1,2,3].map(step)
+Animation(children=scenes,flow="sequence")
 wait(1s)"#;
     let prepared = prepare(source);
     assert_eq!(prepared.animation.duration, Fraction::new(13u64, 10u64));
-    let duration = Engine::default()
-        .duration("main.sanim", &files(source), &Default::default())
-        .unwrap();
-    assert_eq!(duration.duration, prepared.animation.duration);
+    assert_eq!(
+        Engine::default()
+            .duration("main.sanim", &files(source), &Default::default())
+            .unwrap()
+            .duration,
+        prepared.animation.duration
+    );
     let padded = prepare(
-        r#"fn step(value:Number):Number {wait(100ms);return value}
-let result=[1,2].map(step,duration=500ms)
+        r#"fn step(value:Number):Animation{return Animation(children=[wait(100ms)],duration=500ms)}
+Animation(children=[1,2].map(step),flow="sequence")
 wait(1s)"#,
     );
-    assert_eq!(padded.animation.duration, Fraction::new(3u64, 2u64));
-    let error = Engine::default()
-        .prepare(
-            "main.sanim",
-            &files(
-                r#"fn step(value:Number):Number {wait(100ms);return value}
-let result=[1,2].map(step,duration=100ms)"#,
-            ),
-            &Default::default(),
-        )
-        .unwrap_err();
-    assert!(error.message.contains("exceeding requested"), "{error}");
+    assert_eq!(padded.animation.duration, Fraction::from(2));
 }
 
 #[test]
-fn timed_reductions_scans_and_early_exit_predicates_match_duration_resolution() {
-    let source = r#"fn accumulate(total:Number,value:Number):Number{wait(10ms);return total+value}
-fn is_two(value:Number):Bool{wait(10ms);return value==2}
+fn data_reductions_scans_and_early_exit_predicates_have_no_timeline_effect() {
+    let source = r#"fn accumulate(total:Number,value:Number):Number{return total+value}
+fn is_two(value:Number):Bool{return value==2}
 let reduced=[1,2,3].reduce(accumulate)
 let folded=[1,2,3].fold(0,accumulate)
 let scanned=[1,2,3].scan(0,accumulate)
@@ -256,7 +248,7 @@ assert(reduced==6 and folded==6 and scanned==[1,3,6])
 assert(any_hit and not all_hit and position==Some(1) and found==Some(2))
 wait(1s)"#;
     let prepared = prepare(source);
-    assert_eq!(prepared.animation.duration, Fraction::new(23u64, 20u64));
+    assert_eq!(prepared.animation.duration, Fraction::from(1));
     let report = Engine::default()
         .duration("main.sanim", &files(source), &Default::default())
         .unwrap();
@@ -298,7 +290,7 @@ fn sorting_and_unique_use_stable_keys_evaluated_once_in_input_order() {
     prepare(
         r#"mut calls=0
 type Row={key:Number,label:String}
-fn key(row:Row):Number {calls=calls+1;return row.key}
+fn<mut, ref> key(row:Row):Number {calls=calls+1;return row.key}
 let items=[{key=2,label="first"},{key=1,label="second"},{key=2,label="third"}]
 let sorted=items.sort(key=key)
 assert(calls==3)
@@ -432,7 +424,7 @@ wait(1s)"#,
 
 #[test]
 fn callback_created_elements_receive_distinct_stable_iteration_identities() {
-    let source = "fn make_dot(radius:Number):Element{return Circle(radius=radius*1pt)}\nlet shapes=[1,2,3].map(make_dot)\nwait(1s)";
+    let source = "fn make_dot(radius:Number):Element{return Box(width=2*(radius*1pt), height=2*(radius*1pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)}\nlet shapes=[1,2,3].map(make_dot)\nwait(1s)";
     let first = prepare(source);
     let second = prepare(source);
     let ids = |prepared: &sanim_lang::Prepared| {
@@ -475,28 +467,28 @@ wait(1s)"#,
 }
 
 #[test]
-fn duration_only_discards_map_outputs_without_forcing_nested_inputs_or_return_assets() {
+fn duration_only_skips_unused_pure_map_inputs_and_outputs() {
     for flat in [false, true] {
-        let (output, read) = if flat {
-            ("List<Number>", "read<List<Number>>(\"absent.json\")")
+        let (output, result) = if flat {
+            ("List<Number>", "[value,value+1]")
         } else {
-            ("Number", "read<Number>(\"absent.json\")")
+            ("Number", "value*2")
         };
         let method = if flat { "flat_map" } else { "map" };
         let mut sources = files(&format!(
-            "fn delayed(value:Number):{output} {{wait(value*1s);return {read}}}\nlet inputs=read<List<Number>>(\"inputs.json\")\nlet unused=inputs.{method}(delayed)\nwait(1s)"
+            "fn delayed(value:Number):{output} {{return {result}}}\nlet inputs=read<List<Number>>(\"inputs.json\")\nlet unused=inputs.{method}(delayed)\nwait(1s)"
         ));
         sources.insert("inputs.json", "[1,2]");
         let report = Engine::default()
             .duration("main.sanim", &sources, &Default::default())
             .unwrap();
-        assert_eq!(report.duration, 4.into());
+        assert_eq!(report.duration, 1.into());
         assert!(!report.dependencies.contains_key("absent.json"));
-        assert_eq!(report.statistics.decoded_assets, 1);
-        assert_eq!(report.statistics.checkpoint_count, 0);
+        assert_eq!(report.statistics.decoded_assets, 0);
+        assert!(!report.dependencies.contains_key("inputs.json"));
     }
     let source = r#"fn double(value:Number):Number{return value*2}
-fn delayed(value:Number):Number{wait(value*1s);return read<Number>("absent.json")}
+fn delayed(value:Number):Number{return value+1}
 let unused=[1,2].map(double).map(delayed)
 wait(1s)"#;
     let report = Engine::default()
@@ -504,22 +496,22 @@ wait(1s)"#;
         .unwrap();
     assert_eq!(
         report.duration,
-        7.into(),
-        "inner map produces needed input even when the outer result is discarded"
+        1.into(),
+        "unused composed maps do not force pure callback work"
     );
     assert!(!report.dependencies.contains_key("absent.json"));
 }
 
 #[test]
-fn demand_keeps_asset_backed_callback_mutation_and_timing_in_source_order() {
+fn demand_keeps_asset_backed_callback_mutation_eager_and_pure_results_lazy() {
     let mut sources = files(
         r#"mut calls=0
-fn observe(value:Int < 0):Number{calls=calls+1;return value}
-fn observe(value:Int >= 0):Number{calls=calls+1;return value}
-fn delayed(value:Number):Number{wait(10ms);return value}
+fn<mut, ref> observe(value:Int < 0):Number{calls=calls+1;return value}
+fn<mut, ref> observe(value:Int >= 0):Number{calls=calls+1;return value}
+fn doubled(value:Number):Number{return value}
 let unused_mutation=read<List<Int>>("items.json").map(observe)
 assert(calls==3)
-let unused_timing=read<List<Number>>("items.json").map(delayed)
+let unused_pure=read<List<Number>>("items.json").map(doubled)
 wait(1s)"#,
     );
     sources.insert("items.json", "[-1,0,2]");
@@ -528,16 +520,21 @@ wait(1s)"#,
     let prepared = engine
         .prepare("main.sanim", &sources, &Default::default())
         .unwrap();
-    assert_eq!(prepared.animation.duration, Fraction::new(103u64, 100u64));
+    assert_eq!(prepared.animation.duration, Fraction::from(1));
     assert!(prepared.bindings.contains_key("unused_mutation"));
-    assert!(prepared.bindings.contains_key("unused_timing"));
+    assert!(
+        prepared
+            .deferred_bindings
+            .iter()
+            .any(|binding| binding.name == "unused_pure")
+    );
 }
 
 #[test]
 fn demand_callbacks_preserve_read_only_captures_at_the_let_declaration() {
     let mut sources = files(
         r#"mut factor=1
-fn scaled(value:Number):Number{return value*factor}
+fn<ref> scaled(value:Number):Number{return value*factor}
 let mapped=read<List<Number>>("items.json").map(scaled)
 factor=2
 assert(mapped==[1,2,3])
@@ -555,10 +552,10 @@ wait(1s)"#,
 #[test]
 fn callback_effects_cannot_hide_inside_reflect_or_signal_captures() {
     for source in [
-        "mut calls=0\nfn observe(value:Number):Number{calls=calls+1;return value}\nlet value=reflect([1].map(observe))",
-        "mut calls=0\nfn observe(value:Number):Number{calls=calls+1;return value}\nsig value=[1].map(observe)",
-        "fn delayed(value:Number):Number{wait(1s);return value}\nsig value=[1].map(delayed)",
-        "mut calls=0\nfn key(value:Number):Number{calls=calls+1;return value}\nlet value=reflect([1].sort(key=key))",
+        "mut calls=0\nfn<mut, ref> observe(value:Number):Number{calls=calls+1;return value}\nlet value=reflect([1].map(observe))",
+        "mut calls=0\nfn<mut, ref> observe(value:Number):Number{calls=calls+1;return value}\nsig value=[1].map(observe)",
+        "fn<mut> delayed(value:Number):Number{check(true);return value}\nsig value=[1].map(delayed)",
+        "mut calls=0\nfn<mut, ref> key(value:Number):Number{calls=calls+1;return value}\nlet value=reflect([1].sort(key=key))",
     ] {
         let error = Engine::default()
             .prepare("main.sanim", &files(source), &Default::default())
@@ -585,7 +582,7 @@ fn callback_iteration_limits_count_visits_without_restricting_indexed_queries() 
     );
     run("fn accumulate(a:Number,b:Number):Number{return a+b}\nlet result=[1,2,3].reduce(accumulate)\nassert(result==6)").unwrap();
     run("fn yes(value:Number):Bool{return true}\nlet found=[1,2,3,4,5].any(yes)\nassert(found)\nassert([1,2,3,4,5].bisect_left(4)==3)").unwrap();
-    run("fn yes(value:Number):Bool{wait(1ms);return true}\nlet found=[1,2,3,4,5].any(yes)\nassert(found)").unwrap();
+    run("fn<mut> yes(value:Number):Bool{check(true);return true}\nlet found=[1,2,3,4,5].any(yes)\nassert(found)").unwrap();
 }
 
 #[test]

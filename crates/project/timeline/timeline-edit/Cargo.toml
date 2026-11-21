@@ -6,6 +6,6 @@ edition = "2024"
 [dependencies]
 shrimply-property-model = { workspace = true }
 shrimply-math-core = { workspace = true }
-shrimply-project-document = { workspace = true, default-features = true }
+shrimply-project-document.workspace = true
 shrimply-process-reporting = { workspace = true }
 uuid.workspace = true

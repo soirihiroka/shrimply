@@ -32,6 +32,27 @@ pub enum ExportProgress {
 }
 
 impl Format {
+    pub const ALL: [Self; 5] = [Self::Wav, Self::Flac, Self::Mp3, Self::Ogg, Self::Opus];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Wav => "WAV",
+            Self::Flac => "FLAC",
+            Self::Mp3 => "MP3",
+            Self::Ogg => "OGG Vorbis",
+            Self::Opus => "Opus",
+        }
+    }
+
+    pub fn mime_type(self) -> &'static str {
+        match self {
+            Self::Wav => "audio/wav",
+            Self::Flac => "audio/flac",
+            Self::Mp3 => "audio/mpeg",
+            Self::Ogg | Self::Opus => "audio/ogg",
+        }
+    }
+
     pub fn from_index(index: u32) -> Self {
         match index {
             1 => Self::Flac,

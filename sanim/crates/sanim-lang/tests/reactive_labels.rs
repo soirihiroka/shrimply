@@ -11,11 +11,11 @@ sig words="value={count:.0f}"
 mut typeface=Font("sans-serif")
 mut size=16pt
 let title=Label(words,font=typeface,font_size=size)
-add(title)
-background { animate(count,to=10,duration=1s,ease="linear") }
-background { animate(size,to=32pt,duration=1s,ease="linear") }
+Animation(children=[title])
+<Animation absolute flow="sequence">{animate(count,to=10,duration=1s,ease="linear") }</Animation>
+<Animation absolute flow="sequence">{animate(size,to=32pt,duration=1s,ease="linear") }</Animation>
 wait(500ms)
-typeface=Font("monospace")
+animate(typeface,to=Font("monospace"),duration=0s)
 wait(500ms)
 "#,
     );
@@ -78,7 +78,7 @@ wait(500ms)
 #[test]
 fn formatted_strings_can_feed_markup_labels_without_explicit_sig_bindings() {
     let mut files = MemorySources::default();
-    files.insert("main.sanim", "mut count=1\nlet title=<Label>count={count}</Label>\nadd(title)\nwait(1s)\ncount=2\nwait(1s)\n");
+    files.insert("main.sanim", "mut count=1\nlet title=<Label>count={count}</Label>\nAnimation(children=[title])\nwait(1s)\nanimate(count,to=2,duration=0s)\nwait(1s)\n");
     let prepared = Engine::default()
         .prepare("main.sanim", &files, &Default::default())
         .unwrap();
@@ -111,15 +111,15 @@ fn label_factories_preserve_signal_arguments_and_dynamic_font_constructors() {
         r#"mut family="sans-serif"
 mut count=1
 sig typeface=Font(family)
-fn make_label(sig words:String,sig font:Font):Element {
+fn<sig> make_label(sig words:String,sig font:Font):Element {
     return Label(words,font=font)
 }
 
 let title=make_label("count={count}",typeface)
-add(title)
+Animation(children=[title])
 wait(1s)
-family="monospace"
-count=2
+animate(family,to="monospace",duration=0s)
+animate(count,to=2,duration=0s)
 wait(1s)
 "#,
     );
@@ -153,7 +153,7 @@ wait(1s)
 #[test]
 fn native_alignment_arguments_accept_typed_signal_values() {
     let mut files = MemorySources::default();
-    files.insert("main.sanim", "mut alignment=Align.Start\nlet title=Label(\"aligned\",x_align=alignment,y_align=alignment)\nadd(title)\nwait(1s)\nalignment=Align.End\nwait(1s)\n");
+    files.insert("main.sanim", "mut alignment=Align.Start\nlet title=Label(\"aligned\",x_align=alignment,y_align=alignment)\nAnimation(children=[title])\nwait(1s)\nanimate(alignment,to=Align.End,duration=0s)\nwait(1s)\n");
     let prepared = Engine::default()
         .prepare("main.sanim", &files, &Default::default())
         .unwrap();
@@ -176,7 +176,7 @@ fn text_constructor_getter_and_setter_share_language_string_allocations() {
     let mut files = MemorySources::default();
     files.insert(
         "main.sanim",
-        "let words=\"Shared authored text\"\nlet label=Text(words)\nadd(label)",
+        "let words=\"Shared authored text\"\nlet label=Text(words)\nAnimation(children=[label])",
     );
     let prepared = Engine::default()
         .prepare("main.sanim", &files, &Default::default())

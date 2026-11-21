@@ -158,7 +158,7 @@ pub(in crate::drawing) fn draw_audio_item_with_waveform(
                 bounds: rect(clip_x, y, clip_width, TRACK_HEIGHT),
                 fill: fill_color,
                 timeline_x: draw.timeline_x,
-                view: draw.view,
+                view: draw.view.into(),
                 selected,
                 selected_border_color,
             },
@@ -470,6 +470,7 @@ pub(in crate::drawing) fn draw_loading_waveform_bar(
 
 pub fn item_rect(start: Time, end: Time, x: f64, view: TimelineViewState) -> (f64, f64) {
     let item_x = time_to_x(start.as_secs_f64(), x, view);
-    let item_width = ((end.as_secs_f64() - start.as_secs_f64()) / view.seconds_per_pixel).max(1.0);
+    let item_width = ((end.as_secs_f64() - start.as_secs_f64()) / view.seconds_per_pixel)
+        .max(shrimply_timeline_paint_skia::MIN_ITEM_PIXEL_WIDTH);
     (item_x, item_width)
 }

@@ -161,6 +161,9 @@ impl Default for PaintPreviewState {
 impl PaintPreviewState {
     pub fn set_mode(&mut self, mode: PaintPreviewMode) {
         self.mode = mode;
+        if mode != PaintPreviewMode::Pen {
+            self.adjusting = false;
+        }
         if mode == PaintPreviewMode::StrokeTransform {
             self.eraser = false;
         }
@@ -172,6 +175,7 @@ impl PaintPreviewState {
     pub fn set_eraser(&mut self, enabled: bool) {
         self.eraser = enabled;
         if enabled {
+            self.adjusting = false;
             self.mode = PaintPreviewMode::Pen;
             self.focused = None;
         }

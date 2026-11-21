@@ -1,8 +1,17 @@
+enum class SoftwareObjectFeature : uint
+{
+    Transport = 1u << 2u,
+    Grounds = 1u << 3u,
+    GroundReflections = 1u << 4u,
+};
+
+struct SoftwareObjectOptions { SoftwareObjectFeature feature; };
+
 [[vk::constant_id(0)]] const uint OBJECT_OPTIONS = 0;
 #define OBJECT_SHADING_MODEL ShadingModel(OBJECT_OPTIONS & 3u)
-#define OBJECT_TRANSPORT ((OBJECT_OPTIONS & 4u) != 0)
-#define OBJECT_GROUNDS ((OBJECT_OPTIONS & 8u) != 0)
-#define OBJECT_GROUND_REFLECTIONS ((OBJECT_OPTIONS & (1u << 4u)) != 0)
+#define OBJECT_TRANSPORT ((OBJECT_OPTIONS & uint(SoftwareObjectFeature::Transport)) != 0)
+#define OBJECT_GROUNDS ((OBJECT_OPTIONS & uint(SoftwareObjectFeature::Grounds)) != 0)
+#define OBJECT_GROUND_REFLECTIONS ((OBJECT_OPTIONS & uint(SoftwareObjectFeature::GroundReflections)) != 0)
 
 // Software BVH traversal shares all material, lighting, projection, and outline code
 // with the hardware ray-query backend. Only resource access and intersections differ.
@@ -72,6 +81,12 @@ struct SoftwareResources
     float4* denoised_texture_data;
     float4* denoised_background_texture_data;
     float4* denoised_alpha_texture_data;
+    TransportWork* transport_work_data;
+    SampleRayWork* sample_work_data;
+    PixelAccumulator* accumulation_data;
+    uint* pass_count_data;
+    uint2 wavefront_origin;
+    uint2 wavefront_extent;
 };
 struct SoftwareAddress { SoftwareResources* data; };
 [[vk::push_constant]] ConstantBuffer<SoftwareAddress> software_address;

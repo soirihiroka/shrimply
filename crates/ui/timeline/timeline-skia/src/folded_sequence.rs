@@ -101,7 +101,7 @@ pub fn hit_projected_item(
     x: f64,
     y: f64,
 ) -> Option<ProjectedItemHit> {
-    if x < timeline_x() || y < super::RULER_HEIGHT {
+    if x < timeline_x(view) || y < super::RULER_HEIGHT {
         return None;
     }
     let row = ((y + view.scroll_y - super::RULER_HEIGHT) / TRACK_HEIGHT).floor() as usize;
@@ -627,15 +627,6 @@ fn apply_audio_drag(item: &mut AudioItem, kind: FoldedDragKind, start: Time, end
     fit_audio_transitions(item);
 }
 
-pub fn track_kind(address: &ItemAddress) -> TrackKind {
-    match address.kind() {
-        ItemKind::Comment => TrackKind::Comment,
-        ItemKind::Caption => TrackKind::Caption,
-        ItemKind::Video => TrackKind::Video,
-        ItemKind::Audio => TrackKind::Audio,
-    }
-}
-
 pub fn update_drag(drag: &mut FoldedDrag, target: Time, minimum_duration: Time) {
     match drag.kind {
         FoldedDragKind::Move => {
@@ -681,8 +672,9 @@ pub fn update_drag(drag: &mut FoldedDrag, target: Time, minimum_duration: Time) 
 
 fn hits_item(x: f64, start: Time, end: Time, view: TimelineViewState) -> bool {
     let start_x =
-        timeline_x() + (start.as_secs_f64() - view.scroll_seconds) / view.seconds_per_pixel;
-    let end_x = timeline_x() + (end.as_secs_f64() - view.scroll_seconds) / view.seconds_per_pixel;
+        timeline_x(view) + (start.as_secs_f64() - view.scroll_seconds) / view.seconds_per_pixel;
+    let end_x =
+        timeline_x(view) + (end.as_secs_f64() - view.scroll_seconds) / view.seconds_per_pixel;
     x >= start_x && x <= end_x
 }
 
@@ -1186,10 +1178,9 @@ fn map_video_item(host: &VideoItem, nested: &VideoItem) -> Option<VideoItem> {
             item.start.signed_sub(host.start),
             host.playback_speed,
         ));
-        item.time_offset = nested.time_offset.saturating_add(scaled_time_delta(
-            sequence_time.signed_sub(nested.start),
-            nested_speed,
-        ));
+        let source_delta = scaled_time_delta(sequence_time.signed_sub(nested.start), nested_speed);
+        item.time_offset = nested.time_offset.saturating_add(source_delta);
+        item.animation_time_offset = nested.animation_time_offset.saturating_add(source_delta);
         item.playback_speed *= host.playback_speed;
         item
     })

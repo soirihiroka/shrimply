@@ -2,16 +2,16 @@ use sanim_core::{CornerRadius, Fraction, Geometry, Paint, Property, Value};
 use sanim_lang::{Engine, MemorySources};
 fn prepare(source: &str) -> Result<sanim_lang::Prepared, sanim_core::Diagnostic> {
     let mut files = MemorySources::default();
-    files.insert("main.sanim", source);
+    files.insert("main.sanim", format!("{}\nAnimation()", source));
     Engine::default().prepare("main.sanim", &files, &Default::default())
 }
 #[test]
 fn native_markup_lowers_into_the_same_typed_shapes_and_formats_text() {
     let prepared=prepare(r#"let count=7
 let label=<Label fill="blue3">hello {{literal}} {count:04d} &amp; more</Label>
-let card=<Rect w-96 h-40 pill border-2 border-light1 fill={LinearGradient(from=Color("blue3"),to=Color("purple3"))}><Label>native</Label></Rect>
-add(label)
-add(card)
+let card=<Box w-96 h-40 pill border-2 border-light1 fill={LinearGradient(from=Color("blue3"),to=Color("purple3"))} x_align={Align.Center} y_align={Align.Center}><Label>native</Label></Box>
+Animation(children=[label])
+Animation(children=[card])
 wait(1s)"#).unwrap();
     let Geometry::Text { text, .. } = prepared.animation.find("label").unwrap().geometry.as_ref()
     else {
@@ -19,16 +19,16 @@ wait(1s)"#).unwrap();
     };
     assert_eq!(text.as_ref(), "hello {literal} 0007 & more");
     let card = prepared.animation.find("card").unwrap();
-    let Geometry::Rectangle {
-        width,
-        height,
-        radius,
-        children,
-    } = card.geometry.as_ref()
-    else {
+    let Geometry::Box { radius, children } = card.geometry.as_ref() else {
         panic!("painted container")
     };
-    assert_eq!((*width, *height), (96.into(), 40.into()));
+    assert_eq!(
+        (
+            card.layout.width.unwrap().value,
+            card.layout.height.unwrap().value
+        ),
+        (96.into(), 40.into())
+    );
     assert_eq!(radius, &CornerRadius::Pill);
     assert_eq!(children.len(), 1);
     assert!(prepared.animation.find(&children[0].id).is_some());
@@ -38,17 +38,17 @@ wait(1s)"#).unwrap();
 #[test]
 fn markup_diagnostics_explain_syntax_types_and_design_mistakes() {
     for (source, expected) in [
-        ("let x=<Rect><Label>bad</Rect>", "does not match"),
-        ("let x=<Rect width=12pt/>", "quoted string or"),
-        ("let x=<Rect width={\"bad\"}/>", "Length"),
-        ("let x=<Rect fill=\"not-a-color\"/>", "unknown color"),
-        ("let x=<Rect nonesuch/>", "unknown native utility"),
+        ("let x=<Box><Label>bad</Box>>", "does not match"),
+        ("let x=<Box width=12pt/>", "quoted string or"),
+        ("let x=<Box width={\"bad\"}/>", "Length"),
+        ("let x=<Box fill=\"not-a-color\"/>", "unknown color"),
+        ("let x=<Box nonesuch/>", "unknown native utility"),
         ("let x=<Label card>x</Label>", "does not support"),
-        ("let x=<Rect from-blue3/>", "fill={LinearGradient"),
-        ("let x=<Rect bg-gradient-to-r/>", "fill={LinearGradient"),
-        ("let x=<Rect via-blue3/>", "fill={LinearGradient"),
-        ("let x=<Rect to-purple3/>", "fill={LinearGradient"),
-        ("let x=<Rect fill=\"blue3\" fill=\"red3\"/>", "duplicate"),
+        ("let x=<Box from-blue3/>", "direction"),
+        ("let x=<Box bg-gradient-to-r/>", "starting color"),
+        ("let x=<Box via-blue3/>", "direction"),
+        ("let x=<Box to-purple3/>", "direction"),
+        ("let x=<Box fill=\"blue3\" fill=\"red3\"/>", "duplicate"),
     ] {
         let error = prepare(source).unwrap_err().to_string();
         assert!(error.contains(expected), "{source}: {error}");
@@ -59,9 +59,9 @@ fn markup_signal_arguments_retain_existing_property_animation() {
     let prepared = prepare(
         r#"mut size=30pt
 mut tint=Color("blue3")
-let shape=<Rect width={size} height={20pt} fill={tint} pill><Label text-sm>signal</Label></Rect>
-add(shape)
-background {animate(size,to=90pt,duration=1s,ease="linear")}
+let shape=<Box width={size} height={20pt} fill={tint} pill x_align={Align.Center} y_align={Align.Center}><Label text-sm>signal</Label></Box>
+Animation(children=[shape])
+<Animation absolute flow="sequence">{animate(size,to=90pt,duration=1s,ease="linear")}</Animation>
 animate(tint,to=Color("orange3"),duration=1s,ease="linear")
 "#,
     )
@@ -84,7 +84,7 @@ animate(tint,to=Color("orange3"),duration=1s,ease="linear")
     );
     assert!(matches!(
         shape.geometry.as_ref(),
-        Geometry::Rectangle {
+        Geometry::Box {
             radius: CornerRadius::Pill,
             ..
         }
@@ -118,7 +118,7 @@ sig description="count={count}"
 count=5
 let snapshot=description
 let label=<Label>{snapshot} + {6:02d} = {11} / done</Label>
-add(label)
+Animation(children=[label])
 wait(1s)"#,
     )
     .unwrap();
@@ -128,7 +128,7 @@ wait(1s)"#,
     };
     assert_eq!(text.as_ref(), "count=5 + 06 = 11 / done");
     let prepared =
-        prepare("let card=<Rect>first<Label>middle</Label>last</Rect>\nadd(card)\nwait(1s)")
+        prepare("let card=<Box width={64pt} height={64pt} fill=\"light1\" x_align={Align.Center} y_align={Align.Center}>first<Label>middle</Label>last</Box>\nAnimation(children=[card])\nwait(1s)")
             .unwrap();
     let children = prepared
         .animation
@@ -152,7 +152,7 @@ wait(1s)"#,
 #[test]
 fn unsupported_gradient_interpolation_fails_during_preparation() {
     let error = prepare(
-        "let shape=Rect(fill=LinearGradient())\nFillTo(shape,to=Color(\"blue3\"),duration=1s)",
+        "let shape=Box(fill=LinearGradient(), width=64pt, height=64pt, x_align=Align.Center, y_align=Align.Center)\nshape.fill_to(to=Color(\"blue3\"), duration=1s)",
     )
     .unwrap_err()
     .to_string();
@@ -166,37 +166,38 @@ fn unsupported_gradient_interpolation_fails_during_preparation() {
 fn later_corner_utilities_and_explicit_radius_have_consistent_precedence() {
     for (source, expected) in [
         (
-            "let shape=<Rect pill rounded-4/>\nadd(shape)",
+            "let shape=<Box pill rounded-4 width={64pt} height={64pt} fill=\"light1\" x_align={Align.Center} y_align={Align.Center}/>\nAnimation(children=[shape])",
             CornerRadius::Fixed(4.into()),
         ),
         (
-            "let shape=<Rect rounded-4 pill/>\nadd(shape)",
+            "let shape=<Box rounded-4 pill width={64pt} height={64pt} fill=\"light1\" x_align={Align.Center} y_align={Align.Center}/>\nAnimation(children=[shape])",
             CornerRadius::Pill,
         ),
         (
-            "let shape=<Rect pill radius={3pt}/>\nadd(shape)",
+            "let shape=<Box pill radius={3pt} width={64pt} height={64pt} fill=\"light1\" x_align={Align.Center} y_align={Align.Center}/>\nAnimation(children=[shape])",
             CornerRadius::Fixed(3.into()),
         ),
     ] {
         let prepared = prepare(source).unwrap();
-        let Geometry::Rectangle { radius, .. } =
+        let Geometry::Box { radius, .. } =
             prepared.animation.find("shape").unwrap().geometry.as_ref()
         else {
-            panic!("Rect")
+            panic!("Box")
         };
         assert_eq!(radius, &expected);
     }
 }
 #[test]
 fn relative_pill_radius_does_not_claim_percentages_are_point_lengths() {
-    let error = prepare("let shape=<Rect pill w-50% h-50%/>\nlet invalid=shape.radius\nwait(1s)")
+    let error = prepare("let shape=<Box pill w-50% h-50% fill=\"light1\" x_align={Align.Center} y_align={Align.Center}/>\nlet invalid=shape.radius\nwait(1s)")
         .unwrap_err()
         .to_string();
     assert!(error.contains("radius depends on its parent"), "{error}");
 }
 #[test]
 fn label_alias_uses_the_native_registry_and_is_protected() {
-    let prepared = prepare("let label=Label(\"registered\")\nadd(label)\nwait(1s)").unwrap();
+    let prepared =
+        prepare("let label=Label(\"registered\")\nAnimation(children=[label])\nwait(1s)").unwrap();
     assert!(
         matches!(prepared.animation.find("label").unwrap().geometry.as_ref(),Geometry::Text{text,..}if text.as_ref()=="registered")
     );
@@ -209,7 +210,7 @@ fn label_alias_uses_the_native_registry_and_is_protected() {
 
 #[test]
 fn one_utility_can_lower_to_several_distinct_cached_arguments() {
-    let prepared = prepare("let child=<Box flex-1/>\nlet parent=<Box w-180 h-60 flex>{child}<Box flex-1/></Box>\nadd(parent)\nwait(1s)").unwrap();
+    let prepared = prepare("let child=<Box flex-1/>\nlet parent=<Box w-180 h-60 flex>{child}<Box flex-1/></Box>\nAnimation(children=[parent])\nwait(1s)").unwrap();
     let child = prepared.animation.find("child").unwrap();
     assert_eq!(child.layout.flex_grow, Fraction::from(1));
     assert_eq!(child.layout.flex_shrink, Fraction::from(1));

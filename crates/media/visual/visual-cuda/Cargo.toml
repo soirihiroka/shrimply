@@ -5,6 +5,7 @@ edition = "2024"
 build = "build.rs"
 
 [dependencies]
+shrimply-preview-render-core.workspace = true
 sanim-runtime.workspace = true
 shrimply-preferences-core.workspace = true
 shrimply-3dgs-vulkan.workspace = true
@@ -63,8 +64,8 @@ shrimply-render-3d-core = { workspace = true }
 shrimply-resource-pipeline = { workspace = true }
 shrimply-scene-3d = { workspace = true }
 shrimply-shape-3d = { workspace = true }
-shrimply-text-3d = { workspace = true }
-shrimply-visual-modifiers = { workspace = true }
+shrimply-text-3d = { workspace = true, default-features = true }
+shrimply-visual-modifiers = { workspace = true, default-features = true }
 shrimply-video-decoder = { workspace = true, features = ["cuda"] }
 shrimply-compute-client = { workspace = true }
 skia-safe = { workspace = true, features = ["gl", "vulkan", "textlayout", "svg"] }
@@ -78,6 +79,5 @@ serde_json.workspace = true
 shrimply-slang-build = { workspace = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-shrimply-preview-render-core.workspace = true
-shrimply-render-vulkan.workspace = true
+shrimply-render-vulkan = { workspace = true, default-features = true }
 shrimply-preview-render-vulkan.workspace = true

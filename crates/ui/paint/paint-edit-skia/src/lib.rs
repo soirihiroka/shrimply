@@ -1,4 +1,5 @@
 mod math;
+pub mod toolbar;
 
 use glam::{Mat3, Vec2};
 use shrimply_paint_geometry::PreparedGeometry;

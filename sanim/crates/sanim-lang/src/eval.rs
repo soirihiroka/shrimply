@@ -1,11 +1,14 @@
+mod code_queries;
 mod dataframe;
 mod demand;
-pub(crate) mod duration;
+mod functions;
 mod list_functions;
 mod lists;
+mod measure;
 mod native;
 mod plans;
 mod provenance;
+mod pure;
 mod reactive;
 mod reactive_animation;
 mod resources;
@@ -35,7 +38,7 @@ use std::{
 type Values = imbl::OrdMap<String, Value>;
 type Env = imbl::OrdMap<String, Binding>;
 type ObservedSignals = BTreeMap<(String, usize, usize), sanim_core::SignalRef>;
-type DurationDemand = BTreeMap<String, BTreeSet<String>>;
+type TypeBindings = Arc<BTreeMap<String, Type>>;
 
 #[derive(serde::Serialize)]
 enum CacheDependency<'a> {
@@ -45,18 +48,26 @@ enum CacheDependency<'a> {
 
 #[derive(Clone, serde::Serialize)]
 struct Function {
+    capabilities: sanim_core::FnCapabilities,
+    #[serde(skip)]
+    references: BTreeSet<String>,
     module: String,
     name: String,
     parameters: Vec<Parameter>,
     body: Vec<Statement>,
     clause: usize,
-    duration: Option<Expr>,
     span: Span,
+}
+struct ClosureDefinition {
+    function: Arc<Function>,
+    fingerprint: String,
 }
 #[derive(Clone)]
 struct FunctionGroup {
     clauses: Vec<Arc<Function>>,
     fingerprint: String,
+    captures: Option<Env>,
+    types: TypeBindings,
 }
 
 pub(crate) fn evaluate(
@@ -64,10 +75,11 @@ pub(crate) fn evaluate(
     snapshot: &mut Snapshot<'_>,
     overrides: &BTreeMap<String, Value>,
     preparation: crate::Preparation,
-    (limits, viewport, duration_needed, progress): (
+    (limits, viewport, available, measure_only, progress): (
         &Limits,
         &Viewport,
-        Option<DurationDemand>,
+        Option<Fraction>,
+        bool,
         &Reporter,
     ),
     (values, assets, states, databases): (
@@ -78,7 +90,6 @@ pub(crate) fn evaluate(
     ),
     statistics: &mut Statistics,
 ) -> Result<Prepared, Diagnostic> {
-    let duration_only = duration_needed.is_some();
     let total_statements = loaded
         .iter()
         .flat_map(|module| &module.ast.statements)
@@ -113,16 +124,17 @@ pub(crate) fn evaluate(
         reactive: reactive::Store::default(),
         signal_frames: Vec::new(),
         signal_observations: Vec::new(),
-        call_horizons: Vec::new(),
-        last_call: duration::CallBoundary::default(),
+        active_calls: Vec::new(),
         named_constructor: None,
         list_edit: None,
-        background_depth: 0,
         instance_paths: loaded
             .iter()
             .map(|module| (module.id.clone(), reactive::instance_paths(&module.ast)))
             .collect(),
         functions: BTreeMap::new(),
+        closures: imbl::OrdMap::new(),
+        anonymous_definitions: imbl::OrdMap::new(),
+        next_closure: 0,
         constructors: BTreeMap::new(),
         reflected: imbl::Vector::new(),
         used_overrides: imbl::OrdSet::new(),
@@ -134,38 +146,28 @@ pub(crate) fn evaluate(
         identity: vec![],
         depth: 0,
         root_active: false,
-        duration_only,
         preparation,
-        result_needed: false,
-        discarded_list_call: None,
+        measure_only,
         signal_return: None,
-        duration_needed: duration_needed.unwrap_or_default(),
-        type_bindings: BTreeMap::new(),
+        type_bindings: Arc::default(),
         hotspots: imbl::OrdMap::new(),
         performance: Vec::new(),
         retained_bytes: limits.data.max_bytes,
         retained_items: limits.data.max_values,
         retained_frames: imbl::OrdSet::new(),
-        retained_fonts: sanim_core::value_budget::Budget::default(),
+        retained_resources: sanim_core::value_budget::Budget::default(),
         logical_operations: 0,
+        logical_native_work: 0,
         used_functions: imbl::OrdMap::new(),
         used_resources: imbl::OrdMap::new(),
         input_versions: imbl::OrdMap::new(),
-        time_map: TimeMap::default(),
         element_sources: imbl::OrdMap::new(),
         source_calls: imbl::Vector::new(),
-        source_ids: BTreeMap::new(),
+        source_ids: imbl::OrdMap::new(),
         root_statement: 0,
+        outputs: imbl::Vector::new(),
+        entry_returned: false,
     };
-    if duration_only {
-        for module in loaded {
-            for declaration in module.checked.reflected.values() {
-                if overrides.contains_key(&declaration.key) {
-                    runtime.used_overrides.insert(declaration.key.clone());
-                }
-            }
-        }
-    }
     for module in loaded {
         runtime.module = module.id.clone();
         runtime.root_active = loaded.last().is_some_and(|v| v.id == module.id);
@@ -215,35 +217,29 @@ pub(crate) fn evaluate(
             }
         }
         for statement in &module.ast.statements {
-            if let StatementKind::Function {
-                name,
-                parameters,
-                body,
-                duration,
-                ..
-            } = &statement.kind
-            {
+            if let StatementKind::Function { name, .. } = &statement.kind {
                 let key = format!("{}::{name}", module.id);
                 let group = runtime.functions.entry(key.clone()).or_insert_with(|| {
                     Arc::new(FunctionGroup {
                         clauses: Vec::new(),
                         fingerprint: String::new(),
+                        captures: None,
+                        types: runtime.type_bindings.clone(),
                     })
                 });
-                Arc::make_mut(group).clauses.push(Arc::new(Function {
-                    module: module.id.clone(),
-                    name: name.clone(),
-                    parameters: parameters.clone(),
-                    body: body.clone(),
-                    clause: module
-                        .checked
-                        .function_clauses
-                        .get(&statement.span.start)
-                        .copied()
-                        .expect("checked function clause"),
-                    duration: duration.clone(),
-                    span: statement.span,
-                }));
+                let clause = module
+                    .checked
+                    .function_clauses
+                    .get(&statement.span.start)
+                    .copied()
+                    .expect("checked function clause");
+                Arc::make_mut(group)
+                    .clauses
+                    .push(Arc::new(Function::from_statement(
+                        module.id.clone(),
+                        statement,
+                        clause,
+                    )));
                 env.insert(name.clone(), Value::Function(key).into());
             }
         }
@@ -258,7 +254,7 @@ pub(crate) fn evaluate(
                 digest(&serde_json::to_vec(&group.clauses).expect("serializable function clauses"));
         }
         runtime.globals.insert(module.id.clone(), env.clone());
-        let restored = if runtime.root_active && !duration_only {
+        let restored = if runtime.root_active {
             let restored = states.begin(&mut runtime, &mut env, module);
             if restored == 0 {
                 states.save(&runtime, &env, 0);
@@ -267,6 +263,11 @@ pub(crate) fn evaluate(
         } else {
             0
         };
+        runtime
+            .animation
+            .reactive
+            .set_native_byte_limit(runtime.limits.data.max_bytes)
+            .map_err(|error| runtime.error("S140", error, Span::default()))?;
         for (index, statement) in module
             .ast
             .statements
@@ -274,24 +275,31 @@ pub(crate) fn evaluate(
             .filter(|statement| state::executable(statement))
             .enumerate()
         {
+            if runtime.entry_returned {
+                break;
+            }
             if index < restored {
                 continue;
             }
             runtime.root_statement = index;
             runtime.report_evaluation(Some(statement.span));
-            let start = runtime.cursor;
-            runtime.block(std::slice::from_ref(statement), &mut env)?;
+            let output = runtime.block(std::slice::from_ref(statement), &mut env)?;
+            if runtime.root_active
+                && let Some(Value::Animation(plan)) = output
+            {
+                runtime.collect_plan(plan, statement.span)?;
+                runtime.entry_returned = true;
+            }
             runtime.completed_statements += 1;
             runtime.report_evaluation(Some(statement.span));
             runtime.globals.insert(module.id.clone(), env.clone());
-            if runtime.root_active && !duration_only {
-                runtime.map_time(start, statement.span, TimeMapKind::Statement)?;
+            if runtime.root_active {
                 states.save(&runtime, &env, index + 1);
             }
         }
     }
     for key in overrides.keys() {
-        if !runtime.used_overrides.contains(key) {
+        if !measure_only && !runtime.used_overrides.contains(key) {
             return Err(runtime.error(
                 "S302",
                 format!(
@@ -307,59 +315,12 @@ pub(crate) fn evaluate(
             ));
         }
     }
-    let checks = runtime.assertions.len() as u64;
-    runtime
-        .progress
-        .emit(Phase::Verifying, Some(0), Some(checks), None);
-    for (index, assertion) in runtime.assertions.clone().into_iter().enumerate() {
-        let verification = verify::evaluate_with(
-            &runtime.animation,
-            &assertion.predicate,
-            assertion.time,
-            sanim_data::resolve_pending,
-        );
-        if assertion.required && verification.evidence != verify::Evidence::Proved {
-            return Err(Diagnostic::new(
-                "S350",
-                format!(
-                    "visual assertion {:?}: {}{}",
-                    verification.evidence,
-                    verification.message,
-                    assertion
-                        .message
-                        .map(|v| format!(". {v}"))
-                        .unwrap_or_default()
-                ),
-                &assertion.module,
-                assertion.span,
-            ));
-        }
-        runtime.checks.push_back(verification);
-        runtime.progress.emit(
-            Phase::Verifying,
-            Some(index as u64 + 1),
-            Some(checks),
-            Some(&assertion.module),
-        );
-    }
-    if !duration_only {
-        runtime
-            .time_map
-            .index(
-                runtime.animation.rate,
-                runtime.animation.duration,
-                limits.max_time_map_bytes,
-            )
-            .map_err(|message| runtime.error("S303", message, Span::default()))?;
-        runtime.statistics.checkpoint_count = states.len();
-        runtime.statistics.checkpoint_bytes = states.bytes;
-    }
     let root = loaded
         .last()
         .ok_or_else(|| runtime.error("S301", "no root module", Span::default()))?;
     let scope = runtime.globals.get(&root.id).cloned().unwrap_or_default();
     let reactive_revision = runtime.reactive.revision;
-    let bindings = if duration_only {
+    let bindings = if measure_only {
         Values::new()
     } else if preparation == crate::Preparation::Demand {
         runtime.available_bindings(&scope)
@@ -367,7 +328,7 @@ pub(crate) fn evaluate(
         runtime.materialize(&scope, Span::default())?
     };
     let deferred_bindings = runtime.deferred_bindings(&scope);
-    if !duration_only && runtime.reactive.revision != reactive_revision {
+    if !measure_only && runtime.reactive.revision != reactive_revision {
         states.save(
             &runtime,
             &scope,
@@ -378,6 +339,78 @@ pub(crate) fn evaluate(
                 .count(),
         );
     }
+    let plan=match runtime.outputs.len() {
+        0=>return Err(runtime.error("S134","the entry script must produce an Animation value; leave an Animation expression unassigned or return it explicitly",Span::default())),
+        1=>runtime.outputs[0].clone(),
+        _=>{
+            let mut plan=sanim_core::plan::Animation::new(sanim_core::plan::Node::Container(runtime.outputs.clone()));
+            plan.style.flow=sanim_core::plan::Flow::Sequence;
+            Arc::new(plan)
+        }
+    };
+    runtime.retain_binding_value(&Value::Animation(plan.clone()), Span::default())?;
+    runtime
+        .animation
+        .reactive
+        .set_native_byte_limit(runtime.limits.data.max_bytes)
+        .map_err(|error| runtime.error("S140", error, Span::default()))?;
+    let plan_base = Arc::new(runtime.animation.clone());
+    runtime
+        .progress
+        .emit(Phase::Duration, None, None, Some(&runtime.module));
+    let temporal_layout = if measure_only {
+        let (duration, indefinite, layout) =
+            crate::animation_plan::measure(&plan, available, limits)
+                .map_err(|error| crate::layout_diagnostic(error, &plan, &runtime.module))?;
+        runtime.animation.duration = duration;
+        runtime.animation.indefinite = indefinite;
+        layout
+    } else {
+        let mut lower_limits = limits.clone();
+        lower_limits.max_native_work = limits
+            .max_native_work
+            .saturating_sub(runtime.logical_native_work);
+        let lowered = crate::animation_plan::lower(&plan, &plan_base, available, &lower_limits)
+            .map_err(|error| crate::layout_diagnostic(error, &plan, &runtime.module))?;
+        runtime.charge_native_work(
+            lowered.native_work,
+            plan.origin
+                .as_ref()
+                .map_or(Span::default(), |origin| origin.location.span),
+        )?;
+        runtime.animation = lowered.animation;
+        lowered.layout
+    };
+    let placements = temporal_layout.len() as u64;
+    runtime.progress.emit(
+        Phase::Duration,
+        Some(placements),
+        Some(placements),
+        Some(&runtime.module),
+    );
+    let time_map = crate::layout_time_map(
+        &temporal_layout,
+        &runtime.animation,
+        limits.max_time_map_bytes,
+        !measure_only,
+    )
+    .map_err(|message| runtime.error("S303", message, Span::default()))?;
+    let checks = runtime.assertions.len() as u64;
+    runtime
+        .progress
+        .emit(Phase::Verifying, Some(0), Some(checks), None);
+    for (index, assertion) in runtime.assertions.clone().into_iter().enumerate() {
+        let verification = crate::validate_contract(&runtime.animation, &assertion)?;
+        runtime.checks.push_back(verification);
+        runtime.progress.emit(
+            Phase::Verifying,
+            Some(index as u64 + 1),
+            Some(checks),
+            Some(&assertion.module),
+        );
+    }
+    runtime.statistics.checkpoint_count = states.len();
+    runtime.statistics.checkpoint_bytes = states.bytes;
     let types = root.checked.schemas.clone();
     // Determinism makes complete semantic inputs a revision identity. Do not serialize
     // the scene and bindings again: both can reference the same large payloads.
@@ -389,19 +422,23 @@ pub(crate) fn evaluate(
             overrides,
             limits,
             viewport,
-            duration_only,
+            available,
             preparation,
         ))
         .map_err(|e| runtime.error("S301", e.to_string(), Span::default()))?,
     );
     let mut performance:Vec<_>=runtime.hotspots.into_iter().filter(|(_,count)|*count>=limits.warn_operations).map(|((module,start,line,column),operations)|PerformanceWarning{
-        code:"P001".into(),message:format!("this statement performed {operations} preparation operations (warning budget {}). Hoist invariant work out of loops, reduce collection sizes, or split independent elements.",limits.warn_operations),source:module,span:Span{start,end:start,line,column},operations,
+        code:"P001".into(),message:format!("this statement performed {operations} interpreted preparation operations (warning budget {}). Hoist invariant work out of loops, reduce collection sizes, or split independent elements.",limits.warn_operations),source:module,span:Span{start,end:start,line,column},operations,
     }).collect();
     performance.extend(runtime.performance);
     Ok(Prepared {
         source: root.id.clone(),
         animation: runtime.animation,
-        time_map: runtime.time_map,
+        plan,
+        temporal_layout,
+        plan_base,
+        plan_limits: Arc::new(limits.clone()),
+        time_map,
         element_sources: runtime.element_sources,
         source_texts: loaded
             .iter()
@@ -419,14 +456,10 @@ pub(crate) fn evaluate(
         reflected: runtime.reflected,
         types,
         symbols: root.checked.exports.clone(),
-        scheduling_helpers: root.checked.effects.iter().cloned().collect(),
-        durations: loaded
-            .iter()
-            .map(|module| (module.id.clone(), module.checked.durations.clone()))
-            .collect(),
         checks: runtime.checks,
         contracts: runtime.assertions,
         dependencies: BTreeMap::new(),
+        plan_fingerprint: fingerprint.clone(),
         fingerprint,
         statistics: Statistics::default(),
         performance,
@@ -439,6 +472,7 @@ pub(crate) struct Runtime<'a, 's> {
     overrides: &'a BTreeMap<String, Value>,
     limits: &'a Limits,
     preparation: crate::Preparation,
+    measure_only: bool,
     values: &'a mut crate::cache::ValueCache,
     assets: &'a mut crate::cache::ValueCache,
     databases: &'a mut sanim_data::sqlite::Databases,
@@ -453,13 +487,14 @@ pub(crate) struct Runtime<'a, 's> {
     signal_frames: Vec<reactive::Frame>,
     signal_observations: Vec<(bool, ObservedSignals)>,
     // Intrinsic work observed during active calls, excluding their argument effects.
-    call_horizons: Vec<Fraction>,
-    last_call: duration::CallBoundary,
+    active_calls: Vec<String>,
     named_constructor: Option<(usize, String)>,
     pub(super) list_edit: Option<crate::lists::EditReceipt>,
-    background_depth: usize,
     instance_paths: BTreeMap<String, BTreeMap<usize, String>>,
     functions: BTreeMap<String, Arc<FunctionGroup>>,
+    closures: imbl::OrdMap<String, Arc<FunctionGroup>>,
+    anonymous_definitions: imbl::OrdMap<(String, usize, usize), Arc<ClosureDefinition>>,
+    next_closure: u64,
     constructors: BTreeMap<String, Type>,
     reflected: imbl::Vector<ReflectedInput>,
     used_overrides: imbl::OrdSet<String>,
@@ -471,27 +506,25 @@ pub(crate) struct Runtime<'a, 's> {
     identity: Vec<String>,
     depth: usize,
     root_active: bool,
-    duration_only: bool,
-    result_needed: bool,
-    discarded_list_call: Option<(String, Span)>,
     signal_return: Option<Type>,
-    duration_needed: BTreeMap<String, BTreeSet<String>>,
-    type_bindings: BTreeMap<String, Type>,
+    type_bindings: TypeBindings,
     hotspots: imbl::OrdMap<(String, usize, usize, usize), u64>,
     performance: Vec<PerformanceWarning>,
     retained_bytes: usize,
     retained_items: usize,
     retained_frames: imbl::OrdSet<String>,
-    retained_fonts: sanim_core::value_budget::Budget,
+    retained_resources: sanim_core::value_budget::Budget,
     logical_operations: u64,
+    logical_native_work: u64,
     used_functions: imbl::OrdMap<String, (String, usize)>,
     used_resources: imbl::OrdMap<String, (String, usize)>,
     input_versions: imbl::OrdMap<String, (Option<Value>, usize)>,
-    time_map: TimeMap,
     element_sources: imbl::OrdMap<String, Arc<crate::ElementSource>>,
     source_calls: imbl::Vector<crate::SourceLocation>,
-    source_ids: BTreeMap<String, Arc<str>>,
+    source_ids: imbl::OrdMap<String, Arc<str>>,
     root_statement: usize,
+    outputs: imbl::Vector<Arc<sanim_core::plan::Animation>>,
+    entry_returned: bool,
 }
 
 impl Runtime<'_, '_> {
@@ -504,49 +537,11 @@ impl Runtime<'_, '_> {
             |span| format!("{}:{}", self.module, span.line),
         );
         self.progress.emit(
-            if self.duration_only {
-                Phase::Duration
-            } else {
-                Phase::Evaluating
-            },
+            Phase::Evaluating,
             Some(self.completed_statements),
             Some(self.total_statements),
             Some(&resource),
         );
-    }
-    fn map_time(
-        &mut self,
-        start: Fraction,
-        span: Span,
-        kind: TimeMapKind,
-    ) -> Result<(), Diagnostic> {
-        self.map_time_until(start, self.cursor, span, kind)
-    }
-    fn map_time_until(
-        &mut self,
-        start: Fraction,
-        end: Fraction,
-        span: Span,
-        kind: TimeMapKind,
-    ) -> Result<(), Diagnostic> {
-        self.observe_call_horizon(end);
-        if self.duration_only || !self.root_active {
-            return Ok(());
-        }
-        self.time_map
-            .push(
-                TimeMapEntry {
-                    source: self.module.clone(),
-                    span,
-                    start,
-                    end,
-                    statement: self.root_statement,
-                    kind,
-                    call_path: self.identity.iter().cloned().collect(),
-                },
-                self.limits.max_time_map_bytes,
-            )
-            .map_err(|message| self.error("S303", message, span))
     }
     fn error(&self, code: &str, message: impl Into<String>, span: Span) -> Diagnostic {
         Diagnostic::new(code, message, &self.module, span)
@@ -559,6 +554,10 @@ impl Runtime<'_, '_> {
             return Ok(());
         }
         self.statistics.operations = self.statistics.operations.saturating_add(amount);
+        self.statistics.interpreted_operations = self
+            .statistics
+            .interpreted_operations
+            .saturating_add(amount);
         self.logical_operations = self.logical_operations.saturating_add(amount);
         const PROGRESS_WORK_INTERVAL: u64 = 256;
         if self.progress.enabled()
@@ -574,61 +573,41 @@ impl Runtime<'_, '_> {
         }
         Ok(())
     }
+    fn charge_native_work(&mut self, amount: u64, span: Span) -> Result<(), Diagnostic> {
+        self.logical_native_work = self
+            .logical_native_work
+            .checked_add(amount)
+            .ok_or_else(|| self.error("S303", "native work counter overflow", span))?;
+        self.statistics.native_work = self.statistics.native_work.saturating_add(amount);
+        self.statistics.operations = self.statistics.operations.saturating_add(amount);
+        if self.logical_native_work > self.limits.max_native_work {
+            return Err(self.error("S303", format!("preparation exceeded its native work budget: {} work units, limit {}. Reduce native samples, resolution, or repeated computation; the host can configure max_native_work independently of the DSL operation limit.", self.logical_native_work, self.limits.max_native_work),span));
+        }
+        Ok(())
+    }
+    fn collect_plan(
+        &mut self,
+        plan: Arc<sanim_core::plan::Animation>,
+        span: Span,
+    ) -> Result<(), Diagnostic> {
+        self.retain_binding_value(&Value::Animation(plan.clone()), span)?;
+        self.retained_bytes = self
+            .retained_bytes
+            .checked_sub(std::mem::size_of::<Arc<sanim_core::plan::Animation>>())
+            .ok_or_else(|| {
+                self.error(
+                    "S303",
+                    "entry Animation collection exceeds its retained-data byte budget",
+                    span,
+                )
+            })?;
+        self.outputs.push_back(plan);
+        Ok(())
+    }
     fn block(&mut self, body: &[Statement], env: &mut Env) -> Result<Option<Value>, Diagnostic> {
         for statement in body {
-            if self.duration_only {
-                match &statement.kind {
-                    StatementKind::Bind {
-                        kind, name, value, ..
-                    } if !self.result_needed && !self.duration_binding_needed(name) => {
-                        if *kind != BindingKind::Sig {
-                            self.duration_effects(value, env)?;
-                        }
-                        continue;
-                    }
-                    StatementKind::Assign { name, value }
-                        if !self.duration_binding_needed(name)
-                            && (!self.result_needed || !env.contains_key(name)) =>
-                    {
-                        self.duration_effects(value, env)?;
-                        continue;
-                    }
-                    _ => {}
-                }
-                let binding_needed = match &statement.kind {
-                    StatementKind::Bind { name, .. } => {
-                        self.result_needed || self.duration_binding_needed(name)
-                    }
-                    _ => false,
-                };
-                if !self.statement_stateful(statement)
-                    && !binding_needed
-                    && !matches!(
-                        statement.kind,
-                        StatementKind::Repeat { .. } | StatementKind::For { .. }
-                    )
-                    && !crate::effects::has_return(std::slice::from_ref(statement))
-                    && self.duration_statement_safe(statement)
-                    && let TimelineEffect::Fixed(duration) = self.timeline_effect(statement.span)
-                {
-                    self.advance_duration(duration, statement.span)?;
-                    continue;
-                }
-                match &statement.kind {
-                    StatementKind::Expr(value) => {
-                        self.duration_effects(value, env)?;
-                        continue;
-                    }
-                    StatementKind::Return(value) if !self.result_needed => {
-                        self.duration_effects(value, env)?;
-                        return Ok(Some(Value::Unit));
-                    }
-                    _ => {}
-                }
-            }
-
             self.work(statement.span)?;
-            let before = self.statistics.operations;
+            let before = self.statistics.interpreted_operations;
             match &statement.kind {
                 StatementKind::Bind {
                     kind, name, value, ..
@@ -636,7 +615,7 @@ impl Runtime<'_, '_> {
                     let previous_name = self
                         .named_constructor
                         .replace((value.span.start, name.clone()));
-                    let binding = if *kind == BindingKind::Let
+                    let mut binding = if *kind == BindingKind::Let
                         && self.should_defer(value, env, statement.span)
                     {
                         self.defer_binding(name, value, env, statement.span)
@@ -648,52 +627,40 @@ impl Runtime<'_, '_> {
                             self.expression(value, env)
                         };
                         result.and_then(|value| {
-                            let value = value
-                                .with_type(&self.binding_type(statement.span)?)
-                                .map_err(|e| self.error("S140", e, statement.span))?;
+                            let value = self.typed_value(
+                                &value,
+                                &self.binding_type(statement.span)?,
+                                statement.span,
+                            )?;
                             self.retain_binding_value(&value, statement.span)?;
                             Ok(Binding::Value(value))
                         })
                     } else {
                         self.declare_reactive(name, *kind, value, env, statement.span)
                     };
+                    if let Ok(Binding::Value(Value::Animation(plan))) = &mut binding {
+                        let plan = std::sync::Arc::make_mut(plan);
+                        let origin = plan.origin.get_or_insert_with(|| sanim_core::plan::Origin {
+                            checkpoint: self.root_statement,
+                            location: self.source_location(value.span),
+                            binding: None,
+                        });
+                        origin.binding = Some(name.as_str().into());
+                    }
                     self.named_constructor = previous_name;
                     env.insert(name.clone(), binding?);
                 }
                 StatementKind::Assign { name, value } => {
                     self.assign(name, value, env, statement.span)?
                 }
-                StatementKind::Animate {
-                    name,
-                    value,
-                    duration,
-                    easing,
-                } => self.animate_binding(
-                    name,
-                    value,
-                    duration,
-                    easing.as_ref(),
-                    env,
-                    statement.span,
-                )?,
-                StatementKind::Background { body } => {
-                    let start = self.cursor;
-                    self.background_depth += 1;
-                    let result = self.scoped_block(body, &mut env.clone());
-                    self.background_depth -= 1;
-                    let mapped = if result.is_ok() {
-                        self.map_time(start, statement.span, TimeMapKind::Statement)
-                    } else {
-                        Ok(())
-                    };
-                    self.cursor = start;
-                    mapped?;
-                    if let Some(value) = result? {
-                        return Ok(Some(value));
-                    }
-                }
                 StatementKind::Expr(expr) => {
-                    self.expression(expr, env)?;
+                    let value = self.expression(expr, env)?;
+                    if self.root_active
+                        && self.depth == 0
+                        && let Value::Animation(plan) = value
+                    {
+                        self.collect_plan(plan, expr.span)?;
+                    }
                 }
                 StatementKind::Return(expr) => {
                     return if let Some(ty) = self.signal_return.clone() {
@@ -738,14 +705,6 @@ impl Runtime<'_, '_> {
                             statement.span,
                         ));
                     }
-                    if self.duration_only
-                        && let Some(duration) = self.fixed_block_duration(body)
-                    {
-                        let total = math::arithmetic("*", duration, Fraction::from(values.len()))
-                            .map_err(|e| self.error("S304", e, statement.span))?;
-                        self.advance_duration(total, statement.span)?;
-                        continue;
-                    }
                     for (index, value) in values.iter().enumerate() {
                         let mut scope = env.clone();
                         scope.insert(name.clone(), value.clone().into());
@@ -758,68 +717,24 @@ impl Runtime<'_, '_> {
                         }
                     }
                 }
-                StatementKind::Repeat {
-                    count,
-                    period,
-                    body,
-                } => {
+                StatementKind::Repeat { count, body } => {
                     let count = self
                         .expression(count, env)?
                         .number()
                         .and_then(Number::usize)
                         .map_err(|e| {
-                            self.error("S303", format!("repeat/timer count: {e}"), count.span)
+                            self.error("S303", format!("repeat count: {e}"), count.span)
                         })?;
                     if count > self.limits.max_iterations {
                         return Err(self.error(
                             "S303",
                             format!(
-                                "repeat/timer count {count} exceeds iteration limit {}",
+                                "repeat count {count} exceeds iteration limit {}",
                                 self.limits.max_iterations
                             ),
                             statement.span,
                         ));
                     }
-                    let period = period
-                        .as_ref()
-                        .map(|p| {
-                            self.expression(p, env).and_then(|v| {
-                                v.number()
-                                    .map(|v| v.value)
-                                    .map_err(|e| self.error("S303", e, p.span))
-                            })
-                        })
-                        .transpose()?;
-                    if period.is_some_and(|v| v <= Fraction::from(0)) {
-                        return Err(self.error(
-                            "S303",
-                            "timer period must be positive",
-                            statement.span,
-                        ));
-                    }
-                    if self.duration_only
-                        && let Some(body_duration) = self.fixed_block_duration(body)
-                    {
-                        if let Some(period) = period
-                            && count > 0
-                            && body_duration > period
-                        {
-                            return Err(self.error(
-                                "S304",
-                                "timer body exceeds its period",
-                                statement.span,
-                            ));
-                        }
-                        let duration = math::arithmetic(
-                            "*",
-                            period.unwrap_or(body_duration),
-                            Fraction::from(count),
-                        )
-                        .map_err(|e| self.error("S304", e, statement.span))?;
-                        self.advance_duration(duration, statement.span)?;
-                        continue;
-                    }
-                    let start = self.cursor;
                     for index in 0..count {
                         self.identity.push(format!(
                             "repeat{}:{index}",
@@ -829,36 +744,6 @@ impl Runtime<'_, '_> {
                         self.identity.pop();
                         if let Some(value) = result? {
                             return Ok(Some(value));
-                        }
-                        if let Some(period) = period {
-                            let next = math::Number {
-                                value: period,
-                                unit: Unit::Duration,
-                            }
-                            .binary(
-                                "*",
-                                Number::scalar((index + 1).try_into().map_err(|_| {
-                                    self.error("S303", "timer count overflow", statement.span)
-                                })?),
-                            )
-                            .and_then(|v| {
-                                v.binary(
-                                    "+",
-                                    Number {
-                                        value: start,
-                                        unit: Unit::Duration,
-                                    },
-                                )
-                            })
-                            .map_err(|e| self.error("S303", e, statement.span))?
-                            .value;
-                            if self.cursor > next {
-                                return Err(self.error("S304",format!("timer iteration {} ends at {}s, past its {}s deadline. Shorten animation/wait durations or increase the timer period.",index+1,self.cursor,next),statement.span));
-                            }
-                            math::timeline_end(Fraction::from(0), next)
-                                .map_err(|e| self.error("S304", e, statement.span))?;
-                            self.cursor = next;
-                            self.animation.duration = self.animation.duration.max(next);
                         }
                     }
                 }
@@ -886,7 +771,7 @@ impl Runtime<'_, '_> {
                     ));
                 }
             }
-            let count = self.statistics.operations - before;
+            let count = self.statistics.interpreted_operations - before;
             *self
                 .hotspots
                 .entry((
@@ -907,14 +792,28 @@ impl Runtime<'_, '_> {
             return self.contextual_template(value, expr.span);
         }
         let cache_started = Instant::now();
-        let key = if self.limits.max_cache_entries > 0 && self.limits.max_cache_bytes > 0 {
+        let animation_result = self
+            .loaded
+            .iter()
+            .find(|module| module.id == self.module)
+            .and_then(|module| {
+                module
+                    .checked
+                    .result_types
+                    .get(&(expr.span.start, expr.span.end))
+            })
+            .is_some_and(Type::contains_animation);
+        let key = if !animation_result
+            && self.limits.max_cache_entries > 0
+            && self.limits.max_cache_bytes > 0
+        {
             let plan = self.expression_plan(expr)?;
             // Resolving reactive reads remains execution work; never hide them behind a value hit.
             if let Some(fingerprint) = &plan.fingerprint
                 && !plan
                     .names
                     .iter()
-                    .any(|name| env.get(name).is_some_and(Binding::is_dynamic))
+                    .any(|name| env.get(name).is_some_and(|binding| binding.is_dynamic() || matches!(binding,Binding::Value(value) if pure::contains_animation(value))))
             {
                 let identity = plan.element_identity.then_some(&self.identity);
                 let limits = plan.iteration_limit.then_some(self.limits.max_iterations);
@@ -931,6 +830,7 @@ impl Runtime<'_, '_> {
                 Some(digest(
                     &serde_json::to_vec(&(
                         SEMANTICS_VERSION,
+                        self.measure_only,
                         self.template_context(expr.span),
                         &self.type_bindings,
                         limits,
@@ -1032,6 +932,7 @@ impl Runtime<'_, '_> {
     fn expression_inner(&mut self, expr: &Expr, env: &Env) -> Result<Value, Diagnostic> {
         let bad = |e| self.error("S305", e, expr.span);
         match &expr.kind {
+            ExprKind::Function(declaration) => self.closure(declaration, env, expr.span),
             ExprKind::Number(v) => Number::parse(v).map(Value::Number).map_err(bad),
             ExprKind::String(v) if self.template_expected(expr.span) => {
                 Ok(Value::Template(Arc::new(sanim_core::Template {
@@ -1175,6 +1076,10 @@ impl Runtime<'_, '_> {
                     })
                     .map_err(|e| self.error("S303", e, expr.span))?;
                 }
+                self.charge_work(
+                    math::operations::binary_work(op, &left, &right) as u64,
+                    expr.span,
+                )?;
                 math::operations::binary(op, left, right)
                     .map_err(|e| self.error("S305", e, expr.span))
             }
@@ -1211,24 +1116,6 @@ impl Runtime<'_, '_> {
                     Value::Record(fields) => fields.get(name).cloned().ok_or_else(|| {
                         self.error("S305", format!("missing field '{name}'"), expr.span)
                     }),
-                    vector @ (Value::Vec2(_) | Value::Vec3(_) | Value::Vec4(_)) => {
-                        let (values, unit) = vector
-                            .vector()
-                            .map_err(|e| self.error("S305", e, expr.span))?;
-                        let index = match name.as_str() {
-                            "x" => 0,
-                            "y" => 1,
-                            "z" => 2,
-                            _ => 3,
-                        };
-                        Ok(Value::Number(Number {
-                            value: math::from_f64(*values.get(index).ok_or_else(|| {
-                                self.error("S305", "vector has no such component", expr.span)
-                            })?)
-                            .map_err(|e| self.error("S305", e, expr.span))?,
-                            unit,
-                        }))
-                    }
                     Value::Fraction(value) => {
                         let magnitude = if name == "numerator" {
                             *value
@@ -1248,25 +1135,6 @@ impl Runtime<'_, '_> {
                             unit: Unit::Number,
                         }))
                     }
-                    Value::Matrix4(matrix) => Ok(Value::List(
-                        matrix
-                            .into_iter()
-                            .map(|row| {
-                                Ok(Value::List(
-                                    row.into_iter()
-                                        .map(|v| {
-                                            Ok(Value::Number(Number {
-                                                value: math::from_f64(v).map_err(|e| {
-                                                    self.error("S305", e, expr.span)
-                                                })?,
-                                                unit: Unit::Number,
-                                            }))
-                                        })
-                                        .collect::<Result<_, Diagnostic>>()?,
-                                ))
-                            })
-                            .collect::<Result<_, Diagnostic>>()?,
-                    )),
                     Value::Element(element) => {
                         if name == "id" {
                             return Ok(Value::String(element.id.clone().into()));
@@ -1355,20 +1223,51 @@ impl Runtime<'_, '_> {
                         Err(self.error("S308",format!("{}: missing key or index {}; {available}. Use get(value, key) for an optional lookup.",access_path(expr),sanim_data::to_json(&key).map_err(|e|self.error("S305",e,index.span))?),index.span))
                     };
                 }
+                let direct = crate::list_functions::constant_count(Some(index), None)
+                    .and_then(|index| {
+                        self.loaded
+                            .iter()
+                            .find(|module| module.id == self.module)
+                            .and_then(|module| {
+                                module
+                                    .checked
+                                    .result_types
+                                    .get(&(base.span.start, base.span.end))
+                            })
+                            .and_then(|ty| ty.fixed_index(index).ok().flatten())
+                    })
+                    .is_some();
                 let index = self
                     .expression(index, env)?
                     .number()
                     .and_then(Number::usize)
                     .map_err(|e| self.error("S305", e, expr.span))?;
-                Ok(value
+                let item = value
                     .list()
-                    .map_err(|e| self.error("S305", e, expr.span))?
+                    .map_err(|error| self.error("S305", error, expr.span))?
                     .get(index)
-                    .cloned()
-                    .map(|v| Value::Some(std::sync::Arc::new(v)))
-                    .unwrap_or(Value::None))
+                    .cloned();
+                if direct {
+                    item.ok_or_else(|| {
+                        self.error(
+                            "S305",
+                            "fixed List cardinality changed after type checking",
+                            expr.span,
+                        )
+                    })
+                } else {
+                    Ok(item
+                        .map(|value| Value::Some(Arc::new(value)))
+                        .unwrap_or(Value::None))
+                }
             }
             ExprKind::Call { callee, args, .. } => {
+                if let Some(value) = self.measure_animation_call(callee, args, env, expr.span)? {
+                    return Ok(value);
+                }
+                if let Some(value) = self.staged_code_range(expr, env)? {
+                    return Ok(value);
+                }
                 let mut receiver = None;
                 let native = match &callee.kind {
                     ExprKind::Name(name) if prelude::builtin(name).is_some() => Some(name.clone()),
@@ -1397,6 +1296,11 @@ impl Runtime<'_, '_> {
                     _ => None,
                 };
                 if let Some(name) = native {
+                    if let Some(builtin) = prelude::builtin(&name).filter(|builtin| {
+                        matches!(builtin.execute, prelude::Execution::CellAnimation)
+                    }) {
+                        return self.cell_animation(builtin, args, env, expr.span);
+                    }
                     let mut evaluated = vec![];
                     if let Some(receiver) = receiver {
                         evaluated.push((None, receiver));
@@ -1438,8 +1342,7 @@ impl Runtime<'_, '_> {
                 let mut evaluated = vec![];
                 for (index, (label, value)) in args.iter().enumerate() {
                     let parameter = self
-                        .functions
-                        .get(&key)
+                        .function_group(&key)
                         .and_then(|group| group.clauses.first())
                         .and_then(|function| {
                             if let Some(label) = label {
@@ -1463,23 +1366,6 @@ impl Runtime<'_, '_> {
                     evaluated.push((label.clone(), value));
                 }
                 if let Some(ty) = self.constructors.get(&key).cloned() {
-                    let easing = if matches!(&ty,Type::Record(fields) if fields.contains_key("ease"))
-                    {
-                        Easing::default()
-                    } else {
-                        crate::timing::easing(crate::timing::ease_argument(&evaluated))
-                            .map_err(|error| self.error("S304", error, expr.span))?
-                    };
-                    let requested = if !matches!(&ty,Type::Record(fields) if fields.contains_key("duration"))
-                    {
-                        crate::timing::envelope(&evaluated)
-                            .map(|value| crate::timing::Timing::default().value(Some(value)))
-                            .transpose()
-                            .map_err(|e| self.error("S304", e, expr.span))?
-                    } else {
-                        None
-                    };
-                    let start = self.cursor;
                     let value = match ty {
                         Type::Record(fields) => {
                             let ordered = order_values(
@@ -1542,144 +1428,33 @@ impl Runtime<'_, '_> {
                         }
                         _ => Err(self.error("S305", "type is not constructible", expr.span)),
                     }?;
-                    self.finish_call_duration(start, requested, self.cursor, expr.span)?;
-                    self.last_call.easing = easing;
                     return Ok(value);
                 }
-                let result = self.invoke(&key, &evaluated, expr.span, true, None);
+                let result = self.invoke(&key, &evaluated, expr.span);
                 self.reactive.remove_since(first_signal);
                 result
             }
         }
-    }
-    fn function_signature(&self, function: &Function) -> Option<&Signature> {
-        self.loaded
-            .iter()
-            .find(|module| module.id == function.module)
-            .and_then(|module| module.checked.exports.get(&function.name))
-            .and_then(|ty| ty.signatures().get(function.clause))
-    }
-    fn record_function(&mut self, key: &str, group: &FunctionGroup) {
-        if !self.used_functions.contains_key(key) {
-            self.used_functions.insert(
-                key.to_owned(),
-                (group.fingerprint.clone(), self.root_statement),
-            );
-        }
-    }
-    fn call_type_bindings(&self, span: Span) -> BTreeMap<String, Type> {
-        self.loaded
-            .iter()
-            .find(|module| module.id == self.module)
-            .and_then(|module| module.checked.call_types.get(&(span.start, span.end)))
-            .map(|types| {
-                types
-                    .iter()
-                    .map(|(name, ty)| (name.clone(), ty.substitute(&self.type_bindings)))
-                    .collect()
-            })
-            .unwrap_or_else(|| self.type_bindings.clone())
-    }
-    fn select_function(
-        &mut self,
-        group: &FunctionGroup,
-        evaluated: &Values,
-        substitutions: &BTreeMap<String, Type>,
-        span: Span,
-    ) -> Result<Arc<Function>, Diagnostic> {
-        let first = group
-            .clauses
-            .first()
-            .ok_or_else(|| self.error("S140", "function has no checked clauses", span))?;
-        if group.clauses.len() == 1 {
-            return Ok(first.clone());
-        }
-        let mut arguments = Values::new();
-        for (name, value) in evaluated {
-            arguments.insert(name.clone(), self.sample_signal(value.clone(), span)?);
-        }
-        let mut selected = None;
-        for function in &group.clauses {
-            let signature = self.function_signature(function).ok_or_else(|| {
-                self.error(
-                    "S140",
-                    "function clause is missing its checked signature",
-                    span,
-                )
-            })?;
-            let parameters = signature
-                .parameters
-                .iter()
-                .map(|parameter| {
-                    (
-                        parameter.name.clone(),
-                        parameter.ty.substitute(substitutions),
-                    )
-                })
-                .collect::<Vec<_>>();
-            let mut matches = true;
-            for (name, ty) in parameters {
-                let Some(value) = arguments.get(&name) else {
-                    continue;
-                };
-                let available = self
-                    .limits
-                    .max_operations
-                    .saturating_sub(self.logical_operations);
-                let mut remaining = available;
-                let mut exhausted = false;
-                let result =
-                    sanim_core::validation::validate_typed_value(&ty, value, &mut |value| {
-                        let work = match value {
-                            Value::String(text) => text.len().max(1) as u64,
-                            _ => 1,
-                        };
-                        remaining = remaining.checked_sub(work).ok_or_else(|| {
-                            exhausted = true;
-                            "function clause validation exceeded the operation budget".to_string()
-                        })?;
-                        Ok(())
-                    });
-                self.charge_work(
-                    if exhausted {
-                        available
-                    } else {
-                        available - remaining
-                    },
-                    span,
-                )?;
-                if exhausted {
-                    return Err(self.error("S303", "function clause validation exceeded the operation budget; narrow the input schema to avoid repeated data scans", span));
-                }
-                if result.is_err() {
-                    matches = false;
-                    break;
-                }
-            }
-            if matches {
-                if selected.is_some() {
-                    return Err(self.error("S140",format!("function '{}' matches multiple clauses for these arguments; supply an explicit argument to distinguish defaulted clauses",first.name),span));
-                }
-                selected = Some(function.clone());
-            }
-        }
-        selected.ok_or_else(||self.error("S140",format!("function '{}' has no clause matching the supplied values; checked alternatives: {}",first.name,group.clauses.iter().filter_map(|function|self.function_signature(function)).map(|signature|signature.parameters.iter().map(|parameter|format!("{}: {}",parameter.name,parameter.ty)).collect::<Vec<_>>().join(", ")).collect::<Vec<_>>().join(" | ")),span))
     }
     fn invoke(
         &mut self,
         key: &str,
         evaluated: &[(Option<String>, Value)],
         span: Span,
-        need_result: bool,
-        provided: Option<&BTreeSet<String>>,
     ) -> Result<Value, Diagnostic> {
+        if self.active_calls.iter().any(|active| active == key) {
+            return Err(self.error(
+                "S111",
+                format!("recursive call to '{key}' is forbidden; use bounded for/repeat"),
+                span,
+            ));
+        }
         if self.depth >= self.limits.max_call_depth {
             return Err(self.error("S303", "bounded function call depth exceeded", span));
         }
         self.depth += 1;
         let group = self
-            .functions
-            .get(key)
+            .function_group(key)
             .cloned()
             .ok_or_else(|| self.error("S305", format!("unknown function '{key}'"), span))?;
         let first = group
@@ -1694,64 +1469,25 @@ impl Runtime<'_, '_> {
                 .map(|parameter| parameter.name.clone())
                 .collect::<Vec<_>>(),
         );
-        let bindings = self.call_type_bindings(span);
+        let bindings = self.call_type_bindings(span, &group.types);
         let function = self.select_function(&group, &ordered, &bindings, span)?;
-        let envelope = if !function
-            .parameters
-            .iter()
-            .any(|parameter| parameter.name == "duration")
-        {
-            crate::timing::envelope(evaluated)
-                .map(|value| crate::timing::Timing::default().value(Some(value)))
-                .transpose()
-                .map_err(|e| self.error("S304", e, span))?
-        } else {
-            None
-        };
-        let easing = if function
-            .parameters
-            .iter()
-            .any(|parameter| parameter.name == "ease")
-        {
-            Easing::default()
-        } else {
-            crate::timing::easing(crate::timing::ease_argument(evaluated))
-                .map_err(|error| self.error("S304", error, span))?
-        };
-        if envelope.is_some_and(|duration| duration > Fraction::from(0)) && !self.root_active {
-            return Err(self.error(
-                "S115",
-                "imported modules cannot schedule animation while being imported",
-                span,
-            ));
-        }
         self.record_function(key, &group);
         let call_site = self.instance_site(span);
-        let mutates = self.function_mutates(&function);
         let previous_types = std::mem::replace(&mut self.type_bindings, bindings);
         let caller = self.source_location(span);
         let previous = std::mem::replace(&mut self.module, function.module.clone());
-        let mut scope = self
-            .globals
-            .get(&function.module)
-            .cloned()
-            .unwrap_or_default();
+        let mut scope = group.captures.clone().unwrap_or_else(|| {
+            self.globals
+                .get(&function.module)
+                .cloned()
+                .unwrap_or_default()
+        });
         self.identity
             .push(format!("{}@{}", function.name, call_site));
         self.source_calls.push_back(caller);
         for parameter in &function.parameters {
             let name = &parameter.name;
             let default = &parameter.default;
-            if self.duration_only && !need_result && !mutates && !self.duration_binding_needed(name)
-            {
-                if !ordered.contains_key(name)
-                    && !provided.is_some_and(|names| names.contains(name))
-                    && let Some(default) = default
-                {
-                    self.duration_effects(default, &scope)?;
-                }
-                continue;
-            }
             let value = if let Some(value) = ordered.get(name) {
                 value.clone()
             } else if let Some(default) = default {
@@ -1795,9 +1531,7 @@ impl Runtime<'_, '_> {
             }
             let value = self.sample_signal(value, span)?;
             let value = if let Some(ty) = &parameter_type {
-                value
-                    .with_type(ty)
-                    .map_err(|e| self.error("S140", e, span))?
+                self.typed_value(&value, ty, span)?
             } else {
                 value
             };
@@ -1809,32 +1543,6 @@ impl Runtime<'_, '_> {
                 scope.insert(name.clone(), value.into());
             }
         }
-        let declared_duration = if let Some(annotation) = &function.duration {
-            let start = self.cursor;
-            let value = self.expression(annotation, &scope)?;
-            let declared = crate::timing::Timing::default()
-                .value(Some(&value))
-                .map_err(|error| {
-                    self.error(
-                        "S304",
-                        format!(
-                            "invalid @duration contract for '{}': {error}",
-                            function.name
-                        ),
-                        annotation.span,
-                    )
-                })?;
-            if self.cursor != start {
-                return Err(self.error(
-                    "S304",
-                    "@duration expressions cannot advance the timeline",
-                    annotation.span,
-                ));
-            }
-            Some(declared)
-        } else {
-            None
-        };
         let live_return = self.function_signature(&function).and_then(|signature| {
             if let Type::Signal(inner) = signature.result.as_ref() {
                 Some(inner.substitute(&self.type_bindings))
@@ -1843,66 +1551,60 @@ impl Runtime<'_, '_> {
             }
         });
         let previous_signal_return = std::mem::replace(&mut self.signal_return, live_return);
-        let previous_result = self.result_needed;
-        self.result_needed = need_result;
-        let function_start = self.cursor;
-        self.call_horizons.push(function_start);
-        let result = self.scoped_block(&function.body, &mut scope);
+        let memo_scope = self.pure_result_type(&function).then(|| scope.clone());
+        let memo_marker = format!("pure-eligible:{}:{}", group.fingerprint, function.clause);
+        let memo_key = if memo_scope.is_some() && self.values.get(&memo_marker).is_some() {
+            self.pure_call_key(&function, &group, &scope)?
+        } else {
+            None
+        };
+        let memo_hit = memo_key.as_ref().and_then(|key| self.values.get(key));
+        let body_operations = self.statistics.operations;
+        self.active_calls.push(key.to_owned());
+        let result = if let Some(value) = memo_hit {
+            self.statistics.reused_expressions += 1;
+            Ok(Some(value))
+        } else {
+            self.scoped_block(&function.body, &mut scope)
+        };
+        self.active_calls.pop();
         let result = result.and_then(|value| {
-            if self.duration_only && !need_result {
-                return Ok(value);
-            }
             let ty = self
                 .function_signature(&function)
                 .map(|signature| signature.result.substitute(&self.type_bindings));
             value
                 .map(|value| {
                     if let Some(ty) = &ty {
-                        value.with_type(ty).map_err(|e| self.error("S140", e, span))
+                        self.typed_value(&value, ty, span)
                     } else {
                         Ok(value)
                     }
                 })
                 .transpose()
         });
-        let result = result.and_then(|value| {
-            let horizon = self
-                .call_horizons
-                .last()
-                .copied()
-                .expect("active function horizon")
-                .max(self.cursor);
-            if !self.duration_only && let Some(declared)=declared_duration {
-                let annotation=function.duration.as_ref().expect("declared duration");
-                let actual=math::arithmetic("-",self.cursor,function_start).map_err(|error|self.error("S304",error,span))?;
-                if horizon>self.cursor {
-                    return Err(self.error("S304",format!("@duration contract for '{}' requires an exact blocking duration, but background work continues beyond the function's cursor; wait for that work to finish inside the function or remove the exact @duration contract",function.name),annotation.span));
-                }
-                if declared!=actual {return Err(self.error("S304",format!("@duration contract for '{}' declares {declared}s, but its body consumed {actual}s; update the contract or the function body",function.name),annotation.span));}
+        let mut memo_result_nodes = pure::MAX_MEMO_INPUT_NODES;
+        if let (Some(entry_scope), Ok(Some(value))) = (memo_scope.as_ref(), result.as_ref())
+            && self.statistics.operations.saturating_sub(body_operations)
+                >= pure::MIN_MEMO_OPERATIONS
+            && pure::supported(value, &mut memo_result_nodes, self.limits.max_cache_bytes)
+        {
+            let key = if let Some(key) = memo_key {
+                Some(key)
+            } else {
+                self.pure_call_key(&function, &group, entry_scope)?
+            };
+            if let Some(key) = key {
+                self.values.insert(memo_marker, Value::Unit);
+                self.values.insert(key, value.clone());
             }
-            self.map_time_until(
-                function_start,
-                horizon,
-                function.span,
-                TimeMapKind::Function,
-            )?;
-            Ok(value)
-        });
-        let horizon = self
-            .call_horizons
-            .pop()
-            .expect("active function horizon")
-            .max(self.cursor);
+        }
         self.depth -= 1;
-        self.result_needed = previous_result;
         self.signal_return = previous_signal_return;
         self.identity.pop();
         self.source_calls.pop_back();
         self.module = previous;
         self.type_bindings = previous_types;
         let result = result?;
-        self.finish_call_duration(function_start, envelope, horizon, span)?;
-        self.last_call.easing = easing;
         Ok(result.unwrap_or(Value::Unit))
     }
     fn check_elements(&self, span: Span) -> Result<(), Diagnostic> {
@@ -1939,12 +1641,15 @@ fn order_values(args: &[(Option<String>, Value)], parameters: &[String]) -> Valu
 fn cacheable(expr: &Expr) -> bool {
     match &expr.kind {
         ExprKind::Call { callee, args, .. } => {
-            matches!(&callee.kind,ExprKind::Name(name)if prelude::builtin(name).is_some_and(|v|!v.call_schedules(args)&&matches!(v.execute,prelude::Execution::Native(_))))
+            matches!(&callee.kind,ExprKind::Name(name)if prelude::builtin(name).is_some_and(|v|v.capabilities().is_pure()&&v.result!=Type::Animation&&matches!(v.execute,prelude::Execution::Native(_))))
                 && args.iter().all(|(_, v)| cacheable(v))
         }
         // Recording metadata and override dependencies is part of evaluating an input.
         // Cache its pure default, but never skip this boundary or an enclosing expression.
-        ExprKind::Reflect { .. } | ExprKind::Member(_, _) | ExprKind::Index(_, _) => false,
+        ExprKind::Function(_)
+        | ExprKind::Reflect { .. }
+        | ExprKind::Member(_, _)
+        | ExprKind::Index(_, _) => false,
         ExprKind::Unary(_, a) => cacheable(a),
         ExprKind::Binary(_, a, b) => cacheable(a) && cacheable(b),
         ExprKind::Template(parts) => parts.iter().all(|part| match part {

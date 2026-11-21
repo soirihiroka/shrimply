@@ -2,6 +2,7 @@
 
 #include <QQuickFramebufferObject>
 #include <QPoint>
+#include <QImage>
 #include <QString>
 #include <cstdint>
 #include <QUrl>
@@ -22,6 +23,8 @@ class TimelineSurface : public QQuickFramebufferObject {
     Q_PROPERTY(bool overwriteMode READ overwriteMode NOTIFY dragCollisionModeChanged)
     Q_PROPERTY(bool blockMode READ blockMode NOTIFY dragCollisionModeChanged)
     Q_PROPERTY(bool newTrackMode READ newTrackMode NOTIFY dragCollisionModeChanged)
+    Q_PROPERTY(qreal toolsProgress READ toolsProgress NOTIFY timelineLayoutChanged)
+    Q_PROPERTY(qreal audioMonitorProgress READ audioMonitorProgress NOTIFY timelineLayoutChanged)
     Q_PROPERTY(QVariantList contextMenuItems READ contextMenuItems NOTIFY contextMenuItemsChanged)
     Q_PROPERTY(QVariantList trackAddMenuItems READ trackAddMenuItems NOTIFY trackAddMenuItemsChanged)
 
@@ -40,6 +43,9 @@ public:
     Q_INVOKABLE void selectOverwriteMode();
     Q_INVOKABLE void selectBlockMode();
     Q_INVOKABLE void selectNewTrackMode();
+    qreal toolsProgress() const { return tools_progress_; }
+    qreal audioMonitorProgress() const { return audio_monitor_progress_; }
+    void setTimelineLayoutProgress(qreal tools, qreal monitor);
     QVariantList contextMenuItems() const;
     QVariantList trackAddMenuItems() const;
     Q_INVOKABLE void activateContextMenuItem(int index);
@@ -56,10 +62,11 @@ signals:
     void beatGridEnabledChanged();
     void cursorToolChanged();
     void dragCollisionModeChanged();
+    void timelineLayoutChanged();
     void contextMenuItemsChanged();
-    void contextMenuRequested(qreal x, qreal y);
+    void contextMenuRequested(qreal x, qreal y, bool bottomSheet);
     void trackAddMenuItemsChanged();
-    void trackAddMenuRequested(qreal x, qreal y);
+    void trackAddMenuRequested(qreal x, qreal y, bool bottomSheet);
     void trackImportRequested();
     void trackRemuxRequested();
     void sourceDeletionRequested(const QString &path);
@@ -78,11 +85,15 @@ protected:
     void mouseMoveEvent(QMouseEvent *event) override;
     void mouseReleaseEvent(QMouseEvent *event) override;
     void mouseUngrabEvent() override;
+    void touchEvent(QTouchEvent *event) override;
+    void touchUngrabEvent() override;
     void wheelEvent(QWheelEvent *event) override;
     void keyPressEvent(QKeyEvent *event) override;
 
 private:
     void handleActionResult(std::uint8_t result);
+    qreal tools_progress_ = 1.0;
+    qreal audio_monitor_progress_ = 1.0;
     bool middle_mouse_grabbed_ = false;
     QPoint middle_cursor_center_;
     QPoint middle_cursor_origin_;
@@ -112,11 +123,16 @@ public:
     Q_INVOKABLE void selectPenTool();
     Q_INVOKABLE void selectFillTool();
     Q_INVOKABLE void selectTransformTool();
+    Q_INVOKABLE void cancelPointerInput();
+    Q_INVOKABLE void captureContextImage(bool save);
+    Q_INVOKABLE void saveCapturedImage(const QUrl &destination);
 
 signals:
     void guidesVisibleChanged();
     void fullscreenPreviewChanged();
     void paintToolChanged();
+    void previewImageSaveRequested();
+    void previewImageCaptureFailed(const QString &error);
 
 protected:
     void hoverMoveEvent(QHoverEvent *event) override;
@@ -126,9 +142,13 @@ protected:
     void mouseReleaseEvent(QMouseEvent *event) override;
     void mouseUngrabEvent() override;
     void wheelEvent(QWheelEvent *event) override;
+    void keyPressEvent(QKeyEvent *event) override;
+    void keyReleaseEvent(QKeyEvent *event) override;
+    void focusOutEvent(QFocusEvent *event) override;
 
 private:
     bool fullscreen_preview_ = false;
+    QImage captured_image_;
 };
 
 class AudioMeterSurface : public QQuickFramebufferObject {

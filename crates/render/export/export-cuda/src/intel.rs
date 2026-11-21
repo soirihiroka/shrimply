@@ -298,16 +298,7 @@ impl VideoBackend for IntelBackend {
             .expect("rendered Intel frame")
             .renderer
             .readback(&rendered.buffer)?;
-        let mut frame = ffmpeg::frame::Video::new(Pixel::RGBA, rendered.width, rendered.height);
-        let stride = frame.stride(0);
-        let row_bytes = rendered.width as usize * size_of::<u32>();
-        for (destination, source) in frame
-            .data_mut(0)
-            .chunks_mut(stride)
-            .zip(bytes.chunks_exact(row_bytes))
-        {
-            destination[..row_bytes].copy_from_slice(source);
-        }
+        let frame = core::rgba_frame(rendered.width, rendered.height, &bytes)?;
         Ok(RenderedFrame {
             frame,
             timing: FrameTiming::default(),

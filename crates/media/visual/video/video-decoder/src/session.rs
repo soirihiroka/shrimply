@@ -87,8 +87,11 @@ pub struct VideoDecoderSession {
     stream_start_time: i64,
     pub(crate) frame_duration: Time,
     decoder: ffmpeg::decoder::Video,
+    #[cfg(target_os = "android")]
+    android_pool: Option<Arc<shrimply_visual_frame::android::AndroidFramePool>>,
     decoder_name: String,
     frame_index: usize,
+    frame_number_clock: Option<crate::math::FrameNumberClock>,
     pub(crate) last_decoded_position: Option<Time>,
     previous_decoded_position: Option<Time>,
     lookahead: Option<DecodedVisual>,
@@ -110,6 +113,53 @@ pub struct VideoDecoderSession {
 }
 
 impl VideoDecoderSession {
+    pub fn dimensions(&self) -> (u32, u32) {
+        (self.decoder.width(), self.decoder.height())
+    }
+
+    /// Clockwise display-matrix rotation; decoded pixels remain in coded orientation.
+    pub fn rotation_degrees(&self) -> i32 {
+        self.input
+            .stream(self.stream_index)
+            .expect("selected video stream")
+            .side_data()
+            .find(|data| data.kind() == ffmpeg::codec::packet::side_data::Type::DisplayMatrix)
+            .and_then(|data| crate::math::display_rotation(data.data()))
+            .unwrap_or(0)
+    }
+
+    /// Source metadata rate, following VideoCapture's rational fallback order.
+    pub fn frame_rate(&self) -> shrimply_math_core::Fraction {
+        let stream = self
+            .input
+            .stream(self.stream_index)
+            .expect("selected video stream");
+        let mut rate = stream.avg_frame_rate();
+        if !crate::math::usable_metadata_frame_rate(rate) {
+            // FFmpeg guesses codec cadence for field-coded streams rather than
+            // assuming that r_frame_rate describes complete decoded frames.
+            rate = unsafe {
+                ffmpeg::Rational::from(sys::av_guess_frame_rate(
+                    self.input.as_ptr().cast_mut(),
+                    stream.as_ptr().cast_mut(),
+                    ptr::null_mut(),
+                ))
+            };
+        }
+        if crate::math::usable_metadata_frame_rate(rate) {
+            shrimply_math_core::fraction_new(
+                i64::from(rate.numerator()),
+                i64::from(rate.denominator()),
+            )
+        } else {
+            let time_base = stream.time_base();
+            shrimply_math_core::fraction_new(
+                i64::from(time_base.denominator()),
+                i64::from(time_base.numerator()),
+            )
+        }
+    }
+
     pub fn next_frame_time(&self) -> Option<Time> {
         self.lookahead.as_ref().map(|frame| frame.0)
     }
@@ -117,12 +167,12 @@ impl VideoDecoderSession {
     pub fn open(
         source: &AssetSnapshot,
         media_track_id: u32,
-        backend: impl FnOnce(ffmpeg::codec::Id) -> Result<DecoderBackend, String>,
+        backend: impl FnOnce(&ffmpeg::codec::Parameters) -> Result<DecoderBackend, String>,
         cancellation: Option<DecodeControl>,
     ) -> Result<Self, String> {
         source.verify_current()?;
         ffmpeg::init().map_err(|error| error.to_string())?;
-        let input = ffmpeg::format::input_with_interrupt(&source.path(), move || {
+        let input = shrimply_media_info::demux::open_with_interrupt(source.path(), move || {
             cancellation.as_ref().is_some_and(DecodeControl::superseded)
         })
         .map_err(|error| error.to_string())?;
@@ -162,7 +212,13 @@ impl VideoDecoderSession {
         };
 
         let decoder_open_started = Instant::now();
-        let decoder = backend(parameters.id())?.open(&parameters, stream_time_base)?;
+        let backend = backend(&parameters)?;
+        #[cfg(target_os = "android")]
+        let android_pool = match &backend {
+            DecoderBackend::Android { pool, .. } => Some(pool.clone()),
+            _ => None,
+        };
+        let decoder = backend.open(&parameters, stream_time_base)?;
         let decoder_name = decoder
             .codec()
             .ok_or("opened video decoder has no codec")?
@@ -177,8 +233,11 @@ impl VideoDecoderSession {
             stream_start_time,
             frame_duration,
             decoder,
+            #[cfg(target_os = "android")]
+            android_pool,
             decoder_name,
             frame_index: 0,
+            frame_number_clock: None,
             last_decoded_position: None,
             previous_decoded_position: None,
             lookahead: None,
@@ -198,6 +257,154 @@ impl VideoDecoderSession {
             active_request: None,
             nonadvancing_frames: 0,
         })
+    }
+
+    /// Frame-number access with VideoCapture's preroll and EOF conventions.
+    /// Timestamp-free elementary streams support forward frame-number reads.
+    pub fn frame_by_index(
+        &mut self,
+        index: u64,
+        controls: DecodeControls<'_>,
+    ) -> Result<DecodeOutcome, String> {
+        if self.cancel_if_superseded(controls) {
+            return Ok(DecodeOutcome::Superseded(None));
+        }
+        if unsafe { (*self.input.format().as_ptr()).flags } & sys::AVFMT_NOTIMESTAMPS != 0 {
+            // Raw elementary streams have frame ordinals but no seekable PTS.
+            // Reuse the normal decoder and retain its cancellation/lookahead policy.
+            loop {
+                let next_index = self
+                    .frame_index
+                    .saturating_sub(usize::from(self.lookahead.is_some()));
+                let next_index =
+                    u64::try_from(next_index).expect("decoded frame index exceeds u64");
+                if index < next_index {
+                    return Err("cannot seek backward in a video stream without timestamps".into());
+                }
+                match self.next_frame(controls)? {
+                    NextFrame::Frame(frame) if next_index == index => {
+                        return Ok(DecodeOutcome::Frame(Some(frame)));
+                    }
+                    NextFrame::Frame(_) => {}
+                    NextFrame::EndOfStream => return Ok(DecodeOutcome::Frame(None)),
+                    NextFrame::Superseded => return Ok(DecodeOutcome::Superseded(None)),
+                }
+            }
+        }
+        let frame_rate = self.frame_rate();
+        let stream = self
+            .input
+            .stream(self.stream_index)
+            .expect("selected video stream");
+        let total_frames = if stream.frames() != 0 {
+            stream.frames()
+        } else {
+            crate::math::estimated_frame_count(
+                self.input.duration(),
+                stream.duration(),
+                self.stream_time_base,
+                frame_rate,
+            )
+            .ok_or("video decoder source frame count is out of range")?
+        };
+        let index = index.min(total_frames.max(0) as u64);
+        if total_frames <= 1 {
+            // VideoCapture deliberately skips native seeking for single-frame
+            // and unknown-length inputs; consume forward through the decoder.
+            let mut skip = index;
+            loop {
+                match self.next_frame(controls)? {
+                    NextFrame::Frame(frame) if skip == 0 => {
+                        return Ok(DecodeOutcome::Frame(Some(frame)));
+                    }
+                    NextFrame::Frame(_) => skip -= 1,
+                    NextFrame::EndOfStream => return Ok(DecodeOutcome::Frame(None)),
+                    NextFrame::Superseded => return Ok(DecodeOutcome::Superseded(None)),
+                }
+            }
+        }
+        let position = shrimply_math_core::time_from_frame(index, frame_rate)
+            .ok_or("video decoder frame index is out of range")?;
+        if self.frame_number_clock.is_none() {
+            if self.frame_index != 0 || self.seek_target.is_some() {
+                self.seek(Time::ZERO)?;
+            }
+            let first = match self.next_frame(controls)? {
+                NextFrame::Frame(frame) => frame,
+                NextFrame::EndOfStream => return Ok(DecodeOutcome::Frame(None)),
+                NextFrame::Superseded => return Ok(DecodeOutcome::Superseded(None)),
+            };
+            self.frame_number_clock = Some(
+                crate::math::FrameNumberClock::new(
+                    first.1.native(),
+                    frame_rate,
+                    self.stream_time_base,
+                    self.stream_start_time,
+                    unsafe { (*self.input.as_ptr()).start_time },
+                )
+                .ok_or("video decoder frame-number origin is out of range")?,
+            );
+            if index == 0 {
+                self.finish_exact(position);
+                return Ok(DecodeOutcome::Frame(Some(first)));
+            }
+        }
+        let clock = self
+            .frame_number_clock
+            .expect("frame-number origin initialized");
+        let target =
+            i64::try_from(index).expect("frame index validated by rational time conversion");
+        // OpenCV seeks 16 frames early, seeds the ordinal from the first decoded
+        // PTS, then counts decoded frames. This preserves variable frame rates.
+        const INITIAL_PREROLL_FRAMES: u64 = 16;
+        let mut preroll = INITIAL_PREROLL_FRAMES;
+        'seek: loop {
+            let timestamp = clock
+                .seek_timestamp(index, preroll)
+                .ok_or("video decoder frame seek timestamp is out of range")?;
+            self.seek_timestamp(position, timestamp, true)?;
+            let outcome = 'read: {
+                let mut frame = match self.next_frame(controls)? {
+                    NextFrame::Frame(frame) => frame,
+                    NextFrame::EndOfStream if index > preroll => {
+                        preroll = preroll.saturating_add(preroll / 2);
+                        continue 'seek;
+                    }
+                    NextFrame::EndOfStream => break 'read DecodeOutcome::Frame(None),
+                    NextFrame::Superseded => break 'read DecodeOutcome::Superseded(None),
+                };
+                if index == 0 {
+                    break 'read DecodeOutcome::Frame(Some(frame));
+                }
+                let mut ordinal = if index == 1 {
+                    0
+                } else {
+                    clock
+                        .ordinal(frame.1.native())
+                        .ok_or("video decoder frame ordinal is out of range")?
+                };
+                if ordinal < 0 || ordinal > target - 1 {
+                    if index > preroll {
+                        preroll = preroll.saturating_add(preroll / 2);
+                        continue 'seek;
+                    }
+                    // VideoCapture stops retrying at stream start; its following
+                    // read consumes the frame after the already grabbed one.
+                    ordinal = target - 1;
+                }
+                while ordinal < target {
+                    frame = match self.next_frame(controls)? {
+                        NextFrame::Frame(frame) => frame,
+                        NextFrame::EndOfStream => break 'read DecodeOutcome::Frame(None),
+                        NextFrame::Superseded => break 'read DecodeOutcome::Superseded(None),
+                    };
+                    ordinal += 1;
+                }
+                DecodeOutcome::Frame(Some(frame))
+            };
+            self.finish_exact(position);
+            return Ok(outcome);
+        }
     }
 
     pub fn frame(
@@ -388,22 +595,40 @@ impl VideoDecoderSession {
     }
 
     pub(crate) fn seek(&mut self, position: Time) -> Result<(), String> {
-        shrimply_profiling::increment("Video decode / Seek");
-        let _measurement = shrimply_profiling::measure("Video decode / Seek time");
         let target_timestamp = source_time_to_stream_timestamp(
             position,
             self.stream_time_base,
             self.stream_start_time,
         );
+        self.seek_timestamp(position, target_timestamp, false)
+    }
+
+    fn seek_timestamp(
+        &mut self,
+        position: Time,
+        target_timestamp: i64,
+        frame_number: bool,
+    ) -> Result<(), String> {
+        shrimply_profiling::increment("Video decode / Seek");
+        let _measurement = shrimply_profiling::measure("Video decode / Seek time");
         let result = unsafe {
-            sys::avformat_seek_file(
-                self.input.as_mut_ptr(),
-                self.stream_index as i32,
-                i64::MIN,
-                target_timestamp,
-                target_timestamp,
-                sys::AVSEEK_FLAG_BACKWARD,
-            )
+            if frame_number {
+                sys::av_seek_frame(
+                    self.input.as_mut_ptr(),
+                    self.stream_index as i32,
+                    target_timestamp,
+                    sys::AVSEEK_FLAG_BACKWARD,
+                )
+            } else {
+                sys::avformat_seek_file(
+                    self.input.as_mut_ptr(),
+                    self.stream_index as i32,
+                    i64::MIN,
+                    target_timestamp,
+                    target_timestamp,
+                    sys::AVSEEK_FLAG_BACKWARD,
+                )
+            }
         };
         if result < 0 {
             return Err(format!(
@@ -586,7 +811,15 @@ impl VideoDecoderSession {
                 self.last_decoded_position = Some(position);
                 self.frame_index += 1;
                 self.record_first_frame(&decoded);
-                let frame = Arc::new(VideoFrame::new(decoded)?);
+                #[cfg(target_os = "android")]
+                let frame = if let Some(pool) = &self.android_pool {
+                    VideoFrame::from_android(decoded, pool.clone())?
+                } else {
+                    VideoFrame::new(decoded)?
+                };
+                #[cfg(not(target_os = "android"))]
+                let frame = VideoFrame::new(decoded)?;
+                let frame = Arc::new(frame);
                 Ok(ReceiveState::Frame((position, frame)))
             }
             Err(ffmpeg::Error::Other { errno }) if errno == libc::EAGAIN => {

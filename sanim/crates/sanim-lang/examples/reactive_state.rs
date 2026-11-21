@@ -31,7 +31,7 @@ fn report(label: &str, prepared: &Prepared, micros: u128) {
 }
 fn main() {
     let mut files = MemorySources::default();
-    files.insert("main.sanim","mut source=1\nmut unrelated=0\nsig twice=source*2\nsig derived=twice+1\nlet first=derived\nrepeat 1000 {source=source;unrelated=unrelated+1}\nlet last=derived\n");
+    files.insert("main.sanim","mut source=1\nmut unrelated=0\nsig twice=source*2\nsig derived=twice+1\nlet first=derived\nrepeat 1000 {source=source;unrelated=unrelated+1}\nlet last=derived\n\nAnimation()");
     let started = Instant::now();
     let result = prepare(&mut Engine::default(), &files);
     report(
@@ -44,12 +44,18 @@ fn main() {
     assert_eq!(result.statistics.signal_invalidations, 0);
     let prefix =
         "mut source=1\nsig derived=source*2\nrepeat 10000 {source=source+1}\nlet before=derived\n";
-    files.insert("main.sanim", format!("{prefix}let result=derived+1\n"));
+    files.insert(
+        "main.sanim",
+        format!("{prefix}let result=derived+1\n\nAnimation()"),
+    );
     let mut engine = Engine::default();
     let started = Instant::now();
     let cold = prepare(&mut engine, &files);
     report("prefix cold", &cold, started.elapsed().as_micros());
-    files.insert("main.sanim", format!("{prefix}let result=derived+2\n"));
+    files.insert(
+        "main.sanim",
+        format!("{prefix}let result=derived+2\n\nAnimation()"),
+    );
     let started = Instant::now();
     let hot = prepare(&mut engine, &files);
     report("prefix hot", &hot, started.elapsed().as_micros());
@@ -60,7 +66,7 @@ fn main() {
             .map(|factor| format!("input*{factor}"))
             .collect::<Vec<_>>()
             .join("+");
-        files.insert("main.sanim",format!("fn calculate(input:Number):Number {{sig local={terms};sig derived=local+1;return derived}}\nmut total=0\nrepeat {count} {{total=total+calculate(2)}}\n"));
+        files.insert("main.sanim",format!("fn calculate(input:Number):Number {{sig local={terms};sig derived=local+1;return derived}}\nmut total=0\nrepeat {count} {{total=total+calculate(2)}}\n\nAnimation()"));
         let started = Instant::now();
         let result = prepare(&mut Engine::default(), &files);
         report(

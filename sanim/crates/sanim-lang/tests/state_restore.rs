@@ -20,14 +20,14 @@ fn semantic_output(prepared: &sanim_lang::Prepared) -> serde_json::Value {
 }
 
 #[test]
-fn suffix_edit_restores_bindings_tracks_cursor_and_skips_prefix_execution() {
+fn suffix_edit_reuses_builder_state_and_preserves_the_compiled_prefix() {
     let mut files = MemorySources::default();
-    let prefix = "let c=Circle(id=\"dot\")\nrepeat 100 { let unused=1+2 }\nFadeIn(c, duration=1s, ease=\"linear\")\n";
+    let prefix = "let c=Box(id=\"dot\", width=2*(32pt), height=2*(32pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nrepeat 100 { let unused=1+2 }\nc.fade_in(duration=1s, ease=\"linear\")\n";
     files.insert("main.sanim", format!("{prefix}wait(1s)\n"));
     let mut engine = Engine::default();
     let old = prepare(&mut engine, &files);
     let boundary = engine.execution_state(3).unwrap();
-    assert_eq!(boundary.cursor, Fraction::from(1));
+    assert_eq!(boundary.cursor, Fraction::from(0));
     files.insert("main.sanim", format!("{prefix}wait(2s)\n"));
     let edited = prepare(&mut engine, &files);
     assert_eq!(edited.statistics.restored_statements, 3);
@@ -44,7 +44,7 @@ fn suffix_edit_restores_bindings_tracks_cursor_and_skips_prefix_execution() {
 #[test]
 fn data_changes_resume_before_the_first_resource_read() {
     let mut files = MemorySources::default();
-    files.insert("main.sanim", "add(Circle(id=\"early\"))\nwait(1s)\nlet delay=read<Duration>(\"delay.json\")\nwait(delay)\n");
+    files.insert("main.sanim", "Animation(children=[Box(id=\"early\", width=2*(32pt), height=2*(32pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)])\nwait(1s)\nlet delay=read<Duration>(\"delay.json\")\nwait(delay)\n");
     files.insert("delay.json", "\"1s\"");
     let mut engine = Engine::default();
     prepare(&mut engine, &files);
@@ -116,22 +116,28 @@ fn changed_retained_helper_body_default_and_transitive_calls_match_fresh_graphs(
             3,
         ),
         (
-            "fn double(sig value:Length):sig Length{return value*2}",
-            "fn double(sig value:Length):sig Length{return value*3}",
+            "fn<sig> double(sig value:Length):sig Length{return value*2}",
+            "fn<sig> double(sig value:Length):sig Length{return value*3}",
             2,
         ),
     ] {
         let program = |helper| {
             format!(
-                "wait(1s)\n{helper}\nmut size=10pt\nsig result=double(size)\nlet marker=Circle(radius=result)\nadd(marker)\nanimate(size,to=20pt,duration=1s,ease=\"linear\")\n"
+                "wait(1s)\n{helper}\nmut size=10pt\nsig result=double(size)\nlet marker=Box(width=2*(result), height=2*(result), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nAnimation(children=[marker])\nanimate(size,to=20pt,duration=1s,ease=\"linear\")\n"
             )
         };
         let mut files = MemorySources::default();
-        files.insert("main.sanim", program(old_helper));
+        files.insert(
+            "main.sanim",
+            format!("{}\nAnimation()", program(old_helper)),
+        );
         let mut engine = Engine::default();
         let old = prepare(&mut engine, &files);
         let before_use = engine.execution_state(boundary).unwrap();
-        files.insert("main.sanim", program(new_helper));
+        files.insert(
+            "main.sanim",
+            format!("{}\nAnimation()", program(new_helper)),
+        );
         let edited = prepare(&mut engine, &files);
         assert_eq!(
             edited.statistics.restored_statements, boundary as u64,
@@ -183,15 +189,21 @@ fn a_short_circuited_helper_lowered_for_later_playback_invalidates_its_checkpoin
     ] {
         let program = |helper| {
             format!(
-                "wait(1s)\n{helper}\nmut active=false\nmut input=3\nsig flag=active and gate(input)\nlet view=CodeView(code=r\"x=1\",lang=\"python\",line_numbers=flag)\nadd(view)\nwait(1s)\nactive=true\nwait(1s)\n"
+                "wait(1s)\n{helper}\nmut active=false\nmut input=3\nsig flag=active and gate(input)\nlet view=CodeView(code=r\"x=1\",lang=\"python\",line_numbers=flag)\nAnimation(children=[view])\nwait(1s)\nactive=true\nwait(1s)\n"
             )
         };
         let mut files = MemorySources::default();
-        files.insert("main.sanim", program(old_helper));
+        files.insert(
+            "main.sanim",
+            format!("{}\nAnimation()", program(old_helper)),
+        );
         let mut engine = Engine::default();
         let old = prepare(&mut engine, &files);
         let before_use = engine.execution_state(4).unwrap();
-        files.insert("main.sanim", program(new_helper));
+        files.insert(
+            "main.sanim",
+            format!("{}\nAnimation()", program(new_helper)),
+        );
         let edited = prepare(&mut engine, &files);
         let fresh = prepare(&mut Engine::default(), &files);
         assert_eq!(
@@ -277,17 +289,16 @@ fn changed_reflection_restores_before_its_binding_and_failure_keeps_valid_prefix
 #[test]
 fn restored_continuous_assertions_are_checked_against_the_new_suffix() {
     let mut files = MemorySources::default();
-    let prefix =
-        "let c=Circle(radius=2pt,id=\"c\")\nadd(c)\nassert(always(inside_canvas(c)))\nwait(1s)\n";
+    let prefix = "let c=Box(id=\"c\", width=2*(2pt), height=2*(2pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nAnimation(children=[c])\nassert(always(inside_canvas(c)))\nwait(1s)\n";
     files.insert(
         "main.sanim",
-        format!("{prefix}MoveTo(c, Vec2(1pt,0pt), duration=1s, ease=\"linear\")\n"),
+        format!("{prefix}c.move_to([1pt, 0pt], duration=1s, ease=\"linear\")\n\nAnimation()"),
     );
     let mut engine = Engine::default();
     prepare(&mut engine, &files);
     files.insert(
         "main.sanim",
-        format!("{prefix}MoveTo(c, Vec2(9999pt,0pt), duration=1s, ease=\"linear\")\n"),
+        format!("{prefix}c.move_to([9999pt, 0pt], duration=1s, ease=\"linear\")\n\nAnimation()"),
     );
     let error = engine
         .prepare("main.sanim", &files, &BTreeMap::new())
@@ -296,7 +307,7 @@ fn restored_continuous_assertions_are_checked_against_the_new_suffix() {
 }
 
 #[test]
-fn snapshots_share_large_data_geometry_and_unchanged_timeline_nodes() {
+fn snapshots_share_large_data_and_immutable_element_geometry() {
     let mut files = MemorySources::default();
     files.insert(
         "large.json",
@@ -308,7 +319,7 @@ fn snapshots_share_large_data_geometry_and_unchanged_timeline_nodes() {
                 .join(",")
         ),
     );
-    files.insert("main.sanim", "let large=read<List<Number>>(\"large.json\")\nlet c=Circle(id=\"c\")\nadd(c)\nwait(1s)\nwait(1s)\n");
+    files.insert("main.sanim", "let large=read<List<Number>>(\"large.json\")\nlet c=Box(id=\"c\", width=2*(32pt), height=2*(32pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nAnimation(children=[c])\nwait(1s)\nwait(1s)\n");
     let mut engine = Engine::default();
     let prepared = prepare(&mut engine, &files);
     let first = engine.execution_state(3).unwrap();
@@ -320,28 +331,25 @@ fn snapshots_share_large_data_geometry_and_unchanged_timeline_nodes() {
         panic!("list snapshots")
     };
     assert!(a.values.ptr_eq(&b.values));
-    assert!(first.animation.layers.ptr_eq(&last.animation.layers));
-    assert!(Arc::ptr_eq(
-        &first.animation.layers[0].element.geometry,
-        &last.animation.layers[0].element.geometry
-    ));
+    let (Value::Element(first_shape), Value::Element(last_shape)) =
+        (first.binding("c").unwrap(), last.binding("c").unwrap())
+    else {
+        panic!("element snapshots")
+    };
+    assert!(Arc::ptr_eq(first_shape, last_shape));
     let sampled = prepared.animation.sample(Fraction::from(1)).unwrap();
-    assert!(Arc::ptr_eq(
-        &sampled[0].geometry,
-        &first.animation.layers[0].element.geometry
-    ));
-    let mut fork = first.as_ref().clone();
-    fork.animation.layers[0].element.opacity = Fraction::from(0);
-    assert_eq!(first.animation.layers[0].element.opacity, Fraction::from(1));
-    assert_eq!(last.animation.layers[0].element.opacity, Fraction::from(1));
+    assert!(Arc::ptr_eq(&sampled[0].geometry, &first_shape.geometry));
+    let mut fork = first_shape.as_ref().clone();
+    fork.opacity = Fraction::from(0);
+    assert_eq!(first_shape.opacity, Fraction::from(1));
+    assert_eq!(last_shape.opacity, Fraction::from(1));
 }
 
 #[test]
 fn direct_frame_and_source_indexes_cover_changed_parameter_bytes_and_loop_calls() {
     let mut files = MemorySources::default();
-    let source =
-        "fn pause_step():Unit { wait(100ms) }\nwait(1s)\nrepeat 4 { pause_step() }\nwait(1s)\n";
-    files.insert("main.sanim", source);
+    let source = "fn pause_step():Animation { return wait(100ms) }\nwait(1s)\nrepeat 4 { pause_step() }\nwait(1s)\n";
+    files.insert("main.sanim", format!("{}\nAnimation()", source));
     let prepared = prepare(&mut Engine::default(), &files);
     let entry = prepared.time_map.at_frame(35).unwrap();
     assert_eq!(entry.statement, 1);
@@ -455,7 +463,7 @@ fn bounded_checkpoint_eviction_keeps_suffix_restoration_available() {
     assert!(Arc::ptr_eq(&prefix, &engine.execution_state(9).unwrap()));
     engine.clear_cache();
     assert!(engine.execution_state(9).is_none());
-    assert_eq!(prefix.cursor, Fraction::from(9));
+    assert_eq!(prefix.cursor, Fraction::from(0));
 }
 
 #[test]

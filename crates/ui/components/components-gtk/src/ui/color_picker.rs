@@ -1,24 +1,27 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
-use std::str::FromStr;
 
 use adw::prelude::*;
 use gtk::cairo;
 use gtk::gio;
 use gtk::gio::prelude::SettingsExt;
 use gtk::glib;
+use shrimply_components_core::color::picker::{
+    BAR_SIZE, CHECKER_DARK, CHECKER_LIGHT, CHECKER_SIZE, SELECTION_SIZE, THUMB_RADIUS, TRACK_SIZE,
+    alpha_stops, hue_stops, plane_stops,
+};
 use shrimply_components_core::color::{Hsva, PALETTE, RECENT_LIMIT, color_hex};
-use shrimply_math_color::Color;
+use shrimply_components_core::math::{ColorSelection, color_selection, color_selection_key};
+use shrimply_math_color::{Color, parse_css_color};
 
 use super::color_swatch::{ColorSwatch, SwatchShape};
 
-const WINDOW_WIDTH: i32 = 880;
+const WINDOW_WIDTH: i32 = 960;
 const WINDOW_HEIGHT: i32 = 480;
-const SELECTION_SIZE: i32 = 300;
-const BAR_SIZE: i32 = 24;
-const TRACK_SIZE: f64 = 16.0;
-const THUMB_RADIUS: f64 = 10.0;
-const CHECKER_SIZE: f64 = 8.0;
+const NARROW_WIDTH: i32 = 760;
+const SMALL_WIDTH: i32 = 430;
+const SMALL_SELECTION_SIZE: i32 = 200;
+const CONTENT_MARGIN: i32 = 24;
 
 const COLOR_CHOOSER_SETTINGS: &str = "org.gtk.gtk4.Settings.ColorChooser";
 const CUSTOM_COLORS_KEY: &str = "custom-colors";
@@ -315,15 +318,81 @@ fn show_window(
     main.set_hexpand(true);
     main.set_vexpand(true);
     main.append(&selection);
-    main.append(&gtk::Separator::new(gtk::Orientation::Vertical));
+    let separator = gtk::Separator::new(gtk::Orientation::Vertical);
+    main.append(&separator);
     main.append(&palette_column);
 
     let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
     content.set_margin_top(18);
     content.set_margin_bottom(18);
-    content.set_margin_start(24);
-    content.set_margin_end(24);
+    content.set_margin_start(CONTENT_MARGIN);
+    content.set_margin_end(CONTENT_MARGIN);
     content.append(&main);
+    let scroller = gtk::ScrolledWindow::builder()
+        .hscrollbar_policy(gtk::PolicyType::Never)
+        .child(&content)
+        .build();
+    let adaptive = adw::BreakpointBin::builder()
+        .child(&scroller)
+        .width_request(SMALL_SELECTION_SIZE + BAR_SIZE + 10 + CONTENT_MARGIN * 2)
+        .height_request(BAR_SIZE)
+        .vexpand(true)
+        .build();
+    let narrow = adw::Breakpoint::new(
+        adw::BreakpointCondition::parse(&format!(
+            "min-width: {}px and max-width: {NARROW_WIDTH}px",
+            SMALL_WIDTH + 1
+        ))
+        .expect("valid color picker breakpoint"),
+    );
+    narrow.add_setter(
+        &main,
+        "orientation",
+        Some(&gtk::Orientation::Vertical.to_value()),
+    );
+    narrow.add_setter(
+        &separator,
+        "orientation",
+        Some(&gtk::Orientation::Horizontal.to_value()),
+    );
+    adaptive.add_breakpoint(narrow);
+    let small = adw::Breakpoint::new(
+        adw::BreakpointCondition::parse(&format!("max-width: {SMALL_WIDTH}px"))
+            .expect("valid small color picker breakpoint"),
+    );
+    small.add_setter(
+        &main,
+        "orientation",
+        Some(&gtk::Orientation::Vertical.to_value()),
+    );
+    small.add_setter(
+        &separator,
+        "orientation",
+        Some(&gtk::Orientation::Horizontal.to_value()),
+    );
+    small.add_setter(
+        &plane,
+        "content-width",
+        Some(&SMALL_SELECTION_SIZE.to_value()),
+    );
+    small.add_setter(
+        &plane,
+        "content-height",
+        Some(&SMALL_SELECTION_SIZE.to_value()),
+    );
+    small.add_setter(
+        &hue,
+        "content-height",
+        Some(&SMALL_SELECTION_SIZE.to_value()),
+    );
+    if let Some(alpha) = selection.child_at(1, 2) {
+        small.add_setter(
+            &alpha,
+            "content-width",
+            Some(&SMALL_SELECTION_SIZE.to_value()),
+        );
+    }
+    adaptive.add_breakpoint(small);
 
     let confirm = gtk::Button::builder()
         .icon_name("object-select-symbolic")
@@ -352,7 +421,7 @@ fn show_window(
     header.pack_start(&picker);
     let toolbar = adw::ToolbarView::new();
     toolbar.add_top_bar(&header);
-    toolbar.set_content(Some(&content));
+    toolbar.set_content(Some(&adaptive));
     window.set_content(Some(&toolbar));
     window.present();
 }
@@ -370,15 +439,23 @@ fn color_plane(color: Rc<Cell<Hsva>>, update: Rc<dyn Fn(Hsva)>) -> gtk::DrawingA
         let color = color.clone();
         move |_, context, width, height| {
             let value = color.get();
-            for row in 0..height {
-                let saturation = 1.0 - unit(f64::from(row), f64::from(height));
-                let edge = Color::<u8>::from_hsv(value.hue, saturation, 1.0);
-                let gradient = cairo::LinearGradient::new(0.0, 0.0, f64::from(width), 0.0);
-                gradient.add_color_stop_rgb(0.0, 0.0, 0.0, 0.0);
-                gradient.add_color_stop_rgb(1.0, channel(edge.r), channel(edge.g), channel(edge.b));
+            for (axis, colors) in plane_stops(value.hue).into_iter().enumerate() {
+                let gradient = if axis == 0 {
+                    cairo::LinearGradient::new(0.0, 0.0, 0.0, f64::from((height - 1).max(1)))
+                } else {
+                    cairo::LinearGradient::new(0.0, 0.0, f64::from((width - 1).max(1)), 0.0)
+                };
+                for (index, color) in colors.into_iter().enumerate() {
+                    gradient.add_color_stop_rgba(
+                        index as f64,
+                        channel(color.r),
+                        channel(color.g),
+                        channel(color.b),
+                        channel(color.a),
+                    );
+                }
                 context.set_source(&gradient).expect("set SV gradient");
-                context.rectangle(0.0, f64::from(row), f64::from(width), 1.0);
-                context.fill().expect("draw SV gradient");
+                context.paint().expect("draw SV gradient");
             }
             draw_crosshair(
                 context,
@@ -390,11 +467,13 @@ fn color_plane(color: Rc<Cell<Hsva>>, update: Rc<dyn Fn(Hsva)>) -> gtk::DrawingA
         }
     });
     area.set_cursor_from_name(Some("crosshair"));
+    connect_keys(&area, color.clone(), update.clone(), ColorSelection::Plane);
     connect_drag(&area, move |x, y, width, height| {
-        let mut value = color.get();
-        value.value = unit(x, width - 1.0);
-        value.saturation = 1.0 - unit(y, height - 1.0);
-        update(value);
+        update(color_selection(
+            color.get(),
+            ColorSelection::Plane,
+            [unit(x, width - 1.0), unit(y, height - 1.0)],
+        ));
     });
     area
 }
@@ -413,10 +492,9 @@ fn hue_bar(color: Rc<Cell<Hsva>>, update: Rc<dyn Fn(Hsva)>) -> gtk::DrawingArea 
             let start = THUMB_RADIUS;
             let end = f64::from(height) - THUMB_RADIUS;
             let gradient = cairo::LinearGradient::new(0.0, start, 0.0, end);
-            for step in 0..=6 {
-                let color = Color::<u8>::from_hsv(step as f32 * 60.0, 1.0, 1.0);
+            for (position, color) in hue_stops() {
                 gradient.add_color_stop_rgb(
-                    f64::from(step) / 6.0,
+                    position,
                     channel(color.r),
                     channel(color.g),
                     channel(color.b),
@@ -441,10 +519,13 @@ fn hue_bar(color: Rc<Cell<Hsva>>, update: Rc<dyn Fn(Hsva)>) -> gtk::DrawingArea 
             );
         }
     });
+    connect_keys(&area, color.clone(), update.clone(), ColorSelection::Hue);
     connect_drag(&area, move |_, y, _, height| {
-        let mut value = color.get();
-        value.hue = unit(y - THUMB_RADIUS, height - THUMB_RADIUS * 2.0) * 360.0;
-        update(value);
+        update(color_selection(
+            color.get(),
+            ColorSelection::Hue,
+            [unit(y - THUMB_RADIUS, height - THUMB_RADIUS * 2.0), 0.0],
+        ));
     });
     area
 }
@@ -472,16 +553,16 @@ fn alpha_bar(color: Rc<Cell<Hsva>>, update: Rc<dyn Fn(Hsva)>) -> gtk::DrawingAre
             );
             context.clip();
             draw_checkerboard(context, width, height);
-            let value = color.get().color();
             let gradient = cairo::LinearGradient::new(start, 0.0, end, 0.0);
-            gradient.add_color_stop_rgba(
-                0.0,
-                channel(value.r),
-                channel(value.g),
-                channel(value.b),
-                0.0,
-            );
-            gradient.add_color_stop_rgb(1.0, channel(value.r), channel(value.g), channel(value.b));
+            for (index, color) in alpha_stops(color.get().color()).into_iter().enumerate() {
+                gradient.add_color_stop_rgba(
+                    index as f64,
+                    channel(color.r),
+                    channel(color.g),
+                    channel(color.b),
+                    channel(color.a),
+                );
+            }
             context.set_source(&gradient).expect("set alpha gradient");
             context.paint().expect("draw alpha gradient");
             context.restore().expect("restore alpha clip");
@@ -492,12 +573,38 @@ fn alpha_bar(color: Rc<Cell<Hsva>>, update: Rc<dyn Fn(Hsva)>) -> gtk::DrawingAre
             );
         }
     });
+    connect_keys(&area, color.clone(), update.clone(), ColorSelection::Alpha);
     connect_drag(&area, move |x, _, width, _| {
-        let mut value = color.get();
-        value.alpha = unit(x - THUMB_RADIUS, width - THUMB_RADIUS * 2.0);
-        update(value);
+        update(color_selection(
+            color.get(),
+            ColorSelection::Alpha,
+            [unit(x - THUMB_RADIUS, width - THUMB_RADIUS * 2.0), 0.0],
+        ));
     });
     area
+}
+
+fn connect_keys(
+    area: &gtk::DrawingArea,
+    color: Rc<Cell<Hsva>>,
+    update: Rc<dyn Fn(Hsva)>,
+    control: ColorSelection,
+) {
+    let keys = gtk::EventControllerKey::new();
+    keys.connect_key_pressed(move |_, key, _, _| {
+        let key = match key {
+            gtk::gdk::Key::Left => "left",
+            gtk::gdk::Key::Right => "right",
+            gtk::gdk::Key::Up => "up",
+            gtk::gdk::Key::Down => "down",
+            _ => return glib::Propagation::Proceed,
+        };
+        if let Some(value) = color_selection_key(color.get(), control, key) {
+            update(value);
+        }
+        glib::Propagation::Stop
+    });
+    area.add_controller(keys);
 }
 
 fn connect_drag(area: &gtk::DrawingArea, update: impl Fn(f64, f64, f64, f64) + 'static) {
@@ -532,27 +639,33 @@ fn palette_grid(
     selected: Color<u8>,
     update: Rc<dyn Fn(Color<u8>)>,
     swatches: Rc<RefCell<Vec<ColorSwatch>>>,
-) -> gtk::Grid {
-    let grid = gtk::Grid::builder()
-        .row_spacing(2)
+) -> gtk::FlowBox {
+    let grid = gtk::FlowBox::builder()
+        .selection_mode(gtk::SelectionMode::None)
+        .min_children_per_line(1)
+        .max_children_per_line((PALETTE.len() / 5) as u32)
+        .row_spacing(4)
         .column_spacing(4)
-        .halign(gtk::Align::Start)
+        .halign(gtk::Align::Fill)
         .valign(gtk::Align::Start)
         .build();
-    for (index, &(name, color)) in PALETTE.iter().enumerate() {
-        let position = index % 5;
-        let shape = match position {
-            0 => SwatchShape::PaletteTop,
-            4 => SwatchShape::PaletteBottom,
-            _ => SwatchShape::PaletteMiddle,
-        };
-        let sample = ColorSwatch::new(color, shape, selected == color, {
-            let update = update.clone();
-            move || update(color)
-        });
-        sample.set_tooltip_text(Some(crate::i18n::text(name).as_ref()));
-        swatches.borrow_mut().push(sample.clone());
-        grid.attach(&sample, (index / 5) as i32, (index % 5) as i32, 1, 1);
+    for colors in PALETTE.chunks(5) {
+        let column = gtk::Box::new(gtk::Orientation::Vertical, 2);
+        for (position, &(name, color)) in colors.iter().enumerate() {
+            let shape = match position {
+                0 => SwatchShape::PaletteTop,
+                4 => SwatchShape::PaletteBottom,
+                _ => SwatchShape::PaletteMiddle,
+            };
+            let sample = ColorSwatch::new(color, shape, selected == color, {
+                let update = update.clone();
+                move || update(color)
+            });
+            sample.set_tooltip_text(Some(crate::i18n::text(name).as_ref()));
+            swatches.borrow_mut().push(sample.clone());
+            column.append(&sample);
+        }
+        grid.insert(&column, -1);
     }
     grid
 }
@@ -562,16 +675,21 @@ fn recent_row(
     update: Rc<dyn Fn(Color<u8>)>,
     swatches: Rc<RefCell<Vec<ColorSwatch>>>,
 ) -> gtk::Box {
-    let row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    let row = gtk::FlowBox::builder()
+        .selection_mode(gtk::SelectionMode::None)
+        .min_children_per_line(1)
+        .max_children_per_line(RECENT_LIMIT as u32)
+        .row_spacing(6)
+        .column_spacing(6)
+        .build();
     for color in RECENT_COLORS.with(|colors| colors.borrow().clone()) {
         let sample = ColorSwatch::new(color, SwatchShape::Rounded, selected == color, {
             let update = update.clone();
             move || update(color)
         });
         swatches.borrow_mut().push(sample.clone());
-        row.append(&sample);
+        row.insert(&sample, -1);
     }
-    row.append(&gtk::Box::builder().hexpand(true).build());
     let section = gtk::Box::new(gtk::Orientation::Vertical, 6);
     section.append(
         &gtk::Label::builder()
@@ -652,16 +770,15 @@ fn connect_hex_entry(
             if updating.get() {
                 return;
             }
-            match gtk::gdk::RGBA::from_str(entry.text().trim()) {
-                Ok(rgba) => {
-                    let mut color: Color<u8> = rgba.into();
+            match parse_css_color(entry.text().trim()) {
+                Some(mut color) => {
                     if !with_alpha {
                         color.a = u8::MAX;
                     }
                     entry.remove_css_class("error");
                     update(color);
                 }
-                Err(_) => entry.add_css_class("error"),
+                None => entry.add_css_class("error"),
             }
         })
     };
@@ -716,9 +833,9 @@ fn load_recent_colors() -> Vec<Color<u8>> {
 }
 
 fn draw_checkerboard(context: &cairo::Context, width: i32, height: i32) {
-    context.set_source_rgb(0.72, 0.72, 0.72);
+    context.set_source_rgb(CHECKER_DARK, CHECKER_DARK, CHECKER_DARK);
     context.paint().expect("draw checkerboard base");
-    context.set_source_rgb(0.9, 0.9, 0.9);
+    context.set_source_rgb(CHECKER_LIGHT, CHECKER_LIGHT, CHECKER_LIGHT);
     let columns = (f64::from(width) / CHECKER_SIZE).ceil() as i32;
     let rows = (f64::from(height) / CHECKER_SIZE).ceil() as i32;
     for row in 0..rows {

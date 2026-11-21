@@ -22,6 +22,30 @@ pub struct Entry {
     pub kind: Kind,
 }
 
+pub struct EntryPresentation {
+    pub title: String,
+    pub body: String,
+    pub close_label: String,
+}
+
+impl Entry {
+    pub fn presentation(&self) -> EntryPresentation {
+        let scope = shrimply_i18n::text(match self.kind {
+            Kind::File => "File trust includes future edits and replacements.",
+            Kind::Folder => "Folder trust includes all current and future files and subfolders.",
+        });
+        EntryPresentation {
+            title: shrimply_i18n::text("Trusted source").into_owned(),
+            body: format!(
+                "{}\n\n{scope}\n\n{}",
+                self.path.display(),
+                shrimply_i18n::text("Removing trust stops affected workers.")
+            ),
+            close_label: shrimply_i18n::text("Close").into_owned(),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct Review {
     pub files: Vec<PathBuf>,

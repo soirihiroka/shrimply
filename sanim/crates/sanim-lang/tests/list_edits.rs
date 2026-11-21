@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 fn prepare(source: &str) -> sanim_lang::Prepared {
     let mut files = MemorySources::default();
-    files.insert("main.sanim", source);
+    files.insert("main.sanim", format!("{}\nAnimation()", source));
     Engine::default()
         .prepare("main.sanim", &files, &BTreeMap::new())
         .unwrap()
@@ -89,7 +89,7 @@ fn invalid_list_edits_have_specific_type_and_bounds_messages() {
         ("let bad=popleft(3)", "items must be List<T>"),
     ] {
         let mut files = MemorySources::default();
-        files.insert("main.sanim", source);
+        files.insert("main.sanim", format!("{}\nAnimation()", source));
         let error = Engine::default()
             .prepare("main.sanim", &files, &BTreeMap::new())
             .unwrap_err();
@@ -98,19 +98,68 @@ fn invalid_list_edits_have_specific_type_and_bounds_messages() {
 }
 
 #[test]
-fn list_edits_consume_the_shared_optional_timeline_duration() {
+fn immutable_list_snapshots_feed_sequential_native_transitions() {
     let prepared = prepare(
-        "mut items:List<Number>=[]\nitems=append(items,1,duration=400ms)\nitems=insert(items,0,2,duration=100ms)\nitems=pop(items,1,duration=500ms)\nassert(items==[2])\n",
+        "mut items:List<Number>=[]\nlet first=append(items,1)\nlet second=insert(first,0,2)\nlet final=pop(second,1)\nassert(items==[] and final==[2])\nreturn Animation(children=[animate(items,to=first,duration=400ms),animate(items,to=second,duration=100ms),animate(items,to=final,duration=500ms)],flow=\"sequence\")",
     );
     assert_eq!(prepared.animation.duration, Fraction::from(1));
+    let sanim_core::plan::Node::Container(plans) = prepared.plan.node.as_ref() else {
+        panic!("sequence plan")
+    };
+    let sanim_core::plan::Node::Cell { cell, .. } = plans[0].node.as_ref() else {
+        panic!("native list cell")
+    };
+    assert_eq!(
+        prepared
+            .animation
+            .reactive
+            .sample_cell(*cell, 1.into())
+            .unwrap(),
+        prepared.bindings["final"]
+    );
+    assert_eq!(
+        prepared
+            .animation
+            .reactive
+            .sample_cell(*cell, Fraction::new(9u64, 20u64))
+            .unwrap(),
+        prepared.bindings["first"]
+    );
 }
 
 #[test]
-fn stack_and_queue_pops_share_timing_and_commit_at_the_end() {
+fn stack_and_queue_pops_share_parallel_native_commit_time() {
     let prepared = prepare(
-        "mut stack=[1,2,3]\nmut queue=[1,2,3]\nbackground{stack=pop(stack,duration=500ms)}\nbackground{queue=popleft(queue,duration=500ms)}\nlet before_stack=stack\nlet before_queue=queue\nwait(500ms)\nassert(before_stack==[1,2,3] and before_queue==[1,2,3])\nassert(stack==[1,2] and queue==[2,3])",
+        "mut stack=[1,2,3]\nmut queue=[1,2,3]\nlet after_stack=pop(stack)\nlet after_queue=popleft(queue)\nreturn Animation(children=[animate(stack,to=after_stack,duration=500ms),animate(queue,to=after_queue,duration=500ms)])",
     );
     assert_eq!(prepared.animation.duration, Fraction::new(1u64, 2u64));
+    let sanim_core::plan::Node::Container(plans) = prepared.plan.node.as_ref() else {
+        panic!("parallel plan")
+    };
+    for (plan, before, after) in [
+        (&plans[0], "stack", "after_stack"),
+        (&plans[1], "queue", "after_queue"),
+    ] {
+        let sanim_core::plan::Node::Cell { cell, .. } = plan.node.as_ref() else {
+            panic!("native list cell")
+        };
+        assert_eq!(
+            prepared
+                .animation
+                .reactive
+                .sample_cell(*cell, 0.into())
+                .unwrap(),
+            prepared.bindings[before]
+        );
+        assert_eq!(
+            prepared
+                .animation
+                .reactive
+                .sample_cell(*cell, Fraction::new(1u64, 2u64))
+                .unwrap(),
+            prepared.bindings[after]
+        );
+    }
 }
 
 #[test]
@@ -149,7 +198,7 @@ fn repeated_edits_charge_shared_storage_instead_of_the_full_list_each_time() {
 #[test]
 fn nested_argument_writes_do_not_confuse_the_native_edit_receipt() {
     let prepared = prepare(
-        "mut items=[1,2]\nfn update():Number{items=append(items,3);return 9}\nitems=append(items,update())\nassert(items==[1,2,9])\nlet saved=items\nfn helper():List<Number>{return append(items,10)}\nitems=helper()\nassert(saved==[1,2,9])\nassert(items==[1,2,9,10])\n",
+        "mut items=[1,2]\nfn<mut, ref> update():Number{items=append(items,3);return 9}\nitems=append(items,update())\nassert(items==[1,2,9])\nlet saved=items\nfn<ref> helper():List<Number>{return append(items,10)}\nitems=helper()\nassert(saved==[1,2,9])\nassert(items==[1,2,9,10])\n",
     );
     assert_eq!(prepared.bindings["items"].list().unwrap().len(), 4);
 }

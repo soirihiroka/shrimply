@@ -30,7 +30,7 @@ pub(crate) fn register(output: &mut Vec<Builtin>, common: Vec<Parameter>) {
                 .map(|(name, ty, required)| p(name, ty, required))
                 .collect(),
             result,
-            schedule: false,
+            state_effect: false,
             timing: Default::default(),
             content: Default::default(),
             execute: Execution::Native(execute),
@@ -59,7 +59,7 @@ pub(crate) fn register(output: &mut Vec<Builtin>, common: Vec<Parameter>) {
         name: "CodeView",
         parameters,
         result: Type::Element,
-        schedule: false,
+        state_effect: false,
         timing: Default::default(),
         content: crate::prelude::MarkupContent::Literal {
             parameter: "code",
@@ -108,7 +108,7 @@ fn check_edit(builtin: &Builtin, actuals: &[Type]) -> Result<Type, String> {
     Ok(builtin.result.clone())
 }
 
-fn methods() -> &'static [Builtin] {
+pub(crate) fn methods() -> &'static [Builtin] {
     static METHODS: std::sync::OnceLock<Vec<Builtin>> = std::sync::OnceLock::new();
     METHODS.get_or_init(|| {
         let p = |name, ty, required| Parameter { name, ty, required };
@@ -207,11 +207,17 @@ fn methods() -> &'static [Builtin] {
                 p("view", Type::Element, true)
             }];
             parameters.extend(arguments);
+            if schedule {
+                parameters.extend([
+                    p("duration", crate::animation_plan::duration_type(), false),
+                    p("ease", Type::String, false),
+                ]);
+            }
             let mut builtin = Builtin {
                 name,
                 parameters,
-                result,
-                schedule,
+                result: if schedule { Type::Animation } else { result },
+                state_effect: false,
                 timing: crate::timing::Timing {
                     default: if schedule {
                         Fraction::new(3u64, 10u64)
@@ -223,10 +229,8 @@ fn methods() -> &'static [Builtin] {
                 content: Default::default(),
                 execute: if matches!(name, "CodeView.patch" | "CodeRange.edit") {
                     Execution::Source(execute)
-                } else if schedule {
-                    Execution::Native(execute)
                 } else {
-                    Execution::Access(execute)
+                    Execution::Native(execute)
                 },
                 check: if matches!(name, "CodeView.range" | "CodeView.ranges") {
                     check_query
@@ -241,9 +245,6 @@ fn methods() -> &'static [Builtin] {
         }
         methods
     })
-}
-pub(crate) fn builtin(name: &str) -> Option<&'static Builtin> {
-    methods().iter().find(|method| method.name == name)
 }
 pub(crate) fn methods_for(receiver: &Type) -> impl Iterator<Item = &'static Builtin> {
     methods().iter().filter(move |method| {
@@ -333,6 +334,25 @@ fn sample_document(
 }
 
 fn execute(
+    name: &str,
+    args: &imbl::OrdMap<String, Value>,
+    context: Context<'_>,
+) -> Result<Value, String> {
+    let builtin = crate::prelude::builtin(name).expect("registered code operation");
+    if builtin.result == Type::Animation {
+        let easing = crate::timing::easing(args.get("ease"))?;
+        return crate::animation_plan::sized_effect(
+            name,
+            args.clone(),
+            builtin.timing.default,
+            easing,
+            Default::default(),
+        );
+    }
+    execute_effect(name, args, context)
+}
+
+pub(crate) fn execute_effect(
     name: &str,
     args: &imbl::OrdMap<String, Value>,
     mut context: Context<'_>,
@@ -471,7 +491,7 @@ fn execute(
             Ok(Value::Element(root))
         }
         "CodeView.range" | "CodeView.ranges" => {
-            selectors::query(args, context, name == "CodeView.ranges")
+            selectors::query(args, &mut context, name == "CodeView.ranges")
         }
         _ => edits::execute(name, args, context),
     }

@@ -3,8 +3,12 @@ name = "shrimply-export-cuda"
 version = "0.1.0"
 edition = "2024"
 
+[target.'cfg(not(target_os = "macos"))'.dev-dependencies]
+shrimply-media-info.workspace = true
+
 [target.'cfg(not(target_os = "macos"))'.dependencies]
 ffmpeg-next.workspace = true
+serde_json.workspace = true
 shrimply-export-core = { workspace = true, default-features = true }
 shrimply-gpu-cuda.workspace = true
 shrimply-math-core = { workspace = true }
@@ -16,14 +20,14 @@ shrimply-visual-cuda = { workspace = true }
 shrimply-preview-render-core.workspace = true
 shrimply-preview-render-vulkan.workspace = true
 shrimply-render-core.workspace = true
-shrimply-render-vulkan.workspace = true
+shrimply-render-vulkan = { workspace = true, default-features = true }
 shrimply-visual-frame.workspace = true
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
+shrimply-video-decoder.workspace = true
 skia-safe.workspace = true
 shrimply-visual-modifiers.workspace = true
 shrimply-scene-3d.workspace = true
-serde_json.workspace = true
 shrimply-property-model.workspace = true
 shrimply-blender-core.workspace = true
 shrimply-visual-core.workspace = true

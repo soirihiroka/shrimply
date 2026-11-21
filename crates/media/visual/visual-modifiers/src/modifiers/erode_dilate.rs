@@ -1,6 +1,7 @@
 use hashbrown::HashSet;
 
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "preview")]
 use shrimply_preview_provider_skia::{
     Color, Cursor, CursorUpdate, PointerEvent, PreviewBuilder, PreviewContext, PreviewEditOutcome,
     PreviewEditSink, PreviewProvider, PreviewRefresh, PreviewResponse, PreviewTarget,
@@ -18,7 +19,9 @@ pub enum ErodeDilateOperation {
     Dilate,
 }
 
+#[cfg(feature = "preview")]
 const RADIUS_COLOR: Color = Color::new(0.35, 0.82, 1.0, 1.0);
+#[cfg(feature = "preview")]
 struct ErodeDilatePreview {
     target: PreviewTarget,
     original: ErodeDilateModifier,
@@ -28,7 +31,9 @@ struct ErodeDilatePreview {
     active: bool,
     changed: bool,
 }
+#[cfg(feature = "preview")]
 impl ErodeDilateModifier {
+    #[cfg(feature = "preview")]
     pub(crate) fn preview_provider(
         &self,
         target: PreviewTarget,
@@ -49,6 +54,7 @@ impl ErodeDilateModifier {
         }))
     }
 }
+#[cfg(feature = "preview")]
 impl ErodeDilatePreview {
     fn points(&self) -> (glam::Vec2, glam::Vec2) {
         let center = self.size * 0.5;
@@ -59,6 +65,7 @@ impl ErodeDilatePreview {
         )
     }
 }
+#[cfg(feature = "preview")]
 impl PreviewProvider for ErodeDilatePreview {
     fn on_draw(
         &mut self,
@@ -129,6 +136,7 @@ impl PreviewProvider for ErodeDilatePreview {
         }
     }
 }
+#[cfg(feature = "preview")]
 fn scalar_edit(changed: bool, commit: bool) -> PreviewResponse {
     if !changed {
         return PreviewResponse::handled();

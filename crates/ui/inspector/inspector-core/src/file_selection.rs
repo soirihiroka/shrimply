@@ -11,17 +11,29 @@ pub struct FileSelection {
 impl InspectorControlAction {
     pub fn file_selection(self) -> Option<FileSelection> {
         Some(match self {
+            Self::SelectVideoGenerationMedia { .. } => FileSelection {
+                title: "Select generation media",
+                extensions: &[
+                    "png", "jpg", "jpeg", "webp", "bmp", "tif", "tiff", "mp4", "mov", "mkv",
+                    "webm", "wav", "mp3", "flac", "ogg", "opus", "m4a", "aac",
+                ],
+            },
             Self::SelectObject3dModel { .. } => FileSelection {
                 title: "Select 3D model",
                 extensions: &["obj", "glb"],
             },
             Self::SelectScene3dEnvironment => FileSelection {
                 title: "Select environment image",
-                extensions: &["png", "jpg", "jpeg", "webp", "avif", "hdr", "exr"],
+                extensions: &[
+                    "png", "jpg", "jpeg", "webp", "avif", "heic", "heif", "jxl", "hdr", "exr",
+                ],
             },
             Self::SelectPaintTexture { .. } => FileSelection {
                 title: "Select paint texture",
-                extensions: &["png", "jpg", "jpeg", "webp", "gif", "bmp", "tif", "tiff"],
+                extensions: &[
+                    "png", "jpg", "jpeg", "webp", "avif", "heic", "heif", "jxl", "gif", "bmp",
+                    "tif", "tiff",
+                ],
             },
             _ => return None,
         })
@@ -36,6 +48,9 @@ impl InspectorController {
         path: &Path,
     ) -> Result<(), String> {
         match action {
+            InspectorControlAction::SelectVideoGenerationMedia { model, input } => {
+                self.add_video_generation_media(target, model, input, path)
+            }
             InspectorControlAction::SelectObject3dModel { modifier_id } => {
                 self.set_object_3d_model(target, modifier_id, path)
             }

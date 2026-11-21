@@ -3,7 +3,7 @@ use sanim_lang::{Engine, MemorySources, Prepared};
 use std::collections::BTreeMap;
 fn run(source: &str) -> Result<Prepared, sanim_core::Diagnostic> {
     let mut files = MemorySources::default();
-    files.insert("main.sanim", source);
+    files.insert("main.sanim", format!("{}\nAnimation()", source));
     files.insert("value.json", "12");
     Engine::default().prepare("main.sanim", &files, &BTreeMap::new())
 }
@@ -36,7 +36,7 @@ fn structural_constraints_expose_only_guaranteed_fields() {
 }
 #[test]
 fn generic_reads_use_call_specific_schemas_and_track_dependencies() {
-    let p=run("fn load<T:Readable=Data>(path:String):T{return read<T>(path)}\nlet raw=load(\"value.json\")\nlet number_value=load<Number>(\"value.json\")\n").unwrap();
+    let p=run("fn<ref> load<T:Readable=Data>(path:String):T{return read<T>(path)}\nlet raw=load(\"value.json\")\nlet number_value=load<Number>(\"value.json\")\n").unwrap();
     assert_eq!(p.bindings["raw"], Value::Data(serde_json::json!(12).into()));
     assert_eq!(
         p.bindings["number_value"].number().unwrap().value,

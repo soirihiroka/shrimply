@@ -1,5 +1,5 @@
 //! One operator contract used by both the type checker and preparation evaluator.
-use super::{float_arithmetic as calc, linear, to_f64};
+use super::linear;
 use crate::{Fraction, Number, Type, Unit, Value};
 
 pub fn scalar_unit(ty: &Type) -> Option<Unit> {
@@ -17,6 +17,9 @@ pub fn scalar_unit(ty: &Type) -> Option<Unit> {
 }
 
 pub fn binary_type(op: &str, a: &Type, b: &Type) -> Result<Type, String> {
+    if op == "concat" {
+        return a.concatenate(b);
+    }
     if let Type::Signal(inner) = a {
         return binary_type(op, inner, b);
     }
@@ -101,52 +104,42 @@ pub fn binary_type(op: &str, a: &Type, b: &Type) -> Result<Type, String> {
     if op == "+" && Type::String.accepts(a) && Type::String.accepts(b) {
         return Ok(Type::String);
     }
-    if op == "+"
-        && let (Type::List(x, lx), Type::List(y, ly)) = (a, b)
+    if op == "*"
+        && matches!(b, Type::List(..))
+        && let Some(result) = linear::matrix::product_type(a, b)
     {
-        let element = if **x == Type::Unknown {
-            y.as_ref().clone()
-        } else if **y == Type::Unknown || x.accepts(y) {
-            x.as_ref().clone()
-        } else {
-            x.join_list_lengths(y).ok_or_else(|| {
-                format!("List concatenation requires compatible element types, found {x} and {y}")
-            })?
-        };
-        let length = lx.checked_add(*ly)?;
-        return Ok(Type::List(Box::new(element), length));
+        return result;
     }
-    if matches!(op, "+" | "-")
-        && let (Type::Vector(n, x), Type::Vector(m, y)) = (a, b)
-        && n == m
-        && x.is_some()
-        && x == y
+    if let (Type::List(x, lx), Type::List(y, ly)) = (a, b)
+        && matches!(op, "+" | "-" | "*" | "/" | "%" | "**")
     {
-        return Ok(a.clone());
+        let length = match (*lx, *ly) {
+            (crate::ListLength::Exact(x), crate::ListLength::Exact(y)) if x != y => {
+                return Err(format!(
+                    "pointwise List arithmetic requires matching lengths, found {x} and {y}; use concat(a,b) to concatenate"
+                ));
+            }
+            (crate::ListLength::Exact(length), _) | (_, crate::ListLength::Exact(length)) => {
+                crate::ListLength::Exact(length)
+            }
+            _ => crate::ListLength::Unknown,
+        };
+        if unary_type("+", x).is_err() || unary_type("+", y).is_err() {
+            return Err("List arithmetic requires numeric elements; concatenate lists explicitly with concat(a,b)".into());
+        }
+        return Ok(Type::List(Box::new(binary_type(op, x, y)?), length));
     }
     if matches!(op, "*" | "/")
-        && let Type::Vector(..) = a
-        && scalar_unit(b) == Some(Unit::Number)
+        && let Type::List(inner, length) = a
+        && scalar_unit(b).is_some()
     {
-        return Ok(a.clone());
+        return Ok(Type::List(Box::new(binary_type(op, inner, b)?), *length));
     }
     if op == "*"
-        && let Type::Vector(..) = b
-        && scalar_unit(a) == Some(Unit::Number)
+        && let Type::List(inner, length) = b
+        && scalar_unit(a).is_some()
     {
-        return Ok(b.clone());
-    }
-    if *a == Type::Matrix4 && *b == Type::Matrix4 && matches!(op, "+" | "-" | "*") {
-        return Ok(Type::Matrix4);
-    }
-    if *a == Type::Matrix4 && op == "*" && matches!(b, Type::Vector(4, Some(Unit::Number))) {
-        return Ok(b.clone());
-    }
-    if *a == Type::Matrix4 && matches!(op, "*" | "/") && scalar_unit(b) == Some(Unit::Number) {
-        return Ok(Type::Matrix4);
-    }
-    if *b == Type::Matrix4 && op == "*" && scalar_unit(a) == Some(Unit::Number) {
-        return Ok(Type::Matrix4);
+        return Ok(Type::List(Box::new(binary_type(op, a, inner)?), *length));
     }
     Err(format!(
         "operator '{op}' requires compatible operands; found {a} and {b}"
@@ -164,7 +157,8 @@ pub fn unary_type(op: &str, ty: &Type) -> Result<Type, String> {
         return Ok(Type::Bool);
     }
     if matches!(op, "+" | "-")
-        && (scalar_unit(ty).is_some() || matches!(ty, Type::Vector(..) | Type::Matrix4))
+        && (scalar_unit(ty).is_some()
+            || matches!(ty, Type::List(inner,_) if unary_type(op,inner).is_ok()))
     {
         if matches!(ty,Type::BoundedVariable(_,bound) if matches!(bound.as_ref(),crate::TypeBound::Type(ty) if matches!(ty.as_ref(),Type::RefinedNumeric(_))))
         {
@@ -177,6 +171,26 @@ pub fn unary_type(op: &str, ty: &Type) -> Result<Type, String> {
         });
     }
     Err(format!("operator '{op}' is not defined for {ty}"))
+}
+
+fn map_list(
+    list: crate::List,
+    inner: Box<Type>,
+    mut apply: impl FnMut(usize, &Value) -> Result<Value, String>,
+) -> Result<Value, String> {
+    let mut values = list.values.clone();
+    for (index, original) in list.values.iter().enumerate() {
+        let value = apply(index, original)?;
+        if value != *original {
+            values.set(index, value);
+        }
+    }
+    let inner = if inner.as_ref() == list.element_type.as_ref() {
+        list.element_type.clone()
+    } else {
+        inner.into()
+    };
+    Ok(Value::List(crate::List::from_values(inner, values)))
 }
 
 pub fn unary(op: &str, value: Value) -> Result<Value, String> {
@@ -196,21 +210,65 @@ pub fn unary(op: &str, value: Value) -> Result<Value, String> {
             Ok(Value::Number(n))
         }
         Value::Fraction(v) => Ok(Value::Fraction(-v)),
-        Value::Matrix4(mut m) => {
-            for row in m.iter_mut() {
-                for value in row {
-                    *value = -*value;
-                }
-            }
-            Ok(Value::Matrix4(m))
+        Value::List(list) => {
+            let Type::List(inner, _) = unary_type(op, &Value::List(list.clone()).ty())? else {
+                unreachable!("numeric List")
+            };
+            map_list(list, inner, |_, value| unary(op, value.clone()))
         }
-        vector => {
-            let (v, unit) = vector.vector()?;
-            Value::from_vector(v.iter().map(|n| -*n).collect(), unit)
-        }
+        _ => Err("unsupported unary operand".into()),
     }
 }
 
+fn identity_list<'a>(op: &str, a: &'a Value, b: &'a Value) -> Option<&'a Value> {
+    let (list, value) = match (a, b) {
+        (Value::List(list), Value::Number(number))
+            if matches!(op, "*" | "/")
+                && number.unit == Unit::Number
+                && number.value == Fraction::from(1) =>
+        {
+            (list, a)
+        }
+        (Value::Number(number), Value::List(list))
+            if op == "*" && number.unit == Unit::Number && number.value == Fraction::from(1) =>
+        {
+            (list, b)
+        }
+        _ => return None,
+    };
+    unary_type("+", list.element_type.as_ref())
+        .is_ok()
+        .then_some(value)
+}
+/// The interpreter and performance diagnostics charge work after no-op proofs.
+pub fn binary_work(op: &str, a: &Value, b: &Value) -> usize {
+    if !matches!(op, "+" | "-" | "*" | "/" | "%" | "**") || identity_list(op, a, b).is_some() {
+        return 0;
+    }
+    match (a, b) {
+        (Value::List(a), Value::List(b))
+            if op == "*" && linear::matrix::shape(&Value::List(a.clone()).ty()).is_some() =>
+        {
+            let columns = a
+                .values
+                .front()
+                .and_then(|value| value.list().ok())
+                .map_or(0, |row| row.len());
+            let output_columns = b
+                .values
+                .front()
+                .and_then(|value| value.list().ok())
+                .map_or(1, |row| row.len());
+            a.len()
+                .saturating_mul(columns)
+                .saturating_mul(output_columns)
+                .saturating_mul(2)
+        }
+        (Value::List(a), Value::List(b)) => a.len().max(b.len()),
+        (Value::List(values), _) | (_, Value::List(values)) => values.len(),
+        _ => 0,
+    }
+}
 pub fn binary(op: &str, a: Value, b: Value) -> Result<Value, String> {
     if matches!(a, Value::Series(_)) || matches!(b, Value::Series(_)) {
         return crate::dataframe::Series::binary(op, a, b)
@@ -223,6 +281,9 @@ pub fn binary(op: &str, a: Value, b: Value) -> Result<Value, String> {
         Err(_) if matches!(op, "==" | "!=") => return Ok(Value::Bool(op == "!=")),
         Err(message) => return Err(message),
     };
+    if let Some(value) = identity_list(op, &a, &b) {
+        return Ok(value.clone());
+    }
     if matches!(op, "==" | "!=" | "<" | ">" | "<=" | ">=") {
         if let (Ok(x), Ok(y)) = (a.number(), b.number()) {
             let ordering = x.value.cmp(&y.value);
@@ -260,59 +321,47 @@ pub fn binary(op: &str, a: Value, b: Value) -> Result<Value, String> {
     match (a, b) {
         (Value::String(a), Value::String(b)) => Ok(Value::String(format!("{a}{b}").into())),
         (Value::List(a), Value::List(b)) => {
+            if op == "*" && linear::matrix::shape(&Value::List(a.clone()).ty()).is_some() {
+                return linear::matrix::product(&a, &b);
+            }
+            if op == "concat" {
+                let Type::List(inner, _) = ty else {
+                    unreachable!("checked List concatenation")
+                };
+                let mut values = a.values;
+                values.append(b.values);
+                return Ok(Value::List(crate::List::from_values(inner.into(), values)));
+            }
+            if a.len() != b.len() {
+                return Err(format!(
+                    "pointwise List arithmetic requires matching lengths, found {} and {}",
+                    a.len(),
+                    b.len()
+                ));
+            }
             let Type::List(element_type, _) = ty else {
-                unreachable!("checked list concatenation type")
+                unreachable!("checked List result")
             };
-            let mut values = a.values;
-            values.append(b.values);
-            Ok(Value::List(crate::List::from_values(
-                element_type.into(),
-                values,
-            )))
+            map_list(a, element_type, |index, left| {
+                binary(op, left.clone(), b[index].clone())
+            })
         }
-        (Value::Matrix4(a), Value::Matrix4(b)) => {
-            if op == "*" {
-                return linear::multiply(&a, &b).map(|m| Value::Matrix4(Box::new(m)));
-            }
-            let mut out = a;
-            for (i, row) in out.iter_mut().enumerate() {
-                for (j, value) in row.iter_mut().enumerate() {
-                    *value = calc(op, *value, b[i][j])?;
-                }
-            }
-            Ok(Value::Matrix4(out))
+        (Value::List(list), scalar) => {
+            let Type::List(inner, _) = ty else {
+                unreachable!("checked List result")
+            };
+            map_list(list, inner, |_, value| {
+                binary(op, value.clone(), scalar.clone())
+            })
         }
-        (Value::Matrix4(matrix), Value::Vec4(v)) => {
-            Value::from_vector(linear::transform(&matrix, &v.values)?, Unit::Number)
+        (scalar, Value::List(list)) => {
+            let Type::List(inner, _) = ty else {
+                unreachable!("checked List result")
+            };
+            map_list(list, inner, |_, value| {
+                binary(op, scalar.clone(), value.clone())
+            })
         }
-        (Value::Matrix4(mut matrix), scalar) | (scalar, Value::Matrix4(mut matrix)) => {
-            let scalar = to_f64(scalar.number()?.value)?;
-            for row in matrix.iter_mut() {
-                for value in row {
-                    *value = calc(op, *value, scalar)?;
-                }
-            }
-            Ok(Value::Matrix4(matrix))
-        }
-        (a, b) => {
-            if let (Ok((x, unit)), Ok((y, _))) = (a.vector(), b.vector()) {
-                return Value::from_vector(
-                    x.iter()
-                        .zip(y)
-                        .map(|(a, b)| calc(op, *a, *b))
-                        .collect::<Result<_, _>>()?,
-                    unit,
-                );
-            }
-            let (vector, scalar) = if a.vector().is_ok() { (a, b) } else { (b, a) };
-            let (v, unit) = vector.vector()?;
-            let scalar = to_f64(scalar.number()?.value)?;
-            Value::from_vector(
-                v.iter()
-                    .map(|v| calc(op, *v, scalar))
-                    .collect::<Result<_, _>>()?,
-                unit,
-            )
-        }
+        _ => Err("unsupported arithmetic operands".into()),
     }
 }
