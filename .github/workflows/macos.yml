@@ -268,7 +268,7 @@ jobs:
           test ! -d "${contents}/Resources/manim-worker/.venv"
 
           worker="${contents}/Resources/manim-worker"
-          EXPECTED_FFMPEG="$(cat external/ffmpeg/RELEASE)" PYTHONPATH="${worker}" \
+          PYTHONDONTWRITEBYTECODE=1 EXPECTED_FFMPEG="$(cat external/ffmpeg/RELEASE)" PYTHONPATH="${worker}" \
             "${contents}/MacOS/uv" run --no-project --python 3.14 python -c \
               'import av, os; assert av.ffmpeg_version_info == os.environ["EXPECTED_FFMPEG"], av.ffmpeg_version_info'
           dependencies="${RUNNER_TEMP}/macos-dependencies.txt"
@@ -304,7 +304,7 @@ jobs:
           unpacked="${RUNNER_TEMP}/shrimply-macos-verify"
           mkdir -p "${unpacked}"
           ditto -x -k "${MACOS_ARCHIVE}" "${unpacked}"
-          codesign --verify --deep --strict "${unpacked}/Shrimply.app"
+          codesign --verify --deep --strict --verbose=2 "${unpacked}/Shrimply.app"
           test -s "${MACOS_ARCHIVE}.sha256"
 
       - name: Publish prerelease
