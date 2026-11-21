@@ -192,7 +192,7 @@ rustPlatform.buildRustPackage {
     # components-gtk resolves bundled icons relative to the binary.
     install -d "$out/share/shrimply/icons"
     find external/adwaita-icon-theme/Adwaita/symbolic -type f -name '*.svg' \
-      -exec cp -a {} "$out/share/shrimply/icons/" +
+      -exec install -m644 -t "$out/share/shrimply/icons" {} +
     cp -a assets/icons/. "$out/share/shrimply/icons/"
     install -Dm644 assets/icons/dev.shrimply.Shrimply.svg \
       "$out/share/icons/hicolor/scalable/apps/dev.shrimply.Shrimply.svg"
