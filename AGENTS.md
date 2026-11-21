@@ -59,7 +59,7 @@ Reusing dependencies already declared or locked in this repository is allowed wi
 Avoid extra labels and meaningless texts.
 
 
-When porting to a new UI framework. Use the GTK UI as the referrence.
+When porting to a new UI framework. Use the GTK UI as the reference.
 
 Avoid platform specific code unless absolutely necessary.
 

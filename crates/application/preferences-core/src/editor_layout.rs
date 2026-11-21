@@ -3,7 +3,7 @@ use rusqlite::Connection;
 use serde_json::{Value, json};
 
 const KEY: &str = "editor_layout";
-const DEFAULT_INSPECTOR_WIDTH: f32 = 320.0;
+const DEFAULT_INSPECTOR_WIDTH: f32 = shrimply_components_core::layout::INSPECTOR_MIN_WIDTH;
 const MAX_INSPECTOR_WIDTH: f32 = 4096.0;
 const MIN_TIMELINE_FRACTION: f32 = 0.05;
 const MAX_TIMELINE_FRACTION: f32 = 0.95;

@@ -27,19 +27,19 @@ pub fn editor_pane_bounds(
 ) -> [[f32; 4]; 3] {
     let [width, height] = size.map(|value| value.max(0.0));
     let divider = crate::layout::PANEL_DIVIDER_WIDTH;
-    let inspector_width = inspector_width.clamp(0.0, width);
+    let overlay = crate::layout::inspector_overlay(width);
+    let inspector_width = inspector_width.clamp(0.0, crate::layout::inspector_max_width(width));
     let timeline_height = split_pane_extent(height, divider, timeline_fraction.clamp(0.0, 1.0));
     let top_height = if timeline_visible {
         (height - timeline_height - divider).max(0.0)
     } else {
         height
     };
-    let preview_left =
-        if inspector_visible && !crate::layout::inspector_overlay(width, inspector_width) {
-            (inspector_width + divider).min(width)
-        } else {
-            0.0
-        };
+    let preview_left = if inspector_visible && !overlay {
+        (inspector_width + divider).min(width)
+    } else {
+        0.0
+    };
     [
         [preview_left, 0.0, width - preview_left, top_height],
         [0.0, 0.0, inspector_width, top_height],

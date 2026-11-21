@@ -50,10 +50,8 @@ import java.io.File
 
 private val ExpandedWidth = 840.dp
 private val PaneHandleTargetSize = 48.dp
-private val InspectorMinimumWidth = 320.dp
 private val TimelineMinimumHeight = 120.dp
 private const val MaximumTimelineFraction = 0.75f
-private const val InspectorMaximumWidthFraction = 0.45f
 
 /** Layout and actions follow launcher-gtk and preview-gtk, using Android native controls. */
 @Composable
@@ -531,8 +529,10 @@ private fun Editor(timeline: TimelineSession, files: ProjectFiles, project: JSON
     BoxWithConstraints(Modifier.fillMaxSize().windowInsetsPadding(safeInsets).background(MaterialTheme.colorScheme.background)
         .fileDropTarget(timeline, files, project.getString("path").takeUnless { renderOnly }, false, onError)) {
         val availableWidth = maxWidth.value
-        val expandedInspectorWidth = inspectorWidth.coerceIn(InspectorMinimumWidth.value.coerceAtMost(availableWidth), availableWidth).dp
-        val sideBySide = !NativeLayout.inspectorOverlay(availableWidth, expandedInspectorWidth.value)
+        val minInspectorWidth = remember { NativeLayout.inspectorMinWidth() }
+        val maxInspectorWidth = NativeLayout.inspectorMaxWidth(availableWidth)
+        val expandedInspectorWidth = inspectorWidth.coerceIn(minInspectorWidth.coerceAtMost(maxInspectorWidth), maxInspectorWidth).dp
+        val sideBySide = !NativeLayout.inspectorOverlay(availableWidth)
         val compact = NativeLayout.compactControls(maxWidth.value, maxHeight.value)
         val toolSize = if (compact) 40.dp else 48.dp
         val toolIconSize = if (compact) 14.dp else 16.dp
@@ -642,7 +642,7 @@ private fun Editor(timeline: TimelineSession, files: ProjectFiles, project: JSON
                             .draggable(
                                 state = rememberDraggableState { delta ->
                                     inspectorDraft = ((inspectorDraft ?: currentInspectorWidth) + delta / density)
-                                        .coerceIn(InspectorMinimumWidth.value, (availableWidth * InspectorMaximumWidthFraction).coerceAtLeast(InspectorMinimumWidth.value))
+                                        .coerceIn(minInspectorWidth, maxInspectorWidth.coerceAtLeast(minInspectorWidth))
                                 },
                                 orientation = Orientation.Horizontal,
                                 enabled = enabled,

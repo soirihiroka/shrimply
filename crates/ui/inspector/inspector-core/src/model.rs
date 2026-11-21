@@ -38,7 +38,7 @@ pub(crate) fn with_edit_position<T>(position: Time, edit: impl FnOnce() -> T) ->
     edit()
 }
 
-pub const INSPECTOR_MIN_WIDTH: i32 = 320;
+pub const INSPECTOR_MIN_WIDTH: i32 = shrimply_components_core::layout::INSPECTOR_MIN_WIDTH as i32;
 pub(crate) const INSPECTOR_EDIT_COMMIT: &str = "inspector-edit";
 
 #[derive(Clone, Debug, PartialEq)]

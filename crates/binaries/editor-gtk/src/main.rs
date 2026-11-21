@@ -45,6 +45,37 @@ enum PanelSide {
     End,
 }
 
+impl PanelSide {
+    fn orientation(self) -> gtk::Orientation {
+        match self {
+            Self::Start => gtk::Orientation::Horizontal,
+            Self::End => gtk::Orientation::Vertical,
+        }
+    }
+
+    fn set_size_request(self, widget: &impl IsA<gtk::Widget>, size: i32) {
+        match self {
+            Self::Start => widget.set_width_request(size),
+            Self::End => widget.set_height_request(size),
+        }
+    }
+
+    fn min_size(self, child: &gtk::Widget) -> i32 {
+        let min = child.measure(self.orientation(), -1).0;
+        match self {
+            Self::Start => min.max(inspector::INSPECTOR_MIN_WIDTH),
+            Self::End => min,
+        }
+    }
+
+    fn set_shrink(self, paned: &gtk::Paned, shrink: bool) {
+        match self {
+            Self::Start => paned.set_shrink_start_child(shrink),
+            Self::End => paned.set_shrink_end_child(shrink),
+        }
+    }
+}
+
 fn main() -> glib::ExitCode {
     crash::install();
     shrimply_process_reporting::diagnostics::init();
@@ -153,29 +184,34 @@ fn build_ui(window: &adw::ApplicationWindow, project: project::Project) {
         video_player.clone(),
         property_clipboard.clone(),
     );
+    let inspector_width = editor_layout.inspector_width.round() as i32;
+    let inspector_pane = panel_viewport(&inspector, PanelSide::Start);
     let overlay_mode = Rc::new(Cell::new(false));
     let top = gtk::Paned::new(gtk::Orientation::Horizontal);
     top.set_wide_handle(false);
-    top.set_start_child(Some(&inspector));
+    top.set_start_child(Some(&inspector_pane));
     top.set_end_child(Some(&video_player));
     top.set_position(if editor_layout.inspector_visible {
-        editor_layout.inspector_width.round() as i32
+        inspector_width
     } else {
         0
     });
-    inspector.set_visible(editor_layout.inspector_visible);
+    inspector_pane.set_visible(editor_layout.inspector_visible);
     top.set_resize_start_child(true);
     top.set_resize_end_child(true);
     top.set_shrink_start_child(false);
     top.set_shrink_end_child(false);
 
+    let timeline_height =
+        (editor_layout.timeline_fraction * DEFAULT_WINDOW_HEIGHT as f32).round() as i32;
+    let timeline_pane = panel_viewport(&timeline, PanelSide::End);
     let layout = gtk::Paned::new(gtk::Orientation::Vertical);
     layout.set_wide_handle(false);
-    layout.set_end_child(Some(&timeline));
+    layout.set_end_child(Some(&timeline_pane));
     layout.set_position(
         ((1.0 - editor_layout.timeline_fraction) * DEFAULT_WINDOW_HEIGHT as f32).round() as i32,
     );
-    timeline.set_visible(editor_layout.timeline_visible);
+    timeline_pane.set_visible(editor_layout.timeline_visible);
     layout.set_resize_start_child(true);
     layout.set_resize_end_child(true);
     layout.set_shrink_start_child(false);
@@ -187,21 +223,22 @@ fn build_ui(window: &adw::ApplicationWindow, project: project::Project) {
         .icon_name("dock-left-symbolic")
         .tooltip_text(tr!("Toggle Inspector").as_ref())
         .build();
-    let inspector_animation = connect_panel_toggle(
+    let stop_inspector = connect_panel_toggle(
         &inspector_toggle,
         &top,
-        &inspector,
+        &inspector_pane,
         PanelSide::Start,
-        editor_layout.inspector_width.round() as i32,
+        inspector_width,
         Some(overlay_mode.clone()),
         &preferences,
     );
     let inspector_host = inspector_layout::connect(
         &top,
-        &inspector,
+        inspector_pane.upcast_ref(),
         &inspector_toggle,
         overlay_mode,
-        inspector_animation,
+        stop_inspector,
+        &preferences,
     );
     layout.set_start_child(Some(&inspector_host));
     let timeline_toggle = gtk::ToggleButton::builder()
@@ -212,9 +249,9 @@ fn build_ui(window: &adw::ApplicationWindow, project: project::Project) {
     connect_panel_toggle(
         &timeline_toggle,
         &layout,
-        &timeline,
+        &timeline_pane,
         PanelSide::End,
-        (editor_layout.timeline_fraction * DEFAULT_WINDOW_HEIGHT as f32).round() as i32,
+        timeline_height,
         None,
         &preferences,
     );
@@ -262,32 +299,79 @@ fn build_ui(window: &adw::ApplicationWindow, project: project::Project) {
     video_player.grab_focus();
 }
 
+fn panel_viewport(child: &gtk::Widget, side: PanelSide) -> gtk::Viewport {
+    let pane = gtk::Viewport::builder()
+        .scroll_to_focus(false)
+        .child(child)
+        .build();
+    side.set_size_request(&pane, side.min_size(child));
+    pane
+}
+
 fn connect_panel_toggle(
     button: &gtk::ToggleButton,
     paned: &gtk::Paned,
-    panel: &impl IsA<gtk::Widget>,
+    pane: &gtk::Viewport,
     side: PanelSide,
     default_size: i32,
     overlay_mode: Option<Rc<Cell<bool>>>,
     preferences: &preferences::SharedPreferences,
-) -> (Rc<Cell<i32>>, adw::TimedAnimation) {
-    let panel = panel.as_ref().clone();
+) -> Rc<dyn Fn()> {
+    let divider = shrimply_components_core::layout::PANEL_DIVIDER_WIDTH.round() as i32;
     let expanded_size = Rc::new(Cell::new(default_size));
-    let weak_paned = paned.downgrade();
-    let target_overlay_mode = overlay_mode.clone();
-    let target = adw::CallbackAnimationTarget::new(move |size| {
-        if target_overlay_mode.as_ref().is_some_and(|mode| mode.get()) {
-            return;
+    let sync_slide = move |pane: &gtk::Viewport, expanded: i32, size: i32| {
+        if matches!(side, PanelSide::Start)
+            && let Some(adj) = pane.hadjustment()
+        {
+            adj.configure(
+                f64::from((expanded - size).max(0)),
+                0.0,
+                f64::from(expanded.max(size)),
+                0.0,
+                0.0,
+                f64::from(size),
+            );
         }
+    };
+    let finish: Rc<dyn Fn()> = {
+        let weak_paned = paned.downgrade();
+        let weak_pane = pane.downgrade();
+        Rc::new(move || {
+            let (Some(paned), Some(pane)) = (weak_paned.upgrade(), weak_pane.upgrade()) else {
+                return;
+            };
+            let min_size = pane.child().map_or(0, |child| {
+                side.set_size_request(&child, -1);
+                side.min_size(&child)
+            });
+            if let Some(adj) = pane.hadjustment() {
+                adj.set_value(0.0);
+            }
+            side.set_size_request(&pane, min_size);
+            side.set_shrink(&paned, false);
+        })
+    };
 
-        let Some(paned) = weak_paned.upgrade() else {
-            return;
-        };
-        let size = (size.round() as i32).max(0);
-        paned.set_position(match side {
-            PanelSide::Start => size,
-            PanelSide::End => paned.height().saturating_sub(size),
-        });
+    let target = adw::CallbackAnimationTarget::new({
+        let weak_paned = paned.downgrade();
+        let weak_pane = pane.downgrade();
+        let expanded_size = expanded_size.clone();
+        let overlay_mode = overlay_mode.clone();
+        move |size| {
+            if overlay_mode.as_ref().is_some_and(|mode| mode.get()) {
+                return;
+            }
+            let (Some(paned), Some(pane)) = (weak_paned.upgrade(), weak_pane.upgrade()) else {
+                return;
+            };
+            let size = (size.round() as i32).max(0);
+            paned.set_position(match side {
+                PanelSide::Start => size,
+                PanelSide::End if size == 0 => paned.height(),
+                PanelSide::End => paned.height().saturating_sub(size + divider),
+            });
+            sync_slide(&pane, expanded_size.get(), size);
+        }
     });
     let animation = adw::TimedAnimation::new(
         paned,
@@ -296,78 +380,102 @@ fn connect_panel_toggle(
         PANEL_ANIMATION_DURATION_MS,
         target,
     );
-
-    let weak_button = button.downgrade();
-    let weak_paned = paned.downgrade();
-    let weak_panel = panel.downgrade();
-    let done_overlay_mode = overlay_mode.clone();
-    animation.connect_done(move |_| {
-        if done_overlay_mode.as_ref().is_some_and(|mode| mode.get()) {
-            return;
-        }
-        let (Some(button), Some(paned), Some(panel)) = (
-            weak_button.upgrade(),
-            weak_paned.upgrade(),
-            weak_panel.upgrade(),
-        ) else {
-            return;
-        };
-        if !button.is_active() {
-            panel.set_visible(false);
-        }
-        match side {
-            PanelSide::Start => paned.set_shrink_start_child(false),
-            PanelSide::End => paned.set_shrink_end_child(false),
+    animation.connect_done({
+        let weak_button = button.downgrade();
+        let weak_pane = pane.downgrade();
+        let overlay_mode = overlay_mode.clone();
+        let finish = finish.clone();
+        move |_| {
+            if overlay_mode.as_ref().is_some_and(|mode| mode.get()) {
+                return;
+            }
+            if let (Some(button), Some(pane)) = (weak_button.upgrade(), weak_pane.upgrade())
+                && !button.is_active()
+            {
+                pane.set_visible(false);
+            }
+            finish();
         }
     });
 
-    let paned = paned.clone();
-    let expanded_panel_size = expanded_size.clone();
-    let toggle_animation = animation.clone();
-    let preferences = preferences.clone();
-    button.connect_toggled(move |button| {
-        if overlay_mode.as_ref().is_some_and(|mode| mode.get()) {
-            return;
-        }
-        let current_size = match side {
-            PanelSide::Start => paned.position(),
-            PanelSide::End => paned.height().saturating_sub(paned.position()),
-        };
-        if !button.is_active() && toggle_animation.state() != adw::AnimationState::Playing {
-            expanded_panel_size.set(current_size);
-        }
-        if button.is_active() {
-            panel.set_visible(true);
-            let layout = preferences::snapshot(&preferences).editor_layout;
-            expanded_panel_size.set(match side {
-                PanelSide::Start => layout.inspector_width.round() as i32,
-                PanelSide::End => {
-                    let height = paned.height() as f32;
-                    let content = paned.start_child().expect("preview pane exists").height()
-                        + paned.end_child().expect("timeline pane exists").height();
-                    let divider = (height - content as f32).max(0.0);
-                    (shrimply_components_core::math::split_pane_extent(
-                        height,
-                        divider,
-                        layout.timeline_fraction,
-                    ) + divider)
-                        .round() as i32
+    button.connect_toggled({
+        let paned = paned.clone();
+        let pane = pane.clone();
+        let expanded_size = expanded_size.clone();
+        let animation = animation.clone();
+        let preferences = preferences.clone();
+        move |button| {
+            if overlay_mode.as_ref().is_some_and(|mode| mode.get()) {
+                return;
+            }
+            let playing = animation.state() == adw::AnimationState::Playing;
+            let current_size = if playing {
+                animation.value()
+            } else if !pane.is_visible() {
+                0.0
+            } else {
+                f64::from(match side {
+                    PanelSide::Start => paned.position().max(0),
+                    PanelSide::End => paned.height().saturating_sub(paned.position() + divider),
+                })
+            };
+            let expanded = if button.is_active() {
+                let saved = preferences::snapshot(&preferences).editor_layout;
+                let total = match side {
+                    PanelSide::Start => paned.width(),
+                    PanelSide::End => paned.height(),
+                };
+                let min_size = pane.child().map_or(0, |child| {
+                    side.set_size_request(&child, -1);
+                    side.min_size(&child)
+                });
+                let sibling_min = match side {
+                    PanelSide::Start => paned.end_child(),
+                    PanelSide::End => paned.start_child(),
                 }
+                .map_or(0, |child| child.measure(side.orientation(), -1).0);
+                let desired = match side {
+                    PanelSide::Start => saved.inspector_width,
+                    PanelSide::End => shrimply_components_core::math::split_pane_extent(
+                        total as f32,
+                        divider as f32,
+                        saved.timeline_fraction,
+                    ),
+                }
+                .round() as i32;
+                let clamped = desired
+                    .clamp(min_size, (total - sibling_min - divider).max(min_size))
+                    .max(1);
+                expanded_size.set(clamped);
+                clamped
+            } else {
+                if !playing && current_size > 0.0 {
+                    expanded_size.set(current_size.round() as i32);
+                }
+                expanded_size.get().max(1)
+            };
+            if let Some(child) = pane.child() {
+                side.set_size_request(&child, expanded);
+            }
+            side.set_size_request(&pane, -1);
+            side.set_shrink(&paned, true);
+            animation.set_value_from(current_size);
+            animation.reset();
+            if button.is_active() {
+                pane.set_visible(true);
+            }
+            animation.set_value_to(if button.is_active() {
+                f64::from(expanded)
+            } else {
+                0.0
             });
+            animation.play();
         }
-        match side {
-            PanelSide::Start => paned.set_shrink_start_child(true),
-            PanelSide::End => paned.set_shrink_end_child(true),
-        }
-        toggle_animation.set_value_from(f64::from(current_size));
-        toggle_animation.set_value_to(f64::from(if button.is_active() {
-            expanded_panel_size.get()
-        } else {
-            0
-        }));
-        toggle_animation.play();
     });
-    (expanded_size, animation)
+    Rc::new(move || {
+        animation.reset();
+        finish();
+    })
 }
 
 fn begin_project_load(app: &adw::Application, path: PathBuf) {

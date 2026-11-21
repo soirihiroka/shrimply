@@ -6,16 +6,23 @@ pub const PANEL_ANIMATION_DURATION_MS: u32 = 250;
 
 const COMPACT_CONTROLS_WIDTH: f32 = 600.0;
 const COMPACT_CONTROLS_HEIGHT: f32 = 480.0;
+pub const INSPECTOR_MIN_WIDTH: f32 = 320.0;
 pub const MIN_PREVIEW_WIDTH: f32 = 360.0;
 pub const PANEL_DIVIDER_WIDTH: f32 = 1.0;
+pub const INSPECTOR_OVERLAY_WIDTH: f32 =
+    INSPECTOR_MIN_WIDTH + MIN_PREVIEW_WIDTH + PANEL_DIVIDER_WIDTH;
 pub const TRANSPORT_ROW_MIN_WIDTH: f32 = 520.0;
 
-pub fn inspector_min_width(inspector_width: f32) -> f32 {
-    inspector_width + MIN_PREVIEW_WIDTH + PANEL_DIVIDER_WIDTH
+pub fn inspector_overlay(window_width: f32) -> bool {
+    window_width < INSPECTOR_OVERLAY_WIDTH
 }
 
-pub fn inspector_overlay(width: f32, inspector_width: f32) -> bool {
-    width < inspector_min_width(inspector_width)
+pub fn inspector_max_width(window_width: f32) -> f32 {
+    if inspector_overlay(window_width) {
+        window_width.max(0.0)
+    } else {
+        (window_width - MIN_PREVIEW_WIDTH - PANEL_DIVIDER_WIDTH).max(0.0)
+    }
 }
 
 pub fn transport_stacked(width: f32) -> bool {

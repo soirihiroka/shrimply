@@ -334,7 +334,7 @@ ApplicationWindow {
                 SplitView.fillHeight: true
                 SplitView.preferredHeight: 660
                 readonly property real inspectorWidth: Math.max(backend.inspectorWidth, inspectorView.implicitWidth)
-                readonly property bool inspectorOverlay: backend.inspectorOverlay(width, inspectorWidth)
+                readonly property bool inspectorOverlay: backend.inspectorOverlay(window.width)
 
                 ThinSplitView {
                     id: horizontalSplit
@@ -367,6 +367,7 @@ ApplicationWindow {
                 ColumnLayout {
                     SplitView.fillWidth: true
                     SplitView.fillHeight: true
+                    SplitView.minimumWidth: backend.previewMinimumWidth()
                     spacing: 0
 
                     RowLayout {

@@ -164,11 +164,7 @@ pub mod qobject {
         fn split_pane_extent(self: &EditorBackend, total: f32, divider: f32, fraction: f32) -> f32;
         #[qinvokable]
         #[cxx_name = "inspectorOverlay"]
-        fn inspector_overlay(
-            self: Pin<&mut EditorBackend>,
-            width: f64,
-            inspector_width: f64,
-        ) -> bool;
+        fn inspector_overlay(self: Pin<&mut EditorBackend>, width: f64) -> bool;
         #[qinvokable]
         #[cxx_name = "transportStacked"]
         fn transport_stacked(self: Pin<&mut EditorBackend>, width: f64) -> bool;
@@ -746,8 +742,8 @@ impl qobject::EditorBackend {
         self.history_action(project::redo);
     }
 
-    pub fn inspector_overlay(self: Pin<&mut Self>, width: f64, inspector_width: f64) -> bool {
-        shrimply_components_qt::layout::inspector_overlay(width as f32, inspector_width as f32)
+    pub fn inspector_overlay(self: Pin<&mut Self>, width: f64) -> bool {
+        shrimply_components_qt::layout::inspector_overlay(width as f32)
     }
 
     pub fn transport_stacked(self: Pin<&mut Self>, width: f64) -> bool {

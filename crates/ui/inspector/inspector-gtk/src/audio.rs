@@ -89,6 +89,7 @@ fn beat_detection(control: &InspectorControl, context: &InspectorContext) -> gtk
 fn modifier_menu(control: &InspectorControl, context: &InspectorContext) -> gtk::Widget {
     let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     buttons.set_halign(gtk::Align::Center);
+    buttons.set_hexpand(true);
     let controller = context.inspector_core.clone();
     let target = context.list_target.clone();
     let control = control.clone();

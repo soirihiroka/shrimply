@@ -122,7 +122,7 @@ internal fun inspectorIcon(icon: String): Int = when (icon) {
     "security-high-symbolic" -> R.drawable.security_high
     "padlock2-symbolic" -> R.drawable.padlock2
     "padlock2-open-symbolic" -> R.drawable.padlock2_open
-    "rotation.svg", "arrow3-up-symbolic" -> R.drawable.arrow3_up
+    "arrow3-up-symbolic" -> R.drawable.arrow3_up
     "closed-captioning-symbolic" -> R.drawable.closed_captioning
     "network-server-symbolic" -> R.drawable.network_server
     "ruler-angled-symbolic" -> R.drawable.ruler_angled

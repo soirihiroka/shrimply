@@ -50,14 +50,29 @@ pub extern "system" fn Java_dev_shrimply_app_NativeLayout_splitPaneExtent(
 }
 
 #[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_shrimply_app_NativeLayout_inspectorMinWidth(
+    _env: *mut JNIEnv,
+    _class: jclass,
+) -> jni::sys::jfloat {
+    shrimply_components_core::layout::INSPECTOR_MIN_WIDTH
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_shrimply_app_NativeLayout_inspectorMaxWidth(
+    _env: *mut JNIEnv,
+    _class: jclass,
+    width: jni::sys::jfloat,
+) -> jni::sys::jfloat {
+    shrimply_components_core::layout::inspector_max_width(width)
+}
+
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_dev_shrimply_app_NativeLayout_inspectorOverlay(
     _env: *mut JNIEnv,
     _class: jclass,
     width: jni::sys::jfloat,
-    inspector_width: jni::sys::jfloat,
 ) -> jni::sys::jboolean {
-    shrimply_components_core::layout::inspector_overlay(width, inspector_width)
-        as jni::sys::jboolean
+    shrimply_components_core::layout::inspector_overlay(width) as jni::sys::jboolean
 }
 
 #[unsafe(no_mangle)]

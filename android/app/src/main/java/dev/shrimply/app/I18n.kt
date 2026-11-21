@@ -26,7 +26,9 @@ internal object NativeLayout {
     external fun panelDividerWidth(): Float
     external fun menuUsesBottomSheet(inputSource: String): Boolean
     external fun compactControls(width: Float, height: Float): Boolean
-    external fun inspectorOverlay(width: Float, inspectorWidth: Float): Boolean
+    external fun inspectorMinWidth(): Float
+    external fun inspectorMaxWidth(width: Float): Float
+    external fun inspectorOverlay(width: Float): Boolean
     external fun splitPaneExtent(total: Float, divider: Float, fraction: Float): Float
     external fun editorPaneBounds(width: Float, height: Float, inspectorWidth: Float, timelineFraction: Float,
         inspectorVisible: Boolean, timelineVisible: Boolean): FloatArray

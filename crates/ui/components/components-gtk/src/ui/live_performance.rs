@@ -13,6 +13,7 @@ thread_local! {
 pub fn live_performance() -> gtk::Widget {
     let status = adw::ExpanderRow::builder()
         .title(crate::tr!("Live Performance").as_ref())
+        .hexpand(true)
         .build();
     let clear = gtk::Button::builder()
         .icon_name("edit-clear-symbolic")

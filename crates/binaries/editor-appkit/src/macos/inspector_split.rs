@@ -12,7 +12,7 @@ use objc2_app_kit::{
 use objc2_foundation::{MainThreadMarker, NSObject, NSObjectProtocol, NSPoint, NSRect, NSSize};
 use shrimply_editor_state::preferences::{self, SharedPreferences};
 
-const INSPECTOR_MIN_WIDTH: f64 = 320.0;
+const INSPECTOR_MIN_WIDTH: f64 = shrimply_components_core::layout::INSPECTOR_MIN_WIDTH as f64;
 const OVERLAY_SHADOW_BLUR_RADIUS: f64 = 12.0;
 const PREVIEW_MIN_WIDTH: f64 = shrimply_components_core::layout::MIN_PREVIEW_WIDTH as f64;
 
@@ -63,10 +63,7 @@ impl ResponsiveInspector {
                     .inspector_width,
             )
         };
-        let overlay = shrimply_components_core::layout::inspector_overlay(
-            bounds.size.width as f32,
-            width as f32,
-        );
+        let overlay = shrimply_components_core::layout::inspector_overlay(bounds.size.width as f32);
         if overlay != state.overlay.replace(overlay) {
             state
                 .inspector
