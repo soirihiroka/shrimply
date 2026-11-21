@@ -23,8 +23,8 @@ track, a video track, and an audio track.
 Open a project
 --------------
 
-Select :guilabel:`Open Project` to open a ``.shrimp``, ``.json``, ``.otio``,
-or ``.kdenlive`` project.
+Select :guilabel:`Open Project` to open a ``.shrimp``, ``.sjson`` (or legacy
+``.json``), ``.otio``, or ``.kdenlive`` project.
 
 On Linux, double-click a ``.shrimp`` file to open it. If a file manager already
 has a different default, use :guilabel:`Open With` and pick Shrimply or
