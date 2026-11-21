@@ -1391,7 +1391,7 @@ impl PaintGesture {
     fn draw_active(
         &self,
         canvas: &shrimply_preview_provider_skia::PreviewCanvas,
-        context: &dyn PreviewContext,
+        _context: &dyn PreviewContext,
         drawing_cache: &mut shrimply_paint_skia::PaintCache,
         active_cache: &mut shrimply_paint_skia::PaintCache,
         renderer: PreviewPaintRenderer<'_>,

@@ -98,7 +98,7 @@ impl PreviewProvider for DirectionalBlurPreview {
         _context: &dyn PreviewContext,
     ) {
         let (center, radius, angle) = self.points();
-        let color = preview::selection_color();
+        let color = super::preview::selection_color();
         super::preview::draw_line(painter, center, radius, color);
         super::preview::draw_handle(painter, radius, color);
         super::preview::draw_line(painter, center, angle, color);

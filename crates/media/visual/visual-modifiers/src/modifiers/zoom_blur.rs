@@ -61,7 +61,7 @@ impl PreviewProvider for ZoomBlurPreview {
         super::preview::draw_handle(
             painter,
             self.map.transform_point2(self.point * self.size),
-            preview::selection_color(),
+            super::preview::selection_color(),
         );
     }
     fn on_pointer(
