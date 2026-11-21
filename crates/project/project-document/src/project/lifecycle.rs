@@ -1,6 +1,12 @@
 use super::*;
 use std::path::PathBuf;
 
+/// Parsed foreign timeline, before frame-grid validation and media conversion.
+pub struct InterchangeDocument {
+    pub project: serde_json::Value,
+    pub warnings: Vec<String>,
+}
+
 pub enum ProjectValidationOutcome {
     Valid(Project),
     FrameGridRepair(Project),
@@ -767,7 +773,7 @@ impl Project {
         }
     }
 
-    fn visit_assets_mut(&mut self, mut visit: impl FnMut(&mut Asset)) {
+    pub fn visit_assets_mut(&mut self, mut visit: impl FnMut(&mut Asset)) {
         for track in self.video_tracks.iter_mut().chain(
             self.folded_sequences
                 .iter_mut()

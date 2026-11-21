@@ -12,7 +12,7 @@ use objc2_foundation::{NSObject, NSObjectProtocol, NSSize};
 use shrimply_components_appkit::export_dialog::{
     self, ROW_HEIGHT, WIDTH, add_choices, popup_row, text_row,
 };
-use shrimply_export_core::video::{ExportAudioEncoder, ExportContainer, ExportVideoCodec};
+use shrimply_export_core::video::{ExportContainer, ExportVideoCodec, available_audio_encoders};
 use shrimply_export_metal::{
     ExportSettings, H264Entropy, VideoToolboxProfile, VideoToolboxRateControl,
 };
@@ -200,12 +200,8 @@ pub fn choose_settings(
     content.addSubview(&aq_row);
     let (refs_row, max_refs) = text_row("Max refs (0 = auto)", "0", 3, mtm);
     content.addSubview(&refs_row);
-    let (audio_row, audio) = popup_row(
-        "Audio encoder",
-        &["AudioToolbox AAC", "AAC", "Opus"],
-        2,
-        mtm,
-    );
+    let (encoders, labels): (Vec<_>, Vec<_>) = available_audio_encoders().unzip();
+    let (audio_row, audio) = popup_row("Audio encoder", &labels, 2, mtm);
     content.addSubview(&audio_row);
     let (audio_rate_row, audio_rate) =
         popup_row("Audio sample rate", &["44100", "48000", "96000"], 1, mtm);
@@ -314,11 +310,7 @@ pub fn choose_settings(
         power_efficient: power_efficient.indexOfSelectedItem() == 1,
         spatial_aq: spatial_aq.indexOfSelectedItem() == 1,
         max_reference_frames: parse_u32(&max_refs)?,
-        audio_encoder: match audio.indexOfSelectedItem() {
-            1 => ExportAudioEncoder::Aac,
-            2 => ExportAudioEncoder::Opus,
-            _ => ExportAudioEncoder::AudioToolboxAac,
-        },
+        audio_encoder: *encoders.get(audio.indexOfSelectedItem() as usize)?,
         audio_sample_rate: match audio_rate.indexOfSelectedItem() {
             0 => 44_100,
             2 => 96_000,

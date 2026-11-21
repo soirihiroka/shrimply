@@ -1,19 +1,13 @@
 from __future__ import annotations
 
-import os
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, Self
+from typing import Self
 
 from pydantic import BaseModel, ConfigDict, model_validator
 
 from api import gpu
 from api.video_generation.protocol import ModelId, WorkerState
-
-if TYPE_CHECKING:
-    import numpy as np
-    import torch
-    from diffusers import WanImageToVideoPipeline, WanPipeline
 
 WAN21_MODEL_ID = "Wan-AI/Wan2.1-T2V-1.3B-Diffusers"
 WAN22_MODEL_ID = "Wan-AI/Wan2.2-TI2V-5B-Diffusers"
@@ -72,46 +66,6 @@ class GenerationRequest(BaseModel):
         return self
 
 
-def _encode_video(frames: Sequence[np.ndarray], request: GenerationRequest) -> None:
-    import av
-    import numpy as np
-
-    if len(frames) != request.frames:
-        raise RuntimeError(
-            f"Wan returned {len(frames)} frames, expected {request.frames}"
-        )
-    request.output.parent.mkdir(parents=True, exist_ok=True)
-    temporary = request.output.with_name(request.output.name + ".tmp")
-    try:
-        with av.open(str(temporary), mode="w", format="mp4") as container:
-            stream = container.add_stream("libx264", rate=request.frame_rate)
-            stream.width = request.width
-            stream.height = request.height
-            stream.pix_fmt = "yuv420p"
-            for value in frames:
-                pixels = np.asarray(value)
-                if np.issubdtype(pixels.dtype, np.floating):
-                    pixels = np.rint(np.clip(pixels, 0, 1) * 255).astype(np.uint8)
-                elif pixels.dtype != np.uint8:
-                    pixels = pixels.astype(np.uint8)
-                if pixels.shape != (request.height, request.width, 3):
-                    raise RuntimeError(
-                        f"Wan returned frame shape {pixels.shape}, expected "
-                        f"{(request.height, request.width, 3)}"
-                    )
-                frame = av.VideoFrame.from_ndarray(
-                    np.ascontiguousarray(pixels), format="rgb24"
-                )
-                for packet in stream.encode(frame):
-                    container.mux(packet)
-            for packet in stream.encode():
-                container.mux(packet)
-        os.replace(temporary, request.output)
-    except Exception:
-        temporary.unlink(missing_ok=True)
-        raise
-
-
 def generate(
     request: GenerationRequest,
     progress: Callable[[str, WorkerState], None],
@@ -121,6 +75,8 @@ def generate(
     import torch
     from diffusers import AutoencoderKLWan, WanImageToVideoPipeline, WanPipeline
     from diffusers.pipelines.wan.pipeline_output import WanPipelineOutput
+
+    from api.media import encode_video, load_image
 
     if not gpu.bf16_supported(device):
         raise RuntimeError("Wan requires a BF16-capable CUDA device")
@@ -147,8 +103,6 @@ def generate(
 
     generator = torch.Generator(device="cpu").manual_seed(request.seed)
     if request.workflow == "i2v":
-        from api.media import load_image
-
         if request.image is None:
             raise RuntimeError("Wan image-to-video requires a first frame")
         pipe = WanImageToVideoPipeline.from_pretrained(
@@ -208,4 +162,11 @@ def generate(
     if not isinstance(frames, np.ndarray) or frames.ndim != 5 or frames.shape[0] != 1:
         raise TypeError("Wan pipeline returned invalid video frames")
     progress("Encoding Wan video…", "decoding")
-    _encode_video(frames[0], request)
+    expected = (request.frames, request.height, request.width, 3)
+    if frames[0].shape != expected:
+        raise RuntimeError(
+            f"Wan returned frames of shape {frames[0].shape}, expected {expected}"
+        )
+    encode_video(
+        request.output, frames[0], request.frame_rate, torch.cuda.current_device()
+    )

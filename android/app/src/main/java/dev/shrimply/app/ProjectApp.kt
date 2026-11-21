@@ -116,7 +116,11 @@ internal fun ProjectApp(timeline: TimelineSession, files: ProjectFiles, caption:
         if (result.has("show_in_files")) files.showInFiles(result.getString("show_in_files"))
         if (result.has("message")) android.widget.Toast.makeText(context, result.getString("message"), android.widget.Toast.LENGTH_SHORT).show()
     }
-    fun open(path: String) = action { timeline.request(files.openRequest(path)) }
+    suspend fun requestOpen(path: String, reconciled: Boolean = false) {
+        try { timeline.request(files.openRequest(path, reconciled)) }
+        catch (failure: Exception) { files.cancelOpen(); throw failure }
+    }
+    fun open(path: String) = action { requestOpen(path) }
     fun closeProject() = action {
         timeline.request("save")
         project?.optString("path")?.let { files.flush(it) }
@@ -127,7 +131,7 @@ internal fun ProjectApp(timeline: TimelineSession, files: ProjectFiles, caption:
         if (uri != null) action {
             context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
             val found = files.openTree(uri) { file -> scope.launch { progress = file } }
-            if (found.size == 1) timeline.request(files.openRequest(found.single().absolutePath, reconciled = true)) else choices = found
+            if (found.size == 1) requestOpen(found.single().absolutePath, reconciled = true) else choices = found
         }
     }
     val exportFolder = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
@@ -325,7 +329,7 @@ internal fun ProjectApp(timeline: TimelineSession, files: ProjectFiles, caption:
             }
         }) { Text(tr("Create")) } },
         dismissButton = { TextButton(onClick = { create = false }) { Text(tr("Cancel")) } })
-    if (choices.isNotEmpty()) AdaptiveMenu(expanded = true, bottomSheet = checkNotNull(choicesBottomSheet), dismiss = { choices = emptyList() }) {
+    if (choices.isNotEmpty()) AdaptiveMenu(expanded = true, bottomSheet = checkNotNull(choicesBottomSheet), dismiss = { choices = emptyList(); files.cancelOpen() }) {
         ChoiceMenuItems(choices.map { it.nameWithoutExtension }) { index -> val file = choices[index]; choices = emptyList(); open(file.absolutePath) }
     }
     if (comment) AlertDialog(

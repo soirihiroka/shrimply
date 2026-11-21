@@ -39,6 +39,7 @@ serde_json.workspace = true
 hashbrown.workspace = true
 notify.workspace = true
 uuid.workspace = true
+tempfile.workspace = true
 
 # Linux also type-checks the portable Vulkan host without an Android device.
 [target.'cfg(any(target_os = "android", target_os = "linux"))'.dependencies]
@@ -57,6 +58,3 @@ shrimply-video-decoder.workspace = true
 jni = "0.22.4"
 rustls-platform-verifier = "0.7.1"
 ndk = { version = "0.9.0", default-features = false }
-
-[dev-dependencies]
-tempfile.workspace = true

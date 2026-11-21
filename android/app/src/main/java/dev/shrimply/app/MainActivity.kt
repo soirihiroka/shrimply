@@ -153,7 +153,13 @@ class MainActivity : ComponentActivity() {
         }
         window.decorView.requestApplyInsets()
     }
-    override fun onResume() { super.onResume(); if (::timeline.isInitialized) timeline.active(true) }
+    override fun onResume() {
+        super.onResume()
+        if (::timeline.isInitialized) {
+            projects.resumed()
+            timeline.active(true)
+        }
+    }
     override fun onPause() { if (::timeline.isInitialized) timeline.active(false); super.onPause() }
 }
 

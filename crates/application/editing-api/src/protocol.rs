@@ -1045,7 +1045,7 @@ pub struct RenderProjectRequest {
     pub fps: Option<ExactFraction>,
     /// Video bitrate in Kbps; defaults to 10000.
     pub video_bitrate: Option<u32>,
-    /// aac (default), fdk-aac, or opus; macOS also supports audiotoolbox-aac.
+    /// fdk-aac (preferred when available), aac, or opus; macOS also supports audiotoolbox-aac.
     pub audio_encoder: Option<String>,
     /// Audio bitrate in Kbps; defaults to 192.
     pub audio_bitrate: Option<u32>,

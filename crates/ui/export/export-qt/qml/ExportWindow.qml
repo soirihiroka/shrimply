@@ -314,7 +314,7 @@ Item {
                             ControlRow {
                                 label: exportBackend.translate("Audio Encoder")
                                 AdaptiveComboBox {
-                                    model: ["FDK AAC", "AAC", "Opus"]
+                                    model: exportBackend.audioEncoderLabels()
                                     currentIndex: exportBackend.audioEncoder
                                     onActivated: exportBackend.audioEncoder = currentIndex
                                 }

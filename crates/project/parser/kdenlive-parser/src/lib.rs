@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 use glam::Vec2;
 use serde_json::Value;
 use shrimply_math_core::Fraction;
+use shrimply_media_import::interchange_path;
 use shrimply_project_document::{
     AudioGenerator, AudioItem, AudioSource, AudioSpeedMethod, AudioTrack, AudioWaveform,
     Background, BackgroundGenerator, CanvasSize, CaptionTrack, Color, FoldedSequence, Project,
@@ -28,10 +29,7 @@ const COUNTER_BEEP_FREQUENCY_HZ: f32 = 1_000.0;
 const COUNTER_FONT_HEIGHT_PERCENT: u32 = 70;
 const PERCENT: u32 = 100;
 
-pub struct ImportResult {
-    pub project: Value,
-    pub warnings: Vec<String>,
-}
+pub use shrimply_project_document::project::InterchangeDocument as ImportResult;
 
 pub fn from_file(path: impl AsRef<Path>) -> Result<ImportResult, Box<dyn Error + Send + Sync>> {
     let path = path.as_ref();
@@ -494,16 +492,20 @@ impl<'a> Converter<'a> {
             .property("kdenlive:originalurl")
             .or_else(|| producer.property("warp_resource"))
             .or_else(|| producer.property("resource"));
-        let generator_path = resource.map_or_else(PathBuf::new, |resource| {
-            resolve_path(
-                &self.root_dir,
-                resource
-                    .strip_prefix("xml:")
-                    .or_else(|| resource.strip_prefix("consumer:"))
-                    .unwrap_or(resource),
-            )
-        });
-        if let Some(generator) = generator_source(producer, &generator_path, self.fps)? {
+        let path = resource
+            .map(|resource| {
+                interchange_path(
+                    &self.root_dir,
+                    resource
+                        .strip_prefix("xml:")
+                        .or_else(|| resource.strip_prefix("consumer:"))
+                        .unwrap_or(resource),
+                )
+            })
+            .transpose()?;
+        if let Some(generator) =
+            generator_source(producer, path.as_deref().unwrap_or(Path::new("")), self.fps)?
+        {
             let (visual, audio, warning, counter) = match generator {
                 GeneratorSource::ColorBars => (
                     VideoItemContent::Background(Box::new(Background {
@@ -555,8 +557,7 @@ impl<'a> Converter<'a> {
                 counter,
             });
         }
-        let resource = resource.ok_or_else(|| invalid("media producer has no resource"))?;
-        let path = resolve_path(&self.root_dir, resource);
+        let path = path.ok_or_else(|| invalid("media producer has no resource"))?;
         let speed = if service == "timewarp" {
             parse_fraction(producer.property("warp_speed").unwrap_or("1"))?
         } else {
@@ -741,7 +742,8 @@ impl<'a> Converter<'a> {
         for file in files {
             tracks.push(CaptionTrack {
                 enabled: !disabled,
-                items: ass::read(&resolve_path(&self.root_dir, file), self.fps).map_err(invalid)?,
+                items: ass::read(&interchange_path(&self.root_dir, file)?, self.fps)
+                    .map_err(invalid)?,
                 ..CaptionTrack::default()
             });
             self.warnings.insert(
@@ -1060,15 +1062,6 @@ fn parse_mlt_color(value: &str) -> Result<Color<u8>, Box<dyn Error + Send + Sync
 
 fn parse_uuid(value: &str) -> Result<Uuid, Box<dyn Error + Send + Sync>> {
     Ok(Uuid::parse_str(value.trim_matches(['{', '}']))?)
-}
-
-fn resolve_path(root: &Path, value: &str) -> PathBuf {
-    let path = Path::new(value);
-    if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        root.join(path)
-    }
 }
 
 fn property_u32(element: &Element, names: &[&str]) -> Option<u32> {

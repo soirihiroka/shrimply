@@ -6,6 +6,7 @@ bin_directory=$2
 lib_directory=$3
 shift 3
 install -d "$lib_directory"
+install -m644 external/ffmpeg/COPYING* external/ffmpeg/LICENSE.md "$lib_directory/"
 for name in avcodec avdevice avfilter avformat avutil swresample swscale; do
     cp -a "$source_prefix/lib/lib$name.so"* "$lib_directory/"
 done

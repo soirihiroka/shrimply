@@ -69,6 +69,11 @@ Build the GTK app:
    $ nix build --accept-flake-config
    $ ./result/bin/shrimply
 
+The published flake also builds with
+``nix build github:soirihiroka/shrimply --accept-flake-config``. For a fork,
+use ``git+https://github.com/OWNER/shrimply.git?submodules=1`` to fetch its
+source and submodules directly.
+
 The NVIDIA backend needs an NVIDIA driver. This package ships CUDA kernels for
 compute capability 8.6 (GeForce RTX 30-series).
 

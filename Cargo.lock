@@ -6318,12 +6318,14 @@ dependencies = [
  "shrimply-i18n",
  "shrimply-kdenlive-parser",
  "shrimply-math-core",
+ "shrimply-media-import",
  "shrimply-otio-parser",
  "shrimply-playback-performance",
  "shrimply-project-document",
  "shrimply-project-types",
  "shrimply-property-transfer",
  "shrimply-recent-projects",
+ "shrimply-resource-pipeline",
  "shrimply-timeline-edit",
  "shrimply-trust-core",
  "tracing",
@@ -7340,6 +7342,7 @@ dependencies = [
  "shrimply-visual-modifiers",
  "tempfile",
  "tracing",
+ "url",
  "uuid",
 ]
 

@@ -2,6 +2,7 @@ use crate::project_save::ProjectFormat;
 use shrimply_editor_state::{player_state, preferences, preview_focus};
 use shrimply_math_core::Fraction;
 use shrimply_project_document::project::{self, CanvasSize, Project, ProjectPreparation};
+use shrimply_resource_pipeline::CancelToken;
 use shrimply_timeline_edit::selection_state;
 use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
@@ -303,9 +304,9 @@ impl Drop for EditorSession {
     }
 }
 
-enum AfterSave {
-    Load,
-    Warnings(Vec<String>),
+enum SaveKind {
+    Repair,
+    Import(Vec<String>),
 }
 
 enum Pending {
@@ -318,7 +319,7 @@ enum Pending {
     Save {
         result: Result<PathBuf, String>,
         error_heading: &'static str,
-        after_save: AfterSave,
+        save_kind: SaveKind,
     },
 }
 
@@ -335,12 +336,12 @@ enum State {
         source: PathBuf,
         project: Project,
         error_heading: &'static str,
-        after_save: AfterSave,
+        save_kind: SaveKind,
     },
     WaitingForDestination {
         project: Project,
         error_heading: &'static str,
-        after_save: AfterSave,
+        save_kind: SaveKind,
     },
     WaitingForWarnings {
         path: PathBuf,
@@ -352,6 +353,13 @@ enum State {
 pub struct ProjectLoader {
     path: PathBuf,
     state: State,
+    cancellation: CancelToken,
+}
+
+impl Drop for ProjectLoader {
+    fn drop(&mut self) {
+        self.cancellation.cancel();
+    }
 }
 
 impl ProjectLoader {
@@ -359,6 +367,7 @@ impl ProjectLoader {
         Self {
             path,
             state: State::Idle,
+            cancellation: CancelToken::default(),
         }
     }
 
@@ -406,22 +415,9 @@ impl ProjectLoader {
             self.state = State::Finished;
             return LoadEvent::Canceled;
         }
-        let source = self.path.clone();
-        self.start_worker(move || {
-            let result = (|| {
-                let import = shrimply_kdenlive_parser::from_file(&source)
-                    .map_err(|error| error.to_string())?;
-                let native = project::from_json_value_with_frame_grid_repair(import.project)
-                    .map_err(|error| error.to_string())?;
-                Ok((native, import.warnings))
-            })();
-            Pending::Import {
-                kind: ImportKind::Kdenlive,
-                source,
-                result,
-            }
-        });
-        LoadEvent::Progress(OTIO_READING)
+        self.start_import(ImportKind::Kdenlive, |source| {
+            shrimply_kdenlive_parser::from_file(source).map_err(|error| error.to_string())
+        })
     }
 
     pub fn choose_otio_settings(&mut self, settings: Option<(CanvasSize, Fraction)>) -> LoadEvent {
@@ -433,20 +429,32 @@ impl ProjectLoader {
             self.state = State::Finished;
             return LoadEvent::Canceled;
         };
+        self.start_import(ImportKind::Otio, move |source| {
+            shrimply_otio_parser::from_file(source, canvas_size, fps)
+        })
+    }
+
+    fn start_import(
+        &mut self,
+        kind: ImportKind,
+        parse: impl FnOnce(&Path) -> Result<project::InterchangeDocument, String> + Send + 'static,
+    ) -> LoadEvent {
         let source = self.path.clone();
         self.start_worker(move || {
-            let result =
-                shrimply_otio_parser::from_file(&source, canvas_size, fps).and_then(|import| {
-                    let native = project::from_json_value_with_frame_grid_repair(import.project)?;
-                    Ok((native, import.warnings))
-                });
+            let result = parse(&source).and_then(|import| {
+                let project = project::from_json_value_with_frame_grid_repair(import.project)?;
+                Ok((project, import.warnings))
+            });
             Pending::Import {
-                kind: ImportKind::Otio,
+                kind,
                 source,
                 result,
             }
         });
-        LoadEvent::Progress(KDENLIVE_READING)
+        LoadEvent::Progress(match kind {
+            ImportKind::Kdenlive => KDENLIVE_READING,
+            ImportKind::Otio => OTIO_READING,
+        })
     }
 
     pub fn confirm_frame_grid_repair(&mut self, repair: bool) -> LoadEvent {
@@ -455,7 +463,7 @@ impl ProjectLoader {
             source,
             project,
             error_heading,
-            after_save,
+            save_kind,
         } = state
         else {
             panic!("repair response without a pending confirmation");
@@ -463,7 +471,7 @@ impl ProjectLoader {
         if !repair {
             return LoadEvent::Canceled;
         }
-        let title = if matches!(&after_save, AfterSave::Load) {
+        let title = if matches!(&save_kind, SaveKind::Repair) {
             "Save Fixed Project"
         } else {
             match error_heading {
@@ -475,7 +483,7 @@ impl ProjectLoader {
         self.state = State::WaitingForDestination {
             project,
             error_heading,
-            after_save,
+            save_kind,
         };
         LoadEvent::ChooseDestination {
             title,
@@ -488,7 +496,7 @@ impl ProjectLoader {
         let State::WaitingForDestination {
             project,
             error_heading,
-            after_save,
+            save_kind,
         } = state
         else {
             panic!("destination response without a pending request");
@@ -499,12 +507,21 @@ impl ProjectLoader {
         if !has_extension(&destination, "shrimp") {
             destination.set_extension("shrimp");
         }
+        let cancellation = self.cancellation.clone();
         self.start_worker(move || {
-            let result = project::create_project_file(&destination, &project).map(|()| destination);
+            let result = match &save_kind {
+                SaveKind::Import(_) => shrimply_media_import::save_interchange_project(
+                    &destination,
+                    project,
+                    cancellation,
+                ),
+                SaveKind::Repair => project::create_project_file(&destination, &project),
+            }
+            .map(|()| destination);
             Pending::Save {
                 result,
                 error_heading,
-                after_save,
+                save_kind,
             }
         });
         LoadEvent::Progress(PROJECT_WRITING)
@@ -540,6 +557,7 @@ impl ProjectLoader {
     }
 
     pub fn cancel(&mut self) -> LoadEvent {
+        self.cancellation.cancel();
         self.state = State::Finished;
         LoadEvent::Canceled
     }
@@ -569,8 +587,8 @@ impl ProjectLoader {
             Pending::Save {
                 result,
                 error_heading,
-                after_save,
-            } => self.finish_save(result, error_heading, after_save),
+                save_kind,
+            } => self.finish_save(result, error_heading, save_kind),
         })
     }
 
@@ -625,7 +643,7 @@ impl ProjectLoader {
                     source: self.path.clone(),
                     project,
                     error_heading: "Could not fix project",
-                    after_save: AfterSave::Load,
+                    save_kind: SaveKind::Repair,
                 };
                 LoadEvent::ConfirmFrameGridRepair
             }
@@ -663,17 +681,16 @@ impl ProjectLoader {
                 };
             }
         };
-        let after_save = match kind {
-            ImportKind::Kdenlive => AfterSave::Load,
-            ImportKind::Otio if warnings.is_empty() => AfterSave::Load,
-            ImportKind::Otio => AfterSave::Warnings(warnings),
-        };
+        let save_kind = SaveKind::Import(match kind {
+            ImportKind::Otio => warnings,
+            ImportKind::Kdenlive => Vec::new(),
+        });
         match outcome {
             project::ProjectValidationOutcome::Valid(project) => {
                 self.state = State::WaitingForDestination {
                     project,
                     error_heading,
-                    after_save,
+                    save_kind,
                 };
                 LoadEvent::ChooseDestination {
                     title: match kind {
@@ -688,7 +705,7 @@ impl ProjectLoader {
                     source,
                     project,
                     error_heading,
-                    after_save,
+                    save_kind,
                 };
                 LoadEvent::ConfirmFrameGridRepair
             }
@@ -699,18 +716,18 @@ impl ProjectLoader {
         &mut self,
         result: Result<PathBuf, String>,
         error_heading: &'static str,
-        after_save: AfterSave,
+        save_kind: SaveKind,
     ) -> LoadEvent {
         match result {
-            Ok(path) => match after_save {
-                AfterSave::Load => {
+            Ok(path) => match save_kind {
+                SaveKind::Import(warnings) if !warnings.is_empty() => {
+                    self.state = State::WaitingForWarnings { path };
+                    LoadEvent::ImportWarnings(warnings)
+                }
+                SaveKind::Repair | SaveKind::Import(_) => {
                     self.path = path;
                     self.start_native_load();
                     LoadEvent::Progress(PROJECT_READING)
-                }
-                AfterSave::Warnings(warnings) => {
-                    self.state = State::WaitingForWarnings { path };
-                    LoadEvent::ImportWarnings(warnings)
                 }
             },
             Err(body) => {

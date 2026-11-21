@@ -1,5 +1,6 @@
 use hashbrown::HashMap;
 mod av;
+mod interchange;
 mod staging;
 pub use staging::{StagedSource, stage_source, stage_source_in};
 #[cfg(test)]
@@ -7,6 +8,7 @@ mod portable_tests;
 #[cfg(test)]
 mod sanim_tests;
 pub use av::{remux_to_mp4, video_dimensions};
+pub use interchange::{image_kind, image_reference, interchange_path, save_interchange_project};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -212,28 +214,6 @@ pub fn file_kind(path: &Path) -> Option<FileKind> {
             FileKind::Audio
         }
         _ => return None,
-    })
-}
-
-/// File-backed pictures that an interchange document can reference without running a generator.
-pub fn image_kind(path: &Path) -> Option<VisualMediaKind> {
-    use VisualMediaKind::*;
-    match file_kind(path)? {
-        FileKind::Visual(kind @ (Image | Gif | Svg | Pdf | LayeredImage)) => Some(kind),
-        _ => None,
-    }
-}
-
-/// Keep the source type when an interchange document references an offline image.
-pub fn image_reference(
-    path: &Path,
-    canvas_size: CanvasSize,
-    duration: Time,
-) -> Option<(VideoItemContent, Result<UVec2, String>)> {
-    let kind = image_kind(path)?;
-    Some(match inspect(path.to_owned(), canvas_size, duration) {
-        Ok(info) => (video_content_for_import(&info), Ok(info.video_sizes[0])),
-        Err(error) => (kind.content(&[]), Err(error)),
     })
 }
 

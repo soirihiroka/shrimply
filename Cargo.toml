@@ -419,6 +419,7 @@ typos = "0.10"
 typos-dict = "0.14"
 unicase = "2"
 unicode-segmentation = "1"
+url = "2"
 uuid = "1"
 vtracer = { path = "external/vtracer/crates/vtracer" }
 wayland-client = "0.31"

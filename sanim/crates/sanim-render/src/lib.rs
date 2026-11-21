@@ -127,7 +127,13 @@ impl Recording {
         let started = std::time::Instant::now();
         let width = i32::try_from(self.width).map_err(|_| "width exceeds Skia range")?;
         let height = i32::try_from(self.height).map_err(|_| "height exceeds Skia range")?;
-        let mut surface = skia_safe::surfaces::raster_n32_premul((width, height))
+        let info = ImageInfo::new(
+            (width, height),
+            ColorType::RGBA8888,
+            AlphaType::Premul,
+            skia_safe::ColorSpace::new_srgb(),
+        );
+        let mut surface = skia_safe::surfaces::raster(&info, None, None)
             .ok_or("cannot allocate Skia raster surface")?;
         surface.canvas().clear(background);
         self.draw(surface.canvas());
@@ -149,12 +155,7 @@ impl Recording {
             .checked_mul(self.height as usize)
             .ok_or("frame size overflow")?;
         let mut rgba = vec![0; bytes];
-        let info = ImageInfo::new(
-            (width, height),
-            ColorType::RGBA8888,
-            AlphaType::Unpremul,
-            None,
-        );
+        let info = info.with_alpha_type(AlphaType::Unpremul);
         if !surface.read_pixels(&info, &mut rgba, row_bytes, (0, 0)) {
             return Err("Skia raster read failed".into());
         }

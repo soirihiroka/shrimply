@@ -3,6 +3,7 @@ use cxx_qt::CxxQtType;
 use cxx_qt_lib::{QString, QStringList, QUrl};
 use shrimply_cross_ui_core::editor::EditorSession;
 use shrimply_editor_state::preferences::{self, SharedPreferences};
+use shrimply_export_core::video::available_audio_encoders;
 use shrimply_export_core::{caption::ytt, json, output, project, time_format};
 use shrimply_export_cuda as video;
 use shrimply_math_core::Fraction;
@@ -120,6 +121,9 @@ pub mod qobject {
         fn poll(self: Pin<&mut ExportBackend>);
         #[qinvokable]
         fn translate(self: &ExportBackend, key: &QString) -> QString;
+        #[qinvokable]
+        #[cxx_name = "audioEncoderLabels"]
+        fn audio_encoder_labels(self: &ExportBackend) -> QStringList;
         #[qinvokable]
         #[cxx_name = "revealLastOutput"]
         fn reveal_last_output(self: Pin<&mut ExportBackend>);
@@ -404,6 +408,12 @@ impl qobject::ExportBackend {
         shrimply_i18n_qt::text(&key.to_string())
     }
 
+    pub fn audio_encoder_labels(&self) -> QStringList {
+        available_audio_encoders()
+            .map(|(_, label)| shrimply_i18n_qt::text(label))
+            .collect()
+    }
+
     pub fn reveal_last_output(mut self: Pin<&mut Self>) {
         let Some(path) = self.as_ref().rust().last_output.clone() else {
             return;
@@ -474,7 +484,10 @@ impl qobject::ExportBackend {
             adaptive_quantization: self.adaptive_quantization,
             b_frames: as_u32(self.b_frames, "B frames"),
             b_frame_as_reference: self.b_frame_as_reference,
-            audio_encoder: audio_encoder(self.audio_encoder),
+            audio_encoder: available_audio_encoders()
+                .nth(self.audio_encoder as usize)
+                .expect("unknown audio encoder index")
+                .0,
             audio_sample_rate: match self.audio_sample_rate {
                 0 => 44_100,
                 1 => 48_000,
@@ -716,15 +729,6 @@ fn profile(index: i32) -> video::ExportProfile {
         0 => video::ExportProfile::Main,
         1 => video::ExportProfile::Main10,
         value => panic!("unknown profile index {value}"),
-    }
-}
-
-fn audio_encoder(index: i32) -> video::ExportAudioEncoder {
-    match index {
-        0 => video::ExportAudioEncoder::FdkAac,
-        1 => video::ExportAudioEncoder::Aac,
-        2 => video::ExportAudioEncoder::Opus,
-        value => panic!("unknown audio encoder index {value}"),
     }
 }
 

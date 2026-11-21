@@ -14,9 +14,7 @@ pub(super) fn complete(
         shrimply_media_info::demux::open_with_interrupt(input, move || interrupt.is_cancelled())
             .map_err(|error| error.to_string())?;
     loop {
-        if cancel.is_cancelled() {
-            return Err("Media import was cancelled".into());
-        }
+        super::check_cancellation(cancel)?;
         let mut packet = ffmpeg::Packet::empty();
         packet.read(&mut probe).map_err(|error| {
             format!("Could not read VP9 stream {stream_index} keyframe: {error}")

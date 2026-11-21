@@ -3,6 +3,7 @@ from contextlib import ExitStack
 from fractions import Fraction
 from io import BytesIO
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 from typing import Annotated, BinaryIO, Literal, Self
 import warnings
 
@@ -43,16 +44,64 @@ type AudioUpload = Annotated[EncodedAudio | PcmAudio, Field(discriminator="kind"
 type AudioSource = AudioUpload | bytes | Path | BinaryIO
 
 
-def _pcm_frames(audio: PcmAudio) -> Iterator[av.AudioFrame]:
-    samples = np.frombuffer(audio.data, dtype="<f4").reshape(-1, audio.channels)
-    for start in range(0, len(samples), PCM_BLOCK_FRAMES):
+def _pcm_frames(samples: np.ndarray, sample_rate: int) -> Iterator[av.AudioFrame]:
+    channels, length = samples.shape
+    if channels not in (1, 2):
+        raise ValueError(f"Expected mono or stereo PCM, got {channels} channels")
+    for start in range(0, length, PCM_BLOCK_FRAMES):
         frame = av.AudioFrame.from_ndarray(
-            samples[start : start + PCM_BLOCK_FRAMES].T.copy(),
+            np.ascontiguousarray(samples[:, start : start + PCM_BLOCK_FRAMES]),
             format="fltp",
-            layout="mono" if audio.channels == 1 else "stereo",
+            layout="mono" if channels == 1 else "stereo",
         )
-        frame.sample_rate = audio.sample_rate
+        frame.sample_rate = sample_rate
+        frame.pts = start
+        frame.time_base = Fraction(1, sample_rate)
         yield frame
+
+
+def encode_video(
+    output: Path,
+    frames: np.ndarray,
+    fps: int,
+    gpu_index: int,
+    *,
+    audio: tuple[int, np.ndarray] | None = None,
+) -> None:
+    """Write frames from a CUDA generation worker to H.264 with NVENC."""
+    if frames.ndim != 4 or frames.shape[-1] != 3 or not frames.shape[0]:
+        raise ValueError(f"Expected RGB video frames, got shape {frames.shape}")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with NamedTemporaryFile(dir=output.parent, suffix=".mp4", delete=False) as temp:
+        partial = Path(temp.name)
+    try:
+        with av.open(str(partial), mode="w", format="mp4") as container:
+            video = container.add_stream(
+                "h264_nvenc", rate=fps, options={"gpu": str(gpu_index)}
+            )
+            video.height, video.width = frames.shape[1:3]
+            video.pix_fmt = "yuv420p"
+            sound = None
+            if audio is not None:
+                codec = "libfdk_aac" if "libfdk_aac" in av.codecs_available else "aac"
+                sound = container.add_stream(codec, rate=audio[0])
+                sound.layout = "stereo"
+            container.start_encoding()
+            for pixels in frames:
+                if np.issubdtype(pixels.dtype, np.floating):
+                    pixels = np.rint(np.clip(pixels, 0, 1) * 255)
+                frame = av.VideoFrame.from_ndarray(
+                    np.ascontiguousarray(pixels, dtype=np.uint8), format="rgb24"
+                )
+                container.mux(video.encode(frame))
+            container.mux(video.encode())
+            if audio is not None and sound is not None:
+                for pcm in _pcm_frames(audio[1], audio[0]):
+                    container.mux(sound.encode(pcm))
+                container.mux(sound.encode())
+        partial.replace(output)
+    finally:
+        partial.unlink(missing_ok=True)
 
 
 def decode_audio(
@@ -73,7 +122,8 @@ def decode_audio(
         if isinstance(source, PcmAudio):
             source_rate = source.sample_rate
             source_channels = source.channels
-            frames = _pcm_frames(source)
+            samples = np.frombuffer(source.data, dtype="<f4").reshape(-1, source.channels)
+            frames = _pcm_frames(samples.T, source_rate)
         else:
             if isinstance(source, EncodedAudio):
                 source = source.data

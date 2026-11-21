@@ -56,6 +56,14 @@ pub enum ExportAudioEncoder {
     Opus,
 }
 
+impl Default for ExportAudioEncoder {
+    fn default() -> Self {
+        available_audio_encoders()
+            .next()
+            .map_or(Self::Aac, |(encoder, _)| encoder)
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct ExportSettings {
     pub path: PathBuf,
@@ -597,14 +605,13 @@ fn open_audio_encoder(
     let encoder_name = audio_encoder_name(settings.audio_encoder);
     let codec = ffmpeg::codec::encoder::find_by_name(encoder_name)
         .ok_or_else(|| format!("FFmpeg encoder {encoder_name} was not found"))?;
-    let sample_format = audio_sample_format(settings.audio_encoder);
     let mut encoder = ffmpeg::codec::Context::new_with_codec(codec)
         .encoder()
         .audio()
         .map_err(|error| error.to_string())?;
     encoder.set_rate(settings.audio_sample_rate as i32);
     encoder.set_channel_layout(ffmpeg::channel_layout::ChannelLayout::STEREO);
-    encoder.set_format(sample_format);
+    encoder.set_format(audio_sample_format(settings.audio_encoder));
     encoder.set_time_base(ffmpeg::Rational(1, settings.audio_sample_rate as i32));
     encoder.set_bit_rate(settings.audio_bitrate_kbps as usize * 1_000);
     unsafe {
@@ -636,24 +643,18 @@ fn encode_audio_packets(
         .unwrap_or(DEFAULT_AUDIO_FRAME_SIZE);
     let mut packets = VecDeque::new();
     let mut next_pts = 0_i64;
-    let sample_format = audio_sample_format(settings.audio_encoder);
     let mut start_frame = 0;
     while start_frame < input_frames {
         check_cancelled(cancelled)?;
         let frames = frame_size.min(input_frames - start_frame);
         let mut frame = ffmpeg::frame::Audio::new(
-            sample_format,
+            encoder.format(),
             frame_size,
             ffmpeg::channel_layout::ChannelLayout::STEREO,
         );
         frame.set_rate(settings.audio_sample_rate);
         frame.set_pts(Some(next_pts));
-        fill_audio_frame(
-            &mut frame,
-            sample_format,
-            &samples[start_frame * AUDIO_CHANNELS..],
-            frames,
-        );
+        fill_audio_frame(&mut frame, &samples[start_frame * AUDIO_CHANNELS..], frames);
         encoder
             .send_frame(&frame)
             .map_err(|error| error.to_string())?;
@@ -855,14 +856,9 @@ fn receive_video_packets(
     }
 }
 
-fn fill_audio_frame(
-    frame: &mut ffmpeg::frame::Audio,
-    sample_format: ffmpeg::format::Sample,
-    samples: &[f32],
-    frames: usize,
-) {
+fn fill_audio_frame(frame: &mut ffmpeg::frame::Audio, samples: &[f32], frames: usize) {
     let frame_samples = frame.samples();
-    match sample_format {
+    match frame.format() {
         ffmpeg::format::Sample::F32(ffmpeg::format::sample::Type::Planar) => {
             for (index, sample) in frame.plane_mut::<f32>(0).iter_mut().enumerate() {
                 *sample = if index < frames {
@@ -912,12 +908,23 @@ fn sample_i16(sample: f32) -> i16 {
     (sample.clamp(-1.0, 1.0) * i16::MAX as f32).round() as i16
 }
 
+pub fn available_audio_encoders() -> impl Iterator<Item = (ExportAudioEncoder, &'static str)> {
+    [
+        (ExportAudioEncoder::FdkAac, "FDK AAC"),
+        #[cfg(target_os = "macos")]
+        (ExportAudioEncoder::AudioToolboxAac, "AudioToolbox AAC"),
+        (ExportAudioEncoder::Aac, "AAC"),
+        (ExportAudioEncoder::Opus, "Opus"),
+    ]
+    .into_iter()
+    .filter(|(encoder, _)| {
+        ffmpeg::codec::encoder::find_by_name(audio_encoder_name(*encoder)).is_some()
+    })
+}
+
 fn audio_encoder_name(encoder: ExportAudioEncoder) -> &'static str {
     match encoder {
-        #[cfg(not(windows))]
         ExportAudioEncoder::FdkAac => "libfdk_aac",
-        #[cfg(windows)]
-        ExportAudioEncoder::FdkAac => "aac",
         ExportAudioEncoder::Aac => "aac",
         #[cfg(target_os = "macos")]
         ExportAudioEncoder::AudioToolboxAac => "aac_at",
@@ -927,13 +934,8 @@ fn audio_encoder_name(encoder: ExportAudioEncoder) -> &'static str {
 
 fn audio_sample_format(encoder: ExportAudioEncoder) -> ffmpeg::format::Sample {
     match encoder {
-        #[cfg(not(windows))]
         ExportAudioEncoder::FdkAac => {
             ffmpeg::format::Sample::I16(ffmpeg::format::sample::Type::Packed)
-        }
-        #[cfg(windows)]
-        ExportAudioEncoder::FdkAac => {
-            ffmpeg::format::Sample::F32(ffmpeg::format::sample::Type::Planar)
         }
         ExportAudioEncoder::Aac => {
             ffmpeg::format::Sample::F32(ffmpeg::format::sample::Type::Planar)

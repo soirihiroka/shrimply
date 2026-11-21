@@ -2,8 +2,9 @@
 mod vp9;
 
 use super::*;
-use ffmpeg::{Rational, codec, encoder, format, media};
+use ffmpeg::{codec, encoder, format, media};
 use ffmpeg_next as ffmpeg;
+use shrimply_resource_pipeline::CancelToken;
 
 pub(super) fn inspect(
     source: Asset,
@@ -144,31 +145,36 @@ fn track_dimensions(
     }
 }
 
-pub fn remux_to_mp4(
+pub(super) fn check_cancellation(cancellation: &CancelToken) -> Result<(), String> {
+    if cancellation.is_cancelled() {
+        return Err("Media import was cancelled".into());
+    }
+    Ok(())
+}
+
+pub fn remux_to_mp4(input: &Path, cancellation: CancelToken) -> Result<OwnedFile, String> {
+    remux_to(input, input.with_extension("mp4"), cancellation)
+}
+
+pub(super) fn remux_to(
     input: &Path,
-    cancellation: shrimply_resource_pipeline::CancelToken,
+    destination: PathBuf,
+    cancellation: CancelToken,
 ) -> Result<OwnedFile, String> {
-    let (path, _) = super::staging::create_unique(input.with_extension("mp4"))?;
+    let (path, _) = super::staging::create_unique(destination)?;
     let output = OwnedFile::new(path);
     remux(input, output.path(), cancellation)?;
     Ok(output)
 }
 
-fn remux(
-    input: &Path,
-    output: &Path,
-    cancellation: shrimply_resource_pipeline::CancelToken,
-) -> Result<(), String> {
+fn remux(input: &Path, output: &Path, cancellation: CancelToken) -> Result<(), String> {
     let interrupt = cancellation.clone();
     let mut input_context =
         shrimply_media_info::demux::open_with_interrupt(input, move || interrupt.is_cancelled())
             .map_err(|error| format!("could not open {}: {error}", input.display()))?;
     let mut output_context = format::output(output)
         .map_err(|error| format!("could not create {}: {error}", output.display()))?;
-    let stream_count = input_context.nb_streams() as usize;
-    let mut stream_mapping = vec![-1; stream_count];
-    let mut input_time_bases = vec![Rational(0, 1); stream_count];
-    let mut output_index = 0;
+    let mut input_time_bases = Vec::with_capacity(input_context.nb_streams() as usize);
 
     for (input_index, input_stream) in input_context.streams().enumerate() {
         let medium = input_stream.parameters().medium();
@@ -176,12 +182,18 @@ fn remux(
             medium,
             media::Type::Audio | media::Type::Video | media::Type::Subtitle
         ) {
-            continue;
+            return Err(format!(
+                "MP4 cannot preserve the {medium:?} stream in {}",
+                input.display()
+            ));
         }
-
-        stream_mapping[input_index] = output_index;
-        input_time_bases[input_index] = input_stream.time_base();
-        output_index += 1;
+        if input_stream.metadata().get("alpha_mode") == Some("1") {
+            return Err(format!(
+                "MP4 stream copying would discard the alpha channel in {}. Relink a compatible source to import this clip.",
+                input.display()
+            ));
+        }
+        input_time_bases.push(input_stream.time_base());
 
         let mut output_stream = output_context
             .add_stream(encoder::find(codec::Id::None))
@@ -193,20 +205,33 @@ fn remux(
             vp9::complete(input, input_index, &mut parameters, &cancellation)?;
         }
         output_stream.set_parameters(parameters);
+        output_stream.set_metadata(input_stream.metadata().to_owned());
+        output_stream.set_avg_frame_rate(input_stream.avg_frame_rate());
         unsafe {
             (*output_stream.parameters().as_mut_ptr()).codec_tag = 0;
+            (*output_stream.as_mut_ptr()).disposition = (*input_stream.as_ptr()).disposition;
         }
     }
 
+    for chapter in input_context.chapters() {
+        let metadata = chapter.metadata();
+        output_context
+            .add_chapter(
+                chapter.id(),
+                chapter.time_base(),
+                chapter.start(),
+                chapter.end(),
+                metadata.get("title").unwrap_or(""),
+            )
+            .map_err(|e| e.to_string())?;
+    }
     output_context.set_metadata(input_context.metadata().to_owned());
     output_context
         .write_header()
         .map_err(|error| format!("could not write {} header: {error}", output.display()))?;
 
     loop {
-        if cancellation.is_cancelled() {
-            return Err("Media import was cancelled".into());
-        }
+        check_cancellation(&cancellation)?;
         let mut packet = ffmpeg::Packet::empty();
         match packet.read(&mut input_context) {
             Ok(()) => {}
@@ -219,24 +244,26 @@ fn remux(
             }
         }
         let input_index = packet.stream();
-        let output_index = stream_mapping[input_index];
-        if output_index < 0 {
-            continue;
+        if packet
+            .side_data()
+            .any(|data| data.kind() == ffmpeg::packet::side_data::Type::MatroskaBlockAdditional)
+        {
+            return Err(format!(
+                "MP4 cannot preserve the supplemental packet data in {}, which can include an alpha channel.",
+                input.display()
+            ));
         }
         let output_stream = output_context
-            .stream(output_index as usize)
+            .stream(input_index)
             .ok_or_else(|| "remux output stream disappeared".to_string())?;
         packet.rescale_ts(input_time_bases[input_index], output_stream.time_base());
         packet.set_position(-1);
-        packet.set_stream(output_index as usize);
         packet
             .write_interleaved(&mut output_context)
             .map_err(|error| format!("could not write {} packet: {error}", output.display()))?;
     }
 
-    if cancellation.is_cancelled() {
-        return Err("Media import was cancelled".into());
-    }
+    check_cancellation(&cancellation)?;
     output_context
         .write_trailer()
         .map_err(|error| format!("could not write {} trailer: {error}", output.display()))

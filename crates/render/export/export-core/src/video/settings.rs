@@ -173,7 +173,7 @@ pub fn parse_configuration(
         bitrate_kbps: input.bitrate_kbps.unwrap_or(DEFAULT_VIDEO_BITRATE_KBPS),
         keyframe_interval_seconds: input.keyframe_interval_seconds.unwrap_or(0),
         b_frames: input.b_frames.unwrap_or(0),
-        audio_encoder: input.audio_encoder.unwrap_or(ExportAudioEncoder::Aac),
+        audio_encoder: input.audio_encoder.unwrap_or_default(),
         audio_sample_rate: input.audio_sample_rate.unwrap_or(DEFAULT_AUDIO_SAMPLE_RATE),
         audio_bitrate_kbps: input
             .audio_bitrate_kbps

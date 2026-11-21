@@ -1165,7 +1165,7 @@ def decode_checkpoint(
     import numpy as np
     import torch
     from diffusers.modular_pipelines.modular_pipeline import PipelineState
-    from diffusers.utils.export_utils import encode_video
+    from api.media import encode_video
 
     started = time.monotonic()
     latents, audio_latents, manifest = _load_latent_checkpoint(checkpoint)
@@ -1178,8 +1178,6 @@ def decode_checkpoint(
     state = PipelineState()
     state.set("latents", latents.to("cuda"))
     state.set("audio_latents", audio_latents.to("cuda"))
-    # Diffusers' PyAV exporter converts float [0, 1] NumPy frames to uint8;
-    # its tensor path expects tensors to be uint8 already.
     state.set("output_type", "np")
     results = pipe(state=state, output=["videos", "audio", "sampling_rate"])
     raw_videos = results["videos"]
@@ -1200,16 +1198,20 @@ def decode_checkpoint(
     if not isinstance(sampling_rate, int):
         raise TypeError("MiniMax H3 decoder returned an invalid sample rate")
 
-    output.parent.mkdir(parents=True, exist_ok=True)
-    partial = output.with_name(f".{output.stem}.partial{output.suffix}")
+    samples = raw_audio[0].detach()
+    if samples.shape[0] not in (1, 2):
+        samples = samples.T
+    if samples.shape[0] == 1:
+        samples = samples.expand(2, -1)
+    if samples.dtype == torch.int16:
+        samples = samples.float() / 32768
     encode_video(
+        output,
         raw_videos[0],
-        fps=24,
-        output_path=str(partial),
-        audio=raw_audio[0],
-        audio_sample_rate=sampling_rate,
+        24,
+        torch.cuda.current_device(),
+        audio=(sampling_rate, samples.float().cpu().numpy()),
     )
-    os.replace(partial, output)
     elapsed = time.monotonic() - started
     _write_status(checkpoint, "complete", decode_elapsed_seconds=elapsed)
     return {

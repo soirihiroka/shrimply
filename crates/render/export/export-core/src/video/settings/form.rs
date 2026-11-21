@@ -28,19 +28,9 @@ pub(super) fn fields(project: &Project, backend: Backend) -> Vec<Value> {
         .iter()
         .map(|(value, label)| json!({"value":value,"label":text(label)}))
         .collect();
-    let audio: Vec<_> = [
-        ("fdk_aac", "FDK AAC", "libfdk_aac"),
-        ("aac", "AAC", "aac"),
-        ("opus", "Opus", "libopus"),
-    ]
-    .into_iter()
-    .filter(|(_, _, encoder)| ffmpeg_next::codec::encoder::find_by_name(encoder).is_some())
-    .map(|(value, label, _)| json!({"value":value,"label":text(label)}))
-    .collect();
-    let default_audio = audio
-        .first()
-        .expect("FFmpeg must include a supported audio encoder")["value"]
-        .clone();
+    let audio: Vec<_> = crate::video::available_audio_encoders()
+        .map(|(value, label)| json!({"value":value,"label":text(label)}))
+        .collect();
     let mut fields = vec![
         field(
             "video_codec",
@@ -110,7 +100,7 @@ pub(super) fn fields(project: &Project, backend: Backend) -> Vec<Value> {
             "Audio Encoder",
             "Audio",
             json!({"widget":"choice","type":"string","choices":audio}),
-            default_audio,
+            json!(super::ExportAudioEncoder::default()),
         ),
         field(
             "audio_sample_rate",

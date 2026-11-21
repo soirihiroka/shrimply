@@ -74,17 +74,7 @@ fn render(
                         else {
                             return None;
                         };
-                        // YUV conversion is complete. Keep its RGB primaries and transfer curve.
-                        let profile = moxcms::ColorProfile::new_from_cicp(moxcms::CicpProfile {
-                            color_primaries: u8::try_from(*primaries).ok()?.try_into().ok()?,
-                            transfer_characteristics: u8::try_from(*transfer)
-                                .ok()?
-                                .try_into()
-                                .ok()?,
-                            matrix_coefficients: moxcms::MatrixCoefficients::Identity,
-                            full_range: true,
-                        });
-                        ColorSpace::new_icc(&profile.encode().ok()?)
+                        super::raster::cicp_rgb_space(*primaries, *transfer)
                     })
                 })
         })

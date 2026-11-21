@@ -76,7 +76,8 @@ Shrimply recognizes these source types:
      - MP4 and MOV
    * - Video inputs that require remuxing
      - MKV and WebM. Shrimply copies the compressed streams into an MP4 and
-       inserts that file. Import fails if MP4 cannot carry the source codec.
+       inserts that file. Import fails for incompatible codecs, attachments,
+       or supplemental packet data such as VP9 WebM transparency.
    * - Video codecs
      - H.264/AVC, H.265/HEVC, AV1, VP8, VP9, and other codecs with FFmpeg
        CUDA decoding
@@ -95,6 +96,9 @@ Shrimply recognizes these source types:
 
 Project opening additionally accepts native Shrimply projects, Shrimply JSON,
 OpenTimelineIO, and :doc:`Kdenlive projects <kdenlive-import>`.
+Saving an imported OpenTimelineIO or Kdenlive project puts its MKV and WebM
+derivatives beside the new project. Clips that share a source share one MP4.
+Relink missing MKV or WebM files before importing.
 
 Video decoding requires both a matching FFmpeg CUDA decoder and codec support
 from the installed NVIDIA GPU.

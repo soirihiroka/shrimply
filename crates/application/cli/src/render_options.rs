@@ -105,13 +105,14 @@ pub fn from_request(
             ));
         }
     }
-    let audio_encoder = match request.audio_encoder.as_deref().unwrap_or("aac") {
-        "aac" => ExportAudioEncoder::Aac,
-        "fdk-aac" => ExportAudioEncoder::FdkAac,
-        "opus" => ExportAudioEncoder::Opus,
+    let audio_encoder = match request.audio_encoder.as_deref() {
+        None => ExportAudioEncoder::default(),
+        Some("aac") => ExportAudioEncoder::Aac,
+        Some("fdk-aac") => ExportAudioEncoder::FdkAac,
+        Some("opus") => ExportAudioEncoder::Opus,
         #[cfg(target_os = "macos")]
-        "audiotoolbox-aac" => ExportAudioEncoder::AudioToolboxAac,
-        name => return Err(format!("unsupported audio encoder: {name}")),
+        Some("audiotoolbox-aac") => ExportAudioEncoder::AudioToolboxAac,
+        Some(name) => return Err(format!("unsupported audio encoder: {name}")),
     };
     Ok(Options {
         project,

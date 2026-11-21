@@ -55,7 +55,17 @@ pub(super) fn render(
     Ok(())
 }
 
-fn ffmpeg(override_path: Option<&Path>) -> Result<(PathBuf, &'static str), String> {
+struct HardwareEncoder {
+    name: &'static str,
+    device: &'static [&'static str],
+    output: &'static [&'static str],
+}
+
+fn ffmpeg(
+    override_path: Option<&Path>,
+    size: &str,
+    rate: &str,
+) -> Result<(PathBuf, HardwareEncoder), String> {
     let executable = override_path.map(Path::to_owned).unwrap_or_else(|| {
         let bundled = std::env::current_exe().ok().map(|app| {
             app.with_file_name(format!("shrimply-ffmpeg{}", std::env::consts::EXE_SUFFIX))
@@ -103,15 +113,55 @@ fn ffmpeg(override_path: Option<&Path>) -> Result<(PathBuf, &'static str), Strin
         ));
     }
     let listing = String::from_utf8_lossy(&probe.stdout);
-    let encoder = ["libx264", "h264_nvenc"]
-        .into_iter()
-        .find(|name| {
-            listing
-                .lines()
-                .any(|line| line.split_ascii_whitespace().nth(1) == Some(*name))
-        })
-        .ok_or("FFmpeg needs the libx264 or h264_nvenc encoder for H.264 video")?;
-    Ok((executable, encoder))
+    // A compiled-in encoder can still be unusable on this device. Check the actual
+    // frame size, rate and pixel path before rendering any animation frames.
+    let mut failures = Vec::new();
+    for encoder in [
+        HardwareEncoder {
+            name: "h264_nvenc",
+            device: &[],
+            output: &["-pix_fmt", "yuv420p"],
+        },
+        HardwareEncoder {
+            name: "h264_videotoolbox",
+            device: &[],
+            output: &["-allow_sw", "0", "-pix_fmt", "yuv420p"],
+        },
+        HardwareEncoder {
+            name: "h264_vaapi",
+            device: &["-init_hw_device", "vaapi=va", "-filter_hw_device", "va"],
+            output: &["-vf", "format=nv12,hwupload"],
+        },
+    ] {
+        if !listing
+            .lines()
+            .any(|line| line.split_ascii_whitespace().nth(1) == Some(encoder.name))
+        {
+            continue;
+        }
+        let probe = Command::new(&executable)
+            .args(["-hide_banner", "-loglevel", "error", "-nostdin"])
+            .args(encoder.device)
+            .args(["-f", "lavfi", "-i"])
+            .arg(format!("color=size={size}:rate={rate},format=rgba"))
+            .args(["-frames:v", "1", "-c:v", encoder.name])
+            .args(encoder.output)
+            .args(["-f", "null", "-"])
+            .output()
+            .map_err(|error| format!("could not probe {}: {error}", encoder.name))?;
+        if probe.status.success() {
+            return Ok((executable, encoder));
+        }
+        failures.push(format!(
+            "{}: {}",
+            encoder.name,
+            String::from_utf8_lossy(&probe.stderr).trim()
+        ));
+    }
+    Err(format!(
+        "No usable hardware H.264 encoder for {size} at {rate} fps. {}",
+        failures.join("\n")
+    ))
 }
 
 pub(super) fn encode(
@@ -148,36 +198,29 @@ pub(super) fn encode(
         .tempfile_in(directory)
         .map_err(|e| format!("video output: {e}"))?;
     let mut errors = tempfile::tempfile().map_err(|e| e.to_string())?;
-    let (executable, codec) = ffmpeg(args.ffmpeg.as_deref())?;
+    let size = format!("{width}x{height}");
+    let fps = rate.to_string();
+    let (executable, codec) = ffmpeg(args.ffmpeg.as_deref(), &size, &fps)?;
     let mut encoder = Command::new(executable)
+        .args(["-hide_banner", "-loglevel", "error", "-nostdin", "-y"])
+        .args(codec.device)
         .args([
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-nostdin",
-            "-y",
             "-f",
             "rawvideo",
             "-pixel_format",
             "rgba",
             "-video_size",
-        ])
-        .arg(format!("{}x{}", width, height))
-        .arg("-framerate")
-        .arg(rate.to_string())
-        .args([
+            &size,
+            "-framerate",
+            &fps,
             "-i",
             "pipe:0",
             "-an",
             "-c:v",
-            codec,
-            "-pix_fmt",
-            "yuv420p",
-            "-movflags",
-            "+faststart",
-            "-f",
-            "mp4",
+            codec.name,
         ])
+        .args(codec.output)
+        .args(["-movflags", "+faststart", "-f", "mp4"])
         .arg(temporary.path())
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
@@ -223,6 +266,6 @@ pub(super) fn encode(
         .persist(output)
         .map_err(|e| format!("cannot publish video: {e}"))?;
     Ok(
-        serde_json::json!({"ok":true,"output":output,"frames":frames,"rate":rate.to_string(),"duration":duration.to_string(),"render_micros":started.elapsed().as_micros(),"width":width,"height":height}),
+        serde_json::json!({"ok":true,"output":output,"encoder":codec.name,"frames":frames,"rate":rate.to_string(),"duration":duration.to_string(),"render_micros":started.elapsed().as_micros(),"width":width,"height":height}),
     )
 }

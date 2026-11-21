@@ -61,6 +61,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv lock && uv sync --locked --no-dev
 
 FROM cuda-${CUDA_VERSION} AS runtime
+ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility,video
 ARG SHRIMPLY_SERVER_GIT_HASH=""
 ENV SHRIMPLY_SERVER_GIT_HASH=${SHRIMPLY_SERVER_GIT_HASH}
 COPY src ./src

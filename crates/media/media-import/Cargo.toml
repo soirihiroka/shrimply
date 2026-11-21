@@ -24,6 +24,7 @@ shrimply-timeline-edit = { workspace = true }
 shrimply-layered-image-loader.workspace = true
 shrimply-visual-modifiers = { workspace = true, default-features = true }
 uuid = { workspace = true, features = ["v4"] }
+url.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]

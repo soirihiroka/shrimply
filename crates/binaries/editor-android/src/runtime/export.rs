@@ -13,11 +13,12 @@ use std::{
         atomic::{AtomicBool, Ordering},
     },
 };
+use tempfile::TempDir;
 
 pub(super) struct Export {
-    job: Job<Vec<PathBuf>>,
+    job: Job<(TempDir, Vec<PathBuf>)>,
     pub state: Value,
-    directory: PathBuf,
+    completed_directory: Option<TempDir>,
 }
 
 enum Operation {
@@ -61,7 +62,8 @@ impl Export {
         }
         if let Some(result) = update.finished {
             match result {
-                Ok(paths) => {
+                Ok((directory, paths)) => {
+                    self.completed_directory = Some(directory);
                     let files: Vec<_> = paths
                         .into_iter()
                         .map(|path| {
@@ -135,12 +137,17 @@ impl Runtime {
                     if export.state["status"] == "running" {
                         return Err("Wait for the export to stop before dismissing it".into());
                     }
-                    if operation == "export_saved" {
-                        if export.state["status"] != "complete" {
-                            return Err("Only a completed export can be saved".into());
+                    if operation == "export_saved" && export.state["status"] != "complete" {
+                        return Err("Only a completed export can be saved".into());
+                    }
+                    if let Some(directory) = &export.completed_directory {
+                        // Keep ownership if removal fails so Close can be retried.
+                        match std::fs::remove_dir_all(directory.path()) {
+                            Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
+                                return Err(error.to_string());
+                            }
+                            _ => {}
                         }
-                        std::fs::remove_dir_all(&export.directory)
-                            .map_err(|error| error.to_string())?;
                     }
                     self.export = None;
                 }
@@ -165,9 +172,10 @@ impl Runtime {
             .ok_or("open a project first")?
             .clone();
         let id = uuid::Uuid::new_v4().to_string();
-        let directory = shrimply_path_core::cache_directory()?
-            .join("exports")
-            .join(&id);
+        let exports = shrimply_path_core::cache_directory()?.join("exports");
+        std::fs::create_dir_all(&exports).map_err(|error| error.to_string())?;
+        let staging = TempDir::new_in(exports).map_err(|error| error.to_string())?;
+        let directory = staging.path().to_path_buf();
         // Project names are presentation text. Confine actual output to this job.
         let output_path = |extension: &str| -> Result<PathBuf, String> {
             let suggested = shrimply_export_core::output::default_filename(&project, extension);
@@ -203,29 +211,20 @@ impl Runtime {
                 mode == ExportMode::Separate,
             )
         };
-        std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
-        let cleanup = directory.clone();
         let wake = self.backend.wake.clone();
         let job = Job::spawn(
             move |cancelled, progress| {
-                let result = operation.run(project, cancelled, progress);
-                if result.is_err() {
-                    std::fs::remove_dir_all(cleanup)
-                        .map_err(|error| format!("Clean failed export: {error}"))?;
-                }
-                result
+                let paths = operation.run(project, cancelled, progress)?;
+                Ok((staging, paths))
             },
             move || wake(),
-        )
-        .inspect_err(|_| {
-            let _ = std::fs::remove_dir_all(&directory);
-        })?;
+        )?;
         let mut state = json!({"id":id,"status":"running","directory":directory,"separate":separate,"files":[],"mime":mime,
             "kind":if is_video {"video"} else {"captions"},"progress":null,"error":null,"cancelling":false});
         state["presentation"] = video::progress::job_view(&state);
         self.export = Some(Export {
             job,
-            directory: directory.clone(),
+            completed_directory: None,
             state,
         });
         self.backend.snapshot()

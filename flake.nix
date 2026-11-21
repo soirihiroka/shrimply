@@ -35,6 +35,18 @@
     }:
     let
       system = "x86_64-linux";
+      # The GitHub flake fetcher downloads an archive without any submodules.
+      # Fetch that same project revision through Git to resolve its gitlinks.
+      src =
+        if builtins.pathExists (self + "/external/ffmpeg/RELEASE") then self
+        else if self.sourceInfo ? submodules || !(self ? rev) then
+          throw "Initialize the project submodules with git submodule update --init --recursive."
+        else builtins.fetchGit {
+          url = "https://github.com/soirihiroka/shrimply.git";
+          rev = self.rev;
+          submodules = true;
+          shallow = true;
+        };
       overlay =
         final: prev:
         let
@@ -49,9 +61,11 @@
         {
           shrimply-ffmpeg =
             let
-              source = ./external/ffmpeg;
+              source = builtins.path { path = src + "/external/ffmpeg"; name = "ffmpeg"; };
               codec = (prev.ffmpeg.override {
                 inherit source;
+                withUnfree = true;
+                withFdkAac = true;
                 version = final.lib.removeSuffix "\n" (builtins.readFile (source + "/RELEASE"));
               }).overrideAttrs (old: {
                 # The pinned nixpkgs recipe still configures the removed OpenGL output.
@@ -65,8 +79,7 @@
           shrimply-slang = prev.callPackage ./pkgs/slang.nix { };
           shrimply-oidn = prev.callPackage ./pkgs/oidn.nix { };
           shrimply = final.callPackage ./pkgs/shrimply.nix {
-            inherit rustPlatform;
-            src = self;
+            inherit rustPlatform src;
             ffmpeg = final.shrimply-ffmpeg;
             rhubarbSrc = rhubarb;
           };

@@ -301,18 +301,28 @@ fn script_filename_with_spaces() {
 }
 
 #[test]
-fn video_renders_complete_independent_h264_stream() {
+fn video_encodes_on_hardware_or_reports_its_absence() {
     let (output, mp4) = run(
         "let marker=Box(fill=Color(\"red\"), width=2*(4pt), height=2*(4pt), radius=\"full\", x_align=Align.Center, y_align=Align.Center)\nmarker.move_to([25%, 0%], duration=300ms, ease=\"linear\")\n",
-        &["video", "--output", "OUTPUT"],
+        &[
+            "video", "--output", "OUTPUT", "--width", "320", "--height", "240",
+        ],
     );
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    if !output.status.success() {
+        let error = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            error.contains("No usable hardware H.264 encoder"),
+            "{error}"
+        );
+        assert!(mp4.is_empty());
+        return;
+    }
     assert_eq!(&mp4[4..8], b"ftyp");
     let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(matches!(
+        result["encoder"].as_str(),
+        Some("h264_nvenc" | "h264_videotoolbox" | "h264_vaapi")
+    ));
     assert_eq!(result["frames"], 3);
 }
 #[test]

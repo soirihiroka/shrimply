@@ -5,6 +5,7 @@ import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.database.ContentObserver
 import android.net.Uri
+import androidx.core.database.sqlite.transaction
 import org.json.JSONObject
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -12,7 +13,6 @@ import android.os.Handler
 import android.os.Looper
 import android.provider.DocumentsContract
 import kotlinx.coroutines.*
-import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.io.File
@@ -30,6 +30,8 @@ internal class ProjectFiles(context: Context) : AutoCloseable {
     private companion object {
         val mutex = Mutex()
         const val MAX_MIRRORED_ENTRIES = 16_384
+        // FAT-backed providers can round modification times down to two seconds.
+        val PROVIDER_TIME_RESOLUTION_MS = TimeUnit.SECONDS.toMillis(2)
         const val UPLOAD_CLEANUP = 0
         const val UPLOAD_STAGED = 1
         const val UPLOAD_WRITING = 2
@@ -40,11 +42,12 @@ internal class ProjectFiles(context: Context) : AutoCloseable {
     private val resolver = context.contentResolver
     private val origins = context.getSharedPreferences("project-origins", Context.MODE_PRIVATE)
     private val root = File(context.filesDir, "projects").apply { mkdirs() }
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val jobs = SupervisorJob()
+    private val scope = CoroutineScope(jobs + Dispatchers.IO)
     private val main = Handler(Looper.getMainLooper())
-    private var contentObserver: ContentObserver? = null
+    @Volatile private var watch: DocumentTreeWatch? = null
+    private var pendingWatch: DocumentTreeWatch? = null
     @Volatile private var localChange: ((String, String) -> Unit)? = null
-    private var sync: Channel<Unit>? = null
     private var sourceTree: Uri? = null
     private val sourceFiles = mutableMapOf<String, Pair<Entry, File>>()
     private var onError: (String) -> Unit = {}
@@ -53,17 +56,22 @@ internal class ProjectFiles(context: Context) : AutoCloseable {
     @Volatile private var closed = false
     private val mirrorDatabase = lazy {
         this.context.openOrCreateDatabase("project-mirrors.sqlite", Context.MODE_PRIVATE, null).apply {
+            execSQL("CREATE TABLE IF NOT EXISTS relocations (tree TEXT PRIMARY KEY, document TEXT NOT NULL, source TEXT NOT NULL, target TEXT NOT NULL, inode TEXT NOT NULL)")
             execSQL("CREATE TABLE IF NOT EXISTS uploads (stage TEXT PRIMARY KEY, tree TEXT NOT NULL, parent TEXT NOT NULL, name TEXT NOT NULL, mime TEXT NOT NULL, uri TEXT, previous TEXT, wanted TEXT NOT NULL, ready INTEGER NOT NULL, siblings TEXT, UNIQUE(tree,parent,name))")
-            execSQL("CREATE TABLE IF NOT EXISTS fingerprints (uri TEXT PRIMARY KEY, hash TEXT NOT NULL)")
+            execSQL("CREATE TABLE IF NOT EXISTS fingerprints (uri TEXT PRIMARY KEY, hash TEXT NOT NULL, stamp TEXT)")
+            val hasStamp = rawQuery("PRAGMA table_info(fingerprints)", null).use { columns ->
+                generateSequence { if (columns.moveToNext()) columns.getString(1) else null }.contains("stamp")
+            }
+            if (!hasStamp) execSQL("ALTER TABLE fingerprints ADD COLUMN stamp TEXT")
             execSQL("CREATE TABLE IF NOT EXISTS source_entries (uri TEXT PRIMARY KEY, tree TEXT NOT NULL, path TEXT NOT NULL, mime TEXT NOT NULL)")
         }
     }
     private fun baseline(uri: Uri): String? = mirrorDatabase.value.rawQuery(
         "SELECT hash FROM fingerprints WHERE uri=?", arrayOf(uri.toString())
     ).use { if (it.moveToFirst()) it.getString(0) else null }
-    private fun rememberHash(uri: Uri, hash: ByteArray) {
-        mirrorDatabase.value.execSQL("INSERT INTO fingerprints(uri,hash) VALUES (?,?) ON CONFLICT(uri) DO UPDATE SET hash=excluded.hash WHERE hash!=excluded.hash",
-            arrayOf(uri.toString(), hash.joinToString("") { "%02x".format(it) }))
+    private fun rememberHash(uri: Uri, hash: ByteArray, stamp: String? = null) {
+        mirrorDatabase.value.execSQL("INSERT INTO fingerprints(uri,hash,stamp) VALUES (?,?,?) ON CONFLICT(uri) DO UPDATE SET hash=excluded.hash,stamp=excluded.stamp WHERE hash!=excluded.hash OR stamp IS NOT excluded.stamp",
+            arrayOf(uri.toString(), hashLabel(hash), stamp))
     }
     private fun hashLabel(hash: ByteArray?) = hash?.joinToString("") { "%02x".format(it) }
     private fun ensureOpen() { if (closed) throw CancellationException("Project session closed") }
@@ -82,12 +90,13 @@ internal class ProjectFiles(context: Context) : AutoCloseable {
             val folder = existing ?: File(root, UUID.randomUUID().toString())
             try {
                 restoreSources(tree, folder)
-                reconcile(tree, folder, progress)
+                reconcile(tree, folder, prepareWatch(tree), progress)
                 val projects = folder.walkTopDown().onEnter { it.name != ".snapshots" }.filter { it.isFile && it.extension.equals("shrimp", true) }.toList()
                 check(projects.isNotEmpty()) { "This folder does not contain a .shrimp project." }
                 check(origins.edit().putString(folder.absolutePath, tree.toString()).commit()) { "Could not remember the project folder." }
                 projects
             } catch (error: Exception) {
+                cancelOpen()
                 if (existing == null) folder.deleteRecursively()
                 throw error
             }
@@ -102,7 +111,9 @@ internal class ProjectFiles(context: Context) : AutoCloseable {
                 origins.getString(folder.absolutePath, null)?.let(Uri::parse)?.let { tree ->
                     if (!reconciled) {
                         restoreSources(tree, folder)
-                        reconcile(tree, folder) {}
+                        val openedId = sourceFiles.entries.firstOrNull { it.value.second == File(path) }?.key
+                        reconcile(tree, folder, prepareWatch(tree)) {}
+                        openedId?.let { id -> sourceFiles[id]?.second?.let { put("path", it.absolutePath) } }
                     }
                     put("mirror_root", folder.absolutePath)
                 }
@@ -182,7 +193,7 @@ internal class ProjectFiles(context: Context) : AutoCloseable {
                     val tree = (origin as? String)?.let(Uri::parse) ?: continue
                     if (tree.authority != uri.authority) continue
                     if (DocumentsContract.getTreeDocumentId(tree) == id) { mapped = File(folder).canonicalPath; break }
-                    val document = DocumentsContract.buildDocumentUriUsingTree(tree, id)
+                    val document = document(tree, id)
                     mirrorDatabase.value.rawQuery("SELECT path FROM source_entries WHERE uri=? LIMIT 1", arrayOf(document.toString())).use {
                         if (it.moveToFirst()) mapped = File(it.getString(0)).canonicalPath
                     }
@@ -207,7 +218,7 @@ internal class ProjectFiles(context: Context) : AutoCloseable {
                     "SELECT uri FROM source_entries WHERE tree=? AND path=? AND mime=? LIMIT 1",
                     arrayOf(tree.toString(), directory.absolutePath, DocumentsContract.Document.MIME_TYPE_DIR)
                 ).use { if (it.moveToFirst()) Uri.parse(it.getString(0)) else null }
-                original ?: if (directory == folder) DocumentsContract.buildDocumentUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree))
+                original ?: if (directory == folder) document(tree, DocumentsContract.getTreeDocumentId(tree))
                     else ProjectDocumentsProvider.directoryUri(context, directory)
             }
         }
@@ -221,18 +232,184 @@ internal class ProjectFiles(context: Context) : AutoCloseable {
         }
     }
 
-    private fun reconcile(tree: Uri, folder: File, progress: (String) -> Unit) {
+    @Synchronized private fun prepareWatch(tree: Uri): DocumentTreeWatch {
+        watch?.takeIf { it.tree == tree }?.let { return it }
+        pendingWatch?.takeIf { it.tree == tree }?.let { return it }
+        cancelOpen()
+        return DocumentTreeWatch(resolver, tree).also { pendingWatch = it }
+    }
+
+    @Synchronized fun cancelOpen() {
+        pendingWatch?.let { old -> old.close(); scope.launch { old.retain(emptySet()) } }
+        pendingWatch = null
+    }
+
+    @Synchronized private fun startWatch(tree: Uri, project: File): DocumentTreeWatch {
+        val active = prepareWatch(tree)
+        pendingWatch = null
+        active.project = project
+        watch = active
+        return active
+    }
+
+    private fun reconcile(tree: Uri, folder: File, active: DocumentTreeWatch? = watch?.takeIf { it.tree == tree }, progress: (String) -> Unit) {
         if (sourceTree != tree) restoreSources(tree, folder)
+        resumeMove(tree)
         recoverUploads(tree)
-        if (folder.isDirectory) deleteMissingSources(tree, folder, listOf(""))
+        val changes = active?.changes()
+        // Enumerate the whole topology before interpreting any missing path as a deletion:
+        // a provider can keep an ID when moving a document between sibling directories.
+        val listing = linkedMapOf<String, List<Entry>>()
+        val ids = hashSetOf<String>()
         val rootId = DocumentsContract.getTreeDocumentId(tree)
-        copyFrom(tree, rootId, folder, progress = progress)
-        // copyFrom already reconciled every tracked file. Upload only local additions.
+        val pending = ArrayDeque(listOf(rootId))
+        while (pending.isNotEmpty()) {
+            val parent = pending.removeFirst()
+            active?.observe(parent)
+            val entries = entries(tree, parent).filterNot { ignored(it.name) }
+            listing[parent] = entries
+            for (entry in entries) {
+                check(entry.id != rootId && ids.size < MAX_MIRRORED_ENTRIES && ids.add(entry.id)) {
+                    "The provider returned repeated document IDs or exceeded the file budget."
+                }
+                if (entry.directory) pending.addLast(entry.id)
+            }
+        }
+        active?.retain(listing.keys)
+        val openDocument = active?.project?.toPath()
+        val pinned = sourceFiles.entries.filter { openDocument?.startsWith(it.value.second.toPath()) == true }
+            .associate { it.value.second to it.key }
+        val locations = linkedMapOf<String, Pair<Entry, File>>()
+        for ((parent, children) in listing) {
+            val directory = locations[parent]?.second ?: folder
+            for (entry in children) {
+                val natural = File(directory, entry.name)
+                val previous = sourceFiles[entry.id]?.second
+                // Keep the editor's locked document at its original path through a
+                // live rename. A new document ID replacing it in place keeps its name.
+                val path = when {
+                    previous != null && pinned[previous] == entry.id -> previous
+                    pinned[natural] in ids -> File(folder, ".incoming-${UUID.nameUUIDFromBytes(entry.id.toByteArray())}")
+                    else -> natural
+                }
+                locations[entry.id] = entry to path
+            }
+        }
+        val byPath = locations.values.associate { (entry, file) -> file to entry }
+        check(byPath.size == locations.size) { "Two source documents need the same local path. Close the project before retrying." }
+        for ((id, location) in locations) {
+            val (entry, target) = location
+            val (previous, old) = sourceFiles[id] ?: continue
+            check(previous.mime == entry.mime) { "'${entry.name}' changed file type externally. The local copy was kept." }
+            if (old == target) continue
+            if (target.exists()) {
+                val displaced = sourceFiles.entries.firstOrNull { it.value.second == target }
+                check(displaced != null) { "A local file already occupies '${target.name}'. Both copies were kept." }
+                if (displaced.key !in locations) {
+                    // Move surviving descendants first, even if the source removed their parent.
+                    check(!displaced.value.first.directory || sourceFiles.none { (key, value) ->
+                        key in locations && value.second.toPath().startsWith(target.toPath())
+                    }) { "The source replaced a directory while moving its contents. The local files were kept." }
+                    removeDeletedSource(tree, displaced.key, target)
+                } else {
+                    // The source names can form a cycle (a→b, b→a). Vacate the
+                    // occupied path before moving the next document into it.
+                    val stage = File(folder, ".incoming-${UUID.randomUUID()}")
+                    move(tree, displaced.key, target, stage)
+                }
+            }
+            move(tree, id, sourceFiles.getValue(id).second, target)
+        }
+        for ((id, old) in sourceFiles.toMap()) {
+            if (id in locations || id !in sourceFiles) continue
+            val (previous, file) = old
+            val replacement = byPath[file]
+            if (replacement == null && file in pinned) {
+                if (file.isFile) check(file.inputStream().use { hashLabel(digest(it)) } == baseline(document(tree, id))) {
+                    "'${file.name}' was removed externally. Export the project to preserve your local edits."
+                }
+                continue
+            }
+            if (replacement == null) removeDeletedSource(tree, id, file)
+            else {
+                check(replacement.mime == previous.mime) { "'${replacement.name}' changed file type externally. The local copy was kept." }
+                val oldUri = document(tree, id).toString()
+                val newUri = document(tree, replacement.id).toString()
+                mirrorDatabase.value.transaction {
+                    execSQL("INSERT INTO fingerprints(uri,hash) SELECT ?,hash FROM fingerprints WHERE uri=? ON CONFLICT(uri) DO UPDATE SET hash=excluded.hash,stamp=NULL", arrayOf(newUri, oldUri))
+                    forgetEntry(oldUri)
+                    rememberEntry(tree, replacement, file)
+                }
+                sourceFiles.remove(id)
+            }
+        }
+        val deleted = if (folder.isDirectory) deleteMissingSources(tree, folder) else emptySet()
+        for ((parent, entries) in listing) {
+            if (parent in deleted) continue
+            val directory = locations[parent]?.second ?: folder
+            check(directory.isDirectory || directory.mkdirs()) { "Could not create the project folder." }
+            for (entry in entries) {
+                ensureOpen()
+                if (entry.id in deleted) continue
+                val target = locations.getValue(entry.id).second
+                if (!entry.directory) {
+                    val forced = changes?.directories?.let { parent in it || "" in it } == true
+                    syncFile(tree, parent, entry, target, forced, changes?.checkUnversioned != false, progress)
+                }
+                rememberEntry(tree, entry, target)
+            }
+        }
+        // The complete listing already reconciled every tracked file. Publish local additions only.
         val tracked = sourceFiles.values.mapTo(HashSet()) { it.second }
         folder.walkTopDown().onEnter { !ignored(it.name) }.filter { it != folder && it !in tracked && !ignored(it.name) }.forEach {
             if (it.isDirectory) destinationDirectory(folder, it, tree) else writeChangedFile(folder, it, tree)
         }
+        if (changes != null) active.acknowledge(changes)
     }
+
+    // Atomically move the local inode and all persisted descendant paths, including
+    // recovery after a process exit between the filesystem rename and SQLite commit.
+    private fun move(tree: Uri, id: String, source: File, target: File) {
+        check(source.exists()) { "'${source.name}' was removed locally and moved externally. The source was kept." }
+        check(!target.exists()) { "The local path '${target.name}' is occupied." }
+        mirrorDatabase.value.execSQL("INSERT INTO relocations(tree,document,source,target,inode) VALUES(?,?,?,?,?)",
+            arrayOf(tree.toString(), id, source.path, target.path, inode(source)))
+        resumeMove(tree)
+    }
+
+    private fun inode(file: File): String? = if (!file.exists()) null else android.system.Os.stat(file.path).let {
+        "${it.st_dev}:${it.st_ino}"
+    }
+
+    private fun resumeMove(tree: Uri) {
+        mirrorDatabase.value.rawQuery("SELECT document,source,target,inode FROM relocations WHERE tree=?", arrayOf(tree.toString())).use { row ->
+            if (!row.moveToFirst()) return
+            val id = row.getString(0)
+            val source = File(row.getString(1))
+            val target = File(row.getString(2))
+            val expected = row.getString(3)
+            if (inode(target) != expected) {
+                check(inode(source) == expected && !target.exists()) { "A pending project move conflicts with local changes. Both copies were kept." }
+                val parent = checkNotNull(target.parentFile)
+                check(parent.isDirectory || parent.mkdirs()) { "Could not create the new parent directory." }
+                Files.move(source.toPath(), target.toPath(), StandardCopyOption.ATOMIC_MOVE)
+            }
+            val relocated = sourceFiles.filter { (key, value) -> key == id ||
+                target.isDirectory && value.second.toPath().startsWith(source.toPath())
+            }.mapValues { (_, pair) ->
+                val (entry, path) = pair
+                entry to if (path == source) target else File(target, path.relativeTo(source).path)
+            }
+            mirrorDatabase.value.transaction {
+                for ((key, pair) in relocated) execSQL("UPDATE source_entries SET path=? WHERE uri=?",
+                    arrayOf(pair.second.path, document(tree, key).toString()))
+                delete("relocations", "tree=?", arrayOf(tree.toString()))
+            }
+            sourceFiles.putAll(relocated)
+        }
+    }
+
+    fun resumed() { watch?.resumed() }
 
     fun localChanged(root: String, relativePath: String) { localChange?.invoke(root, relativePath) }
 
@@ -241,99 +418,44 @@ internal class ProjectFiles(context: Context) : AutoCloseable {
         check(!closing) { "Project session closed" }
         onError = error
         if (projectPath == null) return generation
-        val folder = projectRoot(File(projectPath))
+        val project = File(projectPath)
+        val folder = projectRoot(project)
         val tree = origins.getString(folder.absolutePath, null)?.let(Uri::parse) ?: return generation
         val epoch = generation
-        val incoming = mutableSetOf<String>()
-        val outgoing = mutableSetOf<String>()
-        val updates = Channel<Unit>(Channel.CONFLATED)
-        sync = updates
-        localChange = { root, relative ->
-            if (root == folder.absolutePath) queueChange(outgoing, relative, "", updates)
-        }
+        val active = startWatch(tree, project)
+        localChange = { root, _ -> if (root == folder.absolutePath) active.localChanged() }
         scope.launch {
-            for (ignored in updates) {
-                try {
-                    mutex.withLock {
-                        if (epoch != generation) return@launch
-                        if (sourceTree != tree) restoreSources(tree, folder)
-                        val changed = takeChanges(outgoing)
-                        if ("" in changed) {
-                            takeChanges(incoming)
+            try {
+                while (active.awaitChange()) {
+                    try {
+                        mutex.withLock {
+                            if (generation != epoch) return@launch
                             reconcile(tree, folder) {}
-                            return@withLock
                         }
-                        recoverUploads(tree)
-                        deleteMissingSources(tree, folder, changed)
-                        val remoteChanges = takeChanges(incoming)
-                        if (remoteChanges.isNotEmpty()) {
-                            var fullScan = false
-                            for (changed in remoteChanges) {
-                                val id = runCatching { DocumentsContract.getDocumentId(Uri.parse(changed)) }.getOrNull()
-                                val known = sourceFiles[id]
-                                if (known == null || known.second.isDirectory) fullScan = true
-                                else try {
-                                    syncFile(tree, known.first, known.second) {}
-                                } catch (_: java.io.FileNotFoundException) {
-                                    // Only a completed directory listing can confirm a deletion or replacement.
-                                    fullScan = true
-                                }
-                            }
-                            if (fullScan) {
-                                copyFrom(tree, DocumentsContract.getTreeDocumentId(tree), folder) {}
-                            }
-                        }
-                        for (relative in changed) {
-                            val file = File(folder, relative)
-                            if (file.isFile) writeChangedFile(folder, file, tree)
-                            else if (file.isDirectory) copyTo(file, tree, destinationDirectory(folder, file, tree)) {}
-                        }
-                    }
-                } catch (failure: Exception) { report(epoch, failure) }
-            }
+                    } catch (failure: Exception) { report(epoch, failure) }
+                }
+            } finally { active.retain(emptySet()) }
         }
-        val observer = object : ContentObserver(main) {
-            override fun onChange(selfChange: Boolean) { queueChange(incoming, tree.toString(), tree.toString(), updates) }
-            override fun onChange(selfChange: Boolean, uri: Uri?) { queueChange(incoming, (uri ?: tree).toString(), tree.toString(), updates) }
-        }
-        try {
-            resolver.registerContentObserver(tree, true, observer)
-            contentObserver = observer
-            queueChange(outgoing, "", "", updates)
-        } catch (failure: Exception) { report(epoch, failure) }
         return epoch
     }
 
-    private fun queueChange(changes: MutableSet<String>, path: String, full: String, updates: Channel<Unit>) {
-        synchronized(changes) {
-            if (full !in changes) {
-                if (changes.size >= MAX_MIRRORED_ENTRIES) { changes.clear(); changes.add(full) }
-                else changes.add(path)
-            }
-        }
-        updates.trySend(Unit)
-    }
-    private fun takeChanges(changes: MutableSet<String>): List<String> = synchronized(changes) {
-        changes.toList().also { changes.clear() }
-    }
-
     private fun destinationDirectory(root: File, directory: File, tree: Uri): String {
-        var parent = DocumentsContract.getTreeDocumentId(tree)
-        var local = root
-        for (part in directory.relativeTo(root).path.split(File.separatorChar).filter(String::isNotEmpty)) {
-            val existing = entries(tree, parent).firstOrNull { it.name == part }
-            parent = destinationSubdirectory(tree, parent, part, existing)
-            local = File(local, part)
-            if (tree == sourceTree) rememberEntry(tree, Entry(parent, part, DocumentsContract.Document.MIME_TYPE_DIR), local)
+        if (directory == root) return DocumentsContract.getTreeDocumentId(tree)
+        if (tree == sourceTree) {
+            sourceFiles.entries.firstOrNull { it.value.second == directory && it.value.first.directory }?.let { return it.key }
         }
-        return parent
+        val parent = destinationDirectory(root, checkNotNull(directory.parentFile), tree)
+        val existing = entries(tree, parent).firstOrNull { it.name == directory.name }
+        val id = destinationSubdirectory(tree, parent, directory.name, existing)
+        if (tree == sourceTree) rememberEntry(tree, Entry(id, directory.name, DocumentsContract.Document.MIME_TYPE_DIR), directory)
+        return id
     }
     private fun destinationSubdirectory(tree: Uri, parent: String, name: String, existing: Entry?): String {
         if (existing != null) {
             check(existing.mime == DocumentsContract.Document.MIME_TYPE_DIR) { "'$name' is a file in the destination folder." }
             return existing.id
         }
-        val uri = DocumentsContract.createDocument(resolver, DocumentsContract.buildDocumentUriUsingTree(tree, parent), DocumentsContract.Document.MIME_TYPE_DIR, name)
+        val uri = DocumentsContract.createDocument(resolver, document(tree, parent), DocumentsContract.Document.MIME_TYPE_DIR, name)
             ?: error("Could not create '$name'.")
         val id = DocumentsContract.getDocumentId(uri)
         val created = inspect(tree, id)
@@ -362,12 +484,26 @@ internal class ProjectFiles(context: Context) : AutoCloseable {
             ?: throw IllegalArgumentException("Project is outside Android's managed project directory.")
     }
 
-    private data class Entry(val id: String, val name: String, val mime: String)
+    // Provider metadata is an optional freshness hint. Document identity comparisons
+    // and the deletion preflight intentionally compare only the ID, name, and MIME.
+    private data class Entry(val id: String, val name: String, val mime: String) {
+        val directory get() = mime == DocumentsContract.Document.MIME_TYPE_DIR
+        var size: Long? = null
+        var modified: Long? = null
+    }
+    private fun document(tree: Uri, id: String) = DocumentsContract.buildDocumentUriUsingTree(tree, id)
+    private fun forgetEntry(uri: String) {
+        for (table in listOf("fingerprints", "source_entries")) {
+            mirrorDatabase.value.delete(table, "uri=?", arrayOf(uri))
+        }
+    }
     private fun rememberEntry(tree: Uri, entry: Entry, file: File) {
         check(sourceFiles.containsKey(entry.id) || sourceFiles.size < MAX_MIRRORED_ENTRIES) { "The project folder exceeds its file budget." }
-        sourceFiles[entry.id] = entry to file
+        val location = entry to file
+        if (sourceFiles[entry.id] == location) return
         mirrorDatabase.value.execSQL("INSERT INTO source_entries(uri,tree,path,mime) VALUES (?,?,?,?) ON CONFLICT(uri) DO UPDATE SET tree=excluded.tree,path=excluded.path,mime=excluded.mime WHERE tree!=excluded.tree OR path!=excluded.path OR mime!=excluded.mime",
-            arrayOf(DocumentsContract.buildDocumentUriUsingTree(tree, entry.id).toString(), tree.toString(), file.absolutePath, entry.mime))
+            arrayOf(document(tree, entry.id).toString(), tree.toString(), file.absolutePath, entry.mime))
+        sourceFiles[entry.id] = location
     }
     private fun restoreSources(tree: Uri, folder: File) {
         sourceFiles.clear()
@@ -388,7 +524,8 @@ internal class ProjectFiles(context: Context) : AutoCloseable {
 
     private fun queryEntries(uri: Uri): List<Entry> {
         fun query() = resolver.query(uri, arrayOf(DocumentsContract.Document.COLUMN_DOCUMENT_ID,
-            DocumentsContract.Document.COLUMN_DISPLAY_NAME, DocumentsContract.Document.COLUMN_MIME_TYPE), android.os.Bundle.EMPTY, null)
+            DocumentsContract.Document.COLUMN_DISPLAY_NAME, DocumentsContract.Document.COLUMN_MIME_TYPE,
+            DocumentsContract.Document.COLUMN_SIZE, DocumentsContract.Document.COLUMN_LAST_MODIFIED), android.os.Bundle.EMPTY, null)
             ?: error("The document provider could not list the project folder.")
         fun complete(cursor: android.database.Cursor): List<Entry>? {
             cursor.extras.getString(DocumentsContract.EXTRA_ERROR)?.let { error(it) }
@@ -397,6 +534,12 @@ internal class ProjectFiles(context: Context) : AutoCloseable {
             return buildList { while (cursor.moveToNext()) {
                 check(size < MAX_MIRRORED_ENTRIES) { "The provider folder exceeds its file budget." }
                 val entry = Entry(cursor.getString(0), cursor.getString(1), cursor.getString(2))
+                fun optionalLong(column: String): Long? {
+                    val index = cursor.getColumnIndex(column)
+                    return if (index >= 0 && !cursor.isNull(index)) cursor.getLong(index) else null
+                }
+                entry.size = optionalLong(DocumentsContract.Document.COLUMN_SIZE)
+                entry.modified = optionalLong(DocumentsContract.Document.COLUMN_LAST_MODIFIED)
                 checkName(entry.name)
                 check(names.add(entry.name)) { "The provider returned duplicate file names." }
                 add(entry)
@@ -421,7 +564,7 @@ internal class ProjectFiles(context: Context) : AutoCloseable {
     }
 
     private fun inspect(tree: Uri, id: String): Entry? {
-        val result = queryEntries(DocumentsContract.buildDocumentUriUsingTree(tree, id))
+        val result = queryEntries(document(tree, id))
         check(result.size <= 1) { "The provider returned multiple entries for one document." }
         return result.firstOrNull()?.also { check(it.id == id) { "The provider returned a different document." } }
     }
@@ -433,57 +576,12 @@ internal class ProjectFiles(context: Context) : AutoCloseable {
     }
     private fun ignored(name: String) = PRIVATE_FILE.matches(name)
 
-    private fun copyFrom(tree: Uri, parent: String, folder: File, visited: MutableSet<String> = mutableSetOf(), progress: (String) -> Unit) {
-        check(visited.size < MAX_MIRRORED_ENTRIES && visited.add(parent)) { "The provider returned a repeated directory or exceeded the directory budget." }
-        check(folder.isDirectory || folder.mkdirs()) { "Could not create the project folder." }
-        val children = entries(tree, parent)
-        val identifiers = children.map(Entry::id).toSet()
-        val childrenByName = children.associateBy(Entry::name)
-        val removed = sourceFiles.filter { (id, value) -> value.second.parentFile == folder && id !in identifiers }
-        for ((id, value) in removed) {
-            val replacement = childrenByName[value.first.name]
-            if (replacement == null) removeDeletedSource(tree, id, value.second)
-            else {
-                check(replacement.mime == value.first.mime) { "'${replacement.name}' changed file type externally. The local version was kept." }
-                // Providers often replace a document ID when saving atomically. Transfer
-                // its baseline before syncFile atomically replaces the local inode.
-                val oldUri = DocumentsContract.buildDocumentUriUsingTree(tree, id).toString()
-                val newUri = DocumentsContract.buildDocumentUriUsingTree(tree, replacement.id).toString()
-                mirrorDatabase.value.beginTransaction()
-                try {
-                    mirrorDatabase.value.execSQL("INSERT INTO fingerprints(uri,hash) SELECT ?,hash FROM fingerprints WHERE uri=? ON CONFLICT(uri) DO UPDATE SET hash=excluded.hash", arrayOf(newUri, oldUri))
-                    mirrorDatabase.value.execSQL("DELETE FROM fingerprints WHERE uri=?", arrayOf(oldUri))
-                    mirrorDatabase.value.execSQL("DELETE FROM source_entries WHERE uri=?", arrayOf(oldUri))
-                    rememberEntry(tree, replacement, value.second)
-                    mirrorDatabase.value.setTransactionSuccessful()
-                } finally { mirrorDatabase.value.endTransaction() }
-                sourceFiles.remove(id)
-            }
-        }
-        for (entry in children) {
-            ensureOpen()
-            if (ignored(entry.name)) continue
-            val target = File(folder, entry.name)
-            sourceFiles[entry.id]?.let { (previous, file) ->
-                check(file == target && previous.mime == entry.mime) { "'${previous.name}' was renamed or changed file type externally. The local version was kept; export local changes before reopening the source." }
-            }
-            check(sourceFiles.containsKey(entry.id) || sourceFiles.size < MAX_MIRRORED_ENTRIES) { "The selected folder contains too many files. Choose the folder containing this project and its media." }
-            if (entry.mime == DocumentsContract.Document.MIME_TYPE_DIR) {
-                copyFrom(tree, entry.id, target, visited, progress)
-                rememberEntry(tree, entry, target)
-            } else {
-                syncFile(tree, entry, target, progress)
-                if (target.isFile) rememberEntry(tree, entry, target)
-            }
-        }
-    }
-
     private fun removeDeletedSource(tree: Uri, id: String, target: File) {
         // A remote deletion must not erase newer or newly created local descendants.
         val known = if (target.isDirectory) sourceFiles.entries.associate { it.value.second.absolutePath to it.key } else emptyMap()
         for (file in target.walkTopDown().filter { it.isFile && !ignored(it.name) }) {
             val sourceId = if (file == target) id else known[file.absolutePath]
-            val base = sourceId?.let { baseline(DocumentsContract.buildDocumentUriUsingTree(tree, it)) }
+            val base = sourceId?.let { baseline(document(tree, it)) }
             check(base != null && hashLabel(file.inputStream().use { digest(it) }) == base) {
                 "'${file.name}' was deleted externally while this device has newer or unsynchronized edits. Export the local project before reopening its source."
             }
@@ -495,33 +593,23 @@ internal class ProjectFiles(context: Context) : AutoCloseable {
     private fun forgetSources(tree: Uri, targets: List<File>) {
         val paths = targets.toSet()
         val removed = sourceFiles.filter { (_, value) -> generateSequence(value.second) { it.parentFile }.any { it in paths } }.keys
-        mirrorDatabase.value.beginTransaction()
-        try {
-            for (sourceId in removed) {
-                val source = arrayOf(DocumentsContract.buildDocumentUriUsingTree(tree, sourceId).toString())
-                mirrorDatabase.value.execSQL("DELETE FROM fingerprints WHERE uri=?", source)
-                mirrorDatabase.value.execSQL("DELETE FROM source_entries WHERE uri=?", source)
-            }
-            mirrorDatabase.value.setTransactionSuccessful()
-        } finally { mirrorDatabase.value.endTransaction() }
+        mirrorDatabase.value.transaction {
+            for (sourceId in removed) forgetEntry(document(tree, sourceId).toString())
+        }
         sourceFiles.keys.removeAll(removed.toSet())
     }
 
-    private fun deleteMissingSources(tree: Uri, folder: File, changed: List<String>) {
-        if (changed.isEmpty()) return
-        val missing = changed.map { File(folder, it) }.filter { !it.exists() }.toSet()
-        val full = "" in changed
-        if (!full && missing.isEmpty()) return
+    private fun deleteMissingSources(tree: Uri, folder: File): Set<String> {
         val directories = sourceFiles.values.filter { it.first.mime == DocumentsContract.Document.MIME_TYPE_DIR }.associate { it.second to it.first }
         val absent = sourceFiles.filter { (_, value) ->
-            !value.second.exists() && (full || generateSequence(value.second) { it.parentFile }.any { it in missing })
+            !value.second.exists()
         }
         // Older mirrors registered incoming entries before copying their bytes. An
         // unverified descendant makes its whole missing subtree a download, never a deletion.
         val incomplete = absent.mapNotNull { (id, value) ->
             val (entry, file) = value
             val missingReceipt = entry.mime != DocumentsContract.Document.MIME_TYPE_DIR &&
-                baseline(DocumentsContract.buildDocumentUriUsingTree(tree, id)) == null
+                baseline(document(tree, id)) == null
             val parents = generateSequence(file.parentFile) { it.parentFile }.takeWhile { it != folder }
             if (missingReceipt || parents.any { it !in directories }) {
                 generateSequence(file) { it.parentFile }.takeWhile { it != folder && !it.exists() }.last()
@@ -574,7 +662,7 @@ internal class ProjectFiles(context: Context) : AutoCloseable {
                         pending.add(known)
                     }
                 } else {
-                    val uri = DocumentsContract.buildDocumentUriUsingTree(tree, current.id)
+                    val uri = document(tree, current.id)
                     val remote = resolver.openInputStream(uri)?.use { hashLabel(digest(it)) }
                         ?: throw IllegalArgumentException("Could not read '${current.name}' before deleting it.")
                     check(baseline(uri)?.let { it == remote } == true) {
@@ -590,7 +678,7 @@ internal class ProjectFiles(context: Context) : AutoCloseable {
                 val current = inspect(tree, entry.id)
                 check(if (entry.id in alreadyGone) current == null else current == entry) { "'${entry.name}' changed externally during deletion. The source was kept." }
                 if (current != null) {
-                    check(DocumentsContract.deleteDocument(resolver, DocumentsContract.buildDocumentUriUsingTree(tree, entry.id))) { "Could not delete source '${entry.name}'." }
+                    check(DocumentsContract.deleteDocument(resolver, document(tree, entry.id))) { "Could not delete source '${entry.name}'." }
                 }
                 deleted.add(target)
             }
@@ -599,21 +687,44 @@ internal class ProjectFiles(context: Context) : AutoCloseable {
             // partially failed batch. Do not forget provider deletions that failed.
             if (deleted.isNotEmpty()) forgetSources(tree, deleted)
         }
+        return affected.keys
     }
 
-    private fun syncFile(tree: Uri, entry: Entry, target: File, progress: (String) -> Unit) {
+    private fun localStamp(file: File): String? {
+        if (!file.isFile) return null
+        val stat = android.system.Os.stat(file.path)
+        return "${stat.st_dev}:${stat.st_ino}:${stat.st_size}:${stat.st_mtim.tv_sec}.${stat.st_mtim.tv_nsec}:${stat.st_ctim.tv_sec}.${stat.st_ctim.tv_nsec}"
+    }
+
+    // A stamp only skips unchanged reads. Actual publication or deletion still checks the
+    // SHA-256 baseline against both sides. Unknown provider metadata is reverified on open
+    // and on directory invalidation, even when there is no useful modification time.
+    private fun syncFile(tree: Uri, parent: String, entry: Entry, target: File, forced: Boolean, checkUnversioned: Boolean, progress: (String) -> Unit) {
+        val uri = document(tree, entry.id)
+        val before = localStamp(target)
+        val size = entry.size ?: -1L
+        val modified = entry.modified ?: 0L
+        val reliable = size >= 0 && modified > 0
+        val recent = modified >= System.currentTimeMillis() - PROVIDER_TIME_RESOLUTION_MS
+        val remoteStamp = "$size:$modified"
+        val stamp = before?.let { "$it:$remoteStamp" }
+        if (!forced && stamp != null && (!checkUnversioned || reliable && !recent) && mirrorDatabase.value.rawQuery(
+                "SELECT 1 FROM fingerprints WHERE uri=? AND stamp=?", arrayOf(uri.toString(), stamp)
+            ).use { it.moveToFirst() }) return
         progress(entry.name)
-        val uri = DocumentsContract.buildDocumentUriUsingTree(tree, entry.id)
         val current = inspect(tree, entry.id) ?: throw java.io.FileNotFoundException(entry.name)
-        check(current == entry) { "'${entry.name}' was renamed or changed file type externally. The local version was kept." }
+        check(current == entry) { "'${entry.name}' changed externally. Retry synchronization." }
         val remoteHash = resolver.openInputStream(uri)?.use { digest(it) }
             ?: throw IllegalArgumentException("Could not read '${entry.name}'.")
         val localHash = target.takeIf(File::isFile)?.inputStream()?.use { digest(it) }
-        if (remoteHash.contentEquals(localHash)) { rememberHash(uri, remoteHash); return }
+        if (remoteHash.contentEquals(localHash)) {
+            rememberHash(uri, remoteHash, stamp)
+            return
+        }
         val base = baseline(uri)
         if (localHash != null && hashLabel(localHash) != base) {
             check(base != null && hashLabel(remoteHash) == base) { "'${entry.name}' has different changes on this device and in its source folder. Export the local project before reopening its source." }
-            writeChangedFile(projectRoot(target), target, tree)
+            writeFile(target, tree, parent, entry)
             return
         }
         val incoming = File(target.parentFile, ".incoming-${UUID.randomUUID()}")
@@ -626,8 +737,12 @@ internal class ProjectFiles(context: Context) : AutoCloseable {
             check(target.takeIf(File::isFile)?.inputStream()?.use { digest(it) }.let { latest ->
                 if (localHash == null) latest == null else latest != null && latest.contentEquals(localHash)
             }) { "'${entry.name}' changed locally while synchronizing. The local version was kept; retry synchronization." }
+            val staged = checkNotNull(localStamp(incoming)).substringBeforeLast(':')
             Files.move(incoming.toPath(), target.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
-            rememberHash(uri, remoteHash)
+            // Keep the fast path tied to the verified inode even if Rust replaces
+            // the destination immediately after publication.
+            val installed = localStamp(target)
+            rememberHash(uri, remoteHash, installed?.takeIf { it.substringBeforeLast(':') == staged }?.let { "$it:$remoteStamp" })
         } finally { incoming.delete() }
     }
 
@@ -659,7 +774,7 @@ internal class ProjectFiles(context: Context) : AutoCloseable {
             val wanted = checkNotNull(hashLabel(localHash))
             input.channel.position(0)
             check(tree != sourceTree || existing != null || sourceFiles.size < MAX_MIRRORED_ENTRIES) { "The project folder exceeds its file budget." }
-            val uri = existing?.let { DocumentsContract.buildDocumentUriUsingTree(tree, it.id) }
+            val uri = existing?.let { document(tree, it.id) }
             var previous: String? = null
             if (uri != null) {
                 previous = resolver.openInputStream(uri)?.use { hashLabel(digest(it)) }
@@ -675,16 +790,16 @@ internal class ProjectFiles(context: Context) : AutoCloseable {
                 }
                 if (wanted == base) {
                     check(tree == sourceTree) { "The export destination has newer content. Choose an empty folder." }
-                    syncFile(tree, existing, file) {}
+                    syncFile(tree, parent, existing, file, forced = true, checkUnversioned = true) {}
                     return
                 }
             }
             // SAF provides no atomic replacement primitive for an existing document URI.
             // Keep the exact intended replacement in private durable storage before truncating.
             val stage = File(context.getDir("uploads", Context.MODE_PRIVATE), UUID.randomUUID().toString())
-            val upload = Upload(stage, parent, file.name, existing?.mime ?: mime, uri, previous, wanted)
+            val upload = Upload(stage, parent, existing?.name ?: file.name, existing?.mime ?: mime, uri, previous, wanted)
             mirrorDatabase.value.execSQL("INSERT INTO uploads(stage,tree,parent,name,mime,uri,previous,wanted,ready) VALUES(?,?,?,?,?,?,?,?,?)",
-                arrayOf<Any?>(stage.name, tree.toString(), parent, file.name, upload.mime, uri?.toString(), previous, wanted, UPLOAD_CLEANUP))
+                arrayOf<Any?>(stage.name, tree.toString(), parent, upload.name, upload.mime, uri?.toString(), previous, wanted, UPLOAD_CLEANUP))
             try {
                 saveStage(input, stage, wanted)
                 if (uri != null) {
@@ -698,7 +813,7 @@ internal class ProjectFiles(context: Context) : AutoCloseable {
                 throw failure
             }
             val destination = finishUpload(tree, upload, UPLOAD_STAGED)
-            if (tree == sourceTree) rememberEntry(tree, Entry(DocumentsContract.getDocumentId(destination), file.name, existing?.mime ?: mime), file)
+            if (tree == sourceTree) rememberEntry(tree, Entry(DocumentsContract.getDocumentId(destination), upload.name, existing?.mime ?: mime), file)
         }
     }
 
@@ -745,7 +860,7 @@ internal class ProjectFiles(context: Context) : AutoCloseable {
         val listing = entries(tree, parent)
         val entry = listing.firstOrNull { it.name == name }
         val uri = if (entry != null) {
-            DocumentsContract.buildDocumentUriUsingTree(tree, entry.id).also {
+            document(tree, entry.id).also {
                 check(original == null || original == it) { "'$name' was replaced externally during upload. The staged version is preserved." }
             }
         } else {
@@ -760,7 +875,7 @@ internal class ProjectFiles(context: Context) : AutoCloseable {
                 check(unchanged) { "The provider changed the folder while creating '$name'. The staged version is preserved." }
             }
             mirrorDatabase.value.execSQL("UPDATE uploads SET ready=?,siblings=? WHERE stage=?", arrayOf<Any?>(UPLOAD_CREATING, siblings, stage.name))
-            DocumentsContract.createDocument(resolver, DocumentsContract.buildDocumentUriUsingTree(tree, parent), mime, name)
+            DocumentsContract.createDocument(resolver, document(tree, parent), mime, name)
                 ?: error("Could not create '$name'.")
         }
         if (original == null) mirrorDatabase.value.execSQL("UPDATE uploads SET uri=? WHERE stage=?", arrayOf(uri.toString(), stage.name))
@@ -852,15 +967,14 @@ internal class ProjectFiles(context: Context) : AutoCloseable {
     fun detach(owner: Int? = null) {
         if (owner != null && owner != generation) return
         generation++
-        contentObserver?.let(resolver::unregisterContentObserver)
-        contentObserver = null
-        sync?.close()
-        sync = null
+        watch?.close()
+        watch = null
         localChange = null
     }
     override fun close() {
         if (closing) return
         closing = true
+        cancelOpen()
         detach()
         onError = {}
         scope.launch {
@@ -870,7 +984,7 @@ internal class ProjectFiles(context: Context) : AutoCloseable {
                 closed = true
                 if (mirrorDatabase.isInitialized()) mirrorDatabase.value.close()
             }
-            scope.cancel()
         }
+        jobs.complete()
     }
 }

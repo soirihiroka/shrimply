@@ -12,10 +12,7 @@ use shrimply_project_document::project::{
 };
 use shrimply_property_model::timeline_value::TimelineValue;
 
-pub struct ImportResult {
-    pub project: Value,
-    pub warnings: Vec<String>,
-}
+pub use shrimply_project_document::project::InterchangeDocument as ImportResult;
 
 pub fn from_file(
     path: &Path,
@@ -444,12 +441,7 @@ fn media_path(reference: &Value, base: &Path) -> Result<PathBuf, String> {
         .get("target_url")
         .and_then(Value::as_str)
         .ok_or_else(|| "external reference is missing target_url".to_string())?;
-    let path = PathBuf::from(target);
-    Ok(if path.is_absolute() {
-        path
-    } else {
-        base.join(path)
-    })
+    shrimply_media_import::interchange_path(base, target)
 }
 
 fn warn_missing_media(path: &Path, warnings: &mut Vec<String>) {

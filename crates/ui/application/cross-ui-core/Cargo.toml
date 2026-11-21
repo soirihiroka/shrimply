@@ -14,6 +14,7 @@ shrimply-audio-engine = { workspace = true }
 shrimply-blender-core = { workspace = true }
 shrimply-i18n = { workspace = true }
 shrimply-math-core = { workspace = true }
+shrimply-media-import.workspace = true
 shrimply-kdenlive-parser = { workspace = true }
 shrimply-otio-parser = { workspace = true }
 shrimply-playback-performance = { workspace = true }
@@ -22,6 +23,7 @@ shrimply-project-document = { workspace = true, default-features = true }
 shrimply-project-types = { workspace = true }
 shrimply-editor-state = { workspace = true, features = ["audio"] }
 shrimply-recent-projects = { workspace = true }
+shrimply-resource-pipeline.workspace = true
 shrimply-timeline-edit = { workspace = true }
 tracing.workspace = true
 

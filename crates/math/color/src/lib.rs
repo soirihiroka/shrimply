@@ -31,6 +31,16 @@ pub struct Color<T = f32> {
 #[cfg(feature = "cuda")]
 unsafe impl<T: shrimply_gpu_cuda::DeviceCopy> shrimply_gpu_cuda::DeviceCopy for Color<T> {}
 
+const VIDEO_BLACK_CODE: f32 = 16.0;
+const VIDEO_LUMA_SPAN: f32 = 219.0;
+
+/// Expand a normalized H.273 narrow-range RGB or luma sample without clipping excursions.
+pub fn expand_video_range(bit_depth: u8) -> impl Fn(f32) -> f32 {
+    // Express the maximum code at this depth in units of an 8-bit video code.
+    let scale = 256.0 - 2.0_f32.powi(8 - i32::from(bit_depth));
+    move |sample| (sample * scale - VIDEO_BLACK_CODE) / VIDEO_LUMA_SPAN
+}
+
 pub trait ColorChannel: Copy + ConstZero {
     const OPAQUE: Self;
 }
@@ -393,7 +403,7 @@ impl Color<f32> {
     pub fn to_bt709_ycbcr(self) -> [u8; 3] {
         let byte = |value: f32| (value.clamp(0.0, 255.0) + 0.5) as u8;
         [
-            byte(16.0 + 219.0 * self.rec709_luma()),
+            byte(VIDEO_BLACK_CODE + VIDEO_LUMA_SPAN * self.rec709_luma()),
             byte(128.0 + 224.0 * (-0.114_572 * self.r - 0.385_428 * self.g + 0.5 * self.b)),
             byte(128.0 + 224.0 * (0.5 * self.r - 0.454_153 * self.g - 0.045_847 * self.b)),
         ]
