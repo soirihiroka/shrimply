@@ -102,8 +102,9 @@ impl Scene {
     pub fn update_drop_preview(&mut self, path: PathBuf, point: Vec2) -> bool {
         self.media_refresh.redraw.set(true);
         self.text_drop_preview = None;
+        let file_kind = import::file_kind(&path);
         if !self.external_drop_target(point)
-            || matches!(import::file_kind(&path), None | Some(import::FileKind::Vtt))
+            || matches!(file_kind, None | Some(import::FileKind::Vtt))
         {
             self.clear_drop_preview();
             return false;
@@ -117,10 +118,11 @@ impl Scene {
             let duration = preferences::snapshot(&self.preferences).default_visual_duration;
             self.drop_preview = Some(DropPreview {
                 inspection: (!matches!(
-                    import::file_kind(&path),
-                    Some(import::FileKind::Visual(
-                        import::VisualMediaKind::Manim | import::VisualMediaKind::Blender
-                    ))
+                    file_kind,
+                    Some(import::FileKind::RemuxToMp4)
+                        | Some(import::FileKind::Visual(
+                            import::VisualMediaKind::Manim | import::VisualMediaKind::Blender
+                        ))
                 ))
                 .then(|| import::request_inspection(path.clone(), project.canvas_size, duration)),
                 path,
@@ -181,11 +183,9 @@ impl Scene {
                     return false;
                 };
                 let (visual_kind, video_streams, audio_streams) = match file_kind {
-                    import::FileKind::Visual(kind) => (
-                        Some(kind),
-                        1,
-                        usize::from(kind == import::VisualMediaKind::Video),
-                    ),
+                    import::FileKind::Visual(import::VisualMediaKind::Video)
+                    | import::FileKind::RemuxToMp4 => (Some(import::VisualMediaKind::Video), 1, 1),
+                    import::FileKind::Visual(kind) => (Some(kind), 1, 0),
                     import::FileKind::Audio => (None, 0, 1),
                     import::FileKind::Vtt => return false,
                 };

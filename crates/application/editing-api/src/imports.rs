@@ -535,7 +535,7 @@ fn apply_import(
 fn prepare_import_source(source: &mut SourcePaths, link: bool) -> Result<native::FileKind, String> {
     let kind = native::file_kind(&source.inspect)
         .ok_or_else(|| format!("unsupported file type: {}", source.inspect.display()))?;
-    if native::requires_mp4_remux(&source.inspect) {
+    if kind == native::FileKind::RemuxToMp4 {
         if link {
             return Err("MKV/WebM requires an MP4 derivative and cannot be linked".into());
         }

@@ -93,6 +93,7 @@ impl Processor<InspectionKey> for MediaInspector {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FileKind {
+    RemuxToMp4,
     Visual(VisualMediaKind),
     Audio,
     Vtt,
@@ -181,24 +182,17 @@ pub fn request_inspection(
         .1
 }
 
-fn media_extension(path: &Path) -> Option<&str> {
-    let extension = path.extension()?.to_str()?;
-    if extension.eq_ignore_ascii_case("part") {
-        Path::new(path.file_stem()?).extension()?.to_str()
-    } else {
-        Some(extension)
-    }
-}
-
-pub fn requires_mp4_remux(path: &Path) -> bool {
-    media_extension(path)
-        .is_some_and(|ext| ext.eq_ignore_ascii_case("mkv") || ext.eq_ignore_ascii_case("webm"))
-}
-
 pub fn file_kind(path: &Path) -> Option<FileKind> {
     use VisualMediaKind::*;
-    Some(match media_extension(path)?.to_ascii_lowercase().as_str() {
-        "mp4" | "mov" | "mkv" | "webm" => FileKind::Visual(Video),
+    let extension = path.extension()?.to_str()?;
+    let extension = if extension.eq_ignore_ascii_case("part") {
+        Path::new(path.file_stem()?).extension()?.to_str()?
+    } else {
+        extension
+    };
+    Some(match extension.to_ascii_lowercase().as_str() {
+        "mp4" | "mov" => FileKind::Visual(Video),
+        "mkv" | "webm" => FileKind::RemuxToMp4,
         "gif" => FileKind::Visual(Gif),
         "svg" => FileKind::Visual(Svg),
         "pdf" => FileKind::Visual(Pdf),
@@ -249,6 +243,9 @@ pub fn inspect(
     let snapshot = source.snapshot()?;
     let path = snapshot.path();
     let file_kind = file_kind(path).ok_or_else(|| "unsupported file type".to_string())?;
+    if file_kind == FileKind::RemuxToMp4 {
+        return Err("MKV/WebM must be remuxed to MP4 before timeline import".into());
+    }
     if file_kind == FileKind::Visual(VisualMediaKind::Sanim) {
         let parent = path.parent().unwrap_or(Path::new("."));
         let entry = path

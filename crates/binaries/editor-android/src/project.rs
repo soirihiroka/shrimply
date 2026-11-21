@@ -621,8 +621,9 @@ impl ProjectBackend {
         if Path::new(name).file_name().and_then(|name| name.to_str()) != Some(name) {
             return Err("imported file name must not contain a directory".into());
         }
-        shrimply_media_import::file_kind(Path::new(name)).ok_or("unsupported file type")?;
-        let remux = shrimply_media_import::requires_mp4_remux(Path::new(name));
+        let file_kind =
+            shrimply_media_import::file_kind(Path::new(name)).ok_or("unsupported file type")?;
+        let remux = file_kind == shrimply_media_import::FileKind::RemuxToMp4;
         let destinations: Vec<&Value> = if let Some(targets) = request
             .get("import_targets")
             .filter(|value| !value.is_null())

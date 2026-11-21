@@ -157,7 +157,10 @@ pub struct ImportQueue {
 
 impl Phase {
     fn new(paths: Vec<PathBuf>, canvas_size: CanvasSize, default_duration: Time) -> Self {
-        if paths.iter().any(|path| import::requires_mp4_remux(path)) {
+        if paths
+            .iter()
+            .any(|path| import::file_kind(path) == Some(import::FileKind::RemuxToMp4))
+        {
             Self::Pending {
                 sources: paths,
                 canvas_size,
@@ -413,7 +416,7 @@ impl ImportQueue {
                         if worker_cancellation.is_cancelled() {
                             return Err("Media import was cancelled".into());
                         }
-                        if import::requires_mp4_remux(&path) {
+                        if import::file_kind(&path) == Some(import::FileKind::RemuxToMp4) {
                             let source = Asset::new(path.clone()).snapshot()?;
                             let output = import::remux_to_mp4(&path, worker_cancellation.clone())?;
                             source.verify_current()?;

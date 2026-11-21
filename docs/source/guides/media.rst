@@ -72,8 +72,11 @@ Shrimply recognizes these source types:
 
    * - Type
      - Formats
-   * - Video containers
-     - MP4, MOV, MKV, and WebM
+   * - Timeline video containers
+     - MP4 and MOV
+   * - Video inputs that require remuxing
+     - MKV and WebM. Shrimply copies the compressed streams into an MP4 and
+       inserts that file. Import fails if MP4 cannot carry the source codec.
    * - Video codecs
      - H.264/AVC, H.265/HEVC, AV1, VP8, VP9, and other codecs with FFmpeg
        CUDA decoding

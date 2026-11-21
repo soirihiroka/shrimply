@@ -13,6 +13,18 @@ pub(super) fn inspect(
     let path = snapshot.path();
     let input = shrimply_media_info::demux::open(path)
         .map_err(|error| format!("could not open {}: {error}", path.display()))?;
+    // Check the demuxer too: a renamed Matroska file is still a remux input.
+    if input
+        .format()
+        .name()
+        .split(',')
+        .any(|name| name == "matroska")
+    {
+        return Err(format!(
+            "{} uses a Matroska/WebM container and must be remuxed to MP4",
+            path.display()
+        ));
+    }
     let mut video_streams = 0;
     let mut video_sizes = Vec::new();
     let mut video_fps = None;
