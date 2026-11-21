@@ -1,4 +1,4 @@
-<p align="center">
+ee<p align="center">
   <img src="assets/icons/dev.shrimply.Shrimply.svg" alt="Shrimply logo" width="128">
   <p align="center">
       <a href="https://trendshift.io/repositories/197189?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-197189" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/197189/daily?language=Rust" alt="soirihiroka%2Fshrimply | Trendshift" width="250" height="55"/></a>
@@ -23,8 +23,11 @@ System requirements:
 - CPU: X86-64 (Linux/Windows) | Apple Silicon (macOS)
 - Display environment: Wayland is required for Linux
 
-Intel requires Mesa Vulkan/OpenGL and VA-API drivers; see the
-[Intel backend requirements and supported features](docs/source/development.rst#intel-gpu-preview-on-linux-gtk).
+Platform support status:
+
+<img width="300" height="396" alt="platformsupport-" src="https://github.com/user-attachments/assets/2631184e-ad24-4cb5-80ff-d2af377933ca" />
+
+
 
 Shrimply is pre-alpha software (though we are getting closer to the first alpha release), which means you should expect:
 
