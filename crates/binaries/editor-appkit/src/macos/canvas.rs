@@ -486,14 +486,15 @@ define_class!(
                 scene.scroll(self.point(event), glam::Vec2::new((event.scrollingDeltaX() * step) as f32, (event.scrollingDeltaY() * step) as f32), event.modifierFlags().contains(NSEventModifierFlags::Control), input);
                 return;
             }
-            let scale = if event.hasPreciseScrollingDeltas() {
-                shrimply_preview_provider_skia::math::SCROLL_PIXELS_PER_STEP
-            } else { 1.0 };
             let enabled = shrimply_editor_state::preferences::snapshot(&self.ivars().session.preferences).preview_zoom_pan_enabled;
-            let scale = if enabled { scale } else { 1.0 };
+            let delta = shrimply_preview_interaction_skia::surface::preview_scroll_delta(
+                glam::Vec2::new(-event.scrollingDeltaX() as f32, -event.scrollingDeltaY() as f32),
+                event.hasPreciseScrollingDeltas(),
+                enabled,
+            );
             self.preview_pointer_event(PointerEvent::Scroll {
                 input: self.preview_input(event),
-                delta: glam::Vec2::new(-event.scrollingDeltaX() as f32 / scale, -event.scrollingDeltaY() as f32 / scale),
+                delta,
             });
         }
 

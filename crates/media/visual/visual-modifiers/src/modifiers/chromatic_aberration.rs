@@ -82,7 +82,7 @@ impl PreviewProvider for ChromaticPreview {
     fn on_draw(
         &mut self,
         painter: &shrimply_preview_provider_skia::PreviewCanvas,
-        __context: &dyn PreviewContext,
+        _context: &dyn PreviewContext,
     ) {
         let center = self.map.transform_point2(self.center);
         for (offset, color) in [

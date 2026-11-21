@@ -14,7 +14,7 @@ use shrimply_preview_provider_skia::{
 use shrimply_property_model::timeline_value::*;
 
 #[cfg(feature = "preview")]
-use super::preview::{self, HANDLES, Handle};
+use super::preview::{self, Handle};
 
 type AnimatedTransform2D = Transform2D<TimelineValue<glam::Vec2>, TimelineValue<f32>>;
 
@@ -218,22 +218,17 @@ impl TransformPreview {
         visible_rect: shrimply_preview_provider_skia::Rect,
     ) -> Option<TransformDragKind> {
         let bounds = self.bounds();
-        if self.editable[0] && self.editable[2] {
-            for handle in HANDLES {
-                if preview::hit(
-                    point,
-                    self.screen_map
-                        .transform_point2(preview::handle_point(handle, bounds)),
-                ) {
-                    return Some(TransformDragKind::Resize(handle));
-                }
-            }
+        if self.editable[0] && self.editable[1] && preview::hit(point, self.anchor_screen()) {
+            return Some(TransformDragKind::Anchor);
         }
         if self.editable[3] && preview::hit(point, self.rotation_points(visible_rect).1) {
             return Some(TransformDragKind::Rotate);
         }
-        if self.editable[0] && self.editable[1] && preview::hit(point, self.anchor_screen()) {
-            return Some(TransformDragKind::Anchor);
+        if self.editable[0]
+            && self.editable[2]
+            && let Some(handle) = preview::hit_bounds_handle(point, self.screen_map, bounds)
+        {
+            return Some(TransformDragKind::Resize(handle));
         }
         let local = preview::inverse_point(self.screen_map, point)?;
         (self.editable[0] && bounds.contains(local)).then_some(TransformDragKind::Move)
@@ -406,7 +401,7 @@ fn update_transform(
             let bounds =
                 shrimply_preview_provider_skia::Rect::from_min_size(glam::Vec2::ZERO, drag.size);
             let handle_local = preview::handle_point(handle, bounds);
-            let fixed_local = preview::handle_point(opposite(handle), bounds);
+            let fixed_local = preview::handle_point(handle.opposite(), bounds);
             let centered = modifiers.contains(Modifiers::ALT);
             let base_local = if centered { start.anchor } else { fixed_local };
             let base_parent = if centered {
@@ -423,7 +418,7 @@ fn update_transform(
                 .inverse()
                 .transform_vector2(parent - base_parent);
             let denominator = handle_local - base_local;
-            let (x, y) = preview::handle_axes(handle);
+            let (x, y) = handle.axes();
             let mut scale = start.scale;
             if x != 0 && denominator.x.abs() > f32::EPSILON {
                 scale.x = (local_delta.x / denominator.x).max(0.001);
@@ -454,18 +449,4 @@ fn update_transform(
         }
     };
     Some((changed, resolved))
-}
-
-#[cfg(feature = "preview")]
-fn opposite(handle: Handle) -> Handle {
-    match handle {
-        Handle::TopLeft => Handle::BottomRight,
-        Handle::Top => Handle::Bottom,
-        Handle::TopRight => Handle::BottomLeft,
-        Handle::Right => Handle::Left,
-        Handle::BottomRight => Handle::TopLeft,
-        Handle::Bottom => Handle::Top,
-        Handle::BottomLeft => Handle::TopRight,
-        Handle::Left => Handle::Right,
-    }
 }

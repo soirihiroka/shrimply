@@ -3,7 +3,7 @@ pub use shrimply_preview_provider_skia::{
     BOUNDS_HANDLES as HANDLES, BoundsHandle as Handle, CONTROL_LINE_WIDTH as LINE_WIDTH,
     bounds_handle_cursor as resize_cursor, bounds_handle_position as handle_point, draw_anchor,
     draw_bounds_handles, draw_control_line as draw_line, draw_control_rect as draw_rect,
-    draw_keypoint as draw_handle, draw_rotation_handle, hit_keypoint as hit,
+    draw_keypoint as draw_handle, draw_rotation_handle, hit_bounds_handle, hit_keypoint as hit,
     rotation_handle_segment, selection_color,
 };
 use shrimply_preview_provider_skia::{PreviewContext, PreviewFacetKey, PreviewTarget};
@@ -39,19 +39,6 @@ pub fn inverse_point(map: Mat3, point: Vec2) -> Option<Vec2> {
     }
     let point = map.inverse().transform_point2(point);
     point.is_finite().then_some(point)
-}
-
-pub fn handle_axes(handle: Handle) -> (i8, i8) {
-    match handle {
-        Handle::TopLeft => (-1, -1),
-        Handle::Top => (0, -1),
-        Handle::TopRight => (1, -1),
-        Handle::Right => (1, 0),
-        Handle::BottomRight => (1, 1),
-        Handle::Bottom => (0, 1),
-        Handle::BottomLeft => (-1, 1),
-        Handle::Left => (-1, 0),
-    }
 }
 
 pub fn set_scalar(value: &mut TimelineValue<f32>, time: Time, next: f32) -> bool {

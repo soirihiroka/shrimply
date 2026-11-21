@@ -44,29 +44,40 @@ impl CanvasView {
         let clock = self.preview_clock();
         let prefs = preferences::snapshot(&session.preferences);
         let focus = preview_focus::snapshot(&session.preview_focus);
-        let mut content = self.ivars().content.borrow_mut();
-        let Content::Preview(state) = &mut *content else {
-            return Ok(());
+        let response = {
+            let mut content = self.ivars().content.borrow_mut();
+            let Content::Preview(state) = &mut *content else {
+                return Ok(());
+            };
+            let mut project = session.project.borrow_mut();
+            let selected =
+                selection_state::focused_video_address(&session.selection_state, &project);
+            state.sync_guides(prefs.preview_guides_visible);
+            state
+                .surface
+                .focus(focus.map(|focus| (focus.item, focus.target)));
+            let configuration = self.preview_configuration(state, &prefs);
+            let had_provider = state.surface.provider().is_some();
+            let invalidated = state.surface.context_invalidated() && state.surface.is_idle();
+            let response =
+                state
+                    .surface
+                    .ensure(&mut project, selected.as_ref(), clock, configuration)?;
+            if had_provider != state.surface.provider().is_some() || invalidated {
+                self.ivars().surface_dirty.set(true);
+            }
+            if let Some(exclusion) = state.surface.exclusion_update() {
+                state.renderer.set_exclusion(exclusion);
+            }
+            state.renderer.set_project_revision(clock.revision);
+            response
         };
-        let project = session.project.borrow();
-        let selected = selection_state::focused_video_address(&session.selection_state, &project);
-        state.sync_guides(prefs.preview_guides_visible);
-        state
-            .surface
-            .focus(focus.map(|focus| (focus.item, focus.target)));
-        let configuration = self.preview_configuration(state, &prefs);
-        let had_provider = state.surface.provider().is_some();
-        let invalidated = state.surface.context_invalidated() && state.surface.is_idle();
-        state
-            .surface
-            .ensure_readonly(&project, selected.as_ref(), clock, configuration)?;
-        if had_provider != state.surface.provider().is_some() || invalidated {
-            self.ivars().surface_dirty.set(true);
+        if response.redraw
+            || response.cursor != CursorUpdate::Keep
+            || response.edit.refresh != PreviewRefresh::NONE
+        {
+            self.apply_preview_response(response)?;
         }
-        if let Some(exclusion) = state.surface.exclusion_update() {
-            state.renderer.set_exclusion(exclusion);
-        }
-        state.renderer.set_project_revision(clock.revision);
         Ok(())
     }
 
@@ -172,7 +183,7 @@ impl CanvasView {
             let selected =
                 selection_state::focused_video_address(&session.selection_state, &project);
             let configuration = self.preview_configuration(preview, &prefs);
-            match preview.surface.keyboard(
+            let response = match preview.surface.keyboard(
                 &mut project,
                 selected.as_ref(),
                 clock,
@@ -186,7 +197,11 @@ impl CanvasView {
                     self.show_error(&error);
                     return true;
                 }
+            };
+            if let Some(exclusion) = preview.surface.exclusion_update() {
+                preview.renderer.set_exclusion(exclusion);
             }
+            response
         };
         if let Err(error) = self.apply_preview_response(response) {
             self.show_error(&error);

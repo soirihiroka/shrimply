@@ -71,14 +71,7 @@ impl Inspector {
             .map(|p| matrix.transform_point2(GlamVec2::from(p)));
         let accent = shrimply_preview_provider_skia::selection_color();
         shrimply_preview_provider_skia::with_control_outline(canvas, |canvas| {
-            for index in 0..points.len() {
-                shrimply_preview_provider_skia::draw_control_line(
-                    canvas,
-                    points[index],
-                    points[(index + 1) % points.len()],
-                    accent,
-                );
-            }
+            shrimply_preview_provider_skia::draw_control_polyline(canvas, &points, true, accent);
         });
     }
 

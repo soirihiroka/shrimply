@@ -147,6 +147,8 @@ pub struct Surface {
     touch: TouchInput,
     navigation: Navigation,
     stamp: Option<Stamp>,
+    last_selection: Option<(ItemAddress, PreviewTarget)>,
+    last_configuration: Option<Configuration>,
     overlay: Option<Overlay>,
     committed: bool,
     cursor: Cursor,
@@ -358,6 +360,8 @@ impl Surface {
                 .as_ref()
                 .map(|(address, target)| (address, *target)),
         );
+        self.last_selection = selection.map(|(address, target)| (address.clone(), target));
+        self.last_configuration = Some(configuration);
         let viewport = self.layout(project, configuration).viewport;
         let position = self.displayed_position(clock);
         self.core.ensure(
@@ -378,7 +382,7 @@ impl Surface {
         )
     }
 
-    fn ensure(
+    pub fn ensure(
         &mut self,
         project: &mut Project,
         selected: Option<&ItemAddress>,
@@ -404,9 +408,9 @@ impl Surface {
                 .map(|(address, target)| (address, *target)),
         )
         .map(|(address, target)| (address.clone(), target));
-        let changed = self.stamp.as_ref().is_some_and(|stamp| {
-            stamp.selected != selection || stamp.configuration != configuration
-        });
+        let changed = self
+            .last_configuration
+            .is_some_and(|last| self.last_selection != selection || last != configuration);
         let response = if changed && self.core.sequence != PointerSequence::Idle {
             self.cancel_pointer(project, true)
         } else {
@@ -414,6 +418,19 @@ impl Surface {
         };
         self.ensure_readonly(project, selected, clock, configuration)?;
         Ok(response)
+    }
+
+    pub fn pointer_leave(&mut self, project: &mut Project) -> PreviewResponse {
+        self.guides.pointer_leave();
+        self.cursor = Cursor::Default;
+        let mut response = if self.core.sequence == PointerSequence::Idle {
+            self.core
+                .pointer(project, &self.expressions, PointerEvent::Leave)
+        } else {
+            PreviewResponse::IGNORED
+        };
+        response.cursor = CursorUpdate::Clear;
+        response
     }
 
     fn apply_cursor(&mut self, update: CursorUpdate) {
@@ -448,17 +465,15 @@ impl Surface {
             return Ok(response);
         }
         if matches!(event, PointerEvent::Leave) {
-            self.guides.pointer_leave();
-            self.cursor = Cursor::Default;
-            if self.core.sequence == PointerSequence::Idle {
-                let provider = self.core.pointer(project, &self.expressions, event);
-                response.merge(provider);
-            }
-            response.cursor = CursorUpdate::Clear;
+            response.merge(self.pointer_leave(project));
             return Ok(response);
         }
+        let was_guide_cursor = self.guides.cursor() != GuideCursor::Default;
         let guide = match event {
-            PointerEvent::Begin(input) if input.button == PointerButton::Primary => {
+            PointerEvent::Begin(input)
+                if input.button == PointerButton::Primary
+                    && self.core.sequence == PointerSequence::Idle =>
+            {
                 self.guides.pointer_press(
                     &mut project.preview_guides,
                     layout.viewport,
@@ -476,7 +491,6 @@ impl Surface {
                 if self.guides.active() {
                     true
                 } else if let Some(cursor) = guide_cursor(self.guides.cursor()) {
-                    self.cursor = cursor;
                     response.merge(PreviewResponse {
                         handled: true,
                         cursor: CursorUpdate::Set(cursor),
@@ -539,7 +553,10 @@ impl Surface {
         {
             return Ok(response);
         }
-        let provider = self.core.pointer(project, &self.expressions, event);
+        let mut provider = self.core.pointer(project, &self.expressions, event);
+        if was_guide_cursor && provider.cursor == CursorUpdate::Keep {
+            provider.cursor = CursorUpdate::Clear;
+        }
         if provider.edit.commits() {
             controller::commit_response(project, provider, "preview-provider");
             self.core.project_committed(clock.revision);

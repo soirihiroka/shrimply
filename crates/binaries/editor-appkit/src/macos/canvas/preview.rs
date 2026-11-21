@@ -188,7 +188,6 @@ impl CanvasView {
                 && preview.surface.presented(revision, time, exclusion, audio)
             {
                 preview.presented_frame = Some(id);
-                preview.surface.invalidate();
                 self.ivars().surface_dirty.set(true);
             }
             preview.sync_loading(shrimply_project_document::project::scaled_time_delta(

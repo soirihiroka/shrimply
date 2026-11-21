@@ -105,7 +105,7 @@ impl PreviewProvider for CrtPreview {
     fn on_draw(
         &mut self,
         painter: &shrimply_preview_provider_skia::PreviewCanvas,
-        __context: &dyn PreviewContext,
+        _context: &dyn PreviewContext,
     ) {
         let (center, handles) = self.points();
         for (handle, color) in [(handles[0], SPACING_COLOR), (handles[1], CURVATURE_COLOR)] {

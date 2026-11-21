@@ -3,11 +3,11 @@ use shrimply_math_geometry::snap::{
     rect_axis_feature, resolve_axis_snap, solve_parameter_correction, transformed_rect,
 };
 use shrimply_preview_provider_skia::{
-    AxisFeatures, AxisGap, AxisSnapKind, BOUNDS_HANDLES, BoundsHandle, Color, Cursor, CursorUpdate,
-    PointerEvent, PreviewBuilder, PreviewContext, PreviewEditOutcome, PreviewEditSink,
-    PreviewItemGeometry, PreviewProvider, PreviewRefresh, PreviewResponse, PreviewTarget,
-    PreviewViewport, Rect, SnapAxis, SnapResult, SnapScene, bounds_handle_position, draw_anchor,
-    draw_bounds_handles, draw_control_line, draw_control_rect, draw_rotation_handle, hit_keypoint,
+    AxisFeatures, AxisGap, AxisSnapKind, BoundsHandle, Color, Cursor, CursorUpdate, PointerEvent,
+    PreviewBuilder, PreviewContext, PreviewEditOutcome, PreviewEditSink, PreviewItemGeometry,
+    PreviewProvider, PreviewRefresh, PreviewResponse, PreviewTarget, PreviewViewport, Rect,
+    SnapAxis, SnapResult, SnapScene, bounds_handle_position, draw_anchor, draw_bounds_handles,
+    draw_control_line, draw_control_rect, draw_rotation_handle, hit_bounds_handle, hit_keypoint,
     rotation_handle_segment, selection_color,
 };
 use shrimply_property_model::timeline_value::{
@@ -205,18 +205,12 @@ impl TransformHandler {
         }
         if self
             .resize_editable(modifiers.contains(shrimply_preview_provider_skia::Modifiers::CONTROL))
+            && let Some(handle) = hit_bounds_handle(point, map, self.geometry.bounds)
         {
-            for handle in BOUNDS_HANDLES {
-                if hit_keypoint(
-                    point,
-                    map.transform_point2(bounds_handle_position(handle, self.geometry.bounds)),
-                ) {
-                    return Some((
-                        DragKind::Resize(handle),
-                        transformed_resize_cursor(handle, map),
-                    ));
-                }
-            }
+            return Some((
+                DragKind::Resize(handle),
+                transformed_resize_cursor(handle, map),
+            ));
         }
         let determinant = map.determinant();
         if self.position_editable
@@ -301,11 +295,12 @@ impl TransformHandler {
                 }
             }
             DragKind::Resize(handle) => {
-                let axes = resize_axes(handle);
+                let (x, y) = handle.axes();
+                let axes = Vec2::new(f32::from(x), f32::from(y));
                 let fixed_local = if drag.centered_resize {
                     drag.bounds.center()
                 } else {
-                    bounds_handle_position(opposite_handle(handle), drag.bounds)
+                    bounds_handle_position(handle.opposite(), drag.bounds)
                 };
                 let handle_local = bounds_handle_position(handle, drag.bounds);
                 let fixed_canvas = drag.start.matrix().transform_point2(fixed_local);
@@ -447,7 +442,7 @@ impl TransformHandler {
                 let next_fixed = if drag.centered_resize {
                     next_bounds.center()
                 } else {
-                    bounds_handle_position(opposite_handle(handle), next_bounds)
+                    bounds_handle_position(handle.opposite(), next_bounds)
                 };
                 next.position = fixed_canvas
                     - linear_transform(next).transform_vector2(next_fixed - next.anchor);
@@ -726,32 +721,6 @@ impl PreviewProvider for TransformHandler {
             }
             _ => PreviewResponse::IGNORED,
         }
-    }
-}
-
-fn resize_axes(handle: BoundsHandle) -> Vec2 {
-    match handle {
-        BoundsHandle::TopLeft => Vec2::new(-1.0, -1.0),
-        BoundsHandle::Top => Vec2::new(0.0, -1.0),
-        BoundsHandle::TopRight => Vec2::new(1.0, -1.0),
-        BoundsHandle::Right => Vec2::new(1.0, 0.0),
-        BoundsHandle::BottomRight => Vec2::new(1.0, 1.0),
-        BoundsHandle::Bottom => Vec2::new(0.0, 1.0),
-        BoundsHandle::BottomLeft => Vec2::new(-1.0, 1.0),
-        BoundsHandle::Left => Vec2::new(-1.0, 0.0),
-    }
-}
-
-fn opposite_handle(handle: BoundsHandle) -> BoundsHandle {
-    match handle {
-        BoundsHandle::TopLeft => BoundsHandle::BottomRight,
-        BoundsHandle::Top => BoundsHandle::Bottom,
-        BoundsHandle::TopRight => BoundsHandle::BottomLeft,
-        BoundsHandle::Right => BoundsHandle::Left,
-        BoundsHandle::BottomRight => BoundsHandle::TopLeft,
-        BoundsHandle::Bottom => BoundsHandle::Top,
-        BoundsHandle::BottomLeft => BoundsHandle::TopRight,
-        BoundsHandle::Left => BoundsHandle::Right,
     }
 }
 
@@ -1059,7 +1028,8 @@ fn resolved_snap(constraints: SnapResult, rect: Rect) -> SnapResult {
 }
 
 fn transformed_resize_cursor(handle: BoundsHandle, map: Mat3) -> Cursor {
-    let direction = map.transform_vector2(resize_axes(handle));
+    let (x, y) = handle.axes();
+    let direction = map.transform_vector2(Vec2::new(f32::from(x), f32::from(y)));
     if !direction.is_finite() || direction.length_squared() <= f32::EPSILON {
         return Cursor::Move;
     }

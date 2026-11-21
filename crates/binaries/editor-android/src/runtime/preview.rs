@@ -394,7 +394,9 @@ impl Runtime {
             return Ok(false);
         };
         let response = self.preview_interaction.cancel(&mut project.borrow_mut());
-        self.apply_preview_response(response)
+        let changed = self.apply_preview_response(response)?;
+        self.schedule_preview_base()?;
+        Ok(changed)
     }
 }
 

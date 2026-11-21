@@ -174,7 +174,7 @@ impl CropPreview {
     fn hit(&self, point: glam::Vec2) -> Option<CropDrag> {
         let rect = self.rect();
         HANDLES.into_iter().find_map(|handle| {
-            let (x, y) = preview::handle_axes(handle);
+            let (x, y) = handle.axes();
             let editable = (x == 0 || self.editable[if x < 0 { 3 } else { 1 }])
                 && (y == 0 || self.editable[if y < 0 { 0 } else { 2 }]);
             (editable
@@ -274,7 +274,7 @@ fn update(
     time: shrimply_property_model::Time,
 ) -> Option<(bool, [f32; 4])> {
     let local = preview::inverse_point(drag.map, point)?;
-    let (x, y) = preview::handle_axes(drag.handle);
+    let (x, y) = drag.handle.axes();
     let mut value = drag.values;
     if drag.pixels {
         if y < 0 {

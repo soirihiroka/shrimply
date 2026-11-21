@@ -395,7 +395,7 @@ impl ToolkitPreview {
 
     pub fn pointer_move(&mut self, width: f32, height: f32, x: f32, y: f32, modifiers: Modifiers) {
         let sample = pointer_sample(x, y);
-        let event = if self.surface.active() {
+        let event = if self.surface.active() && !self.surface.navigation_active() {
             PointerEvent::Samples {
                 input: pointer_input(sample, modifiers),
                 samples: std::slice::from_ref(&sample),
@@ -472,27 +472,17 @@ impl ToolkitPreview {
     }
 
     pub fn pointer_cancel(&mut self) {
+        let clock = self.clock();
         let project_handle = self.project.clone();
         let response = self.surface.cancel(&mut project_handle.borrow_mut());
+        self.update_base_exclusion(clock.position);
         self.apply_provider_response(response);
     }
 
     pub fn pointer_leave(&mut self) {
-        if !self.surface.active() {
-            let project_handle = self.project.clone();
-            let mut project = project_handle.borrow_mut();
-            let selected = selection_state::focused_video_address(&self.selection_state, &project);
-            let clock = self.clock();
-            let preferences = preferences_store::snapshot(&self.preferences);
-            let configuration = self.configuration(&preferences, glam::Vec2::ONE);
-            let _ = self.surface.pointer(
-                &mut project,
-                selected.as_ref(),
-                clock,
-                configuration,
-                PointerEvent::Leave,
-            );
-        }
+        let project_handle = self.project.clone();
+        let response = self.surface.pointer_leave(&mut project_handle.borrow_mut());
+        self.apply_provider_response(response);
     }
 
     pub fn pointer_cursor(&self) -> u8 {

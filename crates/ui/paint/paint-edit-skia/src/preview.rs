@@ -580,8 +580,9 @@ impl PreviewProvider for PaintHandler {
                 PaintPreviewMode::StrokeTransform => draw_stroke_transform(canvas, &self.mapping),
                 PaintPreviewMode::Pen | PaintPreviewMode::Fill => {}
             }
-            if self.gesture.is_none() {
-                let Some(pointer) = self.pointer else { return };
+            if let Some(gesture) = &self.gesture {
+                gesture.draw_overlay(canvas, selection_color);
+            } else if let Some(pointer) = self.pointer {
                 draw_tool_cursor(
                     canvas,
                     self.mapping,
@@ -813,14 +814,8 @@ impl PaintMapping {
             shrimply_preview_provider_skia::Rect::from_min_size(Vec2::ZERO, self.source_size);
         shrimply_preview_provider_skia::hit_keypoint(point, anchor)
             || shrimply_preview_provider_skia::hit_keypoint(point, rotation)
-            || shrimply_preview_provider_skia::BOUNDS_HANDLES
-                .into_iter()
-                .map(|handle| {
-                    self.raw_to_screen.transform_point2(
-                        shrimply_preview_provider_skia::bounds_handle_position(handle, bounds),
-                    )
-                })
-                .any(|handle| shrimply_preview_provider_skia::hit_keypoint(point, handle))
+            || shrimply_preview_provider_skia::hit_bounds_handle(point, self.raw_to_screen, bounds)
+                .is_some()
     }
 
     fn screen_radius_to_raw(self, radius: f32) -> f32 {
@@ -1451,24 +1446,30 @@ impl PaintGesture {
             });
             return true;
         }
-        let pressure = self.latest.pressure;
+        false
+    }
+
+    fn draw_overlay(
+        &self,
+        canvas: &shrimply_preview_provider_skia::PreviewCanvas,
+        selection_color: shrimply_preview_provider_skia::Color,
+    ) {
+        if !self.eraser {
+            return;
+        }
         let diameter = self.stroke_options.width
             * self.eraser_scale
             * shrimply_paint_geometry::pressure_diameter_scale(
                 self.stroke_options.thinning,
-                pressure,
+                self.latest.pressure,
             );
         let radius = self.mapping.item_radius_to_screen(diameter * 0.5);
         shrimply_preview_provider_skia::drawing::circle(
             canvas,
             self.latest.position,
             radius,
-            Paint::stroke(Stroke::new(
-                shrimply_preview_provider_skia::selection_color(),
-                2.0,
-            )),
+            Paint::stroke(Stroke::new(selection_color, 2.0)),
         );
-        false
     }
 }
 
@@ -1827,7 +1828,12 @@ fn draw_stroke_transform(
     let anchor = mapping
         .item_to_screen
         .transform_point2(mapping.stroke.position);
-    shrimply_preview_provider_skia::draw_control_rect(painter, mapping.raw_to_screen, bounds, color);
+    shrimply_preview_provider_skia::draw_control_rect(
+        painter,
+        mapping.raw_to_screen,
+        bounds,
+        color,
+    );
     shrimply_preview_provider_skia::draw_control_line(painter, stem, rotation, color);
     shrimply_preview_provider_skia::draw_bounds_handles(
         painter,
@@ -1856,23 +1862,16 @@ fn hit_stroke_transform(mapping: PaintMapping, point: Vec2) -> StrokeTransformDr
     }
     let bounds =
         shrimply_preview_provider_skia::Rect::from_min_size(Vec2::ZERO, mapping.source_size);
-    shrimply_preview_provider_skia::BOUNDS_HANDLES
-        .into_iter()
-        .find(|&handle| {
-            let screen = mapping.raw_to_screen.transform_point2(
-                shrimply_preview_provider_skia::bounds_handle_position(handle, bounds),
-            );
-            shrimply_preview_provider_skia::hit_keypoint(point, screen)
-        })
-        .map_or(StrokeTransformDrag::Move, |handle| {
-            use shrimply_preview_provider_skia::BoundsHandle;
-            let (x, y) = match handle {
-                BoundsHandle::Top | BoundsHandle::Bottom => (false, true),
-                BoundsHandle::Left | BoundsHandle::Right => (true, false),
-                _ => (true, true),
-            };
-            StrokeTransformDrag::Scale { x, y }
-        })
+    shrimply_preview_provider_skia::hit_bounds_handle(point, mapping.raw_to_screen, bounds).map_or(
+        StrokeTransformDrag::Move,
+        |handle| {
+            let (x, y) = handle.axes();
+            StrokeTransformDrag::Scale {
+                x: x != 0,
+                y: y != 0,
+            }
+        },
+    )
 }
 
 fn rotation_handle(mapping: PaintMapping) -> (Vec2, Vec2) {

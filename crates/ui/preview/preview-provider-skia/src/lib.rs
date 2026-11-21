@@ -894,6 +894,6 @@ pub use controls::{
     BOUNDS_HANDLES, BoundsHandle, CONTROL_LINE_WIDTH, KEYPOINT_HIT_RADIUS, KEYPOINT_RADIUS,
     ROTATION_HANDLE_OFFSET, bounds_handle_cursor, bounds_handle_position, draw_anchor,
     draw_bounds_handles, draw_control_line, draw_control_polyline, draw_control_rect,
-    draw_keypoint, draw_keypoints, draw_rotation_handle, hit_keypoint, rotation_handle_segment,
-    selection_color, selection_foreground, with_control_outline,
+    draw_keypoint, draw_keypoints, draw_rotation_handle, hit_bounds_handle, hit_keypoint,
+    rotation_handle_segment, selection_color, selection_foreground, with_control_outline,
 };

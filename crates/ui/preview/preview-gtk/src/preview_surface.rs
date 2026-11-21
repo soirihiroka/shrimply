@@ -297,20 +297,10 @@ impl PreviewController {
             preference_area.queue_render();
         });
         let style = adw::StyleManager::for_display(&area.display());
-        shrimply_cross_ui_theme::set_accent(Some((
-            style.accent_color_rgba().into(),
-            Color::ACCENT_FG,
-        )));
         let dark_area = area.clone();
         style.connect_dark_notify(move |_| dark_area.queue_render());
         let accent_area = area.clone();
-        style.connect_accent_color_notify(move |style| {
-            shrimply_cross_ui_theme::set_accent(Some((
-                style.accent_color_rgba().into(),
-                Color::ACCENT_FG,
-            )));
-            accent_area.queue_render();
-        });
+        style.connect_accent_color_notify(move |_| accent_area.queue_render());
         let contrast_area = area.clone();
         style.connect_high_contrast_notify(move |_| contrast_area.queue_render());
 

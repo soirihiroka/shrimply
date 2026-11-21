@@ -167,7 +167,7 @@ impl PreviewProvider for TextureBoundsPreview {
         let rect = self.rect();
         let hit = |point| {
             HANDLES.into_iter().find_map(|handle| {
-                let (x, y) = preview::handle_axes(handle);
+                let (x, y) = handle.axes();
                 let editable = (x == 0 || self.editable[if x < 0 { 3 } else { 1 }])
                     && (y == 0 || self.editable[if y < 0 { 0 } else { 2 }]);
                 (editable
@@ -266,7 +266,7 @@ fn update_bounds(
     time: shrimply_property_model::Time,
 ) -> Option<(bool, [f32; 4])> {
     let local = preview::inverse_point(drag.map, point)?;
-    let (x, y) = preview::handle_axes(drag.handle);
+    let (x, y) = drag.handle.axes();
     let mut values = drag.values;
     if y < 0 {
         values[0] = -local.y;
