@@ -27,11 +27,9 @@
   libx11,
   lld,
   llvmPackages,
-  manimSrc,
   makeShellWrapper,
   ninja,
   openssl,
-  optixSrc,
   pipewire,
   pkg-config,
   poppler_gi,
@@ -44,12 +42,12 @@
   shrimply-slang,
   shrimply-oidn,
   spirv-tools,
+  src,
   uv,
   vulkan-headers,
   vulkan-loader,
   vulkan-memory-allocator,
   vte-gtk4,
-  vtracerSrc,
   wrapGAppsHook4,
   zlib,
 }:
@@ -112,19 +110,9 @@ rustPlatform.buildRustPackage {
   pname = "shrimply";
   version = "0.1.0";
 
-  src = null;
+  inherit src;
+  SHRIMPLY_BUILD_GIT_HASH = src.rev or src.dirtyRev or "";
   cargoLock.lockFile = ../Cargo.lock;
-
-  postUnpack = ''
-    mkdir -p "$sourceRoot/external"
-    for dependency in manim optix-dev vtracer; do
-      rm -rf "$sourceRoot/external/$dependency"
-    done
-    cp -r ${manimSrc} "$sourceRoot/external/manim"
-    cp -r ${optixSrc} "$sourceRoot/external/optix-dev"
-    cp -r ${vtracerSrc} "$sourceRoot/external/vtracer"
-    chmod -R u+w "$sourceRoot/external"
-  '';
 
   nativeBuildInputs = [
     clang

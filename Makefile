@@ -69,7 +69,10 @@ UV_MEDIA = $(HOST_MEDIA_ENV) uv run --config-settings-package "$(PYAV_CONFIG)" $
 QT_QMAKE ?= $(if $(filter Windows_NT,$(HOST_OS)),qmake.exe,qmake6)
 BUILD_ENV = CUDA_HOME="$(CUDA_HOME)" CUDA_TOOLKIT_PATH="$(CUDA_TOOLKIT_PATH)" CUDA_IMAGE_FORMAT=$(CUDA_IMAGE_FORMAT) CUDA_TARGET=$(CUDA_TARGET) CUDA_PTX_TARGET=$(CUDA_PTX_TARGET) CUDA_HOST_CXX=$(CUDA_HOST_CXX) CUDA_ALLOW_UNSUPPORTED_COMPILER=$(CUDA_ALLOW_UNSUPPORTED_COMPILER) PKG_CONFIG="$(PKG_CONFIG)" OPTIX_ROOT="$(OPTIX_ROOT)"
 ifeq ($(HOST_OS),Linux)
-BUILD_ENV += $(HOST_MEDIA_ENV)
+# Native dependencies can add /usr/lib64 ahead of ffmpeg-sys's link search path.
+# Give the project ABI precedence in the final linker command for both profiles.
+FFMPEG_LINK_FLAG = -Zpre-link-arg=-L$(FFMPEG_PREFIX)/lib
+BUILD_ENV += $(HOST_MEDIA_ENV) RUSTFLAGS="$(FFMPEG_LINK_FLAG) $(or $(RUSTFLAGS),-C link-arg=-fuse-ld=lld)"
 else
 BUILD_ENV += PKG_CONFIG_PATH="$(PKG_CONFIG_PATH)"
 ifneq ($(HOST_OS),Windows_NT)
@@ -86,7 +89,7 @@ DEV_RUSTFLAGS ?=
 else
 DEV_RUSTFLAGS ?= -C prefer-dynamic -C link-arg=-fuse-ld=lld -C link-arg=-Wl,-rpath,$(RUST_LIBDIR)
 endif
-DEV_BUILD_ENV = $(BUILD_ENV) RUSTFLAGS="$(DEV_RUSTFLAGS)"
+DEV_BUILD_ENV = $(BUILD_ENV) RUSTFLAGS="$(strip $(FFMPEG_LINK_FLAG) $(DEV_RUSTFLAGS))"
 
 APP_NAME := Shrimply
 BIN_NAME := shrimply

@@ -34,6 +34,7 @@ jobs:
         run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
       - uses: cachix/install-nix-action@v30
         with:
+          install_url: https://releases.nixos.org/nix/nix-2.35.2/install
           extra_nix_config: |
             accept-flake-config = true
             extra-substituters = https://cache.nixos-cuda.org https://shrimply.cachix.org
