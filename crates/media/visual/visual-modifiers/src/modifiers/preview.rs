@@ -1,9 +1,10 @@
 use glam::{Mat3, Vec2};
 pub use shrimply_preview_provider_skia::{
     BOUNDS_HANDLES as HANDLES, BoundsHandle as Handle, CONTROL_LINE_WIDTH as LINE_WIDTH,
-    bounds_handle_cursor as resize_cursor, bounds_handle_position as handle_point,
-    draw_control_line as draw_line, draw_control_rect as draw_rect, draw_keypoint as draw_handle,
-    hit_keypoint as hit,
+    TransformBoxOverlay, bounds_handle_cursor as resize_cursor,
+    bounds_handle_position as handle_point, draw_anchor, draw_control_line as draw_line,
+    draw_control_rect as draw_rect, draw_keypoint as draw_handle, draw_rotation_handle,
+    hit_keypoint as hit, rotation_handle_segment,
 };
 use shrimply_preview_provider_skia::{PreviewContext, PreviewFacetKey, PreviewTarget};
 use shrimply_property_model::timeline_value::{

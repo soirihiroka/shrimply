@@ -17,6 +17,7 @@ use crate::{
     controller::{self, Controller, PointerSequence, Preparation},
     guides::{self, GuideInput},
     navigation::Navigation,
+    overlay::{self, InteractionOverlay},
 };
 
 #[derive(Clone, Copy, PartialEq)]
@@ -86,7 +87,7 @@ struct Stamp {
     viewport: PreviewViewport,
     clip: Rect,
     guides: PreviewGuides,
-    guide_colors: [Color; 2],
+    theme_colors: [Color; 4],
 }
 
 #[derive(Default)]
@@ -531,9 +532,14 @@ impl Surface {
             viewport,
             clip,
             guides: project.preview_guides.as_ref().clone(),
-            guide_colors: {
+            theme_colors: {
                 let theme = shrimply_cross_ui_theme::current();
-                [theme.sidebar_bg, theme.sidebar_fg]
+                [
+                    theme.sidebar_bg,
+                    theme.sidebar_fg,
+                    theme.accent_bg,
+                    theme.accent_fg,
+                ]
             },
         };
         if self.stamp.as_ref() == Some(&stamp) && !self.core.frame_pending && self.overlay.is_some()
@@ -545,23 +551,20 @@ impl Surface {
             skia_safe::Rect::from_wh(configuration.size.x, configuration.size.y),
             false,
         );
-        if configuration.guides_visible {
-            guides::draw(
-                &shrimply_components_skia::canvas::TimelinePainter::new(canvas),
-                &project.preview_guides,
+        overlay::draw_interaction(
+            canvas,
+            &InteractionOverlay {
                 viewport,
-                Rect::from_min_size(Vec2::ZERO, configuration.size),
-                Color::BLUE5,
-            );
-        }
-        canvas.save();
-        canvas.clip_rect(
-            skia_safe::Rect::from_xywh(clip.min.x, clip.min.y, clip.width(), clip.height()),
-            None,
-            true,
+                clip_rect: clip,
+                surface_rect: Rect::from_min_size(Vec2::ZERO, configuration.size),
+                guides: configuration
+                    .guides_visible
+                    .then_some(project.preview_guides.as_ref()),
+            },
+            &mut self.core,
+            &self.expressions,
+            |_| {},
         );
-        self.core.draw(canvas, &self.expressions);
-        canvas.restore();
         let picture = recorder
             .finish_recording_as_picture(None)
             .expect("record shared preview controls");

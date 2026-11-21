@@ -8,6 +8,8 @@ use std::cell::Cell;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Theme {
+    pub accent_bg: Color,
+    pub accent_fg: Color,
     pub accent_blue_standalone: Color,
     pub accent_teal_standalone: Color,
     pub accent_green_standalone: Color,
@@ -73,6 +75,7 @@ pub static DARK: Theme = Theme::new(true);
 std::thread_local! {
     static DARK_MODE: Cell<bool> = const { Cell::new(false) };
     static PLATFORM_PALETTE: Cell<Option<PlatformPalette>> = const { Cell::new(None) };
+    static ACCENT_OVERRIDE: Cell<Option<(Color, Color)>> = const { Cell::new(None) };
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -97,16 +100,29 @@ pub fn set_platform_palette(palette: Option<PlatformPalette>) {
     PLATFORM_PALETTE.set(palette);
 }
 
+pub fn set_accent(accent: Option<(Color, Color)>) {
+    ACCENT_OVERRIDE.set(accent);
+}
+
 pub fn current() -> Theme {
     let base = if DARK_MODE.get() { DARK } else { LIGHT };
-    PLATFORM_PALETTE
+    let mut theme = PLATFORM_PALETTE
         .get()
-        .map_or(base, |palette| base.with_platform_palette(palette))
+        .map_or(base, |palette| base.with_platform_palette(palette));
+    if PLATFORM_PALETTE.get().is_none()
+        && let Some((accent_bg, accent_fg)) = ACCENT_OVERRIDE.get()
+    {
+        theme.accent_bg = accent_bg;
+        theme.accent_fg = accent_fg;
+    }
+    theme
 }
 
 impl Theme {
     const fn new(dark: bool) -> Self {
         Self {
+            accent_bg: Color::ACCENT_BLUE,
+            accent_fg: Color::ACCENT_FG,
             accent_blue_standalone: select(
                 dark,
                 Color::ACCENT_BLUE_STANDALONE_LIGHT,
@@ -300,6 +316,8 @@ impl Theme {
         self.thumbnail_fg = palette.view_fg;
         self.shade = palette.border;
         self.scrollbar_outline = palette.border;
+        self.accent_bg = palette.accent_bg;
+        self.accent_fg = palette.accent_fg;
         self.active_toggle_bg = palette.accent_bg;
         self.active_toggle_fg = palette.accent_fg;
         self.overview_bg = palette.window_bg;

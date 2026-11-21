@@ -205,25 +205,18 @@ impl TransformPreview {
             .transform_point2(self.resolved.position)
     }
 
-    fn rotation_points(&self) -> (glam::Vec2, glam::Vec2) {
-        let bounds = self.bounds();
-        let left = self
-            .screen_map
-            .transform_point2(preview::handle_point(Handle::TopLeft, bounds));
-        let right = self
-            .screen_map
-            .transform_point2(preview::handle_point(Handle::TopRight, bounds));
-        let stem = (left + right) * 0.5;
-        let edge = right - left;
-        let normal = if edge.length_squared() > f32::EPSILON {
-            glam::Vec2::new(edge.y, -edge.x).normalize()
-        } else {
-            -glam::Vec2::Y
-        };
-        (stem, stem + normal * 28.0)
+    fn rotation_points(
+        &self,
+        visible_rect: shrimply_preview_provider_skia::Rect,
+    ) -> (glam::Vec2, glam::Vec2) {
+        preview::rotation_handle_segment(self.screen_map, self.bounds(), visible_rect)
     }
 
-    fn hit(&self, point: glam::Vec2) -> Option<TransformDragKind> {
+    fn hit(
+        &self,
+        point: glam::Vec2,
+        visible_rect: shrimply_preview_provider_skia::Rect,
+    ) -> Option<TransformDragKind> {
         let bounds = self.bounds();
         if self.editable[0] && self.editable[2] {
             for handle in HANDLES {
@@ -236,7 +229,7 @@ impl TransformPreview {
                 }
             }
         }
-        if self.editable[3] && preview::hit(point, self.rotation_points().1) {
+        if self.editable[3] && preview::hit(point, self.rotation_points(visible_rect).1) {
             return Some(TransformDragKind::Rotate);
         }
         if self.editable[0] && self.editable[1] && preview::hit(point, self.anchor_screen()) {
@@ -254,33 +247,31 @@ impl PreviewProvider for TransformPreview {
         painter: &shrimply_preview_provider_skia::PreviewCanvas,
         context: &dyn PreviewContext,
     ) {
-        let color = context.selection_color();
         let bounds = self.bounds();
-        preview::draw_rect(painter, self.screen_map, bounds, color);
-        for handle in HANDLES {
-            preview::draw_handle(
-                painter,
-                self.screen_map
-                    .transform_point2(preview::handle_point(handle, bounds)),
-                color,
-            );
-        }
-        let (stem, rotation) = self.rotation_points();
-        preview::draw_line(painter, stem, rotation, color);
-        preview::draw_handle(painter, rotation, color);
-        preview::draw_handle(painter, self.anchor_screen(), color);
+        let rotation = self.rotation_points(context.viewport().surface_rect);
+        preview::TransformBoxOverlay::new(
+            self.screen_map,
+            bounds,
+            context.selection_color(),
+            context.selection_foreground_color(),
+        )
+        .with_resize_handles(true)
+        .with_rotation(Some(rotation))
+        .with_anchor(Some(self.anchor_screen()))
+        .draw(painter);
     }
 
     fn on_pointer(
         &mut self,
         event: PointerEvent<'_>,
-        _context: &dyn PreviewContext,
+        context: &dyn PreviewContext,
         edits: &mut dyn PreviewEditSink,
     ) -> PreviewResponse {
         let time = edits.keyframe_time();
+        let visible_rect = context.viewport().surface_rect;
         match event {
             PointerEvent::Hover(input) => {
-                let Some(kind) = self.hit(input.sample.position) else {
+                let Some(kind) = self.hit(input.sample.position, visible_rect) else {
                     return PreviewResponse::IGNORED;
                 };
                 PreviewResponse {
@@ -291,7 +282,7 @@ impl PreviewProvider for TransformPreview {
                 }
             }
             PointerEvent::Begin(input) => {
-                let Some(kind) = self.hit(input.sample.position) else {
+                let Some(kind) = self.hit(input.sample.position, visible_rect) else {
                     return PreviewResponse::IGNORED;
                 };
                 let Some(start_pointer_parent) =

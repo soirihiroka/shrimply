@@ -10,7 +10,7 @@ use shrimply_components_skia::canvas::{Rect, vec2};
 use shrimply_editor_state::player_state::{self, SharedPlayerState};
 use shrimply_playback_performance as playback_performance;
 use shrimply_preview_provider_skia::PreviewViewport;
-use shrimply_preview_runtime_cuda::captions::{CaptionAppearance, draw_captions};
+use shrimply_preview_runtime_cuda::captions::CaptionAppearance;
 use shrimply_preview_runtime_cuda::guides;
 use shrimply_preview_runtime_cuda::preferences::store as preferences_store;
 use shrimply_preview_runtime_cuda::renderer::{Appearance, VideoRenderer};

@@ -86,13 +86,11 @@ impl VideoRenderer {
             pixels_per_point,
             appearance.background_color,
         )?;
-        shrimply_preview_provider_skia::canvas::draw_background(
+        shrimply_preview_interaction_skia::overlay::draw_background(
             background.canvas(),
-            shrimply_preview_provider_skia::canvas::Appearance {
-                content_rect: Rect::from_min_max(
-                    appearance.content_rect.min.max(appearance.clip_rect.min),
-                    appearance.content_rect.max.min(appearance.clip_rect.max),
-                ),
+            shrimply_preview_interaction_skia::overlay::BackgroundAppearance {
+                content_rect: appearance.content_rect,
+                clip_rect: appearance.clip_rect,
                 background: appearance.background_color,
                 shadow_size: appearance.shadow_size_px,
                 pixel_scale: pixels_per_point,

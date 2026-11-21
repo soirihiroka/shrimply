@@ -2,7 +2,6 @@ use super::*;
 use shrimply_editor_state::{player_state, preferences};
 use shrimply_preview_interaction_skia::captions::{self, CaptionAppearance};
 use shrimply_preview_provider_skia::{PointerButton, PointerEvent};
-use shrimply_project_document::project::{ItemAddress, Project};
 use shrimply_timeline_skia::selection_state;
 
 pub(in crate::macos::canvas) fn appearance(
@@ -115,29 +114,4 @@ impl CanvasView {
         self.ivars().surface_dirty.set(true);
         Ok(true)
     }
-}
-
-pub(in crate::macos::canvas) fn draw(
-    canvas: &skia_safe::Canvas,
-    state: &State,
-    project: &Project,
-    position: shrimply_math_core::Time,
-    appearance: CaptionAppearance,
-    focused: Option<&ItemAddress>,
-) {
-    captions::draw_captions(
-        &shrimply_components_skia::canvas::TimelinePainter::new(canvas),
-        project,
-        position,
-        appearance,
-        focused
-            .zip(state.caption_split_hover)
-            .map(|(address, point)| {
-                (
-                    address,
-                    point,
-                    shrimply_cross_ui_theme::current().accent_blue_standalone,
-                )
-            }),
-    );
 }

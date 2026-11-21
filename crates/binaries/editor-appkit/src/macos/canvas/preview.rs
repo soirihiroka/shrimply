@@ -424,31 +424,6 @@ impl CanvasView {
     }
 }
 
-pub(super) fn draw_guides(
-    canvas: &skia_safe::Canvas,
-    state: &State,
-    project: &shrimply_project_document::project::Project,
-    size: NSSize,
-) {
-    if state.guides_visible
-        && let Some(viewport) = state.viewport
-    {
-        guides::draw(
-            &shrimply_components_skia::canvas::TimelinePainter::new(canvas),
-            state
-                .edited_guides
-                .as_deref()
-                .unwrap_or(&project.preview_guides),
-            viewport,
-            shrimply_components_skia::Rect::from_min_size(
-                glam::Vec2::ZERO,
-                glam::Vec2::new(size.width as f32, size.height as f32),
-            ),
-            shrimply_cross_ui_theme::current().accent_blue_standalone,
-        );
-    }
-}
-
 impl CanvasView {
     pub fn poll_startup(&self) -> Result<shrimply_preview_render_metal::StartupStatus, String> {
         use shrimply_editor_state::player_state;

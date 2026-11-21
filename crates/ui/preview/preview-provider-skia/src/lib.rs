@@ -155,6 +155,7 @@ impl PreviewTarget {
 pub struct PreviewViewport {
     pub canvas_size: Vec2,
     pub content_rect: Rect,
+    pub surface_rect: Rect,
     pub canvas_to_screen: Mat3,
 }
 
@@ -168,12 +169,18 @@ impl PreviewViewport {
         Self {
             canvas_size,
             content_rect,
+            surface_rect: content_rect,
             canvas_to_screen: Mat3::from_scale_angle_translation(
                 content_rect.size() / canvas_size,
                 0.0,
                 content_rect.min,
             ),
         }
+    }
+
+    pub const fn with_surface_rect(mut self, surface_rect: Rect) -> Self {
+        self.surface_rect = surface_rect;
+        self
     }
 
     pub fn canvas_point_to_screen(self, point: Vec2) -> Vec2 {
@@ -603,6 +610,10 @@ pub trait PreviewContext {
     fn local_time(&self) -> Time;
     fn viewport(&self) -> PreviewViewport;
     fn selection_color(&self) -> Color;
+
+    fn selection_foreground_color(&self) -> Color {
+        Color::WHITE
+    }
     fn target_geometry(&self, target: PreviewTarget) -> Option<PreviewItemGeometry>;
     fn source_size(&self, item_id: Uuid) -> Option<Vec2>;
     fn item_geometry(&self, item_id: Uuid) -> Option<PreviewItemGeometry>;
@@ -880,105 +891,14 @@ pub trait PreviewProvider {
     }
 }
 
-pub const KEYPOINT_RADIUS: f32 = 6.0;
-pub const KEYPOINT_HIT_RADIUS: f32 = 11.0;
-pub const CONTROL_LINE_WIDTH: f32 = 2.0;
-pub const CONTROL_SHADOW_WIDTH: f32 = 5.0;
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum BoundsHandle {
-    TopLeft,
-    Top,
-    TopRight,
-    Right,
-    BottomRight,
-    Bottom,
-    BottomLeft,
-    Left,
-}
-
-pub const BOUNDS_HANDLES: [BoundsHandle; 8] = [
-    BoundsHandle::TopLeft,
-    BoundsHandle::Top,
-    BoundsHandle::TopRight,
-    BoundsHandle::Right,
-    BoundsHandle::BottomRight,
-    BoundsHandle::Bottom,
-    BoundsHandle::BottomLeft,
-    BoundsHandle::Left,
-];
-
-pub fn bounds_handle_position(handle: BoundsHandle, bounds: Rect) -> Vec2 {
-    let center = bounds.center();
-    match handle {
-        BoundsHandle::TopLeft => bounds.min,
-        BoundsHandle::Top => Vec2::new(center.x, bounds.min.y),
-        BoundsHandle::TopRight => Vec2::new(bounds.max.x, bounds.min.y),
-        BoundsHandle::Right => Vec2::new(bounds.max.x, center.y),
-        BoundsHandle::BottomRight => bounds.max,
-        BoundsHandle::Bottom => Vec2::new(center.x, bounds.max.y),
-        BoundsHandle::BottomLeft => Vec2::new(bounds.min.x, bounds.max.y),
-        BoundsHandle::Left => Vec2::new(bounds.min.x, center.y),
-    }
-}
-
-pub fn bounds_handle_cursor(handle: BoundsHandle) -> Cursor {
-    match handle {
-        BoundsHandle::Top | BoundsHandle::Bottom => Cursor::ResizeVertical,
-        BoundsHandle::Left | BoundsHandle::Right => Cursor::ResizeHorizontal,
-        BoundsHandle::TopLeft | BoundsHandle::BottomRight => Cursor::ResizeDiagonalDown,
-        BoundsHandle::TopRight | BoundsHandle::BottomLeft => Cursor::ResizeDiagonalUp,
-    }
-}
-
-pub fn draw_keypoint(canvas: &PreviewCanvas, position: Vec2, color: Color) {
-    drawing::circle(canvas, position, KEYPOINT_RADIUS, Paint::fill(color));
-}
-
-pub fn draw_control_line(canvas: &PreviewCanvas, start: Vec2, end: Vec2, color: Color) {
-    drawing::line(
-        canvas,
-        start,
-        end,
-        Stroke::new(Color::new(0.0, 0.0, 0.0, 0.67), CONTROL_SHADOW_WIDTH),
-    );
-    drawing::line(canvas, start, end, Stroke::new(color, CONTROL_LINE_WIDTH));
-}
-
-pub fn draw_control_rect(canvas: &PreviewCanvas, transform: Mat3, bounds: Rect, color: Color) {
-    let points = [
-        bounds.min,
-        Vec2::new(bounds.max.x, bounds.min.y),
-        bounds.max,
-        Vec2::new(bounds.min.x, bounds.max.y),
-    ]
-    .map(|point| transform.transform_point2(point));
-    drawing::polyline(
-        canvas,
-        &points,
-        true,
-        Paint::stroke(Stroke::new(
-            Color::new(0.0, 0.0, 0.0, 0.67),
-            CONTROL_SHADOW_WIDTH,
-        )),
-    );
-    drawing::polyline(
-        canvas,
-        &points,
-        true,
-        Paint::stroke(Stroke::new(color, CONTROL_LINE_WIDTH)),
-    );
-}
-
-pub fn draw_keypoints(canvas: &PreviewCanvas, positions: &[Vec2], color: Color) {
-    for &position in positions {
-        draw_keypoint(canvas, position, color);
-    }
-}
-
-pub fn hit_keypoint(pointer: Vec2, position: Vec2) -> bool {
-    pointer.distance_squared(position) <= KEYPOINT_HIT_RADIUS * KEYPOINT_HIT_RADIUS
-}
-
 pub mod canvas;
+pub mod controls;
 pub mod math;
+
+pub use controls::{
+    BOUNDS_HANDLES, BoundsHandle, CONTROL_LINE_WIDTH, CONTROL_SHADOW_WIDTH, KEYPOINT_HIT_RADIUS,
+    KEYPOINT_RADIUS, ROTATION_HANDLE_OFFSET, TransformBoxOverlay, bounds_handle_cursor,
+    bounds_handle_position, draw_anchor, draw_bounds_handles, draw_control_line,
+    draw_control_polyline, draw_control_rect, draw_keypoint, draw_keypoints, draw_rotation_handle,
+    hit_keypoint, rotation_handle_segment,
+};

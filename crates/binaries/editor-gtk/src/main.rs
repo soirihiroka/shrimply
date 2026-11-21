@@ -83,8 +83,18 @@ fn main() -> glib::ExitCode {
     app.connect_activate(move |app| {
         let style = adw::StyleManager::default();
         shrimply_cross_ui_theme::set_dark(style.is_dark());
+        shrimply_cross_ui_theme::set_accent(Some((
+            style.accent_color_rgba().into(),
+            shrimply_preview_gtk::Color::ACCENT_FG,
+        )));
         style.connect_dark_notify(|style| {
             shrimply_cross_ui_theme::set_dark(style.is_dark());
+        });
+        style.connect_accent_color_notify(|style| {
+            shrimply_cross_ui_theme::set_accent(Some((
+                style.accent_color_rgba().into(),
+                shrimply_preview_gtk::Color::ACCENT_FG,
+            )));
         });
         begin_project_load(app, project_path.clone());
     });

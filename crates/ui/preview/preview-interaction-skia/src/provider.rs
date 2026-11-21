@@ -295,7 +295,11 @@ impl PreviewContext for BuildContext<'_> {
     }
 
     fn selection_color(&self) -> Color {
-        Color::BLUE5
+        shrimply_cross_ui_theme::current().accent_bg
+    }
+
+    fn selection_foreground_color(&self) -> Color {
+        shrimply_cross_ui_theme::current().accent_fg
     }
 
     fn target_geometry(&self, _target: PreviewTarget) -> Option<PreviewItemGeometry> {

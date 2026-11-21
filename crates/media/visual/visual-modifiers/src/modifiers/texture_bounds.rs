@@ -151,17 +151,14 @@ impl PreviewProvider for TextureBoundsPreview {
         painter: &shrimply_preview_provider_skia::PreviewCanvas,
         context: &dyn PreviewContext,
     ) {
-        let rect = self.rect();
-        let color = context.selection_color();
-        preview::draw_rect(painter, self.map, rect, color);
-        for handle in HANDLES {
-            preview::draw_handle(
-                painter,
-                self.map
-                    .transform_point2(preview::handle_point(handle, rect)),
-                color,
-            );
-        }
+        preview::TransformBoxOverlay::new(
+            self.map,
+            self.rect(),
+            context.selection_color(),
+            context.selection_foreground_color(),
+        )
+        .with_resize_handles(true)
+        .draw(painter);
     }
 
     fn on_pointer(

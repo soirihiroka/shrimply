@@ -6,8 +6,8 @@ use shrimply_preview_provider_skia::{
     AxisFeatures, AxisGap, AxisSnapKind, BOUNDS_HANDLES, BoundsHandle, Color, Cursor, CursorUpdate,
     PointerEvent, PreviewBuilder, PreviewContext, PreviewEditOutcome, PreviewEditSink,
     PreviewItemGeometry, PreviewProvider, PreviewRefresh, PreviewResponse, PreviewTarget,
-    PreviewViewport, Rect, SnapAxis, SnapResult, SnapScene, bounds_handle_position,
-    draw_control_line, draw_control_rect, draw_keypoint, draw_keypoints, hit_keypoint,
+    PreviewViewport, Rect, SnapAxis, SnapResult, SnapScene, TransformBoxOverlay,
+    bounds_handle_position, draw_control_line, hit_keypoint, rotation_handle_segment,
 };
 use shrimply_property_model::timeline_value::{
     TimelineBase, TimelineCurveKeyframe, TimelineValue, TimelineValueType,
@@ -19,7 +19,6 @@ use super::super::{ResolvedTransform, Time, VisualItem, VisualSource};
 pub const FACET: shrimply_preview_provider_skia::PreviewFacetKey =
     shrimply_preview_provider_skia::PreviewFacetKey::new("visual-item.transform");
 
-const ROTATION_HANDLE_OFFSET: f32 = 28.0;
 const ROTATION_SNAP_STEP_DEGREES: f32 = 15.0;
 const MIN_SCALE: f32 = 0.001;
 const DIRECT_RESIZE_SNAP_PASSES: usize = 4;
@@ -158,14 +157,16 @@ impl TransformHandler {
         context.viewport().canvas_to_screen * self.geometry.local_to_canvas
     }
 
+    fn rotation_segment(&self, context: &dyn PreviewContext) -> (Vec2, Vec2) {
+        rotation_handle_segment(
+            self.screen_map(context),
+            self.geometry.bounds,
+            context.viewport().surface_rect,
+        )
+    }
+
     fn rotation_handle(&self, context: &dyn PreviewContext) -> Vec2 {
-        let map = self.screen_map(context);
-        let center = map.transform_point2(self.geometry.bounds.center());
-        let top = map.transform_point2(Vec2::new(
-            self.geometry.bounds.center().x,
-            self.geometry.bounds.min.y,
-        ));
-        top + (top - center).normalize_or_zero() * ROTATION_HANDLE_OFFSET
+        self.rotation_segment(context).1
     }
 
     fn anchor(&self, context: &dyn PreviewContext) -> Vec2 {
@@ -598,62 +599,26 @@ impl PreviewProvider for TransformHandler {
             }
         }
         let map = self.screen_map(context);
-        draw_control_rect(painter, map, self.geometry.bounds, color);
-        if self.position_editable
+        let resize_handles = self.position_editable
             && (self.scale_editable
                 || matches!(
                     self.resize,
                     ResizeTarget::Text { editable: true, .. }
                         | ResizeTarget::Shape { editable: true, .. }
-                ))
-        {
-            let handles = BOUNDS_HANDLES.map(|handle| {
-                map.transform_point2(bounds_handle_position(handle, self.geometry.bounds))
-            });
-            draw_keypoints(painter, &handles, color);
-        }
-        if self.rotation_editable {
-            let top = map.transform_point2(Vec2::new(
-                self.geometry.bounds.center().x,
-                self.geometry.bounds.min.y,
-            ));
-            let rotation = self.rotation_handle(context);
-            draw_control_line(painter, top, rotation, color);
-            draw_keypoint(painter, rotation, color);
-        }
-        let anchor = self.anchor(context);
-        shrimply_preview_provider_skia::drawing::circle(
-            painter,
-            anchor,
-            7.0,
-            shrimply_preview_provider_skia::Paint::stroke(
-                shrimply_preview_provider_skia::Stroke::new(color, 2.0),
-            ),
-        );
-        draw_control_line(
-            painter,
-            anchor - Vec2::X * 11.0,
-            anchor - Vec2::X * 7.0,
+                ));
+        TransformBoxOverlay::new(
+            map,
+            self.geometry.bounds,
             color,
-        );
-        draw_control_line(
-            painter,
-            anchor + Vec2::X * 7.0,
-            anchor + Vec2::X * 11.0,
-            color,
-        );
-        draw_control_line(
-            painter,
-            anchor - Vec2::Y * 11.0,
-            anchor - Vec2::Y * 7.0,
-            color,
-        );
-        draw_control_line(
-            painter,
-            anchor + Vec2::Y * 7.0,
-            anchor + Vec2::Y * 11.0,
-            color,
-        );
+            context.selection_foreground_color(),
+        )
+        .with_resize_handles(resize_handles)
+        .with_rotation(
+            self.rotation_editable
+                .then(|| self.rotation_segment(context)),
+        )
+        .with_anchor(Some(self.anchor(context)))
+        .draw(painter);
     }
 
     fn on_pointer(

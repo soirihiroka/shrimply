@@ -1,8 +1,8 @@
 //! Native Vulkan texture borrowing and presentation; planning and playback are shared.
 use crate::runtime::Runtime;
 use shrimply_preferences_core::{PreviewDownsampleMethod, PreviewUpsampleMethod};
-use shrimply_preview_interaction_skia::{captions, guides};
-use shrimply_preview_provider_skia::{Color, canvas, math};
+use shrimply_preview_interaction_skia::{captions, guides, overlay};
+use shrimply_preview_provider_skia::{Color, math};
 use shrimply_project_document::{CaptionItem, Time};
 use shrimply_render_vulkan::{Texture, surface::Renderer};
 
@@ -90,10 +90,25 @@ pub(crate) fn draw(renderer: &mut Renderer, frame: &Frame, density: f32) -> bool
                     )
                 },
             );
-            canvas::draw_background(
+            let clip_rect = frame.overlay.as_ref().map_or_else(
+                || {
+                    shrimply_preview_provider_skia::Rect::from_min_size(
+                        glam::Vec2::ZERO,
+                        glam::vec2(width as f32, height as f32),
+                    )
+                },
+                |overlay| {
+                    shrimply_preview_provider_skia::Rect::from_min_max(
+                        overlay.clip.min * density,
+                        overlay.clip.max * density,
+                    )
+                },
+            );
+            overlay::draw_background(
                 target,
-                canvas::Appearance {
+                overlay::BackgroundAppearance {
                     content_rect: rect,
+                    clip_rect,
                     background: frame.background,
                     shadow_size: (frame.shadow as f32 * density).round() as u32,
                     pixel_scale: density,

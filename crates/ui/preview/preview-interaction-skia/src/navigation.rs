@@ -107,6 +107,7 @@ impl Navigation {
             fit.canvas_size,
             math::zoomed_preview_rect(fit.content_rect, bounds, self.zoom, self.center),
         )
+        .with_surface_rect(self.clip_rect(bounds, fit.surface_rect.size()))
     }
 
     pub fn clip_rect(&self, bounds: Rect, surface: Vec2) -> Rect {

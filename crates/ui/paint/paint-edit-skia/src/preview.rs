@@ -77,6 +77,7 @@ pub fn resolve_onion_frame(
         mapping: PaintMapping::new(
             geometry.local_to_canvas,
             builder.viewport().canvas_to_screen,
+            builder.viewport().surface_rect,
             resolve_stroke_transform(paint, builder),
             geometry.source_size,
             &canvas_operations,
@@ -94,10 +95,7 @@ pub fn resolve_onion_frame(
     }
 }
 
-const HIT_RADIUS: f32 = 10.0;
-const HANDLE_RADIUS: f32 = 6.0;
-const ROTATION_HANDLE_DISTANCE: f32 = 30.0;
-const OUTLINE_WIDTH: f32 = 3.0;
+const HIT_RADIUS: f32 = shrimply_preview_provider_skia::KEYPOINT_HIT_RADIUS;
 const CONNECTION_WIDTH: f32 = 1.5;
 const MIN_SCALE: f32 = -10_000.0;
 const SELECTION_ALPHA: f32 = 0.75;
@@ -290,6 +288,7 @@ impl PaintHandler {
         let mapping = PaintMapping::new(
             geometry.local_to_canvas,
             builder.viewport().canvas_to_screen,
+            builder.viewport().surface_rect,
             stroke_transform,
             geometry.source_size,
             &canvas_operations,
@@ -577,7 +576,12 @@ impl PreviewProvider for PaintHandler {
                 context.selection_color(),
             ),
             PaintPreviewMode::StrokeTransform => {
-                draw_stroke_transform(canvas, &self.mapping, context.selection_color());
+                draw_stroke_transform(
+                    canvas,
+                    &self.mapping,
+                    context.selection_color(),
+                    context.selection_foreground_color(),
+                );
             }
             PaintPreviewMode::Pen | PaintPreviewMode::Fill => {}
         }
@@ -746,12 +750,14 @@ struct PaintMapping {
     screen_to_raw: Option<Mat3>,
     screen_to_item: Option<Mat3>,
     source_size: Vec2,
+    surface_rect: shrimply_preview_provider_skia::Rect,
 }
 
 impl PaintMapping {
     fn new(
         local_to_canvas: Mat3,
         canvas_to_screen: Mat3,
+        surface_rect: shrimply_preview_provider_skia::Rect,
         stroke: ResolvedTransform2D,
         source_size: Vec2,
         canvas_operations: &[CanvasOperation],
@@ -774,6 +780,7 @@ impl PaintMapping {
             screen_to_raw: try_inverse(raw_to_screen),
             screen_to_item: try_inverse(item_to_screen),
             source_size,
+            surface_rect,
         }
     }
 
@@ -806,12 +813,18 @@ impl PaintMapping {
     fn hits_transform_control(self, point: Vec2) -> bool {
         let anchor = self.item_to_screen.transform_point2(self.stroke.position);
         let (_, rotation) = rotation_handle(self);
-        anchor.distance(point) <= HIT_RADIUS
-            || rotation.distance(point) <= HIT_RADIUS
-            || raw_handles(self.source_size)
+        let bounds =
+            shrimply_preview_provider_skia::Rect::from_min_size(Vec2::ZERO, self.source_size);
+        shrimply_preview_provider_skia::hit_keypoint(point, anchor)
+            || shrimply_preview_provider_skia::hit_keypoint(point, rotation)
+            || shrimply_preview_provider_skia::BOUNDS_HANDLES
                 .into_iter()
-                .map(|handle| self.raw_to_screen.transform_point2(handle))
-                .any(|handle| handle.distance(point) <= HIT_RADIUS)
+                .map(|handle| {
+                    self.raw_to_screen.transform_point2(
+                        shrimply_preview_provider_skia::bounds_handle_position(handle, bounds),
+                    )
+                })
+                .any(|handle| shrimply_preview_provider_skia::hit_keypoint(point, handle))
     }
 
     fn screen_radius_to_raw(self, radius: f32) -> f32 {
@@ -1808,127 +1821,69 @@ fn draw_stroke_transform(
     painter: &shrimply_preview_provider_skia::PreviewCanvas,
     mapping: &PaintMapping,
     selection_color: Color,
+    selection_foreground: Color,
 ) {
-    let corners =
-        raw_corners(mapping.source_size).map(|point| mapping.raw_to_screen.transform_point2(point));
-    shrimply_preview_provider_skia::drawing::polyline(
-        painter,
-        &corners,
-        true,
-        Paint::stroke(Stroke::new(selection_color, OUTLINE_WIDTH)),
-    );
-    for handle in
-        raw_handles(mapping.source_size).map(|point| mapping.raw_to_screen.transform_point2(point))
-    {
-        shrimply_preview_provider_skia::drawing::circle(
-            painter,
-            handle,
-            HANDLE_RADIUS,
-            Paint::fill(Color::<f32>::WHITE),
-        );
-        shrimply_preview_provider_skia::drawing::circle(
-            painter,
-            handle,
-            HANDLE_RADIUS - 2.0,
-            Paint::fill(selection_color),
-        );
-    }
-    let (stem, rotation) = rotation_handle(*mapping);
-    shrimply_preview_provider_skia::drawing::line(
-        painter,
-        stem,
-        rotation,
-        Stroke::new(selection_color, OUTLINE_WIDTH),
-    );
-    shrimply_preview_provider_skia::drawing::circle(
-        painter,
-        rotation,
-        HANDLE_RADIUS,
-        Paint::fill(Color::<f32>::WHITE),
-    );
-    shrimply_preview_provider_skia::drawing::circle(
-        painter,
-        rotation,
-        HANDLE_RADIUS - 2.0,
-        Paint::fill(selection_color),
-    );
+    let bounds =
+        shrimply_preview_provider_skia::Rect::from_min_size(Vec2::ZERO, mapping.source_size);
     let anchor = mapping
         .item_to_screen
         .transform_point2(mapping.stroke.position);
-    shrimply_preview_provider_skia::drawing::circle(
-        painter,
-        anchor,
-        HANDLE_RADIUS + 2.0,
-        Paint::stroke(Stroke::new(selection_color, 2.0)),
-    );
+    shrimply_preview_provider_skia::TransformBoxOverlay::new(
+        mapping.raw_to_screen,
+        bounds,
+        selection_color,
+        selection_foreground,
+    )
+    .with_resize_handles(true)
+    .with_rotation(Some(rotation_handle(*mapping)))
+    .with_anchor(Some(anchor))
+    .draw(painter);
 }
 
 fn hit_stroke_transform(mapping: PaintMapping, point: Vec2) -> StrokeTransformDrag {
     let anchor = mapping
         .item_to_screen
         .transform_point2(mapping.stroke.position);
-    if anchor.distance(point) <= HIT_RADIUS {
+    if shrimply_preview_provider_skia::hit_keypoint(point, anchor) {
         return StrokeTransformDrag::Anchor;
     }
     let (_, rotation) = rotation_handle(mapping);
-    if rotation.distance(point) <= HIT_RADIUS {
+    if shrimply_preview_provider_skia::hit_keypoint(point, rotation) {
         let start_angle = mapping
             .screen_to_item(point)
             .and_then(|point| vector_angle_degrees(point - mapping.stroke.position))
             .unwrap_or(mapping.stroke.rotation_degrees);
         return StrokeTransformDrag::Rotate { start_angle };
     }
-    let handles =
-        raw_handles(mapping.source_size).map(|raw| mapping.raw_to_screen.transform_point2(raw));
-    let axes = [
-        (true, true),
-        (false, true),
-        (true, true),
-        (true, false),
-        (true, true),
-        (false, true),
-        (true, true),
-        (true, false),
-    ];
-    handles
+    let bounds =
+        shrimply_preview_provider_skia::Rect::from_min_size(Vec2::ZERO, mapping.source_size);
+    shrimply_preview_provider_skia::BOUNDS_HANDLES
         .into_iter()
-        .zip(axes)
-        .find(|(handle, _)| handle.distance(point) <= HIT_RADIUS)
-        .map_or(StrokeTransformDrag::Move, |(_, (x, y))| {
+        .find(|&handle| {
+            let screen = mapping.raw_to_screen.transform_point2(
+                shrimply_preview_provider_skia::bounds_handle_position(handle, bounds),
+            );
+            shrimply_preview_provider_skia::hit_keypoint(point, screen)
+        })
+        .map_or(StrokeTransformDrag::Move, |handle| {
+            use shrimply_preview_provider_skia::BoundsHandle;
+            let (x, y) = match handle {
+                BoundsHandle::Top | BoundsHandle::Bottom => (false, true),
+                BoundsHandle::Left | BoundsHandle::Right => (true, false),
+                _ => (true, true),
+            };
             StrokeTransformDrag::Scale { x, y }
         })
 }
 
-fn raw_corners(size: Vec2) -> [Vec2; 4] {
-    [
-        Vec2::ZERO,
-        Vec2::new(size.x, 0.0),
-        size,
-        Vec2::new(0.0, size.y),
-    ]
-}
-
-fn raw_handles(size: Vec2) -> [Vec2; 8] {
-    let center = size * 0.5;
-    [
-        Vec2::ZERO,
-        Vec2::new(center.x, 0.0),
-        Vec2::new(size.x, 0.0),
-        Vec2::new(size.x, center.y),
-        size,
-        Vec2::new(center.x, size.y),
-        Vec2::new(0.0, size.y),
-        Vec2::new(0.0, center.y),
-    ]
-}
-
 fn rotation_handle(mapping: PaintMapping) -> (Vec2, Vec2) {
-    let corners =
-        raw_corners(mapping.source_size).map(|point| mapping.raw_to_screen.transform_point2(point));
-    let stem = (corners[0] + corners[1]) * 0.5;
-    let center = corners.into_iter().sum::<Vec2>() * 0.25;
-    let outward = (stem - center).try_normalize().unwrap_or(-Vec2::Y);
-    (stem, stem + outward * ROTATION_HANDLE_DISTANCE)
+    let bounds =
+        shrimply_preview_provider_skia::Rect::from_min_size(Vec2::ZERO, mapping.source_size);
+    shrimply_preview_provider_skia::rotation_handle_segment(
+        mapping.raw_to_screen,
+        bounds,
+        mapping.surface_rect,
+    )
 }
 
 fn scale_component(pointer: f32, start_pointer: f32, start_scale: f32) -> f32 {

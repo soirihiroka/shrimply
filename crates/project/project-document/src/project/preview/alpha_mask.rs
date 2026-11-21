@@ -2,8 +2,9 @@ use glam::{Mat3, Vec2};
 use shrimply_preview_provider_skia::{
     Cursor, CursorUpdate, Paint, PointerEvent, PreviewBuilder, PreviewContext, PreviewEditOutcome,
     PreviewEditSink, PreviewFacetKey, PreviewItemGeometry, PreviewProvider, PreviewRefresh,
-    PreviewResponse, PreviewTarget, Stroke, draw_control_line, draw_keypoint, draw_keypoints,
-    hit_keypoint,
+    PreviewResponse, PreviewTarget, Rect, Stroke, draw_anchor, draw_control_line,
+    draw_control_polyline, draw_keypoints, draw_rotation_handle, hit_keypoint,
+    rotation_handle_segment,
 };
 
 use super::super::{AlphaMaskShape, VisualAlphaMask};
@@ -12,7 +13,10 @@ pub const COMPOSITING_FACET: PreviewFacetKey =
     PreviewFacetKey::new("visual-item.compositing-alpha-mask");
 pub const MODIFIER_FACET: PreviewFacetKey = PreviewFacetKey::new("modifier.alpha-mask");
 
-const ROTATION_OFFSET: f32 = 28.0;
+const UNIT_MASK_BOUNDS: Rect = Rect {
+    min: Vec2::new(-0.5, -0.5),
+    max: Vec2::new(0.5, 0.5),
+};
 
 pub fn provider(
     mask: &VisualAlphaMask,
@@ -96,10 +100,16 @@ impl AlphaMaskHandler {
         .map(|point| map.transform_point2(point))
     }
 
+    fn rotation_segment(&self, context: &dyn PreviewContext) -> (Vec2, Vec2) {
+        rotation_handle_segment(
+            self.map(context),
+            UNIT_MASK_BOUNDS,
+            context.viewport().surface_rect,
+        )
+    }
+
     fn rotation_handle(&self, context: &dyn PreviewContext) -> Vec2 {
-        let center = self.center_screen(context);
-        let top = self.map(context).transform_point2(Vec2::new(0.0, -0.5));
-        top + (top - center).normalize_or_zero() * ROTATION_OFFSET
+        self.rotation_segment(context).1
     }
 
     fn hit(&self, point: Vec2, context: &dyn PreviewContext) -> Option<(DragKind, Cursor)> {
@@ -185,15 +195,25 @@ impl PreviewProvider for AlphaMaskHandler {
         context: &dyn PreviewContext,
     ) {
         let color = context.selection_color();
+        let foreground = context.selection_foreground_color();
         let map = self.map(context);
         let center = self.center_screen(context);
+        let rotation = self
+            .rotation_editable
+            .then(|| self.rotation_segment(context));
+        if let Some((top, knob)) = rotation {
+            draw_control_line(painter, top, knob, color);
+        }
         if self.shape == AlphaMaskShape::Ellipse {
             let radius = center.distance(map.transform_point2(Vec2::new(0.5, 0.0)));
             shrimply_preview_provider_skia::drawing::circle(
                 painter,
                 center,
                 radius,
-                Paint::stroke(Stroke::new(color, 2.0)),
+                Paint::stroke(Stroke::new(
+                    color,
+                    shrimply_preview_provider_skia::CONTROL_LINE_WIDTH,
+                )),
             );
         } else {
             let points = if self.shape == AlphaMaskShape::Polygon {
@@ -204,25 +224,17 @@ impl PreviewProvider for AlphaMaskHandler {
             } else {
                 self.corners(context).to_vec()
             };
-            shrimply_preview_provider_skia::drawing::polyline(
-                painter,
-                &points,
-                true,
-                Paint::stroke(Stroke::new(color, 2.0)),
-            );
+            draw_control_polyline(painter, &points, true, color);
         }
         if self.size_editable {
             let corners = self.corners(context);
             draw_keypoints(painter, &corners, color);
         }
-        if self.center_editable {
-            draw_keypoint(painter, center, color);
+        if let Some((_, knob)) = rotation {
+            draw_rotation_handle(painter, knob, color, foreground);
         }
-        if self.rotation_editable {
-            let top = map.transform_point2(Vec2::new(0.0, -0.5));
-            let rotation = self.rotation_handle(context);
-            draw_control_line(painter, top, rotation, color);
-            draw_keypoint(painter, rotation, color);
+        if self.center_editable {
+            draw_anchor(painter, center, color);
         }
     }
 

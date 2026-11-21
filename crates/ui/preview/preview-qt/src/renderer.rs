@@ -1,5 +1,11 @@
 use super::*;
 use glam::IVec2;
+use shrimply_preview_runtime_cuda::{
+    controller::Controller,
+    overlay::{self, InteractionOverlay, PreviewOverlayFrame},
+};
+use shrimply_project_evaluation::TransformExpressionCache;
+use std::cell::RefCell;
 
 pub(crate) struct ToolkitPreviewRenderer {
     renderer: VideoRenderer,
@@ -40,7 +46,8 @@ impl ToolkitPreviewRenderer {
         preferences: &preferences_store::PreferencesSnapshot,
         viewport: PreviewViewport,
         clip_rect: Rect,
-        draw_overlay: impl FnOnce(&skia_safe::Canvas),
+        controller: &mut Controller,
+        expression_cache: &RefCell<TransformExpressionCache>,
     ) -> Result<(), String> {
         let scale = pixels_per_point.max(1.0);
         let logical_surface = vec2(surface.x as f32 / scale, surface.y as f32 / scale);
@@ -59,32 +66,31 @@ impl ToolkitPreviewRenderer {
             },
             |painter| {
                 let surface_rect = Rect::from_min_size(vec2(0.0, 0.0), logical_surface);
-                draw_captions(
-                    painter,
-                    project,
-                    position,
-                    CaptionAppearance {
-                        preview_rect: surface_rect,
-                        font_size: preferences.caption_font_size,
-                        background_color: preferences.caption_background_color,
-                        bottom_inset: 0.0,
+                overlay::draw_overlay(
+                    painter.canvas(),
+                    &PreviewOverlayFrame {
+                        project,
+                        position,
+                        captions: CaptionAppearance {
+                            preview_rect: surface_rect,
+                            font_size: preferences.caption_font_size,
+                            background_color: preferences.caption_background_color,
+                            bottom_inset: 0.0,
+                        },
+                        caption_split_hover: None,
+                        interaction: InteractionOverlay {
+                            viewport,
+                            clip_rect,
+                            surface_rect,
+                            guides: preferences
+                                .preview_guides_visible
+                                .then_some(project.preview_guides.as_ref()),
+                        },
                     },
-                    None,
+                    controller,
+                    expression_cache,
+                    |_| {},
                 );
-                if preferences.preview_guides_visible {
-                    guides::draw(
-                        painter,
-                        project.preview_guides.as_ref(),
-                        viewport,
-                        surface_rect,
-                        Color::BLUE5,
-                    );
-                }
-                let canvas = painter.canvas();
-                canvas.save();
-                canvas.clip_rect(skia_safe::Rect::from(clip_rect), None, false);
-                draw_overlay(canvas);
-                canvas.restore();
             },
         )
     }

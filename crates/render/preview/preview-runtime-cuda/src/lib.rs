@@ -11,7 +11,8 @@ pub use shrimply_preview_interaction_skia::captions;
 mod cuda_gl;
 #[cfg(target_os = "linux")]
 mod intel_gl;
-pub use shrimply_preview_interaction_skia::{geometry, guides, navigation};
+pub use shrimply_preview_interaction_skia::overlay::background_color;
+pub use shrimply_preview_interaction_skia::{geometry, guides, navigation, overlay};
 mod media;
 pub mod provider;
 pub mod renderer;
@@ -24,14 +25,6 @@ pub mod preferences {
 
 pub mod timeline {
     pub use shrimply_components_skia::canvas as renderer;
-}
-
-pub fn background_color(window_color: Color, fullscreen: bool) -> Color {
-    if fullscreen {
-        Color::BLACK
-    } else {
-        window_color
-    }
 }
 
 pub fn playback_time_label(position: Time, duration: Time) -> String {

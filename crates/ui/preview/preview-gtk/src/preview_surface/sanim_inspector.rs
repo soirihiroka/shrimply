@@ -69,12 +69,13 @@ impl Inspector {
         let points = selected
             .quad
             .map(|p| matrix.transform_point2(GlamVec2::from(p)));
+        let accent = shrimply_cross_ui_theme::current().accent_bg;
         for index in 0..points.len() {
             shrimply_preview_provider_skia::draw_control_line(
                 canvas,
                 points[index],
                 points[(index + 1) % points.len()],
-                Color::BLUE5,
+                accent,
             );
         }
     }

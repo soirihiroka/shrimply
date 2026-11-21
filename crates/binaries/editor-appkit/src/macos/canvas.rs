@@ -1064,6 +1064,20 @@ impl CanvasView {
                         .is_some_and(|name| *name == *NSAppearanceNameDarkAqua)
                 };
                 shrimply_cross_ui_theme::set_dark(dark);
+                let accent = objc2_app_kit::NSColor::controlAccentColor()
+                    .colorUsingColorSpace(&objc2_app_kit::NSColorSpace::sRGBColorSpace())
+                    .map(|color| {
+                        (
+                            shrimply_components_skia::Color::new(
+                                color.redComponent() as f32,
+                                color.greenComponent() as f32,
+                                color.blueComponent() as f32,
+                                color.alphaComponent() as f32,
+                            ),
+                            shrimply_components_skia::Color::ACCENT_FG,
+                        )
+                    });
+                shrimply_cross_ui_theme::set_accent(accent);
                 canvas.clear(shrimply_cross_ui_theme::current().view_bg);
                 canvas.scale((scale as f32, scale as f32));
                 match &mut *self.ivars().content.borrow_mut() {
@@ -1109,14 +1123,16 @@ impl CanvasView {
                         let clip_rect = preview
                             .navigation
                             .clip_rect(bounds, glam::vec2(size.width as f32, size.height as f32));
-                        shrimply_preview_provider_skia::canvas::draw_background(
+                        shrimply_preview_interaction_skia::overlay::draw_background(
                             canvas,
-                            shrimply_preview_provider_skia::canvas::Appearance {
-                                content_rect: shrimply_preview_provider_skia::Rect::from_min_max(
-                                    content.min.max(clip_rect.min),
-                                    content.max.min(clip_rect.max),
-                                ),
-                                background: shrimply_cross_ui_theme::current().view_bg,
+                            shrimply_preview_interaction_skia::overlay::BackgroundAppearance {
+                                content_rect: content,
+                                clip_rect,
+                                background:
+                                    shrimply_preview_interaction_skia::overlay::background_color(
+                                        shrimply_cross_ui_theme::current().view_bg,
+                                        preview.fullscreen,
+                                    ),
                                 shadow_size: prefs.preview_shadow_size_px,
                                 pixel_scale: scale as f32,
                             },
@@ -1153,33 +1169,43 @@ impl CanvasView {
                                 &project,
                             )
                             .filter(|address| project.caption_item(address).is_some());
-                        let captions_timing = shrimply_process_reporting::diagnostics::timing(
-                            "Preview paint / captions and guides",
+                        let surface_rect = shrimply_components_skia::Rect::from_min_size(
+                            glam::Vec2::ZERO,
+                            glam::Vec2::new(size.width as f32, size.height as f32),
                         );
-                        preview::captions::draw(
-                            canvas,
-                            preview,
-                            &project,
-                            player.position,
-                            preview::captions::appearance(
-                                size,
-                                &prefs,
-                                preview.caption_bottom_inset,
-                            ),
-                            focused_caption.as_ref(),
-                        );
-                        preview::draw_guides(canvas, preview, &project, size);
-                        drop(captions_timing);
                         let _timing = shrimply_process_reporting::diagnostics::timing(
                             "Preview paint / interaction overlay",
                         );
-                        canvas.save();
-                        canvas.clip_rect(skia_safe::Rect::from(clip_rect), None, false);
-                        if let Some(retiring) = preview.controller.retiring_provider.as_mut() {
-                            retiring.context.viewport = viewport;
-                        }
-                        preview.controller.draw(canvas, &preview.expressions);
-                        canvas.restore();
+                        shrimply_preview_interaction_skia::overlay::draw_overlay(
+                            canvas,
+                            &shrimply_preview_interaction_skia::overlay::PreviewOverlayFrame {
+                                project: &project,
+                                position: player.position,
+                                captions: preview::captions::appearance(
+                                    size,
+                                    &prefs,
+                                    preview.caption_bottom_inset,
+                                ),
+                                caption_split_hover: focused_caption
+                                    .as_ref()
+                                    .zip(preview.caption_split_hover),
+                                interaction:
+                                    shrimply_preview_interaction_skia::overlay::InteractionOverlay {
+                                        viewport,
+                                        clip_rect,
+                                        surface_rect,
+                                        guides: preview.guides_visible.then_some(
+                                            preview
+                                                .edited_guides
+                                                .as_deref()
+                                                .unwrap_or(&project.preview_guides),
+                                        ),
+                                    },
+                            },
+                            &mut preview.controller,
+                            &preview.expressions,
+                            |_| {},
+                        );
                     }
                 }
             });

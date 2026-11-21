@@ -21,7 +21,7 @@ use crate::transform_eval::{FrameAudioAnalysis, TransformExpressionCache};
 use crate::video::compositor::{CompositeAccuracy, VideoCommand, VideoCommandSender};
 use crate::video::gpu::CompositedVideoFrame;
 
-use shrimply_preview_runtime_cuda::captions::{self, CaptionAppearance, draw_captions};
+use shrimply_preview_runtime_cuda::captions::{self, CaptionAppearance};
 #[path = "preview_surface/dispatch.rs"]
 mod dispatch;
 use dispatch::{
@@ -41,6 +41,7 @@ mod touch;
 use geometry::surface_viewport;
 use shrimply_preview_runtime_cuda::controller::Preparation;
 use shrimply_preview_runtime_cuda::guides;
+use shrimply_preview_runtime_cuda::overlay::{self, InteractionOverlay, PreviewOverlayFrame};
 use shrimply_preview_runtime_cuda::renderer::{Appearance, VideoRenderer};
 
 #[derive(Clone)]
@@ -315,8 +316,20 @@ impl PreviewController {
             preference_area.queue_render();
         });
         let style = adw::StyleManager::for_display(&area.display());
+        shrimply_cross_ui_theme::set_accent(Some((
+            style.accent_color_rgba().into(),
+            Color::ACCENT_FG,
+        )));
         let dark_area = area.clone();
         style.connect_dark_notify(move |_| dark_area.queue_render());
+        let accent_area = area.clone();
+        style.connect_accent_color_notify(move |style| {
+            shrimply_cross_ui_theme::set_accent(Some((
+                style.accent_color_rgba().into(),
+                Color::ACCENT_FG,
+            )));
+            accent_area.queue_render();
+        });
         let contrast_area = area.clone();
         style.connect_high_contrast_notify(move |_| contrast_area.queue_render());
 
@@ -542,7 +555,6 @@ fn attach_render(
             geometry::theme_window_color(area),
             state.fullscreen,
         );
-        let selection_color = Color::BLUE5;
         let guides = state
             .guides_visible
             .then_some(project.preview_guides.as_ref());
@@ -616,39 +628,29 @@ fn attach_render(
                         vec2(0.0, 0.0),
                         vec2(area.width().max(1) as f32, area.height().max(1) as f32),
                     );
-                    draw_captions(
-                        timeline_painter,
-                        &project,
-                        position,
-                        CaptionAppearance {
-                            preview_rect: surface_rect,
-                            font_size: caption_font_size,
-                            background_color: caption_background_color,
-                            bottom_inset: caption_bottom_inset,
+                    overlay::draw_overlay(
+                        timeline_painter.canvas(),
+                        &PreviewOverlayFrame {
+                            project: &project,
+                            position,
+                            captions: CaptionAppearance {
+                                preview_rect: surface_rect,
+                                font_size: caption_font_size,
+                                background_color: caption_background_color,
+                                bottom_inset: caption_bottom_inset,
+                            },
+                            caption_split_hover: focused_caption.as_ref().zip(caption_split_hover),
+                            interaction: InteractionOverlay {
+                                viewport,
+                                clip_rect,
+                                surface_rect,
+                                guides,
+                            },
                         },
-                        focused_caption
-                            .as_ref()
-                            .zip(caption_split_hover)
-                            .map(|(address, point)| (address, point, selection_color)),
+                        core,
+                        expression_cache,
+                        |canvas| sanim_inspector.draw(canvas, sanim_sources.as_deref()),
                     );
-                    if let Some(guides) = &guides {
-                        guides::draw(
-                            timeline_painter,
-                            guides,
-                            viewport,
-                            surface_rect,
-                            selection_color,
-                        );
-                    }
-                    let canvas = timeline_painter.canvas();
-                    canvas.save();
-                    canvas.clip_rect(skia_safe::Rect::from(clip_rect), None, false);
-                    if let Some(retiring) = core.retiring_provider.as_mut() {
-                        retiring.context.viewport = viewport;
-                    }
-                    core.draw(canvas, expression_cache);
-                    sanim_inspector.draw(canvas, sanim_sources.as_deref());
-                    canvas.restore();
                 },
             );
         if let Err(error) = result {

@@ -7595,6 +7595,7 @@ dependencies = [
  "shrimply-audio-engine",
  "shrimply-components-gtk",
  "shrimply-components-skia",
+ "shrimply-cross-ui-theme",
  "shrimply-editor-state",
  "shrimply-gpu-cuda",
  "shrimply-gpu-cuda-memory",
@@ -7644,6 +7645,7 @@ name = "shrimply-preview-provider-skia"
 version = "0.1.0"
 dependencies = [
  "glam 0.34.1",
+ "shrimply-components-skia",
  "shrimply-drawing-skia",
  "shrimply-math-color",
  "shrimply-math-core",

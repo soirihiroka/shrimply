@@ -12,10 +12,15 @@ pub fn video_content_rect(surface: IVec2, canvas: CanvasSize, padding_px: u32) -
 }
 
 pub fn preview_viewport(surface: IVec2, canvas: CanvasSize, padding_px: u32) -> PreviewViewport {
+    let surface_rect = Rect::from_min_size(
+        glam::Vec2::ZERO,
+        vec2(surface.x.max(1) as f32, surface.y.max(1) as f32),
+    );
     PreviewViewport::new(
         vec2(canvas.width.max(1) as f32, canvas.height.max(1) as f32),
         video_content_rect(surface, canvas, padding_px),
     )
+    .with_surface_rect(surface_rect)
 }
 
 pub(crate) use shrimply_preview_provider_skia::math::caption_preview_scale;

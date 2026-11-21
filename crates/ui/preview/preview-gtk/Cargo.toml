@@ -25,6 +25,7 @@ shrimply-preview-runtime-cuda = { workspace = true }
 shrimply-playback-performance = { workspace = true }
 shrimply-render-core = { workspace = true }
 shrimply-components-skia = { workspace = true }
+shrimply-cross-ui-theme = { workspace = true }
 shrimply-editor-state = { workspace = true }
 shrimply-timeline-edit = { workspace = true }
 shrimply-components-gtk = { workspace = true }

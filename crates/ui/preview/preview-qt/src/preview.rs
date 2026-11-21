@@ -205,12 +205,8 @@ impl ToolkitPreview {
                 &preferences,
                 viewport,
                 clip_rect,
-                |canvas| {
-                    if let Some(retiring) = controller.retiring_provider.as_mut() {
-                        retiring.context.viewport = viewport;
-                    }
-                    controller.draw(canvas, expression_cache);
-                },
+                controller,
+                expression_cache,
             )
     }
 
