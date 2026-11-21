@@ -27,15 +27,15 @@ Platform support status:
 
 <img width="300" height="396" alt="platformsupport-" src="https://github.com/user-attachments/assets/2631184e-ad24-4cb5-80ff-d2af377933ca" />
 
-Shrimply is pre-alpha software (though we are getting closer to the first alpha release), which means you should expect:
+Shrimply is by large a personal software, which means you should expect:
 
 - Major changes in behavior
+- Extremely frequent updates when I am editing a video
 - Slop
 - Undocumented footguns
-- Random performance regressions
-- Random crashes and resource leaks
+- Lack of QA on machines that I don't have
 
-If you noticed any performance/correctness issue, please open [issues](https://github.com/soirihiroka/shrimply/issues).
+However, if you noticed any performance/correctness issue, please open [issues](https://github.com/soirihiroka/shrimply/issues). I will look into it.
 
 See the [documentation](https://shrimply.pages.dev) for more.
 
