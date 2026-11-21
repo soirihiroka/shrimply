@@ -41,8 +41,6 @@ If you noticed any performance/correctness issue, please open [issues](https://g
 
 See the [documentation](https://shrimply.pages.dev) for more.
 
-For programmatic animation, see the [Sanim manual](docs/source/sanim/index.rst).
-
 ## CLI
 
 Shrimply now has an agent friendly CLI that replaces the MCP.
