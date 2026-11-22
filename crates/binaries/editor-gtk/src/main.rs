@@ -60,11 +60,22 @@ impl PanelSide {
         }
     }
 
-    fn min_size(self, child: &gtk::Widget) -> i32 {
-        let min = child.measure(self.orientation(), -1).0;
+    fn set_animating_policy(self, pane: &gtk::ScrolledWindow, animating: bool) {
+        let policy = if animating {
+            gtk::PolicyType::External
+        } else {
+            gtk::PolicyType::Never
+        };
         match self {
-            Self::Start => min.max(inspector::INSPECTOR_MIN_WIDTH),
-            Self::End => min,
+            Self::Start => pane.set_policy(policy, gtk::PolicyType::Never),
+            Self::End => pane.set_policy(gtk::PolicyType::Never, policy),
+        }
+    }
+
+    fn rest_size_request(self) -> i32 {
+        match self {
+            Self::Start => inspector::INSPECTOR_MIN_WIDTH,
+            Self::End => -1,
         }
     }
 
@@ -309,19 +320,20 @@ struct PanelPane {
 }
 
 fn panel_pane(child: &gtk::Widget, side: PanelSide) -> PanelPane {
-    let (hpolicy, vpolicy) = match side {
-        PanelSide::Start => (gtk::PolicyType::External, gtk::PolicyType::Never),
-        PanelSide::End => (gtk::PolicyType::Never, gtk::PolicyType::External),
-    };
     let container = gtk::ScrolledWindow::builder()
-        .hscrollbar_policy(hpolicy)
-        .vscrollbar_policy(vpolicy)
+        .hscrollbar_policy(gtk::PolicyType::Never)
+        .vscrollbar_policy(gtk::PolicyType::Never)
         .propagate_natural_width(false)
         .propagate_natural_height(false)
         .kinetic_scrolling(false)
         .child(child)
         .build();
-    side.set_size_request(&container, side.min_size(child));
+    side.set_size_request(&container, side.rest_size_request());
+    if matches!(side, PanelSide::Start) {
+        container
+            .hadjustment()
+            .connect_changed(|adj| adj.set_value((adj.upper() - adj.page_size()).max(0.0)));
+    }
     PanelPane {
         container,
         child: child.clone(),
@@ -337,26 +349,16 @@ fn connect_panel_toggle(
     overlay_mode: Option<Rc<Cell<bool>>>,
     preferences: &preferences::SharedPreferences,
 ) -> Rc<dyn Fn()> {
-    let container = &pane.container;
-    let child = &pane.child;
     let divider = shrimply_components_core::layout::PANEL_DIVIDER_WIDTH.round() as i32;
-    let expanded_size = Rc::new(Cell::new(default_size));
-    let animating = Rc::new(Cell::new(false));
-    if matches!(side, PanelSide::Start) {
-        let animating = animating.clone();
-        container.hadjustment().connect_changed(move |adj| {
-            if animating.get() {
-                adj.set_value((adj.upper() - adj.page_size()).max(0.0));
-            }
-        });
-    }
+    let is_overlay = {
+        let overlay_mode = overlay_mode.clone();
+        move || overlay_mode.as_ref().is_some_and(Cell::get)
+    };
     let finish: Rc<dyn Fn()> = {
         let weak_paned = paned.downgrade();
-        let weak_pane = container.downgrade();
-        let weak_child = child.downgrade();
-        let animating = animating.clone();
+        let weak_pane = pane.container.downgrade();
+        let weak_child = pane.child.downgrade();
         Rc::new(move || {
-            animating.set(false);
             let (Some(paned), Some(pane), Some(child)) = (
                 weak_paned.upgrade(),
                 weak_pane.upgrade(),
@@ -365,19 +367,17 @@ fn connect_panel_toggle(
                 return;
             };
             side.set_size_request(&child, -1);
-            let min_size = side.min_size(&child);
-            pane.hadjustment().set_value(0.0);
-            pane.vadjustment().set_value(0.0);
-            side.set_size_request(&pane, min_size);
+            side.set_animating_policy(&pane, false);
+            side.set_size_request(&pane, side.rest_size_request());
             side.set_shrink(&paned, false);
         })
     };
 
     let target = adw::CallbackAnimationTarget::new({
         let weak_paned = paned.downgrade();
-        let overlay_mode = overlay_mode.clone();
+        let is_overlay = is_overlay.clone();
         move |size| {
-            if overlay_mode.as_ref().is_some_and(|mode| mode.get()) {
+            if is_overlay() {
                 return;
             }
             let Some(paned) = weak_paned.upgrade() else {
@@ -400,11 +400,11 @@ fn connect_panel_toggle(
     );
     animation.connect_done({
         let weak_button = button.downgrade();
-        let weak_pane = container.downgrade();
-        let overlay_mode = overlay_mode.clone();
+        let weak_pane = pane.container.downgrade();
+        let is_overlay = is_overlay.clone();
         let finish = finish.clone();
         move |_| {
-            if overlay_mode.as_ref().is_some_and(|mode| mode.get()) {
+            if is_overlay() {
                 return;
             }
             if let (Some(button), Some(pane)) = (weak_button.upgrade(), weak_pane.upgrade())
@@ -418,20 +418,18 @@ fn connect_panel_toggle(
 
     button.connect_toggled({
         let paned = paned.clone();
-        let pane = container.clone();
-        let child = child.clone();
-        let expanded_size = expanded_size.clone();
-        let animating = animating.clone();
+        let container = pane.container.clone();
+        let child = pane.child.clone();
         let animation = animation.clone();
         let preferences = preferences.clone();
         move |button| {
-            if overlay_mode.as_ref().is_some_and(|mode| mode.get()) {
+            if is_overlay() {
                 return;
             }
             let playing = animation.state() == adw::AnimationState::Playing;
-            let current_size = if playing {
+            let current = if playing {
                 animation.value()
-            } else if !pane.is_visible() {
+            } else if !container.is_visible() {
                 0.0
             } else {
                 f64::from(match side {
@@ -439,14 +437,17 @@ fn connect_panel_toggle(
                     PanelSide::End => paned.height().saturating_sub(paned.position() + divider),
                 })
             };
-            let expanded = if button.is_active() {
+            let target_size = if button.is_active() {
                 let saved = preferences::snapshot(&preferences).editor_layout;
                 let total = match side {
                     PanelSide::Start => paned.width(),
                     PanelSide::End => paned.height(),
                 };
                 side.set_size_request(&child, -1);
-                let min_size = side.min_size(&child);
+                let min_size = child
+                    .measure(side.orientation(), -1)
+                    .0
+                    .max(side.rest_size_request());
                 let sibling_min = match side {
                     PanelSide::Start => paned.end_child(),
                     PanelSide::End => paned.start_child(),
@@ -461,31 +462,26 @@ fn connect_panel_toggle(
                     ),
                 }
                 .round() as i32;
-                let clamped = desired
+                let expanded = desired
                     .clamp(min_size, (total - sibling_min - divider).max(min_size))
                     .max(1);
-                expanded_size.set(clamped);
-                clamped
-            } else {
-                if !playing && current_size > 0.0 {
-                    expanded_size.set(current_size.round() as i32);
-                }
-                expanded_size.get().max(1)
-            };
-            animating.set(true);
-            side.set_size_request(&child, expanded);
-            side.set_size_request(&pane, -1);
-            side.set_shrink(&paned, true);
-            animation.set_value_from(current_size);
-            animation.reset();
-            if button.is_active() {
-                pane.set_visible(true);
-            }
-            animation.set_value_to(if button.is_active() {
+                side.set_size_request(&child, expanded);
                 f64::from(expanded)
             } else {
+                if !playing && current > 0.0 {
+                    side.set_size_request(&child, current.round() as i32);
+                }
                 0.0
-            });
+            };
+            side.set_size_request(&container, -1);
+            side.set_animating_policy(&container, true);
+            side.set_shrink(&paned, true);
+            animation.set_value_from(current);
+            animation.reset();
+            if button.is_active() {
+                container.set_visible(true);
+            }
+            animation.set_value_to(target_size);
             animation.play();
         }
     });
