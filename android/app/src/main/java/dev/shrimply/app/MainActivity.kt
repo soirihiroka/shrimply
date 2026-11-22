@@ -167,7 +167,7 @@ class MainActivity : ComponentActivity() {
 @Composable
 internal fun NativeSurface(timeline: TimelineSession, modifier: Modifier, role: Int = 0, enabled: Boolean = true) {
     val graph = role >= 2
-    val visible = remember(timeline.identity, role) { mutableStateOf(!graph) }
+    val visible = remember(timeline.identity, role) { booleanArrayOf(!graph) }
     val density = LocalDensity.current.density
     val viewConfiguration = android.view.ViewConfiguration.get(LocalContext.current)
     val focus = remember { FocusRequester() }
@@ -176,7 +176,7 @@ internal fun NativeSurface(timeline: TimelineSession, modifier: Modifier, role: 
         .onGloballyPositioned { coordinates ->
             if (graph) {
                 val next = !coordinates.boundsInWindow(clipBounds = true).isEmpty
-                if (visible.value != next) { visible.value = next; timeline.visible(role, next) }
+                if (visible[0] != next) { visible[0] = next; timeline.visible(role, next) }
             }
             val origin = coordinates.positionInRoot()
             if (!graph) timeline.menuOrigin = DpOffset((origin.x / density).dp, (origin.y / density).dp)
@@ -244,9 +244,7 @@ internal fun NativeSurface(timeline: TimelineSession, modifier: Modifier, role: 
             }
             true
         }
-    NativeTextureSurface(timeline, role, density, surfaceModifier) {
-        if (graph) timeline.visible(role, visible.value)
-    }
+    NativeTextureSurface(timeline, role, density, surfaceModifier, isVisible = { visible[0] })
 }
 
 @Composable
@@ -260,15 +258,15 @@ private fun NativeTextureSurface(
     role: Int,
     density: Float,
     modifier: Modifier,
-    onAttached: () -> Unit = {},
+    isVisible: () -> Boolean = { true },
 ) {
     val currentDensity by rememberUpdatedState(density)
-    val currentOnAttached by rememberUpdatedState(onAttached)
+    val currentIsVisible by rememberUpdatedState(isVisible)
     key(timeline.identity, role) {
         val activeSurface = remember { arrayOfNulls<android.view.Surface>(1) }
         val detach: () -> Unit = {
             if (activeSurface[0] != null) {
-                timeline.surface(role, null, 0, 0, currentDensity)
+                timeline.surface(role, null, 0, 0, currentDensity, false)
                 activeSurface[0]?.release()
                 activeSurface[0] = null
             }
@@ -282,8 +280,7 @@ private fun NativeTextureSurface(
                         override fun onSurfaceTextureAvailable(texture: SurfaceTexture, width: Int, height: Int) {
                             val surface = android.view.Surface(texture)
                             activeSurface[0] = surface
-                            timeline.surface(role, surface, width, height, currentDensity)
-                            currentOnAttached()
+                            timeline.surface(role, surface, width, height, currentDensity, currentIsVisible())
                         }
 
                         override fun onSurfaceTextureSizeChanged(texture: SurfaceTexture, width: Int, height: Int) {

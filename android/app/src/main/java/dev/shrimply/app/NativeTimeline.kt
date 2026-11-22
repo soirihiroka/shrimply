@@ -22,7 +22,7 @@ internal object NativeTimeline {
     external fun throughput(path: String, scene: String, frames: Int): String
     external fun create(stress: Boolean, benchmark: Boolean, files: ProjectFiles, listener: TimelineListener): Long
     external fun request(handle: Long, request: String, descriptor: Int): String
-    external fun surface(handle: Long, role: Int, surface: Surface?, width: Int, height: Int, density: Float)
+    external fun surface(handle: Long, role: Int, surface: Surface?, width: Int, height: Int, density: Float, visible: Boolean)
     external fun visible(handle: Long, role: Int, visible: Boolean)
     external fun resize(handle: Long, role: Int, width: Int, height: Int)
     external fun active(handle: Long, active: Boolean)
@@ -81,11 +81,11 @@ internal class TimelineSession(stress: Boolean, benchmark: Boolean, projects: Pr
             }
         }
     }
-    fun surface(role: Int, surface: Surface?, width: Int, height: Int, density: Float) {
+    fun surface(role: Int, surface: Surface?, width: Int, height: Int, density: Float, visible: Boolean = role < 2) {
         val current = handle.get()
         if (current != 0L) {
             if (surface == null) surfaceRoles.remove(role) else surfaceRoles.add(role)
-            NativeTimeline.surface(current, role, surface, width, height, density)
+            NativeTimeline.surface(current, role, surface, width, height, density, visible)
         }
     }
     fun visible(role: Int, visible: Boolean) {
@@ -112,7 +112,7 @@ internal class TimelineSession(stress: Boolean, benchmark: Boolean, projects: Pr
         val closing = handle.getAndSet(0)
         if (closing == 0L) return
         // Surface release acknowledges on the Vulkan worker, independently of queued imports.
-        for (role in surfaceRoles) NativeTimeline.surface(closing, role, null, 0, 0, 1f)
+        for (role in surfaceRoles) NativeTimeline.surface(closing, role, null, 0, 0, 1f, false)
         surfaceRoles.clear()
         executor.execute { NativeTimeline.destroy(closing) }
         executor.shutdown()
