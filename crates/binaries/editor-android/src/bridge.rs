@@ -880,6 +880,7 @@ fn sync_viewport(
             ),
         });
     }
+    pending.surfaces_changed = true;
 }
 
 struct RenderWorker {
