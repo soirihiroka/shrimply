@@ -15,7 +15,7 @@ Platform assets are added as their builds finish. GitHub displays the SHA-256 ch
 
 - **Windows x86-64:** Extract \`shrimply-windows-x86_64.zip\` and run \`shrimply.exe\`.
 - **macOS Apple Silicon:** Unzip \`shrimply-macos-arm64.zip\` and move \`Shrimply.app\` to Applications. The app is ad-hoc signed; approve its first launch in System Settings > Privacy & Security if macOS blocks it.
-- **Android ARM64:** Install \`shrimply-android-arm64.apk\`, or track updates in [Obtainium](https://shrimply.pages.dev/android.html).
+- **Android ARM64:** Unzip \`shrimply-android-arm64.zip\` and install \`shrimply-android-arm64.apk\`, or track updates in [Obtainium](https://shrimply.pages.dev/android.html).
 - **Linux Flatpak:** Install the attached \`shrimply-gtk-x86_64.flatpak\` with \`flatpak install --user ./shrimply-gtk-x86_64.flatpak\`, or use the updating remote:
 
 \`\`\`console

@@ -70,7 +70,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends \
             autoconf automake build-essential clang cmake curl gettext \
-            libclang-dev libglib2.0-dev-bin libtool ninja-build patch pkg-config ripgrep spirv-tools
+            libclang-dev libglib2.0-dev-bin libtool ninja-build patch pkg-config ripgrep spirv-tools zip
 
       - uses: astral-sh/setup-uv@v7
         with:
@@ -128,7 +128,7 @@ jobs:
       - name: Build and check the release APK
         run: make android-check ANDROID_PROFILE=release ANDROID_SDK_ROOT="${ANDROID_HOME}"
 
-      - name: Sign and verify the release APK
+      - name: Sign, verify, and package the release APK
         if: github.event_name != 'pull_request'
         env:
           ANDROID_RELEASE_KEYSTORE_BASE64: ${{ secrets.ANDROID_RELEASE_KEYSTORE_BASE64 }}
@@ -152,16 +152,16 @@ jobs:
           python3 packaging/android-check.py "${apk}" \
             "${ANDROID_HOME}/ndk/28.2.13676358/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf" \
             "${ANDROID_HOME}"
-          (cd dist && sha256sum shrimply-android-arm64.apk > shrimply-android-arm64.apk.sha256)
+          (cd dist && zip -9 -q shrimply-android-arm64.zip shrimply-android-arm64.apk && sha256sum shrimply-android-arm64.zip > shrimply-android-arm64.zip.sha256)
 
-      - name: Upload signed release APK
+      - name: Upload signed release APK ZIP
         if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@v6
         with:
           name: shrimply-android-arm64
           path: |
-            dist/shrimply-android-arm64.apk
-            dist/shrimply-android-arm64.apk.sha256
+            dist/shrimply-android-arm64.zip
+            dist/shrimply-android-arm64.zip.sha256
           if-no-files-found: error
 
       - name: Upload lint report
@@ -195,12 +195,12 @@ jobs:
           name: shrimply-android-arm64
           path: dist
 
-      - name: Verify release APK
+      - name: Verify release archive
         run: |
-          (cd dist && sha256sum --check --strict shrimply-android-arm64.apk.sha256)
-          unzip -tq dist/shrimply-android-arm64.apk
+          (cd dist && sha256sum --check --strict shrimply-android-arm64.zip.sha256)
+          unzip -tq dist/shrimply-android-arm64.zip
 
       - name: Publish prerelease
         run: |
           bash .github/scripts/publish-prerelease.sh \
-            "dist/shrimply-android-arm64.apk"
+            "dist/shrimply-android-arm64.zip"

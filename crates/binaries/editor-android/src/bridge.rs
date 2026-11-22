@@ -850,6 +850,7 @@ fn update_viewport(
     } else if width == 0 || height == 0 {
         viewport.visible = false;
     }
+    pending.surfaces_changed = true;
 }
 
 struct RenderWorker {
