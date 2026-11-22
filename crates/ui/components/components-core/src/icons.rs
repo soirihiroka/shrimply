@@ -117,14 +117,14 @@ pub fn vector(name: &str) -> Option<VectorIcon> {
                 }
                 stack.push(style);
             }
-            Ok(Event::Empty(ref tag)) if skipped_depth == 0 => {
-                if tag.local_name().as_ref() == "path" {
-                    let (style, data) = parse_style(*stack.last().expect("style stack"), tag, true);
-                    if let Some(data) = data
-                        && !style.hidden
-                    {
-                        push_path(data, style, &mut paths);
-                    }
+            Ok(Event::Empty(ref tag))
+                if skipped_depth == 0 && tag.local_name().as_ref() == "path" =>
+            {
+                let (style, data) = parse_style(*stack.last().expect("style stack"), tag, true);
+                if let Some(data) = data
+                    && !style.hidden
+                {
+                    push_path(data, style, &mut paths);
                 }
             }
             Ok(Event::End(_)) => {

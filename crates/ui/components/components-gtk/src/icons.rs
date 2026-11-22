@@ -31,17 +31,17 @@ fn build_gresource<'a>(icons: &[(&'a str, &'a str)]) -> Vec<u8> {
     }
 
     let mut entries = Vec::with_capacity(icons.len() + 4);
-    for (full, key, parent) in [
-        ("/", "/", None),
-        ("/dev/", "dev/", Some(0)),
-        ("/dev/shrimply/", "shrimply/", Some(1)),
-        ("/dev/shrimply/icons/", "icons/", Some(2)),
+    for (parts, key, parent) in [
+        (&["/"][..], "/", None),
+        (&["/dev/"], "dev/", Some(0)),
+        (&["/dev/shrimply/"], "shrimply/", Some(1)),
+        (&[RESOURCE_PREFIX, "/"], "icons/", Some(2)),
     ] {
         entries.push(Entry {
             key,
             parent,
             svg: None,
-            hash: djb2(&[full]),
+            hash: djb2(parts),
         });
     }
     for &(name, svg) in icons {

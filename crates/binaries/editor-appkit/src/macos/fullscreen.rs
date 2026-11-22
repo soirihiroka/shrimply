@@ -80,7 +80,7 @@ impl Editor {
         let Some(window) = self.ivars().window.get() else {
             return;
         };
-        let was_active = self.ivars().fullscreen.borrow().restore.is_some();
+        let was_active = self.ivars().fullscreen.borrow().is_active();
         if active == was_active {
             return;
         }

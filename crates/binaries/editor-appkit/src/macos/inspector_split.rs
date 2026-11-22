@@ -12,12 +12,11 @@ use objc2_app_kit::{
 };
 use objc2_foundation::{MainThreadMarker, NSObject, NSObjectProtocol, NSPoint, NSRect, NSSize};
 use shrimply_editor_state::preferences::{self, SharedPreferences};
+use std::cell::Cell;
 
 const INSPECTOR_MIN_WIDTH: f64 = shrimply_components_core::layout::INSPECTOR_MIN_WIDTH as f64;
 const OVERLAY_SHADOW_BLUR_RADIUS: f64 = 12.0;
 const PREVIEW_MIN_WIDTH: f64 = shrimply_components_core::layout::MIN_PREVIEW_WIDTH as f64;
-
-use std::cell::Cell;
 
 struct ResponsiveState {
     split: Retained<LayoutSplit>,

@@ -37,11 +37,7 @@ pub fn live_performance() -> gtk::Widget {
                             let Some(rows_box) = weak_box.upgrade() else {
                                 return glib::ControlFlow::Break;
                             };
-                            let mut current = state.borrow_mut();
-                            if current.timer.is_none() {
-                                return glib::ControlFlow::Break;
-                            }
-                            refresh(&rows_box, &mut current.performance);
+                            refresh(&rows_box, &mut state.borrow_mut().performance);
                             glib::ControlFlow::Continue
                         },
                     ));
