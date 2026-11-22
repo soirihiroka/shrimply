@@ -1,6 +1,6 @@
 use super::{
     Editor,
-    layout_split::{Dimension, LayoutSplit},
+    layout_split::{Dimension, LayoutSplit, PANEL_ANIMATION_SECONDS},
 };
 use block2::RcBlock;
 use objc2::rc::Retained;
@@ -15,8 +15,6 @@ use shrimply_editor_state::preferences::{self, SharedPreferences};
 
 const INSPECTOR_MIN_WIDTH: f64 = shrimply_components_core::layout::INSPECTOR_MIN_WIDTH as f64;
 const OVERLAY_SHADOW_BLUR_RADIUS: f64 = 12.0;
-const PANEL_ANIMATION_SECONDS: f64 =
-    shrimply_components_core::layout::PANEL_ANIMATION_DURATION_MS as f64 / 1000.0;
 const PREVIEW_MIN_WIDTH: f64 = shrimply_components_core::layout::MIN_PREVIEW_WIDTH as f64;
 
 use std::cell::Cell;

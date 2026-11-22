@@ -6,6 +6,9 @@ use objc2_foundation::{NSObjectProtocol, NSPoint, NSRect, NSSize};
 use shrimply_editor_state::preferences::{self, SharedPreferences};
 use std::cell::Cell;
 
+pub(super) const PANEL_ANIMATION_SECONDS: f64 =
+    shrimply_components_core::layout::PANEL_ANIMATION_DURATION_MS as f64 / 1000.0;
+
 #[derive(Clone, Copy)]
 pub(super) enum Dimension {
     Inspector,

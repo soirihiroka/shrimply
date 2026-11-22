@@ -2,6 +2,7 @@ use quick_xml::{
     Reader, XmlVersion,
     events::{BytesStart, Event},
 };
+use serde::Serialize;
 
 include!(concat!(env!("OUT_DIR"), "/icons.rs"));
 
@@ -13,21 +14,27 @@ pub fn svg(name: &str) -> Option<&'static str> {
         .map(|index| ALL[index].1)
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct VectorIcon {
     pub width: f32,
     pub height: f32,
     pub paths: Vec<VectorPath>,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct VectorPath {
+    #[serde(rename = "d")]
     pub data: String,
+    #[serde(rename = "tx")]
     pub translate_x: f32,
+    #[serde(rename = "ty")]
     pub translate_y: f32,
+    #[serde(rename = "sx")]
     pub scale_x: f32,
+    #[serde(rename = "sy")]
     pub scale_y: f32,
     pub fill_alpha: f32,
+    #[serde(rename = "even_odd")]
     pub fill_even_odd: bool,
     pub stroke_alpha: f32,
     pub stroke_width: f32,
@@ -101,20 +108,22 @@ pub fn vector(name: &str) -> Option<VectorIcon> {
                 if tag_name == "svg" {
                     (width, height) = parse_viewport(tag, width, height);
                 }
-                let style = inherit_style(*stack.last().expect("style stack"), tag);
-                if tag_name == "path" && !style.hidden {
-                    push_path(tag, style, &mut paths);
+                let is_path = tag_name == "path";
+                let (style, data) = parse_style(*stack.last().expect("style stack"), tag, is_path);
+                if let Some(data) = data
+                    && !style.hidden
+                {
+                    push_path(data, style, &mut paths);
                 }
                 stack.push(style);
             }
-            Ok(Event::Empty(ref tag)) => {
-                if skipped_depth > 0 {
-                    continue;
-                }
+            Ok(Event::Empty(ref tag)) if skipped_depth == 0 => {
                 if tag.local_name().as_ref() == "path" {
-                    let style = inherit_style(*stack.last().expect("style stack"), tag);
-                    if !style.hidden {
-                        push_path(tag, style, &mut paths);
+                    let (style, data) = parse_style(*stack.last().expect("style stack"), tag, true);
+                    if let Some(data) = data
+                        && !style.hidden
+                    {
+                        push_path(data, style, &mut paths);
                     }
                 }
             }
@@ -140,34 +149,7 @@ pub fn vector(name: &str) -> Option<VectorIcon> {
 
 /// Serialize a parsed bundled icon as JSON for cross-language FFI (e.g. Android JNI).
 pub fn vector_json(name: &str) -> Option<String> {
-    let icon = vector(name)?;
-    let paths: Vec<serde_json::Value> = icon
-        .paths
-        .into_iter()
-        .map(|path| {
-            serde_json::json!({
-                "d": path.data,
-                "tx": path.translate_x,
-                "ty": path.translate_y,
-                "sx": path.scale_x,
-                "sy": path.scale_y,
-                "fill_alpha": path.fill_alpha,
-                "even_odd": path.fill_even_odd,
-                "stroke_alpha": path.stroke_alpha,
-                "stroke_width": path.stroke_width,
-                "stroke_cap": path.stroke_cap,
-                "stroke_join": path.stroke_join,
-            })
-        })
-        .collect();
-    Some(
-        serde_json::json!({
-            "width": icon.width,
-            "height": icon.height,
-            "paths": paths,
-        })
-        .to_string(),
-    )
+    Some(serde_json::to_string(&vector(name)?).expect("serialize vector icon"))
 }
 
 fn parse_viewport(tag: &BytesStart<'_>, default_w: f32, default_h: f32) -> (f32, f32) {
@@ -180,13 +162,15 @@ fn parse_viewport(tag: &BytesStart<'_>, default_w: f32, default_h: f32) -> (f32,
         };
         match attr.key.local_name().as_ref() {
             "viewBox" => {
-                let nums: Vec<f32> = value
-                    .split(|c: char| c.is_ascii_whitespace() || c == ',')
-                    .filter(|s| !s.is_empty())
-                    .filter_map(|s| s.parse::<f32>().ok())
-                    .collect();
-                if nums.len() == 4 {
-                    view_box = Some((nums[2], nums[3]));
+                let mut nums = parse_numbers(&value);
+                if let (Some(_), Some(_), Some(w), Some(h), None) = (
+                    nums.next(),
+                    nums.next(),
+                    nums.next(),
+                    nums.next(),
+                    nums.next(),
+                ) {
+                    view_box = Some((w, h));
                 }
             }
             "width" => width = parse_px(&value),
@@ -197,15 +181,21 @@ fn parse_viewport(tag: &BytesStart<'_>, default_w: f32, default_h: f32) -> (f32,
     view_box.unwrap_or((width.unwrap_or(default_w), height.unwrap_or(default_h)))
 }
 
-fn inherit_style(mut style: GroupStyle, tag: &BytesStart<'_>) -> GroupStyle {
+fn parse_style(
+    mut style: GroupStyle,
+    tag: &BytesStart<'_>,
+    capture_path: bool,
+) -> (GroupStyle, Option<String>) {
+    let mut path_data = None;
     for attr in tag.attributes().flatten() {
         let Ok(value) = attr.normalized_value(XmlVersion::Implicit1_0) else {
             continue;
         };
-        let value = value.trim();
         let key = attr.key.local_name();
         match key.as_ref() {
+            "d" if capture_path => path_data = Some(value.into_owned()),
             "transform" => {
+                let value = value.trim();
                 if let Some((tx, ty)) = parse_transform_pair(value, "translate(") {
                     style.translate_x += tx * style.scale_x;
                     style.translate_y += ty * style.scale_y;
@@ -222,10 +212,10 @@ fn inherit_style(mut style: GroupStyle, tag: &BytesStart<'_>) -> GroupStyle {
                     }
                 }
             }
-            key => apply_style_prop(&mut style, key, value),
+            key => apply_style_prop(&mut style, key, value.trim()),
         }
     }
-    style
+    (style, path_data)
 }
 
 fn apply_style_prop(style: &mut GroupStyle, prop: &str, val: &str) {
@@ -273,19 +263,7 @@ fn apply_style_prop(style: &mut GroupStyle, prop: &str, val: &str) {
     }
 }
 
-fn push_path(tag: &BytesStart<'_>, style: GroupStyle, out: &mut Vec<VectorPath>) {
-    let data = tag.attributes().flatten().find_map(|attr| {
-        (attr.key.local_name().as_ref() == "d")
-            .then(|| {
-                attr.normalized_value(XmlVersion::Implicit1_0)
-                    .ok()
-                    .map(|v| v.into_owned())
-            })
-            .flatten()
-    });
-    let Some(data) = data else {
-        return;
-    };
+fn push_path(data: String, style: GroupStyle, out: &mut Vec<VectorPath>) {
     let fill_alpha = if style.filled {
         style.opacity * style.fill_opacity
     } else {
@@ -318,18 +296,21 @@ fn parse_px(value: &str) -> Option<f32> {
     value.trim().trim_end_matches("px").parse::<f32>().ok()
 }
 
-fn parse_transform_pair(value: &str, prefix: &str) -> Option<(f32, f32)> {
-    let start = value.find(prefix)? + prefix.len();
-    let end = value[start..].find(')')? + start;
-    let nums: Vec<f32> = value[start..end]
+fn parse_numbers(value: &str) -> impl Iterator<Item = f32> + '_ {
+    value
         .split(|c: char| c.is_ascii_whitespace() || c == ',')
         .filter(|s| !s.is_empty())
         .filter_map(|s| s.parse::<f32>().ok())
-        .collect();
-    match nums.as_slice() {
-        [first] if prefix == "scale(" => Some((*first, *first)),
-        [first] => Some((*first, 0.0)),
-        [first, second] => Some((*first, *second)),
+}
+
+fn parse_transform_pair(value: &str, prefix: &str) -> Option<(f32, f32)> {
+    let start = value.find(prefix)? + prefix.len();
+    let end = value[start..].find(')')? + start;
+    let mut nums = parse_numbers(&value[start..end]);
+    match (nums.next(), nums.next(), nums.next()) {
+        (Some(first), None, None) if prefix == "scale(" => Some((first, first)),
+        (Some(first), None, None) => Some((first, 0.0)),
+        (Some(first), Some(second), None) => Some((first, second)),
         _ => None,
     }
 }

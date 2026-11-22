@@ -1,61 +1,53 @@
-use std::{
-    cell::{Cell, RefCell},
-    rc::Rc,
-};
+use std::{cell::RefCell, rc::Rc};
 
 use adw::prelude::*;
 use gtk::glib;
 
 use super::InspectorCard;
 
+#[derive(Default)]
+struct LivePerformanceState {
+    performance: shrimply_components_core::performance::PerformanceRows,
+    timer: Option<glib::SourceId>,
+}
+
 pub fn live_performance() -> gtk::Widget {
     let rows_box = gtk::ListBox::builder()
         .selection_mode(gtk::SelectionMode::None)
         .css_classes(["boxed-list"])
         .build();
-    let expanded = Rc::new(Cell::new(false));
-    let rows = Rc::new(RefCell::new(Vec::<adw::ActionRow>::new()));
-    let performance = Rc::new(RefCell::new(
-        shrimply_components_core::performance::PerformanceRows::default(),
-    ));
-    let refresh_source = Rc::new(RefCell::new(None::<glib::SourceId>));
+    let state = Rc::new(RefCell::new(LivePerformanceState::default()));
 
     let card =
         InspectorCard::with_expansion(crate::tr!("Live Performance").as_ref(), false, None, {
-            let expanded = expanded.clone();
             let rows_box = rows_box.clone();
-            let rows = rows.clone();
-            let performance = performance.clone();
-            let refresh_source = refresh_source.clone();
-            move |is_expanded| {
-                expanded.set(is_expanded);
-                if let Some(source) = refresh_source.borrow_mut().take() {
+            let state = state.clone();
+            move |expanded| {
+                let mut current = state.borrow_mut();
+                if let Some(source) = current.timer.take() {
                     source.remove();
                 }
-                if is_expanded {
-                    refresh(&rows_box, &rows, &performance);
+                if expanded {
+                    refresh(&rows_box, &mut current.performance);
                     let weak_box = rows_box.downgrade();
-                    let expanded = expanded.clone();
-                    let rows = rows.clone();
-                    let performance = performance.clone();
-                    *refresh_source.borrow_mut() = Some(glib::timeout_add_local(
+                    let state = state.clone();
+                    current.timer = Some(glib::timeout_add_local(
                         shrimply_components_core::performance::REFRESH_INTERVAL,
                         move || {
                             let Some(rows_box) = weak_box.upgrade() else {
                                 return glib::ControlFlow::Break;
                             };
-                            if !expanded.get() {
+                            let mut current = state.borrow_mut();
+                            if current.timer.is_none() {
                                 return glib::ControlFlow::Break;
                             }
-                            refresh(&rows_box, &rows, &performance);
+                            refresh(&rows_box, &mut current.performance);
                             glib::ControlFlow::Continue
                         },
                     ));
                 } else {
-                    for row in rows.take() {
-                        rows_box.remove(&row);
-                    }
-                    *performance.borrow_mut() = Default::default();
+                    rows_box.remove_all();
+                    current.performance = Default::default();
                 }
             }
         });
@@ -67,16 +59,11 @@ pub fn live_performance() -> gtk::Widget {
         .tooltip_text(crate::tr!("Clear").as_ref())
         .css_classes(["flat"])
         .build();
-    clear.connect_clicked({
-        let expanded = expanded.clone();
-        let rows_box = rows_box.clone();
-        let rows = rows.clone();
-        let performance = performance.clone();
-        move |_| {
-            shrimply_components_core::performance::clear();
-            if expanded.get() {
-                refresh(&rows_box, &rows, &performance);
-            }
+    clear.connect_clicked(move |_| {
+        shrimply_components_core::performance::clear();
+        let mut current = state.borrow_mut();
+        if current.timer.is_some() {
+            refresh(&rows_box, &mut current.performance);
         }
     });
     let copy = gtk::Button::builder()
@@ -98,28 +85,18 @@ pub fn live_performance() -> gtk::Widget {
 
 fn refresh(
     rows_box: &gtk::ListBox,
-    rows: &RefCell<Vec<adw::ActionRow>>,
-    performance: &RefCell<shrimply_components_core::performance::PerformanceRows>,
+    performance: &mut shrimply_components_core::performance::PerformanceRows,
 ) {
-    let entries = {
-        let mut performance = performance.borrow_mut();
-        if !performance.refresh() {
-            return;
-        }
-        performance.rows().to_vec()
-    };
-    for row in rows.take() {
-        rows_box.remove(&row);
+    if !performance.refresh() {
+        return;
     }
-    *rows.borrow_mut() = entries
-        .into_iter()
-        .map(|entry| {
-            let row = adw::ActionRow::builder()
-                .title(entry.title)
-                .subtitle(entry.subtitle)
-                .build();
-            rows_box.append(&row);
-            row
-        })
-        .collect();
+    rows_box.remove_all();
+    for entry in performance.rows() {
+        rows_box.append(
+            &adw::ActionRow::builder()
+                .title(entry.title.as_str())
+                .subtitle(entry.subtitle.as_str())
+                .build(),
+        );
+    }
 }

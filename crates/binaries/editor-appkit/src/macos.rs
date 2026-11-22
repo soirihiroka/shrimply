@@ -929,13 +929,11 @@ impl Editor {
             if !timeline_collapsed {
                 layout.root_split.sync_preferred_thickness(&layout.timeline);
             }
-            let duration =
-                shrimply_components_core::layout::PANEL_ANIMATION_DURATION_MS as f64 / 1000.0;
             let generation = layout.root_split.begin_animation();
             let timeline = layout.timeline.clone();
             let changes =
                 block2::RcBlock::new(move |context: std::ptr::NonNull<NSAnimationContext>| {
-                    unsafe { context.as_ref() }.setDuration(duration);
+                    unsafe { context.as_ref() }.setDuration(layout_split::PANEL_ANIMATION_SECONDS);
                     unsafe { context.as_ref() }.setAllowsImplicitAnimation(true);
                     timeline.animator().setCollapsed(timeline_collapsed);
                 });

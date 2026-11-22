@@ -227,7 +227,6 @@ pub fn build(
             .setActive(true);
         tools.addArrangedSubview(glass);
     }
-    tools.addArrangedSubview(&NSView::initWithFrame(NSView::alloc(mtm), NSRect::ZERO));
 
     let meter = super::canvas::new(
         super::canvas::Content::Meter(Default::default()),
@@ -250,22 +249,16 @@ pub fn build(
     let timeline = stack(false, mtm);
     timeline.setDistribution(NSStackViewDistribution::Fill);
     timeline.setSpacing(0.0);
-    tracks.setContentHuggingPriority_forOrientation(
-        NSLayoutPriorityDefaultLow,
+    for axis in [
         NSLayoutConstraintOrientation::Horizontal,
-    );
-    tracks.setContentHuggingPriority_forOrientation(
-        NSLayoutPriorityDefaultLow,
         NSLayoutConstraintOrientation::Vertical,
-    );
-    tracks.setContentCompressionResistancePriority_forOrientation(
-        NSLayoutPriorityDefaultLow,
-        NSLayoutConstraintOrientation::Horizontal,
-    );
-    tracks.setContentCompressionResistancePriority_forOrientation(
-        NSLayoutPriorityDefaultLow,
-        NSLayoutConstraintOrientation::Vertical,
-    );
+    ] {
+        tracks.setContentHuggingPriority_forOrientation(NSLayoutPriorityDefaultLow, axis);
+        tracks.setContentCompressionResistancePriority_forOrientation(
+            NSLayoutPriorityDefaultLow,
+            axis,
+        );
+    }
     timeline.addArrangedSubview(&tool_container);
     timeline.addArrangedSubview(&tracks);
     timeline.addArrangedSubview(&meter_container);

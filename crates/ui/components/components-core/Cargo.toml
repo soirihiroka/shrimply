@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 quick-xml.workspace = true
+serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 shrimply-math-color = { workspace = true }
 shrimply-math-core = { workspace = true }
