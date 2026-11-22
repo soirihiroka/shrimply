@@ -5,7 +5,6 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
@@ -25,7 +24,7 @@ internal fun FrameGraphEditor(timeline: TimelineSession, graph: JSONObject) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
             graph.getJSONArray("actions").objects().forEach { action ->
                 IconButton(modifier = Modifier.size(32.dp), enabled = action.getBoolean("enabled"), onClick = { send(action.getJSONObject("command")) }) {
-                    Icon(painterResource(inspectorIcon(action.getString("icon"))), action.getString("label"), Modifier.size(16.dp))
+                    Icon(iconVector(action.getString("icon")), action.getString("label"), Modifier.size(16.dp))
                 }
             }
         }
@@ -39,7 +38,7 @@ internal fun FrameGraphEditor(timeline: TimelineSession, graph: JSONObject) {
                         DropdownMenuItem(text = { Text(item.getString("label")) },
                             enabled = item.optBoolean("enabled", true),
                             leadingIcon = item.optString("icon").takeIf { it.isNotEmpty() }?.let { icon ->
-                                { Icon(painterResource(inspectorIcon(icon)), null, Modifier.size(16.dp)) }
+                                { Icon(iconVector(icon), null, Modifier.size(16.dp)) }
                             },
                             trailingIcon = if (item.has("selected")) { { Checkbox(checked = item.getBoolean("selected"), onCheckedChange = null) } } else null,
                             onClick = { send(item.getJSONObject("command")) })

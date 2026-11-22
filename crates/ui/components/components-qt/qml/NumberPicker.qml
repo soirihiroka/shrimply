@@ -12,7 +12,6 @@ Item {
     property real dragPixels: 3
     property int digits: 2
     property string prefix: ""
-    property string prefixIconName: ""
     property url prefixIconSource
     property bool prefixIconRotates: false
     property real prefixIconRotationOffsetDegrees: 0
@@ -75,14 +74,12 @@ Item {
         contentItem: RowLayout {
             spacing: 4
             Loader {
-                active: root.prefixIconSource.toString().length > 0 || root.prefixIconName.length > 0
+                active: root.prefixIconSource.toString().length > 0
                 visible: active
                 Layout.preferredWidth: active ? 16 : 0
                 Layout.preferredHeight: active ? 16 : 0
                 sourceComponent: ToolButton {
-                    icon.source: root.prefixIconSource.toString().length > 0
-                        ? root.prefixIconSource
-                        : "image://theme/" + root.prefixIconName
+                    icon.source: root.prefixIconSource
                     icon.color: palette.buttonText
                     display: AbstractButton.IconOnly
                     enabled: false

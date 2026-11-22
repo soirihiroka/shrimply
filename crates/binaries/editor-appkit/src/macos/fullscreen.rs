@@ -15,6 +15,12 @@ pub(super) struct State {
     last_playing: bool,
 }
 
+impl State {
+    pub(super) fn is_active(&self) -> bool {
+        self.restore.is_some()
+    }
+}
+
 struct Restore {
     controls_hidden: bool,
     toolbar_visible: bool,

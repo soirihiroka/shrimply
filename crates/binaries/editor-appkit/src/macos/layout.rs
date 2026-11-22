@@ -22,7 +22,7 @@ pub const MINIMUM_WINDOW_SIZE: NSSize = NSSize::new(
     640.0,
 );
 const TOP_MIN_HEIGHT: f64 = 260.0;
-const TIMELINE_MIN_HEIGHT: f64 = 260.0;
+const TIMELINE_MIN_HEIGHT: f64 = 180.0;
 pub const GAP: f64 = 6.0;
 pub const TOOLBAR_WIDTH: f64 = 44.0;
 pub const BUTTON_SIZE: f64 = 28.0;
@@ -522,16 +522,7 @@ pub fn build(editor: &Editor) -> Layout {
     root.addSplitViewItem(&timeline);
     root.view()
         .setFrame(NSRect::new(NSPoint::ZERO, WINDOW_SIZE));
-    let timeline_extent = shrimply_components_core::math::split_pane_extent(
-        root_split.bounds().size.height as f32,
-        root_split.dividerThickness() as f32,
-        shrimply_editor_state::preferences::snapshot(&session.preferences)
-            .editor_layout
-            .timeline_fraction,
-    );
-    timeline.setPreferredThicknessFraction(
-        f64::from(timeline_extent) / root_split.bounds().size.height,
-    );
+    root_split.sync_preferred_thickness(&timeline);
     root_split.restore();
     let fullscreen_constraints = vec![
         preview_host

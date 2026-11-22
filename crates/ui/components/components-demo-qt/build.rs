@@ -9,7 +9,6 @@ fn main() {
             "qml/Showcase.qml",
         ]))
         .files(["src/backend.rs"])
-        .qrc("qml/demo_assets.qrc")
         .qt_module("Quick")
         .qt_module("QuickControls2")
         .cc_builder(|build| {

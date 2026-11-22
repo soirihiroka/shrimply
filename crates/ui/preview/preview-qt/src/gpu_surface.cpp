@@ -526,17 +526,6 @@ void force_opengl() {
     QQuickWindow::setGraphicsApi(QSGRendererInterface::OpenGL);
 }
 
-void configure_icons() {
-#ifdef Q_OS_WIN
-    QIcon::setThemeName(QStringLiteral("shrimply-adwaita"));
-    QIcon::setFallbackThemeName(QStringLiteral("shrimply-adwaita"));
-#else
-    const QString theme = dark_palette() ? QStringLiteral("breeze-dark") : QStringLiteral("breeze");
-    QIcon::setThemeName(theme);
-    QIcon::setFallbackThemeName(theme);
-#endif
-}
-
 QString fixed_font_family() {
     return QFontDatabase::systemFont(QFontDatabase::FixedFont).family();
 }

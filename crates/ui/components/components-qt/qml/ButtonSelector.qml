@@ -34,9 +34,10 @@ RowLayout {
             checkable: true
             checked: modelData === root.selectedValue
             ButtonGroup.group: group
-            icon.name: index < root.icons.length ? root.icons[index] : ""
+            icon.source: index < root.icons.length && root.icons[index].length > 0
+                ? "qrc:/shrimply/icons/" + root.icons[index] + ".svg" : ""
             text: index < root.labels.length ? root.labels[index] : ""
-            display: icon.name.length > 0
+            display: icon.source.toString().length > 0
                 ? AbstractButton.IconOnly : AbstractButton.TextOnly
             ToolTip.visible: hovered
             ToolTip.text: text

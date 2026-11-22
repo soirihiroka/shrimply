@@ -19,8 +19,6 @@ pub mod qobject {
         #[namespace = "shrimply"]
         fn force_opengl();
         #[namespace = "shrimply"]
-        fn configure_icons();
-        #[namespace = "shrimply"]
         fn fixed_font_family() -> QString;
         #[namespace = "shrimply"]
         fn register_gpu_surfaces();

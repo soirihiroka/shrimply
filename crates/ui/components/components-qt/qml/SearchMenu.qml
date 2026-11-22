@@ -104,7 +104,7 @@ AdaptiveMenu {
                 width: choices.width
                 text: root.labels[sourceIndex]
                 icon.source: root.selectedIndex === sourceIndex
-                    ? "qrc:/qt/qml/dev/shrimply/components/icons/object-select.svg"
+                    ? "qrc:/shrimply/icons/object-select-symbolic.svg"
                     : ""
                 icon.color: palette.buttonText
                 highlighted: root.navigationActive && choices.currentIndex === index

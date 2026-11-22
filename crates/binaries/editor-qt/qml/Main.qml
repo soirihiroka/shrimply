@@ -393,7 +393,7 @@ ApplicationWindow {
                                 ToolButton {
                                     id: previewStatusButton
                                     Layout.alignment: Qt.AlignHCenter
-                                    icon.name: "task-complete"
+                                    icon.source: "qrc:/shrimply/icons/checkbox-checked-symbolic.svg"
                                     text: backend.translate("Ready")
                                     display: AbstractButton.IconOnly
                                     enabled: false
@@ -423,7 +423,7 @@ ApplicationWindow {
                                     HoverHandler { id: speedHover }
                                 }
                                 ToolButton {
-                                    icon.name: "show-guides"
+                                    icon.source: "qrc:/shrimply/icons/ruler-angled-symbolic.svg"
                                     text: backend.translate("Guides")
                                     display: AbstractButton.IconOnly
                                     checkable: true
@@ -432,7 +432,7 @@ ApplicationWindow {
                                 }
                                 ToolSeparator {}
                                 ToolButton {
-                                    icon.name: "draw-freehand"
+                                    icon.source: "qrc:/shrimply/icons/document-edit-symbolic.svg"
                                     text: backend.translate("Pen")
                                     display: AbstractButton.IconOnly
                                     checkable: true
@@ -440,7 +440,7 @@ ApplicationWindow {
                                     onClicked: if (checked && previewLoader.item) previewLoader.item.selectPenTool()
                                 }
                                 ToolButton {
-                                    icon.name: "fill-color"
+                                    icon.source: "qrc:/shrimply/icons/fill-tool-symbolic.svg"
                                     text: backend.translate("Fill")
                                     display: AbstractButton.IconOnly
                                     checkable: true
@@ -448,7 +448,7 @@ ApplicationWindow {
                                     onClicked: if (checked && previewLoader.item) previewLoader.item.selectFillTool()
                                 }
                                 ToolButton {
-                                    icon.name: "transform-move"
+                                    icon.source: "qrc:/shrimply/icons/move-tool-symbolic.svg"
                                     text: backend.translate("Transform")
                                     display: AbstractButton.IconOnly
                                     checkable: true
@@ -456,7 +456,7 @@ ApplicationWindow {
                                     onClicked: if (checked && previewLoader.item) previewLoader.item.selectTransformTool()
                                 }
                                 ToolButton {
-                                    icon.name: "draw-eraser"
+                                    icon.source: "qrc:/shrimply/icons/eraser-symbolic.svg"
                                     text: backend.translate("Eraser")
                                     display: AbstractButton.IconOnly
                                     checkable: true
@@ -521,12 +521,14 @@ ApplicationWindow {
                                 Layout.column: 0
                                 Layout.columnSpan: 1
                                 Layout.alignment: Qt.AlignLeft
-                                ToolButton { icon.name: "media-seek-backward"; onClicked: backend.stepFrame(-1) }
+                                ToolButton { icon.source: "qrc:/shrimply/icons/media-seek-backward-symbolic.svg"; onClicked: backend.stepFrame(-1) }
                                 ToolButton {
-                                    icon.name: backend.playing ? "media-playback-pause" : "media-playback-start"
+                                    icon.source: backend.playing
+                                        ? "qrc:/shrimply/icons/media-playback-pause-symbolic.svg"
+                                        : "qrc:/shrimply/icons/media-playback-start-symbolic.svg"
                                     onClicked: backend.togglePlaying()
                                 }
-                                ToolButton { icon.name: "media-seek-forward"; onClicked: backend.stepFrame(1) }
+                                ToolButton { icon.source: "qrc:/shrimply/icons/media-seek-forward-symbolic.svg"; onClicked: backend.stepFrame(1) }
                             }
                             Slider {
                                 Layout.row: 0
@@ -551,7 +553,9 @@ ApplicationWindow {
                             ToolButton {
                                 Layout.row: 0
                                 Layout.column: 3
-                                icon.name: window.fullscreenPreview ? "view-restore" : "view-fullscreen"
+                                icon.source: window.fullscreenPreview
+                                    ? "qrc:/shrimply/icons/view-restore-symbolic.svg"
+                                    : "qrc:/shrimply/icons/view-fullscreen-symbolic.svg"
                                 text: window.fullscreenPreview ? backend.translate("Exit Fullscreen Preview") : backend.translate("Fullscreen Preview")
                                 display: AbstractButton.IconOnly
                                 onClicked: window.setPreviewFullscreen(!window.fullscreenPreview)
@@ -622,7 +626,7 @@ ApplicationWindow {
                         anchors.top: parent.top
                         anchors.horizontalCenter: parent.horizontalCenter
                         ToolButton {
-                            icon.name: "snap"
+                            icon.source: "qrc:/shrimply/icons/magnet-tilted-symbolic.svg"
                             text: backend.translate("Magnet")
                             display: AbstractButton.IconOnly
                             checkable: true
@@ -630,7 +634,7 @@ ApplicationWindow {
                             onClicked: if (timelineLoader.item) timelineLoader.item.magnetEnabled = checked
                         }
                         ToolButton {
-                            icon.name: "metronome-symbolic"
+                            icon.source: "qrc:/shrimply/icons/metronome-symbolic.svg"
                             text: backend.translate("Beat Grid")
                             display: AbstractButton.IconOnly
                             checkable: true
@@ -642,7 +646,7 @@ ApplicationWindow {
                             Layout.fillWidth: Qt.platform.os === "windows"
                         }
                         ToolButton {
-                            icon.name: "pointer-primary-click-symbolic"
+                            icon.source: "qrc:/shrimply/icons/pointer-left-symbolic.svg"
                             text: backend.translate("Pointer")
                             display: AbstractButton.IconOnly
                             checkable: true
@@ -653,7 +657,7 @@ ApplicationWindow {
                                 timelineLoader.item.cutEnabled = false
                         }
                         ToolButton {
-                            icon.name: "edit-cut"
+                            icon.source: "qrc:/shrimply/icons/edit-cut-symbolic.svg"
                             text: backend.translate("Cut")
                             display: AbstractButton.IconOnly
                             checkable: true
@@ -668,7 +672,7 @@ ApplicationWindow {
                             Layout.fillWidth: Qt.platform.os === "windows"
                         }
                         ToolButton {
-                            icon.name: "timeline-mode-overwrite"
+                            icon.source: "qrc:/shrimply/icons/track-insert-symbolic.svg"
                             text: backend.translate("Overwrite/Insert")
                             display: AbstractButton.IconOnly
                             checkable: true
@@ -679,7 +683,7 @@ ApplicationWindow {
                                 timelineLoader.item.selectOverwriteMode()
                         }
                         ToolButton {
-                            icon.name: "dialog-cancel"
+                            icon.source: "qrc:/shrimply/icons/track-block-symbolic.svg"
                             text: backend.translate("Block")
                             display: AbstractButton.IconOnly
                             checkable: true
@@ -690,7 +694,7 @@ ApplicationWindow {
                                 timelineLoader.item.selectBlockMode()
                         }
                         ToolButton {
-                            icon.name: "selection-move-to-layer-above"
+                            icon.source: "qrc:/shrimply/icons/track-move-above-symbolic.svg"
                             text: backend.translate("New Track")
                             display: AbstractButton.IconOnly
                             checkable: true
@@ -806,7 +810,7 @@ ApplicationWindow {
                     delegate: MenuItem {
                         required property var modelData
                         text: backend.translate(modelData.label)
-                        icon.source: "qrc:/qt/qml/dev/shrimply/editor/track-add-icons/" + modelData.icon + ".svg"
+                        icon.source: "qrc:/shrimply/icons/" + modelData.icon + ".svg"
                         icon.color: highlighted ? palette.highlightedText : palette.buttonText
                         onTriggered: timelineLoader.item.activateTrackAddMenuItem(modelData.index)
                     }
@@ -845,9 +849,12 @@ ApplicationWindow {
                         enabled: modelData.enabled
                         checkable: modelData.checkable
                         checked: modelData.checked
-                        icon.name: modelData.label === "Copy" ? "edit-copy"
-                            : modelData.label === "Cut" ? "edit-cut"
-                            : modelData.label === "Paste" ? "edit-paste" : ""
+                        icon.source: modelData.label === "Copy"
+                            ? "qrc:/shrimply/icons/edit-copy-symbolic.svg"
+                            : modelData.label === "Cut"
+                            ? "qrc:/shrimply/icons/edit-cut-symbolic.svg"
+                            : modelData.label === "Paste"
+                            ? "qrc:/shrimply/icons/edit-paste-symbolic.svg" : ""
                         onTriggered: timelineLoader.item.activateContextMenuItem(modelData.index)
                     }
                 }

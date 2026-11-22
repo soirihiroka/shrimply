@@ -49,7 +49,7 @@ FocusScope {
         height: 16
         sourceSize.width: width
         sourceSize.height: height
-        source: "qrc:/qt/qml/dev/shrimply/components/icons/object-select.svg"
+        source: "qrc:/shrimply/icons/object-select-symbolic.svg"
         visible: false
     }
     MultiEffect {

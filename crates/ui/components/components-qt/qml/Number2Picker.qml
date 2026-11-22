@@ -52,8 +52,8 @@ RowLayout {
         checkable: true
         checked: true
         icon.source: checked
-            ? "qrc:/qt/qml/dev/shrimply/components/icons/padlock.svg"
-            : "qrc:/qt/qml/dev/shrimply/components/icons/padlock-open.svg"
+            ? "qrc:/shrimply/icons/padlock2-symbolic.svg"
+            : "qrc:/shrimply/icons/padlock2-open-symbolic.svg"
         display: AbstractButton.IconOnly
         ToolTip.visible: hovered
         ToolTip.text: ComponentTranslations.text("Lock ratio")

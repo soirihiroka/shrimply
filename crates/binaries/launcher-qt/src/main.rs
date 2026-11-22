@@ -59,7 +59,6 @@ fn main() -> ExitCode {
         eprintln!("could not create Qt application");
         return ExitCode::FAILURE;
     };
-    backend::qobject::set_breeze_icon_fallback();
     app.as_mut()
         .set_application_name(&QString::from("shrimply"));
     app.as_mut()

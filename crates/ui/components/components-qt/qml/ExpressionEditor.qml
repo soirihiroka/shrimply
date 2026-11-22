@@ -34,7 +34,7 @@ ColumnLayout {
         Button {
             Layout.alignment: Qt.AlignTop
             display: AbstractButton.IconOnly
-            icon.name: "view-fullscreen-symbolic"
+            icon.source: "qrc:/shrimply/icons/view-fullscreen-symbolic.svg"
             text: qsTr("Open larger editor")
             onClicked: largeEditor.open()
         }

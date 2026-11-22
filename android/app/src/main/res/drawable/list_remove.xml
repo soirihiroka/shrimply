@@ -1,5 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<!-- From the same bundled symbolic SVG used by GTK. -->
-<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="16dp" android:height="16dp" android:viewportWidth="16" android:viewportHeight="16">
-    <path android:fillColor="#FFFFFFFF" android:pathData="m 1 7 h 14 v 2 h -14 z m 0 0" />
-</vector>

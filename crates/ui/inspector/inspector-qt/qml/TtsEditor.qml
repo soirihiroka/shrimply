@@ -154,7 +154,7 @@ ColumnLayout {
                             onClicked: backend.chooseControlAudio(controlLoader.index)
                         }
                         Button {
-                            icon.name: "pan-down-symbolic"
+                            icon.source: "qrc:/shrimply/icons/down-symbolic.svg"
                             display: AbstractButton.IconOnly
                             ToolTip.visible: hovered
                             ToolTip.text: backend.label("audio_actions")
@@ -219,7 +219,7 @@ ColumnLayout {
                             Layout.fillWidth: true
                         }
                         Button {
-                            icon.name: "list-add-symbolic"
+                            icon.source: "qrc:/shrimply/icons/list-add-symbolic.svg"
                             display: AbstractButton.IconOnly
                             ToolTip.visible: hovered
                             ToolTip.text: backend.label("add_row")
@@ -265,7 +265,7 @@ ColumnLayout {
                                 }
                             }
                             Button {
-                                icon.name: "list-remove-symbolic"
+                                icon.source: "qrc:/shrimply/icons/list-remove-symbolic.svg"
                                 display: AbstractButton.IconOnly
                                 ToolTip.visible: hovered
                                 ToolTip.text: backend.label("remove_row")

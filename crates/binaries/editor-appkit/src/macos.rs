@@ -905,6 +905,8 @@ impl Editor {
     }
 
     fn sync_panels(&self) {
+        use objc2_app_kit::{NSAnimatablePropertyContainer, NSAnimationContext};
+
         let ivars = self.ivars();
         let layout = ivars.layout.get().expect("layout must exist");
         let fullscreen = ivars.fullscreen_preview.get();
@@ -912,17 +914,46 @@ impl Editor {
             &ivars.session.get().expect("project loaded").preferences,
         )
         .editor_layout;
-        ivars.editor_layout.set(Some(desired));
+        let previous = ivars.editor_layout.replace(Some(desired));
+        let animate = previous.is_some() && !fullscreen && !ivars.fullscreen.borrow().is_active();
+        let inspector_collapsed = fullscreen || !desired.inspector_visible;
+        let timeline_collapsed = fullscreen || !desired.timeline_visible;
+        let inspector_changed =
+            previous.is_some_and(|prev| prev.inspector_visible != desired.inspector_visible);
+        let timeline_changed = layout.timeline.isCollapsed() != timeline_collapsed;
+
         layout
             .inspector
-            .set_collapsed(fullscreen || !desired.inspector_visible);
-        layout
-            .timeline
-            .setCollapsed(fullscreen || !desired.timeline_visible);
-        self.sync_fullscreen_layout();
-        layout.root.view().setNeedsLayout(true);
-        layout.root.view().layoutSubtreeIfNeeded();
-        layout.root_split.restore();
+            .set_collapsed(inspector_collapsed, animate && inspector_changed);
+        if animate && timeline_changed {
+            if !timeline_collapsed {
+                layout.root_split.sync_preferred_thickness(&layout.timeline);
+            }
+            let duration =
+                shrimply_components_core::layout::PANEL_ANIMATION_DURATION_MS as f64 / 1000.0;
+            let generation = layout.root_split.begin_animation();
+            let timeline = layout.timeline.clone();
+            let changes =
+                block2::RcBlock::new(move |context: std::ptr::NonNull<NSAnimationContext>| {
+                    unsafe { context.as_ref() }.setDuration(duration);
+                    unsafe { context.as_ref() }.setAllowsImplicitAnimation(true);
+                    timeline.animator().setCollapsed(timeline_collapsed);
+                });
+            let split = layout.root_split.clone();
+            let completion = block2::RcBlock::new(move || {
+                if split.finish_animation(generation) {
+                    split.restore();
+                }
+            });
+            NSAnimationContext::runAnimationGroup_completionHandler(&changes, Some(&completion));
+        } else {
+            layout.root_split.cancel_animation();
+            layout.timeline.setCollapsed(timeline_collapsed);
+            self.sync_fullscreen_layout();
+            layout.root.view().setNeedsLayout(true);
+            layout.root.view().layoutSubtreeIfNeeded();
+            layout.root_split.restore();
+        }
         let timeline_active = !fullscreen && desired.timeline_visible;
         for canvas in &layout.canvases {
             canvas.set_preview_fullscreen(fullscreen);

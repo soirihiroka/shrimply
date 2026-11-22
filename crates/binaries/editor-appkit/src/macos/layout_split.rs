@@ -1,7 +1,7 @@
 use super::Editor;
 use objc2::rc::{Retained, Weak};
 use objc2::{DefinedClass, MainThreadOnly, define_class, msg_send};
-use objc2_app_kit::{NSEvent, NSSplitView};
+use objc2_app_kit::{NSEvent, NSSplitView, NSSplitViewItem};
 use objc2_foundation::{NSObjectProtocol, NSPoint, NSRect, NSSize};
 use shrimply_editor_state::preferences::{self, SharedPreferences};
 use std::cell::Cell;
@@ -18,6 +18,8 @@ pub(super) struct SplitState {
     dimension: Dimension,
     tracking: Cell<bool>,
     restoring: Cell<bool>,
+    animating: Cell<bool>,
+    animation_generation: Cell<u64>,
 }
 
 define_class!(
@@ -46,6 +48,12 @@ define_class!(
             unsafe { let _: () = msg_send![super(self), resizeSubviewsWithOldSize: size]; }
             self.restore();
         }
+
+        #[unsafe(method(layout))]
+        fn layout(&self) {
+            unsafe { let _: () = msg_send![super(self), layout]; }
+            self.restore();
+        }
     }
 );
 
@@ -63,8 +71,52 @@ impl LayoutSplit {
             dimension,
             tracking: Cell::new(false),
             restoring: Cell::new(false),
+            animating: Cell::new(false),
+            animation_generation: Cell::new(0),
         });
         unsafe { msg_send![super(split), initWithFrame: NSRect::new(NSPoint::ZERO, size)] }
+    }
+
+    pub(super) fn is_animating(&self) -> bool {
+        self.ivars().animating.get()
+    }
+
+    pub(super) fn begin_animation(&self) -> u64 {
+        let generation = self.ivars().animation_generation.get().wrapping_add(1);
+        self.ivars().animation_generation.set(generation);
+        self.ivars().animating.set(true);
+        generation
+    }
+
+    pub(super) fn finish_animation(&self, generation: u64) -> bool {
+        if self.ivars().animation_generation.get() != generation {
+            return false;
+        }
+        self.ivars().animating.set(false);
+        true
+    }
+
+    pub(super) fn cancel_animation(&self) {
+        self.ivars()
+            .animation_generation
+            .set(self.ivars().animation_generation.get().wrapping_add(1));
+        self.ivars().animating.set(false);
+    }
+
+    pub(super) fn sync_preferred_thickness(&self, item: &NSSplitViewItem) {
+        let height = self.bounds().size.height;
+        if height <= 0.0 {
+            return;
+        }
+        let fraction = preferences::snapshot(&self.ivars().preferences)
+            .editor_layout
+            .timeline_fraction;
+        let extent = shrimply_components_core::math::split_pane_extent(
+            height as f32,
+            self.dividerThickness() as f32,
+            fraction,
+        );
+        item.setPreferredThicknessFraction(f64::from(extent) / height);
     }
 
     pub(super) fn tracking(&self) -> bool {
@@ -81,7 +133,11 @@ impl LayoutSplit {
 
     /// Allocation may clamp the actual panes; only native divider tracking saves a new desire.
     pub(super) fn restore(&self) {
-        if self.tracking() || self.ivars().restoring.get() || !self.panes_visible() {
+        if self.tracking()
+            || self.ivars().restoring.get()
+            || self.ivars().animating.get()
+            || !self.panes_visible()
+        {
             return;
         }
         let layout = preferences::snapshot(&self.ivars().preferences).editor_layout;

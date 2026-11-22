@@ -189,11 +189,6 @@ rustPlatform.buildRustPackage {
     install -Dm644 vendor/vision/LICENSE \
       "$out/share/licenses/shrimply/OpenCV-Vision.txt"
 
-    # components-gtk resolves bundled icons relative to the binary.
-    install -d "$out/share/shrimply/icons"
-    find external/adwaita-icon-theme/Adwaita/symbolic -type f -name '*.svg' \
-      -exec install -m644 -t "$out/share/shrimply/icons" {} +
-    cp -a assets/icons/. "$out/share/shrimply/icons/"
     install -Dm644 assets/icons/dev.shrimply.Shrimply.svg \
       "$out/share/icons/hicolor/scalable/apps/dev.shrimply.Shrimply.svg"
     install -Dm644 assets/icons/dev.shrimply.Shrimply-project.svg \

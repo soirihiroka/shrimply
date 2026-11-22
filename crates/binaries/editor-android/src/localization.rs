@@ -50,6 +50,25 @@ pub extern "system" fn Java_dev_shrimply_app_NativeLayout_splitPaneExtent(
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "system" fn Java_dev_shrimply_app_NativeLayout_iconVector(
+    env: *mut JNIEnv,
+    _class: jclass,
+    name: jstring,
+) -> jstring {
+    let name = unsafe { string(env, name) };
+    let payload = shrimply_components_core::icons::vector_json(&name)
+        .unwrap_or_else(|| panic!("unknown bundled icon: {name}"));
+    let characters = payload.encode_utf16().collect::<Vec<_>>();
+    unsafe {
+        ((**env).v1_1.NewString)(
+            env,
+            characters.as_ptr(),
+            characters.len().try_into().expect("icon vector fits JNI"),
+        )
+    }
+}
+
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_dev_shrimply_app_NativeLayout_inspectorMinWidth(
     _env: *mut JNIEnv,
     _class: jclass,

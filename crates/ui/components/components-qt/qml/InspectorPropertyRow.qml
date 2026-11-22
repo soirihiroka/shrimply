@@ -53,7 +53,7 @@ ControlRow {
             checkable: true
             checked: root.keyframes
             flat: true
-            icon.source: "qrc:/qt/qml/dev/shrimply/components/icons/keyframe.svg"
+            icon.source: "qrc:/shrimply/icons/stopwatch-symbolic.svg"
             icon.color: checked || highlighted
                 ? palette.highlightedText
                 : palette.buttonText
@@ -67,7 +67,7 @@ ControlRow {
             checkable: true
             checked: root.expression
             flat: true
-            icon.source: "qrc:/qt/qml/dev/shrimply/components/icons/code.svg"
+            icon.source: "qrc:/shrimply/icons/code-symbolic.svg"
             icon.color: checked || highlighted
                 ? palette.highlightedText
                 : palette.buttonText

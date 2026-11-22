@@ -16,7 +16,6 @@ import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import org.json.JSONObject
@@ -96,19 +95,19 @@ internal fun AdaptiveMenuButton(enabled: Boolean, modifier: Modifier = Modifier,
 /** Native settings rows share the same searched, input-aware choice menu. */
 @Composable
 internal fun ChoiceInput(label: String, selected: String, labels: List<String>, enabled: Boolean = true,
-    button: Boolean = false, summary: String = "", settings: Boolean = false, description: String = "", buttonIcon: Int? = null, select: (Int) -> Unit) {
+    button: Boolean = false, summary: String = "", settings: Boolean = false, description: String = "", buttonIcon: String? = null, select: (Int) -> Unit) {
     AdaptiveMenuAnchor(anchor = { open ->
         if (button) Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
             TextButton(onClick = open, enabled = enabled) {
-                buttonIcon?.let { Icon(painterResource(it), null, Modifier.padding(end = 6.dp).size(16.dp)) }
+                buttonIcon?.let { Icon(iconVector(it), null, Modifier.padding(end = 6.dp).size(16.dp)) }
                 Text(label)
             }
         } else if (settings) SettingsRow(label, listOf(selected, summary).filter { it.isNotEmpty() }.joinToString("\n"), enabled,
             modifier = Modifier.clickable(enabled = enabled, onClick = open),
-            trailing = { Icon(painterResource(R.drawable.go_down), null, Modifier.size(20.dp).alpha(if (enabled) 1f else 0.38f)) })
+            trailing = { Icon(iconVector("go-down-symbolic"), null, Modifier.size(20.dp).alpha(if (enabled) 1f else 0.38f)) })
         else ListItem(headlineContent = { Text(label) },
             supportingContent = if (selected.isEmpty() && summary.isEmpty()) null else { { Text(listOf(selected, summary).filter { it.isNotEmpty() }.joinToString("\n")) } },
-            trailingContent = { Icon(painterResource(R.drawable.go_down), null, Modifier.size(16.dp)) },
+            trailingContent = { Icon(iconVector("go-down-symbolic"), null, Modifier.size(16.dp)) },
             colors = ListItemDefaults.colors(containerColor = if (settings) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.surfaceContainerLow),
             modifier = Modifier.fillMaxWidth().clickable(enabled = enabled, onClick = open)
                 .then(if (settings) Modifier.padding(start = 8.dp).heightIn(min = 72.dp) else Modifier))

@@ -90,7 +90,7 @@ FocusScope {
             }
             ToolButton {
                 enabled: graph.canPrevious
-                icon.source: "qrc:/qt/qml/dev/shrimply/components/icons/previous.svg"
+                icon.source: "qrc:/shrimply/icons/go-next-symbolic-rtl.svg"
                 icon.color: palette.buttonText
                 display: AbstractButton.IconOnly
                 ToolTip.visible: hovered
@@ -102,8 +102,8 @@ FocusScope {
             }
             ToolButton {
                 icon.source: graph.keyAtPlayhead
-                             ? "qrc:/qt/qml/dev/shrimply/components/icons/remove.svg"
-                             : "qrc:/qt/qml/dev/shrimply/components/icons/add.svg"
+                             ? "qrc:/shrimply/icons/list-remove-symbolic.svg"
+                             : "qrc:/shrimply/icons/list-add-symbolic.svg"
                 icon.color: palette.buttonText
                 display: AbstractButton.IconOnly
                 ToolTip.visible: hovered
@@ -115,7 +115,7 @@ FocusScope {
             }
             ToolButton {
                 enabled: graph.canNext
-                icon.source: "qrc:/qt/qml/dev/shrimply/components/icons/next.svg"
+                icon.source: "qrc:/shrimply/icons/go-previous-symbolic-rtl.svg"
                 icon.color: palette.buttonText
                 display: AbstractButton.IconOnly
                 ToolTip.visible: hovered

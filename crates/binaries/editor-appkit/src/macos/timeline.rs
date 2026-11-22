@@ -1,7 +1,10 @@
 use super::layout::{BUTTON_SIZE, TOOLBAR_WIDTH, button, stack};
 use objc2::rc::Retained;
 use objc2::{MainThreadOnly, sel};
-use objc2_app_kit::{NSBox, NSBoxType, NSLayoutConstraint, NSStackView, NSView};
+use objc2_app_kit::{
+    NSBox, NSBoxType, NSLayoutConstraint, NSLayoutConstraintOrientation,
+    NSLayoutPriorityDefaultLow, NSStackView, NSStackViewDistribution, NSView,
+};
 use objc2_foundation::{MainThreadMarker, NSEdgeInsets, NSRect};
 use shrimply_components_appkit::{EffectRole, EffectView};
 
@@ -47,14 +50,14 @@ fn clipped(
         view.leadingAnchor()
             .constraintEqualToAnchor(&container.leadingAnchor())
     };
-    for constraint in [
-        horizontal,
-        view.topAnchor()
-            .constraintEqualToAnchor(&container.topAnchor()),
+    horizontal.setActive(true);
+    view.topAnchor()
+        .constraintEqualToAnchor(&container.topAnchor())
+        .setActive(true);
+    if trailing {
         view.bottomAnchor()
-            .constraintEqualToAnchor(&container.bottomAnchor()),
-    ] {
-        constraint.setActive(true);
+            .constraintEqualToAnchor(&container.bottomAnchor())
+            .setActive(true);
     }
     let constraint = container
         .widthAnchor()
@@ -245,7 +248,24 @@ pub fn build(
         meter_width,
     });
     let timeline = stack(false, mtm);
+    timeline.setDistribution(NSStackViewDistribution::Fill);
     timeline.setSpacing(0.0);
+    tracks.setContentHuggingPriority_forOrientation(
+        NSLayoutPriorityDefaultLow,
+        NSLayoutConstraintOrientation::Horizontal,
+    );
+    tracks.setContentHuggingPriority_forOrientation(
+        NSLayoutPriorityDefaultLow,
+        NSLayoutConstraintOrientation::Vertical,
+    );
+    tracks.setContentCompressionResistancePriority_forOrientation(
+        NSLayoutPriorityDefaultLow,
+        NSLayoutConstraintOrientation::Horizontal,
+    );
+    tracks.setContentCompressionResistancePriority_forOrientation(
+        NSLayoutPriorityDefaultLow,
+        NSLayoutConstraintOrientation::Vertical,
+    );
     timeline.addArrangedSubview(&tool_container);
     timeline.addArrangedSubview(&tracks);
     timeline.addArrangedSubview(&meter_container);

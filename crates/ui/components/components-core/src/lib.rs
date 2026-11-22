@@ -1,6 +1,7 @@
 pub mod about;
 pub mod color;
 pub mod file_picker;
+pub mod icons;
 pub mod layered;
 pub mod layout;
 pub mod math;

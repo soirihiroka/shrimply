@@ -135,21 +135,21 @@ ColumnLayout {
                 opacity: 0.6
             }
             ToolButton {
-                icon.name: "go-up-symbolic"
+                icon.source: "qrc:/shrimply/icons/go-up-symbolic.svg"
                 enabled: familyRow.index > 0
                 onClicked: root.move(familyRow.index, -1)
                 ToolTip.visible: hovered
                 ToolTip.text: ComponentTranslations.text("Move up")
             }
             ToolButton {
-                icon.name: "go-down-symbolic"
+                icon.source: "qrc:/shrimply/icons/go-down-symbolic.svg"
                 enabled: familyRow.index + 1 < root.families.length
                 onClicked: root.move(familyRow.index, 1)
                 ToolTip.visible: hovered
                 ToolTip.text: ComponentTranslations.text("Move down")
             }
             ToolButton {
-                icon.name: "user-trash-symbolic"
+                icon.source: "qrc:/shrimply/icons/user-trash-symbolic.svg"
                 onClicked: root.remove(familyRow.index)
                 ToolTip.visible: hovered
                 ToolTip.text: ComponentTranslations.text("Remove")
@@ -158,7 +158,7 @@ ColumnLayout {
     }
 
     ToolButton {
-        icon.name: "list-add-symbolic"
+        icon.source: "qrc:/shrimply/icons/list-add-symbolic.svg"
         display: AbstractButton.IconOnly
         Layout.alignment: Qt.AlignRight
         onClicked: root.openBrowser(-1)

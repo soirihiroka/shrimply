@@ -87,7 +87,7 @@ Item {
                         Layout.fillWidth: true
                         spacing: 8
                         ToolButton {
-                            icon.source: "qrc:/qt/qml/dev/shrimply/components/icons/screen-color.svg"
+                            icon.source: "qrc:/shrimply/icons/color-select-symbolic.svg"
                             icon.color: palette.buttonText
                             display: AbstractButton.IconOnly
                             enabled: !backend.screenPicking

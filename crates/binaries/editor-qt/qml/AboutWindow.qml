@@ -42,7 +42,7 @@ ApplicationWindow {
                 Image {
                     Layout.preferredWidth: 96
                     Layout.preferredHeight: 96
-                    source: "qrc:/qt/qml/dev/shrimply/editor/shrimply.svg"
+                    source: "qrc:/shrimply/icons/dev.shrimply.Shrimply.svg"
                     fillMode: Image.PreserveAspectFit
                     asynchronous: true
                 }

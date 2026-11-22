@@ -34,7 +34,6 @@ fn main() -> ExitCode {
         .set_application_name(&QString::from("shrimply-editor"));
     app.as_mut()
         .set_application_display_name(&QString::from("Shrimply"));
-    backend::qobject::configure_icons();
     backend::qobject::register_gpu_surfaces();
 
     let mut engine = QQmlApplicationEngine::new();

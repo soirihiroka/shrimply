@@ -34,7 +34,6 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.progressBarRangeInfo
@@ -106,11 +105,11 @@ private fun ColorPicker(initial: JSONObject, bottomSheet: Boolean, dismiss: () -
         Column(Modifier.fillMaxWidth()) {
             Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = pickScreen) {
-                    Icon(painterResource(R.drawable.color_select), labels.getString("pick"), Modifier.size(20.dp))
+                    Icon(iconVector("color-select-symbolic"), labels.getString("pick"), Modifier.size(20.dp))
                 }
                 Text(labels.getString("title"), Modifier.weight(1f), style = MaterialTheme.typography.titleLarge)
                 IconButton(onClick = dismiss) {
-                    Icon(painterResource(R.drawable.window_close), labels.getString("cancel"), Modifier.size(20.dp))
+                    Icon(iconVector("window-close-symbolic"), labels.getString("cancel"), Modifier.size(20.dp))
                 }
             }
             screenError?.let { Text(it, Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.error) }
@@ -126,7 +125,7 @@ private fun ColorPicker(initial: JSONObject, bottomSheet: Boolean, dismiss: () -
                                 val result = JSONObject(NativeColor.request(JSONObject().put("state", model.getJSONObject("state")).put("action", "confirm").toString()))
                                 check(result.getBoolean("confirmed"))
                                 confirm(result)
-                            }) { Icon(painterResource(R.drawable.check_plain), labels.getString("confirm"), Modifier.size(20.dp)) }
+                            }) { Icon(iconVector("check-plain-symbolic"), labels.getString("confirm"), Modifier.size(20.dp)) }
                         }
                     }
                 }
@@ -259,8 +258,8 @@ private fun ColorSwatch(color: JSONObject, metrics: JSONObject, update: (JSONObj
         .clickable { update(JSONObject().put("action", "color").put("color", color.getString("hex"))) }, contentAlignment = Alignment.Center) {
         Canvas(Modifier.fillMaxSize()) { checkerboard(metrics); drawRect(Color(color.getLong("argb").toInt())) }
         if (selected) {
-            Icon(painterResource(R.drawable.check_plain), null, Modifier.size(18.dp), tint = Color.Black)
-            Icon(painterResource(R.drawable.check_plain), null, Modifier.size(16.dp), tint = Color.White)
+            Icon(iconVector("check-plain-symbolic"), null, Modifier.size(18.dp), tint = Color.Black)
+            Icon(iconVector("check-plain-symbolic"), null, Modifier.size(16.dp), tint = Color.White)
         }
     }
 }

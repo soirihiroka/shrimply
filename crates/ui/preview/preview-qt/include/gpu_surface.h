@@ -11,7 +11,6 @@
 namespace shrimply {
 
 void force_opengl();
-void configure_icons();
 QString fixed_font_family();
 void register_gpu_surfaces();
 

@@ -30,7 +30,6 @@ import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
@@ -415,7 +414,7 @@ private fun Launcher(status: JSONObject, enabled: Boolean, create: () -> Unit, o
                 Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
                     OutlinedTextField(search, { search = it }, label = { Text(tr("Search history")) }, singleLine = true, modifier = Modifier.weight(1f))
                     IconButton(onClick = clear, enabled = enabled) {
-                        Icon(painterResource(R.drawable.user_trash), tr("Clear History"), Modifier.size(16.dp))
+                        Icon(iconVector("user-trash-symbolic"), tr("Clear History"), Modifier.size(16.dp))
                     }
                 }
                 val recents = status.optJSONArray("recents")
@@ -428,10 +427,10 @@ private fun Launcher(status: JSONObject, enabled: Boolean, create: () -> Unit, o
                         headlineContent = { Text(project.getString("name")) },
                         supportingContent = { Text(project.getString("last_edited"), maxLines = 1, overflow = TextOverflow.Ellipsis) },
                         trailingContent = {
-                            AdaptiveMenuButton(enabled, icon = { Icon(painterResource(R.drawable.view_more), project.getString("menu_label"), Modifier.size(16.dp)) }) { dismiss ->
+                            AdaptiveMenuButton(enabled, icon = { Icon(iconVector("view-more-symbolic"), project.getString("menu_label"), Modifier.size(16.dp)) }) { dismiss ->
                                 project.getJSONArray("menu").objects().forEach { item ->
                                     DropdownMenuItem(text = { Text(item.getString("label")) },
-                                        leadingIcon = { Icon(painterResource(inspectorIcon(item.getString("icon"))), null, Modifier.size(16.dp)) }, onClick = {
+                                        leadingIcon = { Icon(iconVector(item.getString("icon")), null, Modifier.size(16.dp)) }, onClick = {
                                         dismiss()
                                         when (item.getString("service")) {
                                             "info" -> info = item.getJSONObject("info")
@@ -456,16 +455,16 @@ private fun Launcher(status: JSONObject, enabled: Boolean, create: () -> Unit, o
                     Text(field.getString("value"))
                 }
                 field.optJSONObject("action")?.let { action -> IconButton(onClick = { showInFiles(action.getString("path")) }) {
-                    Icon(painterResource(inspectorIcon(action.getString("icon"))), action.getString("label"), Modifier.size(16.dp))
+                    Icon(iconVector(action.getString("icon")), action.getString("label"), Modifier.size(16.dp))
                 } }
             } }
         } } }, confirmButton = { TextButton(onClick = { info = null }) { Text(details.getString("close_label")) } }) }
 }
 
 @Composable
-private fun ActionIcon(resource: Int, description: String, enabled: Boolean = true,
+private fun ActionIcon(icon: String, description: String, enabled: Boolean = true,
     iconSize: Dp = 16.dp, targetSize: Dp = 48.dp, action: () -> Unit) {
-    IconButton(onClick = action, enabled = enabled, modifier = Modifier.size(targetSize)) { Icon(painterResource(resource), tr(description), Modifier.size(iconSize)) }
+    IconButton(onClick = action, enabled = enabled, modifier = Modifier.size(targetSize)) { Icon(iconVector(icon), tr(description), Modifier.size(iconSize)) }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -540,19 +539,19 @@ private fun Editor(timeline: TimelineSession, files: ProjectFiles, project: JSON
             if (!fullscreen) WindowCaptionHeader(caption, interactive = !renderOnly,
                 left = { modifier, targetSize -> Row(modifier) {
                     IconToggleButton(checked = inspectorOpen, onCheckedChange = { viewChange(JSONObject().put("inspector_visible", it)) {} }, enabled = enabled, modifier = Modifier.size(targetSize)) {
-                        Icon(painterResource(R.drawable.dock_left), tr("Toggle Inspector"), Modifier.size(16.dp))
+                        Icon(iconVector("dock-left-symbolic"), tr("Toggle Inspector"), Modifier.size(16.dp))
                     }
                     IconToggleButton(checked = timelineOpen, onCheckedChange = { viewChange(JSONObject().put("timeline_visible", it)) {} }, enabled = enabled, modifier = Modifier.size(targetSize)) {
-                        Icon(painterResource(R.drawable.dock_bottom), tr("Toggle Timeline"), Modifier.size(16.dp))
+                        Icon(iconVector("dock-bottom-symbolic"), tr("Toggle Timeline"), Modifier.size(16.dp))
                     }
                 } },
                 right = { modifier, targetSize -> Row(modifier) {
-                    AdaptiveMenuButton(enabled, Modifier.size(targetSize), icon = { Icon(painterResource(R.drawable.share), tr("Export"), Modifier.size(16.dp)) }) { dismiss ->
+                    AdaptiveMenuButton(enabled, Modifier.size(targetSize), icon = { Icon(iconVector("share-symbolic"), tr("Export"), Modifier.size(16.dp)) }) { dismiss ->
                         DropdownMenuItem(text = { Text(tr("Export Video")) }, onClick = { dismiss(); exportVideo() })
                         DropdownMenuItem(text = { Text(tr("Export Captions")) }, onClick = { dismiss(); exportCaptions() })
                         DropdownMenuItem(text = { Text(tr("Export Project")) }, onClick = { dismiss(); export() })
                     }
-                    AdaptiveMenuButton(enabled, Modifier.size(targetSize), icon = { Icon(painterResource(R.drawable.view_more), tr("Project options"), Modifier.size(16.dp)) }) { dismiss ->
+                    AdaptiveMenuButton(enabled, Modifier.size(targetSize), icon = { Icon(iconVector("view-more-symbolic"), tr("Project options"), Modifier.size(16.dp)) }) { dismiss ->
                         DropdownMenuItem(text = { Text(tr("Undo")) }, enabled = status.optBoolean("can_undo"), onClick = { dismiss(); command("undo", emptyArray()) })
                         DropdownMenuItem(text = { Text(tr("Redo")) }, enabled = status.optBoolean("can_redo"), onClick = { dismiss(); command("redo", emptyArray()) })
                         DropdownMenuItem(text = { Text(tr("Save")) }, onClick = { dismiss(); save() })
@@ -615,7 +614,7 @@ private fun Editor(timeline: TimelineSession, files: ProjectFiles, project: JSON
                                                     val tool = checkNotNull(tools).getJSONObject(index)
                                                     if (index > 0 && tool.getInt("section") != tools.getJSONObject(index - 1).getInt("section")) HorizontalDivider(Modifier.padding(vertical = 4.dp))
                                                     IconToggleButton(checked = tool.getBoolean("active"), onCheckedChange = { command("timeline_tool", arrayOf("id" to tool.getString("id"))) }, enabled = enabled, modifier = Modifier.size(toolSize)) {
-                                                        Icon(painterResource(timelineToolIcon(tool.getString("icon"))), tr(tool.getString("label")), Modifier.size(toolIconSize))
+                                                        Icon(iconVector(tool.getString("icon")), tr(tool.getString("label")), Modifier.size(toolIconSize))
                                                     }
                                                 }
                                             }
@@ -679,17 +678,6 @@ private fun Editor(timeline: TimelineSession, files: ProjectFiles, project: JSON
     }
 }
 
-private fun timelineToolIcon(name: String): Int = when (name) {
-    "magnet-tilted-symbolic" -> R.drawable.magnet_tilted
-    "metronome-symbolic" -> R.drawable.metronome
-    "pointer-left-symbolic" -> R.drawable.pointer_left
-    "cut-symbolic" -> R.drawable.cut
-    "track-insert-symbolic" -> R.drawable.track_insert
-    "track-block-symbolic" -> R.drawable.track_block
-    "track-move-above-symbolic" -> R.drawable.track_move_above
-    else -> error("Unknown shared timeline icon: $name")
-}
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun Transport(playback: JSONObject, enabled: Boolean, command: (String, Array<out Pair<String, Any>>) -> Unit,
@@ -704,10 +692,10 @@ private fun Transport(playback: JSONObject, enabled: Boolean, command: (String, 
     val finishSeek: () -> Unit = { seeking?.let { command("seek", arrayOf("frame" to (it * frames).toLong())) }; seeking = null }
     val value = seeking ?: if (frames == 0L) 0f else position.toFloat() / frames
     val transport: @Composable () -> Unit = {
-        ActionIcon(R.drawable.media_seek_backward, "Step back one frame", enabled, iconSize, targetSize) { command("step", arrayOf("frames" to -1)) }
+        ActionIcon("media-seek-backward-symbolic", "Step back one frame", enabled, iconSize, targetSize) { command("step", arrayOf("frames" to -1)) }
         val playing = playback.optBoolean("playing")
-        ActionIcon(if (playing) R.drawable.media_playback_pause else R.drawable.media_playback_start, if (playing) "Pause" else "Play", enabled && frames > 0, iconSize, targetSize) { command(if (playing) "pause" else "play", emptyArray()) }
-        ActionIcon(R.drawable.media_seek_forward, "Step forward one frame", enabled, iconSize, targetSize) { command("step", arrayOf("frames" to 1)) }
+        ActionIcon(if (playing) "media-playback-pause-symbolic" else "media-playback-start-symbolic", if (playing) "Pause" else "Play", enabled && frames > 0, iconSize, targetSize) { command(if (playing) "pause" else "play", emptyArray()) }
+        ActionIcon("media-seek-forward-symbolic", "Step forward one frame", enabled, iconSize, targetSize) { command("step", arrayOf("frames" to 1)) }
     }
     val seekSlider: @Composable RowScope.() -> Unit = {
         if (compact) Slider(value = value, onValueChange = seek, onValueChangeFinished = finishSeek,
@@ -717,7 +705,7 @@ private fun Transport(playback: JSONObject, enabled: Boolean, command: (String, 
         else Slider(value = value, onValueChange = seek, onValueChangeFinished = finishSeek, enabled = enabled && frames > 0, modifier = Modifier.weight(1f))
     }
     val fullscreenControl: @Composable () -> Unit = {
-        ActionIcon(if (fullscreen) R.drawable.view_restore else R.drawable.view_fullscreen,
+        ActionIcon(if (fullscreen) "view-restore-symbolic" else "view-fullscreen-symbolic",
             if (fullscreen) "Exit fullscreen" else "Fullscreen preview", enabled, iconSize, targetSize, toggleFullscreen)
     }
     CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides targetSize) {

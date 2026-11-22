@@ -47,7 +47,6 @@ fn main() {
             "qml/TypoUnderline.qml",
         ]))
         .files(["src/backend.rs", "src/frame_graph.rs"])
-        .qrc("qml/component_assets.qrc")
         .cpp_files([
             "include/color_settings.h",
             "src/color_settings.cpp",

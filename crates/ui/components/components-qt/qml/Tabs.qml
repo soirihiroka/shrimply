@@ -33,7 +33,8 @@ Item {
                     autoExclusive: true
                     checked: index === 0
                     text: modelData
-                    icon.name: index < root.icons.length ? root.icons[index] : ""
+                    icon.source: index < root.icons.length && root.icons[index].length > 0
+                        ? "qrc:/shrimply/icons/" + root.icons[index] + ".svg" : ""
                     display: AbstractButton.TextBesideIcon
                     onClicked: pageStack.currentIndex = index
                 }

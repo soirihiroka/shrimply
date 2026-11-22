@@ -91,7 +91,7 @@ Frame {
 
             ToolButton {
                 id: disclosureButton
-                icon.source: "qrc:/qt/qml/dev/shrimply/components/icons/disclosure.svg"
+                icon.source: "qrc:/shrimply/icons/pan-start-symbolic-rtl.svg"
                 icon.color: palette.buttonText
                 display: AbstractButton.IconOnly
                 rotation: root.expanded ? 90 : 0
@@ -120,7 +120,7 @@ Frame {
             ToolButton {
                 id: resetButton
                 visible: root.resetVisible
-                icon.source: "qrc:/qt/qml/dev/shrimply/components/icons/reset.svg"
+                icon.source: "qrc:/shrimply/icons/edit-undo-symbolic.svg"
                 icon.color: palette.buttonText
                 display: AbstractButton.IconOnly
                 ToolTip {

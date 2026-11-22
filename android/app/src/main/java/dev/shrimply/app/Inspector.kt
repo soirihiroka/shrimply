@@ -27,7 +27,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.rotate
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -62,7 +61,7 @@ internal fun Inspector(timeline: TimelineSession, document: JSONObject?, enabled
                 SegmentedButton(selected = candidate == category,
                     onClick = { send(candidate.getJSONObject("command")) },
                     shape = SegmentedButtonDefaults.itemShape(index, categories.size),
-                    icon = { Icon(painterResource(inspectorIcon(candidate.getString("icon"))), null, Modifier.size(16.dp)) }) {
+                    icon = { Icon(iconVector(candidate.getString("icon")), null, Modifier.size(16.dp)) }) {
                     Text(candidate.getString("label"), maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
@@ -109,55 +108,6 @@ internal fun Inspector(timeline: TimelineSession, document: JSONObject?, enabled
     }
 }
 
-internal fun inspectorIcon(icon: String): Int = when (icon) {
-    "document-edit-symbolic" -> R.drawable.document_edit
-    "fill-tool-symbolic" -> R.drawable.fill_tool
-    "eraser-symbolic" -> R.drawable.eraser
-    "function-exponential-symbolic" -> R.drawable.function_exponential
-    "stopwatch-symbolic" -> R.drawable.stopwatch
-    "code-symbolic" -> R.drawable.code
-    "move-tool-symbolic" -> R.drawable.move_tool
-    "appearance-symbolic" -> R.drawable.appearance
-    "application-x-executable-symbolic" -> R.drawable.application_x_executable
-    "security-high-symbolic" -> R.drawable.security_high
-    "padlock2-symbolic" -> R.drawable.padlock2
-    "padlock2-open-symbolic" -> R.drawable.padlock2_open
-    "arrow3-up-symbolic" -> R.drawable.arrow3_up
-    "closed-captioning-symbolic" -> R.drawable.closed_captioning
-    "network-server-symbolic" -> R.drawable.network_server
-    "ruler-angled-symbolic" -> R.drawable.ruler_angled
-    "folder-symbolic" -> R.drawable.folder
-    "folder-open-symbolic" -> R.drawable.folder_open
-    "sliders-horizontal-symbolic" -> R.drawable.sliders_horizontal
-    "rich-text-symbolic" -> R.drawable.rich_text
-    "blend-tool-symbolic" -> R.drawable.blend_tool
-    "playback-speed-symbolic" -> R.drawable.playback_speed
-    "image-symbolic" -> R.drawable.image
-    "audio-volume-high-symbolic" -> R.drawable.audio_volume_high
-    "media-playback-start-symbolic" -> R.drawable.media_playback_start
-    "info-outline-symbolic" -> R.drawable.info_outline
-    "speedometer-symbolic" -> R.drawable.speedometer
-    "select-symbolic" -> R.drawable.select
-    "edit-copy-symbolic" -> R.drawable.edit_copy
-    "edit-paste-symbolic" -> R.drawable.edit_paste
-    "zoom-in-symbolic" -> R.drawable.zoom_in
-    "zoom-out-symbolic" -> R.drawable.zoom_out
-    "window-close-symbolic" -> R.drawable.window_close
-    "go-previous-symbolic" -> R.drawable.go_previous
-    "go-next-symbolic" -> R.drawable.go_next
-    "list-remove-symbolic" -> R.drawable.list_remove
-    "list-add-symbolic" -> R.drawable.list_add
-    "media-seek-backward-symbolic" -> R.drawable.media_seek_backward
-    "media-seek-forward-symbolic" -> R.drawable.media_seek_forward
-    "edit-clear-symbolic" -> R.drawable.edit_clear
-    "go-up-symbolic" -> R.drawable.go_up
-    "go-down-symbolic" -> R.drawable.go_down
-    "user-trash-symbolic" -> R.drawable.user_trash
-    "view-refresh-symbolic" -> R.drawable.view_refresh
-    "edit-undo-symbolic" -> R.drawable.edit_undo
-    else -> error("Unknown native icon: $icon")
-}
-
 @Composable
 private fun InspectorItemHeader(item: JSONObject, enabled: Boolean, send: (JSONObject) -> Unit) {
     val title = item.getString("title")
@@ -165,7 +115,7 @@ private fun InspectorItemHeader(item: JSONObject, enabled: Boolean, send: (JSONO
         item.optJSONObject("expansion")?.let { expansion ->
             val rotation by animateFloatAsState(if (item.getBoolean("expanded")) 90f else 0f, label = "Inspector fold")
             IconButton(onClick = { send(expansion.getJSONObject("command")) }, enabled = enabled) {
-                Icon(painterResource(R.drawable.go_next), expansion.getString("label"), Modifier.size(16.dp).rotate(rotation))
+                Icon(iconVector("go-next-symbolic"), expansion.getString("label"), Modifier.size(16.dp).rotate(rotation))
             }
         }
         Text(title, Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
@@ -173,19 +123,19 @@ private fun InspectorItemHeader(item: JSONObject, enabled: Boolean, send: (JSONO
             onCheckedChange = { send(toggle.getJSONObject("command")) }, modifier = Modifier.semantics { contentDescription = title }) }
         item.optJSONObject("button_toggle")?.let { toggle ->
             IconToggleButton(checked = toggle.getBoolean("selected"), enabled = enabled, onCheckedChange = { send(toggle.getJSONObject("command")) }) {
-                Icon(painterResource(inspectorIcon(toggle.getString("icon"))), toggle.getString("label"), Modifier.size(16.dp))
+                Icon(iconVector(toggle.getString("icon")), toggle.getString("label"), Modifier.size(16.dp))
             }
         }
         item.optJSONObject("reset")?.let { reset ->
             IconButton(onClick = { send(reset.getJSONObject("command")) }, enabled = enabled) {
-                Icon(painterResource(inspectorIcon(reset.getString("icon"))), reset.getString("label"), Modifier.size(16.dp))
+                Icon(iconVector(reset.getString("icon")), reset.getString("label"), Modifier.size(16.dp))
             }
         }
         if (item.getJSONArray("actions").length() > 0) AdaptiveMenuButton(enabled,
-            icon = { Icon(painterResource(R.drawable.view_more), item.getString("actions_label"), Modifier.size(16.dp)) }) { dismiss ->
+            icon = { Icon(iconVector("view-more-symbolic"), item.getString("actions_label"), Modifier.size(16.dp)) }) { dismiss ->
             item.getJSONArray("actions").objects().forEach { action ->
                 DropdownMenuItem(text = { Text(action.getString("label")) }, enabled = enabled && action.getBoolean("enabled"),
-                    leadingIcon = { Icon(painterResource(inspectorIcon(action.getString("icon"))), null, Modifier.size(16.dp)) },
+                    leadingIcon = { Icon(iconVector(action.getString("icon")), null, Modifier.size(16.dp)) },
                     onClick = { dismiss(); send(action.getJSONObject("command")) })
             }
         }
@@ -207,7 +157,7 @@ internal fun InspectorControl(timeline: TimelineSession, control: JSONObject, en
         toggles.forEach { toggle ->
             IconToggleButton(checked = toggle.getBoolean("selected"), enabled = editable,
                 onCheckedChange = { send(toggle.getJSONObject("command")) }, modifier = Modifier.size(40.dp)) {
-                Icon(painterResource(inspectorIcon(toggle.getString("icon"))), toggle.getString("label"), Modifier.size(16.dp))
+                Icon(iconVector(toggle.getString("icon")), toggle.getString("label"), Modifier.size(16.dp))
             }
         }
     }
@@ -253,7 +203,7 @@ internal fun InspectorControl(timeline: TimelineSession, control: JSONObject, en
                                 trailingContent = { Row {
                                     row.getJSONArray("actions").objects().forEach { action ->
                                         IconButton(enabled = editable && action.getBoolean("enabled"), onClick = { send(action.getJSONObject("command")) }) {
-                                            Icon(painterResource(inspectorIcon(action.getString("icon"))), action.getString("label"), Modifier.size(16.dp))
+                                            Icon(iconVector(action.getString("icon")), action.getString("label"), Modifier.size(16.dp))
                                         }
                                     }
                                 } }, modifier = Modifier.fillMaxWidth().clickable(enabled = editable) { send(row.getJSONObject("command")) })
@@ -267,7 +217,7 @@ internal fun InspectorControl(timeline: TimelineSession, control: JSONObject, en
                         ListItem(headlineContent = { Text(label) },
                             supportingContent = { androidx.compose.foundation.text.selection.SelectionContainer { Text(control.getString("display")) } },
                             trailingContent = { IconButton(enabled = active, onClick = { send(reveal.getJSONObject("command")) }) {
-                                Icon(painterResource(inspectorIcon(reveal.getString("icon"))), reveal.getString("label"), Modifier.size(16.dp))
+                                Icon(iconVector(reveal.getString("icon")), reveal.getString("label"), Modifier.size(16.dp))
                             } },
                             modifier = Modifier.fillMaxWidth().clickable(enabled = active) { send(reveal.getJSONObject("command")) })
                     }
@@ -278,7 +228,7 @@ internal fun InspectorControl(timeline: TimelineSession, control: JSONObject, en
                             modifier = Modifier.toggleable(value = checked, enabled = editable,
                                 role = Role.Switch, onValueChange = { send(control.getJSONObject("command")) }),
                             trailing = { Switch(checked = checked, enabled = editable, onCheckedChange = null,
-                                thumbContent = if (checked) { { Icon(painterResource(R.drawable.check_plain), null, Modifier.size(SwitchDefaults.IconSize)) } } else null) })
+                                thumbContent = if (checked) { { Icon(iconVector("check-plain-symbolic"), null, Modifier.size(SwitchDefaults.IconSize)) } } else null) })
                     } else Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         Text(label, Modifier.weight(1f))
                         if (control.optBoolean("busy")) CircularProgressIndicator(Modifier.size(20.dp))
@@ -290,7 +240,7 @@ internal fun InspectorControl(timeline: TimelineSession, control: JSONObject, en
                         ChoiceInput(label, control.getString("display"), choices.map { it.getString("label") }, editable,
                             control.getString("choice_style") == "button", summary = if (settings) summary else "", settings = settings,
                             description = control.optString("choice_description"),
-                            buttonIcon = control.optString("choice_icon").takeIf { it.isNotEmpty() }?.let(::inspectorIcon)) { send(choices[it].getJSONObject("command")) }
+                            buttonIcon = control.optString("choice_icon").takeIf { it.isNotEmpty() }) { send(choices[it].getJSONObject("command")) }
                     }
                     "progress" -> Column(Modifier.fillMaxWidth()) {
                         TextButton(onClick = { send(control.getJSONObject("command")) }, enabled = active) { Text(control.optString("cancel_label").ifEmpty { label }) }
@@ -317,7 +267,7 @@ internal fun InspectorControl(timeline: TimelineSession, control: JSONObject, en
                     "number" -> NumberInput(timeline, control, editable)
                     "font" -> SettingsRow(label, control.getString("display"), editable,
                         modifier = Modifier.clickable(enabled = editable) { send(control.getJSONObject("command")) },
-                        trailing = { Icon(painterResource(R.drawable.go_next), null, Modifier.size(20.dp)) })
+                        trailing = { Icon(iconVector("go-next-symbolic"), null, Modifier.size(20.dp)) })
                     "editor" -> if (settings) SettingsRow(label,
                         listOf(control.getString("display"), summary).filter { it.isNotEmpty() }.joinToString("\n"), editable,
                         modifier = Modifier.clickable(enabled = editable) { editor = control.getJSONObject("editor") })

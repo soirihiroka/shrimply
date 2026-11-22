@@ -40,18 +40,17 @@ fn main() {
     let mut adwaita_icons = Vec::new();
     collect_svgs(&adwaita_dir, &mut adwaita_icons);
 
-    let mut names = HashSet::new();
-    let mut generated =
-        String::from("fn icon_svg(name: &str) -> &'static str {\n    match name {\n");
+    let mut seen = HashSet::new();
+    let mut entries = Vec::new();
     for (strict, paths) in [(true, custom_icons), (false, adwaita_icons)] {
         for path in paths {
             let file_name = path
                 .file_name()
                 .and_then(|name| name.to_str())
-                .expect("symbolic icon filename must be UTF-8");
+                .expect("icon filename must be UTF-8");
             let name = file_name.strip_suffix(".svg").expect("SVG suffix");
-            if !names.insert(name.to_owned()) {
-                assert!(!strict, "duplicate custom symbolic icon {name}");
+            if !seen.insert(name.to_owned()) {
+                assert!(!strict, "duplicate custom icon {name}");
                 continue;
             }
             let relative = path
@@ -60,12 +59,18 @@ fn main() {
                 .to_str()
                 .expect("UTF-8 icon path")
                 .replace('\\', "/");
-            generated.push_str(&format!(
-                "        {name:?} => include_str!(concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/../../../../{relative}\")),\n"
-            ));
+            entries.push((name.to_owned(), relative));
         }
     }
-    generated.push_str("        _ => panic!(\"unknown symbolic icon: {name}\"),\n    }\n}\n");
+    entries.sort_by(|left, right| left.0.cmp(&right.0));
+
+    let mut generated = String::from("pub const ALL: &[(&str, &str)] = &[\n");
+    for (name, relative) in entries {
+        generated.push_str(&format!(
+            "    ({name:?}, include_str!(concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/../../../../{relative}\"))),\n"
+        ));
+    }
+    generated.push_str("];\n");
 
     let output = PathBuf::from(env::var_os("OUT_DIR").expect("build output directory"));
     fs::write(output.join("icons.rs"), generated).expect("write icon catalog");

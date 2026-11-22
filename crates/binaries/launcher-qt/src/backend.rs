@@ -8,10 +8,6 @@ use std::process::Child;
 #[cxx_qt::bridge]
 pub mod qobject {
     unsafe extern "C++" {
-        include!("shrimply-launcher-qt/include/icon_theme.h");
-        #[namespace = "shrimply"]
-        fn set_breeze_icon_fallback();
-
         include!("shrimply-launcher-qt/include/startup_error.h");
         #[namespace = "shrimply"]
         fn show_startup_error(heading: &QString, body: &QString);

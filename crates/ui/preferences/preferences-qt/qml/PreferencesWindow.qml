@@ -156,21 +156,21 @@ ApplicationWindow {
                 ItemDelegate {
                     Layout.fillWidth: true
                     text: backend.translate("Appearance")
-                    icon.name: "preferences-desktop-theme"
+                    icon.source: "qrc:/shrimply/icons/appearance-symbolic.svg"
                     highlighted: root.currentPage === 0
                     onClicked: root.currentPage = 0
                 }
                 ItemDelegate {
                     Layout.fillWidth: true
                     text: backend.translate("Performance")
-                    icon.name: "speedometer"
+                    icon.source: "qrc:/shrimply/icons/speedometer-symbolic.svg"
                     highlighted: root.currentPage === 1
                     onClicked: root.currentPage = 1
                 }
                 ItemDelegate {
                     Layout.fillWidth: true
                     text: backend.translate("External")
-                    icon.name: "application-x-executable"
+                    icon.source: "qrc:/shrimply/icons/application-x-executable-symbolic.svg"
                     highlighted: root.currentPage === 2
                     onClicked: root.currentPage = 2
                 }

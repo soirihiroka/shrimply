@@ -146,7 +146,6 @@ RSVG_CONVERT ?= rsvg-convert
 LIP_SYNC_MODEL := $(CARGO_TARGET_DIR)/release/res/lip-sync/pocketsphinx-ci.model
 LIP_SYNC_RESOURCE_DIR := $(DATADIR)/shrimply/lip-sync
 LIP_SYNC_LICENSE_DIR := $(DATADIR)/licenses/shrimply
-ICONS_RESOURCE_DIR := $(DATADIR)/shrimply/icons
 MANIM_WORKER_RESOURCE_DIR := $(PREFIX)/share/shrimply/crates/media/visual/manim/manim-bridge/python
 MANIM_SOURCE_RESOURCE_DIR := $(PREFIX)/share/shrimply/external/manim
 
@@ -713,9 +712,6 @@ endif
 	$(INSTALL) -Dm644 vendor/vision/LICENSE "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/OpenCV-Vision.txt"
 	$(INSTALL) -Dm644 crates/math/color/src/css/LICENSE "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/GTK-Pango-Color.txt"
 	$(INSTALL) -Dm644 crates/math/color/src/css/NOTICE "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/GTK-Pango-Color-NOTICE.txt"
-	$(INSTALL) -d "$(DESTDIR)$(ICONS_RESOURCE_DIR)"
-	find external/adwaita-icon-theme/Adwaita/symbolic -type f -name '*.svg' -exec $(INSTALL) -m644 -t "$(DESTDIR)$(ICONS_RESOURCE_DIR)" {} +
-	cp -a assets/icons/. "$(DESTDIR)$(ICONS_RESOURCE_DIR)/"
 	sed -e 's|^Exec=.*|Exec="$(BINDIR)/$(BIN_NAME)" %f|' -e 's|^TryExec=.*|TryExec=$(BINDIR)/$(BIN_NAME)|' $(DESKTOP_FILE) | $(INSTALL) -Dm644 /dev/stdin "$(DESTDIR)$(APPLICATIONSDIR)/dev.shrimply.Shrimply.desktop"
 	@if test -z "$(DESTDIR)"; then \
 		command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database "$(APPLICATIONSDIR)" >/dev/null || true; \
@@ -767,7 +763,6 @@ uninstall:
 	rm -f "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/OpenCV-Vision.txt"
 	rm -f "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/GTK-Pango-Color.txt"
 	rm -f "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/GTK-Pango-Color-NOTICE.txt"
-	rm -rf "$(DESTDIR)$(ICONS_RESOURCE_DIR)"
 	rm -f "$(DESTDIR)$(APPLICATIONSDIR)/dev.shrimply.Shrimply.desktop"
 	$(MAKE) uninstall-desktop-assets
 

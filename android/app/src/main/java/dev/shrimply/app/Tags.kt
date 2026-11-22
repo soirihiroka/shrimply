@@ -7,7 +7,6 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import org.json.JSONObject
@@ -22,13 +21,13 @@ internal fun Tags(control: JSONObject, enabled: Boolean, send: (JSONObject) -> U
             label = { Text(control.getString("label")) }, placeholder = { Text(control.getString("placeholder")) },
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done), keyboardActions = KeyboardActions(onDone = { add() }),
             trailingIcon = { IconButton(onClick = { add() }, enabled = enabled) {
-                Icon(painterResource(inspectorIcon(control.getString("add_icon"))), control.getString("add_label"))
+                Icon(iconVector(control.getString("add_icon")), control.getString("add_label"))
             } }, modifier = Modifier.fillMaxWidth())
         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             control.getJSONArray("tags").objects().forEach { tag -> key(tag.getString("value")) {
                 InputChip(selected = false, onClick = { send(tag.getJSONObject("command")) }, enabled = enabled,
                     label = { Text(tag.getString("value")) }, trailingIcon = {
-                        Icon(painterResource(inspectorIcon(control.getString("remove_icon"))), tag.getString("remove_label"), Modifier.size(16.dp))
+                        Icon(iconVector(control.getString("remove_icon")), tag.getString("remove_label"), Modifier.size(16.dp))
                     })
             } }
         }

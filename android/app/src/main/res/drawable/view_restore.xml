@@ -1,6 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<!-- Adwaita symbolic icon; LGPL-3.0-or-later or CC-BY-SA-3.0. -->
-<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="16dp" android:height="16dp" android:viewportWidth="16" android:viewportHeight="16">
-    <path android:fillColor="#FFFFFFFF" android:pathData="m 2 8 c -0.550781 0 -1 0.449219 -1 1 s 0.449219 1 1 1 h 2.585938 l -3.292969 3.292969 c -0.390625 0.390625 -0.390625 1.023437 0 1.414062 s 1.023437 0.390625 1.414062 0 l 3.292969 -3.292969 v 2.585938 c 0 0.550781 0.449219 1 1 1 s 1 -0.449219 1 -1 v -6 z m 0 0" />
-    <path android:fillColor="#FFFFFFFF" android:pathData="m 14 8 c 0.550781 0 1 -0.449219 1 -1 s -0.449219 -1 -1 -1 h -2.585938 l 3.292969 -3.292969 c 0.390625 -0.390625 0.390625 -1.023437 0 -1.414062 s -1.023437 -0.390625 -1.414062 0 l -3.292969 3.292969 v -2.585938 c 0 -0.550781 -0.449219 -1 -1 -1 s -1 0.449219 -1 1 v 6 z m 0 0" />
-</vector>

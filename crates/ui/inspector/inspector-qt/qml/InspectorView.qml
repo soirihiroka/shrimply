@@ -30,18 +30,8 @@ Item {
             category, item, control, source, cursor, automatic)
     }
 
-    function bundledCategoryIcon(name) {
-        switch (name) {
-        case "blend-tool-symbolic":
-        case "info-outline-symbolic":
-        case "playback-speed-symbolic":
-        case "sliders-horizontal-symbolic":
-        case "sound-symbolic":
-        case "speedometer-symbolic":
-            return "qrc:/qt/qml/dev/shrimply/components/icons/" + name + ".svg"
-        default:
-            return ""
-        }
+    function iconUrl(name) {
+        return name.length > 0 ? "qrc:/shrimply/icons/" + name + ".svg" : ""
     }
 
     InspectorBackend {
@@ -93,15 +83,12 @@ Item {
                     required property int index
                     readonly property string categoryIconName: root.refreshed(
                         backend.categoryIcon(index))
-                    readonly property string categoryIconSource: root.bundledCategoryIcon(
-                        categoryIconName)
                     Layout.fillWidth: true
                     checkable: true
                     ButtonGroup.group: categories
                     checked: index === backend.activeCategory
                     text: root.refreshed(backend.categoryLabel(index))
-                    icon.name: categoryIconSource.length === 0 ? categoryIconName : ""
-                    icon.source: categoryIconSource
+                    icon.source: root.iconUrl(categoryIconName)
                     display: AbstractButton.TextBesideIcon
                     onClicked: backend.activateCategory(index)
                 }
@@ -242,8 +229,8 @@ Item {
                                         checkable: true
                                         checked: root.refreshed(backend.itemButtonToggleActive(
                                             itemLoader.categoryIndex, itemLoader.index))
-                                        icon.name: root.refreshed(backend.itemButtonToggleIcon(
-                                            itemLoader.categoryIndex, itemLoader.index))
+                                        icon.source: root.iconUrl(root.refreshed(backend.itemButtonToggleIcon(
+                                            itemLoader.categoryIndex, itemLoader.index)))
                                         ToolTip.visible: hovered
                                         ToolTip.text: root.refreshed(
                                             backend.itemButtonToggleTooltip(
@@ -264,9 +251,9 @@ Item {
                                                 backend.itemActionSensitive(
                                                     itemLoader.categoryIndex,
                                                     itemLoader.index, index))
-                                            icon.name: root.refreshed(backend.itemActionIcon(
+                                            icon.source: root.iconUrl(root.refreshed(backend.itemActionIcon(
                                                 itemLoader.categoryIndex,
-                                                itemLoader.index, index))
+                                                itemLoader.index, index)))
                                             ToolTip.visible: hovered
                                             ToolTip.text: root.refreshed(
                                                 backend.itemActionTooltip(
@@ -836,7 +823,7 @@ Item {
                                     Layout.fillWidth: true
                                 }
                                 ToolButton {
-                                    icon.name: "folder-open-symbolic"
+                                    icon.source: "qrc:/shrimply/icons/folder-open-symbolic.svg"
                                     ToolTip.visible: hovered
                                     ToolTip.text: controlLoader.tooltip()
                                     onClicked: backend.showControlPath(
@@ -1017,7 +1004,7 @@ Item {
                                         controlLoader.categoryIndex,
                                         controlLoader.itemIndex, controlLoader.index))
                                     flat: true
-                                    icon.name: controlLoader.prefixIcon()
+                                    icon.source: root.iconUrl(controlLoader.prefixIcon())
                                     display: AbstractButton.IconOnly
                                     ToolTip.visible: hovered && controlLoader.tooltip().length > 0
                                     ToolTip.text: controlLoader.tooltip()
@@ -1322,10 +1309,7 @@ Item {
                                 digits: controlLoader.digits()
                                 unitName: controlLoader.unit()
                                 widthCharacters: controlLoader.widthCharacters()
-                                prefixIconSource: controlLoader.prefixIcon().length > 0
-                                    ? "qrc:/qt/qml/dev/shrimply/components/icons/"
-                                        + controlLoader.prefixIcon() + ".svg"
-                                    : ""
+                                prefixIconSource: root.iconUrl(controlLoader.prefixIcon())
                                 prefixIconRotates: controlLoader.prefixIconRotates()
                                 prefixIconRotationOffsetDegrees:
                                     controlLoader.prefixIconRotationOffset()
@@ -2040,10 +2024,10 @@ Item {
                                             controlLoader.categoryIndex,
                                             controlLoader.itemIndex,
                                             inlineControlRow.removeIndex)
-                                        icon.name: backend.controlPrefixIcon(
+                                        icon.source: root.iconUrl(backend.controlPrefixIcon(
                                             controlLoader.categoryIndex,
                                             controlLoader.itemIndex,
-                                            inlineControlRow.removeIndex)
+                                            inlineControlRow.removeIndex))
                                         display: AbstractButton.IconOnly
                                         ToolTip.visible: hovered
                                         ToolTip.text: backend.controlTooltip(
@@ -2205,7 +2189,7 @@ Item {
                                 ProgressButton {
                                     text: ComponentTranslations.text(controlLoader.value)
                                     flat: true
-                                    icon.name: controlLoader.prefixIcon()
+                                    icon.source: root.iconUrl(controlLoader.prefixIcon())
                                     ToolTip.visible: hovered
                                         && controlLoader.tooltip().length > 0
                                     ToolTip.text: controlLoader.tooltip()
@@ -2222,7 +2206,7 @@ Item {
                                         Item { Layout.fillWidth: true }
                                         ToolButton {
                                             flat: true
-                                            icon.name: controlLoader.prefixIcon()
+                                            icon.source: root.iconUrl(controlLoader.prefixIcon())
                                             display: AbstractButton.IconOnly
                                             ToolTip.visible: hovered
                                                 && controlLoader.tooltip().length > 0
@@ -2251,7 +2235,7 @@ Item {
                                         ProgressButton {
                                             id: actionButton
                                             text: ComponentTranslations.text(controlLoader.value)
-                                            icon.name: controlLoader.prefixIcon()
+                                            icon.source: root.iconUrl(controlLoader.prefixIcon())
                                             progressState: backend.controlBusy(
                                                 controlLoader.categoryIndex,
                                                 controlLoader.itemIndex,
@@ -2291,7 +2275,7 @@ Item {
                                                 controlLoader.index)
                                                 && actionIcon.length > 0
                                             flat: true
-                                            icon.name: actionIcon
+                                            icon.source: root.iconUrl(actionIcon)
                                             display: AbstractButton.IconOnly
                                             ToolTip.visible: hovered
                                             ToolTip.text: backend.controlActionTooltip(
@@ -2371,7 +2355,7 @@ Item {
                             Button {
                                 visible: modifierMenuRow.presentation.pasteVisible
                                 flat: true
-                                icon.name: "edit-paste-symbolic"
+                                icon.source: "qrc:/shrimply/icons/edit-paste-symbolic.svg"
                                 text: modifierMenuRow.presentation.pasteLabel
                                 display: AbstractButton.IconOnly
                                 ToolTip.visible: hovered

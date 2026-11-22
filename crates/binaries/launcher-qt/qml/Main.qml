@@ -113,7 +113,7 @@ ApplicationWindow {
                     }
 
                     ToolButton {
-                        icon.name: "edit-clear-history"
+                        icon.source: "qrc:/shrimply/icons/user-trash-symbolic.svg"
                         text: backend.text("Clear History")
                         display: AbstractButton.IconOnly
                         ToolTip.visible: hovered
@@ -151,7 +151,7 @@ ApplicationWindow {
                             id: optionsButton
                             anchors.right: parent.right
                             anchors.verticalCenter: parent.verticalCenter
-                            icon.name: "overflow-menu"
+                            icon.source: "qrc:/shrimply/icons/view-more-symbolic.svg"
                             text: backend.text("Project options")
                             display: AbstractButton.IconOnly
                             ToolTip.visible: hovered
@@ -194,7 +194,7 @@ ApplicationWindow {
 
                     ToolButton {
                         Layout.alignment: Qt.AlignHCenter
-                        icon.name: "document-open-recent"
+                        icon.source: "qrc:/shrimply/icons/document-open-recent-symbolic.svg"
                         display: AbstractButton.IconOnly
                         enabled: false
                     }
@@ -270,7 +270,7 @@ ApplicationWindow {
                 }
 
                 ToolButton {
-                    icon.name: "document-open-folder"
+                    icon.source: "qrc:/shrimply/icons/folder-open-symbolic.svg"
                     text: backend.text("Show in Files")
                     display: AbstractButton.IconOnly
                     ToolTip.visible: hovered

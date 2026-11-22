@@ -4,7 +4,7 @@ use objc2_app_kit::{
     NSLayoutAttribute, NSLayoutConstraint, NSStackView, NSTextField,
     NSUserInterfaceLayoutOrientation,
 };
-use objc2_foundation::{MainThreadMarker, NSObjectProtocol, NSRect};
+use objc2_foundation::{MainThreadMarker, NSObjectProtocol, NSRect, NSSize};
 use std::cell::{Cell, OnceCell};
 
 pub(super) const ROW_HEIGHT: f64 = 44.0;
@@ -26,11 +26,20 @@ define_class!(
     unsafe impl NSObjectProtocol for Transport {}
 
     impl Transport {
+        #[unsafe(method(setFrameSize:))]
+        fn set_frame_size(&self, size: NSSize) {
+            unsafe { let _: () = msg_send![super(self), setFrameSize: size]; }
+            self.setNeedsLayout(true);
+        }
+
         #[unsafe(method(layout))]
         fn layout(&self) {
-            let stacked = shrimply_components_core::layout::transport_stacked(
-                self.bounds().size.width as f32,
-            );
+            let width = self.bounds().size.width;
+            if width <= 0.0 {
+                unsafe { let _: () = msg_send![super(self), layout]; }
+                return;
+            }
+            let stacked = shrimply_components_core::layout::transport_stacked(width as f32);
             if let Some(height) = self.ivars().height.get()
                 && stacked != self.ivars().stacked.replace(stacked)
             {

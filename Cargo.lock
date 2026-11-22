@@ -5989,6 +5989,7 @@ dependencies = [
  "cxx-qt",
  "cxx-qt-build",
  "cxx-qt-lib",
+ "shrimply-components-core",
 ]
 
 [[package]]
@@ -6139,6 +6140,7 @@ dependencies = [
 name = "shrimply-components-core"
 version = "0.1.0"
 dependencies = [
+ "quick-xml 0.42.0",
  "serde_json",
  "shrimply-i18n",
  "shrimply-math-color",

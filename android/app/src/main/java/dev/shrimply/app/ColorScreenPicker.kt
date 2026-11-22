@@ -39,7 +39,6 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -117,7 +116,7 @@ internal fun rememberScreenColorPicker(labels: JSONObject, onColor: (Int) -> Uni
                     Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                         Text(labels.getString("pick"), Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
                         IconButton(onClick = { bitmap = null }) {
-                            Icon(painterResource(R.drawable.window_close), labels.getString("cancel"))
+                            Icon(iconVector("window-close-symbolic"), labels.getString("cancel"))
                         }
                     }
                     BoxWithConstraints(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {

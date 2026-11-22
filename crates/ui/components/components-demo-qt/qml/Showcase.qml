@@ -169,7 +169,7 @@ ApplicationWindow {
                             digits: 1
                             dragStep: 0.1
                             unitName: "°"
-                            prefixIconSource: "qrc:/qt/qml/dev/shrimply/components/icons/arrow3-up-symbolic.svg"
+                            prefixIconSource: "qrc:/shrimply/icons/arrow3-up-symbolic.svg"
                             prefixIconRotates: true
                             onEdited: function(value) { rotationRow.editValue(value) }
                         }
@@ -253,7 +253,7 @@ ApplicationWindow {
                     ReadOnlyField {
                         text: window.homePath
                         horizontalAlignment: Text.AlignRight
-                        actionIconSource: "qrc:/qt/qml/dev/shrimply/components/demo/icons/folder-open.svg"
+                        actionIconSource: "qrc:/shrimply/icons/folder-open-symbolic.svg"
                         actionText: "Show in Folder"
                         onActionTriggered: Qt.openUrlExternally(window.homeUrl)
                     }

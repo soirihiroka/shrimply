@@ -28,7 +28,6 @@ import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.disabled
 import androidx.compose.ui.semantics.semantics
@@ -123,7 +122,7 @@ internal fun NumberInput(timeline: TimelineSession, control: JSONObject, enabled
             model.optJSONObject("lock")?.let { lock ->
                 IconToggleButton(checked = lock.getBoolean("checked"), enabled = enabled,
                     onCheckedChange = { events.trySend(JSONObject().put("event", "lock")) }, modifier = Modifier.size(40.dp)) {
-                    Icon(painterResource(inspectorIcon(lock.getString("icon"))), lock.getString("label"), Modifier.size(16.dp))
+                    Icon(iconVector(lock.getString("icon")), lock.getString("label"), Modifier.size(16.dp))
                 }
             }
             for (axis in 0 until fields.length()) {
@@ -179,7 +178,7 @@ internal fun NumberInput(timeline: TimelineSession, control: JSONObject, enabled
                                 }
                             }
                         }.padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                        if (field.getString("icon").isNotEmpty()) Icon(painterResource(inspectorIcon(field.getString("icon"))), null,
+                        if (field.getString("icon").isNotEmpty()) Icon(iconVector(field.getString("icon")), null,
                             Modifier.size(16.dp).graphicsLayer { rotationZ = field.getDouble("icon_rotation").toFloat() })
                         if (field.getString("prefix").isNotEmpty()) Text(field.getString("prefix"), color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Text(field.getString("display"), Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyMedium.copy(fontFeatureSettings = "tnum"))

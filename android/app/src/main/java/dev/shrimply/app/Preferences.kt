@@ -31,7 +31,6 @@ import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
@@ -151,8 +150,8 @@ internal fun PreferencesScreen(timeline: TimelineSession, files: ProjectFiles, d
                 if (document == null) LinearProgressIndicator(Modifier.fillMaxWidth())
                 else if (root) groups.forEach { group ->
                     SettingsRow(group.getString("label"), group.getString("summary"), active,
-                        leading = { Icon(painterResource(inspectorIcon(group.getString("icon"))), null, Modifier.size(24.dp)) },
-                        trailing = { Icon(painterResource(R.drawable.go_next), null, Modifier.size(20.dp)) },
+                        leading = { Icon(iconVector(group.getString("icon")), null, Modifier.size(24.dp)) },
+                        trailing = { Icon(iconVector("go-next-symbolic"), null, Modifier.size(20.dp)) },
                         modifier = Modifier.clickable(enabled = active) { page = group.getString("id") })
                 }
                 else if (fonts) FontPreferences(document, active && !busy, send)
@@ -252,7 +251,7 @@ private fun PreferencesPage(title: String, backLabel: String, back: () -> Unit,
                     colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface,
                         scrolledContainerColor = MaterialTheme.colorScheme.surfaceContainer),
                     navigationIcon = { IconButton(onClick = back, enabled = enabled) {
-                        Icon(painterResource(R.drawable.settings_arrow_back), backLabel, Modifier.size(24.dp))
+                        Icon(iconVector("go-previous-symbolic"), backLabel, Modifier.size(24.dp))
                     } })
             }
         }) { padding ->

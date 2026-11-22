@@ -1,5 +1,0 @@
-<RCC>
-  <qresource prefix="/qt/qml/dev/shrimply/components/demo/icons">
-    <file alias="folder-open.svg">../../../../../external/adwaita-icon-theme/Adwaita/symbolic/status/folder-open-symbolic.svg</file>
-  </qresource>
-</RCC>

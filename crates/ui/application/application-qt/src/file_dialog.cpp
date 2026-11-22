@@ -6,6 +6,7 @@
 #include <QIcon>
 #include <QPalette>
 #include <QQuickStyle>
+#include <QResource>
 #include <QWindow>
 
 #ifdef Q_OS_WIN
@@ -16,6 +17,11 @@
 #include "cxx-qt-lib/qcoreapplication.h"
 
 namespace shrimply {
+
+bool register_rcc_resource(const uint8_t *rcc_data)
+{
+  return QResource::registerResource(reinterpret_cast<const uchar *>(rcc_data));
+}
 
 std::unique_ptr<QGuiApplication> new_widget_application()
 {
@@ -32,7 +38,7 @@ std::unique_ptr<QGuiApplication> new_widget_application()
   QQuickStyle::setStyle(quick_style.isEmpty() ? QStringLiteral("Fusion") : quick_style);
 #endif
   QApplication::setWindowIcon(QIcon(QStringLiteral(
-    ":/qt/qml/dev/shrimply/application/shrimply-symbolic.svg")));
+    ":/shrimply/icons/dev.shrimply.Shrimply-symbolic.svg")));
   return application;
 }
 

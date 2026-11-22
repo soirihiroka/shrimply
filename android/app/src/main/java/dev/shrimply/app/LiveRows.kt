@@ -9,7 +9,6 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -52,7 +51,7 @@ internal fun LiveRows(timeline: TimelineSession, resource: JSONObject) {
             for (index in 0 until actions.length()) {
                 val action = actions.getJSONObject(index)
                 IconButton(onClick = { scope.launch { request(action.getJSONObject("request")) } }) {
-                    Icon(painterResource(inspectorIcon(action.getString("icon"))), action.getString("label"), Modifier.size(16.dp))
+                    Icon(iconVector(action.getString("icon")), action.getString("label"), Modifier.size(16.dp))
                 }
             }
         }

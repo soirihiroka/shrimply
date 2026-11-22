@@ -22,8 +22,6 @@ thread_local! {
         LruCache::builder().max_size(MAX_ICON_CACHE_ENTRIES).build().expect("valid icon cache size")));
 }
 
-include!(concat!(env!("OUT_DIR"), "/icons.rs"));
-
 pub fn draw(canvas: &Canvas, icon: Icon, bounds: Rect, color: Color) {
     if !bounds.width().is_finite()
         || !bounds.height().is_finite()
@@ -48,7 +46,9 @@ pub fn draw(canvas: &Canvas, icon: Icon, bounds: Rect, color: Color) {
             icons.0 = generation;
         }
         let Some(picture) = icons.1.cache_get_or_set_with(key, || {
-            let source = tint(icon_svg(icon.0), key);
+            let raw = shrimply_components_core::icons::svg(icon.0)
+                .unwrap_or_else(|| panic!("unknown symbolic icon: {}", icon.0));
+            let source = tint(raw, key.color);
             let dom = match svg::Dom::from_str(&source, crate::skia_font::font_manager()) {
                 Ok(dom) => dom,
                 Err(error) => {
@@ -78,9 +78,9 @@ pub fn draw(canvas: &Canvas, icon: Icon, bounds: Rect, color: Color) {
     });
 }
 
-fn tint(svg: &str, key: IconCacheKey) -> String {
-    let opacity = (f32::from(key.color.a) / 255.0).to_string();
-    let color = format!("#{:02x}{:02x}{:02x}", key.color.r, key.color.g, key.color.b);
+fn tint(svg: &str, color: Color<u8>) -> String {
+    let opacity = (f32::from(color.a) / 255.0).to_string();
+    let color = format!("#{:02x}{:02x}{:02x}", color.r, color.g, color.b);
     let Some(root_start) = svg.find("<svg") else {
         return svg.to_owned();
     };

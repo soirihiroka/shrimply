@@ -6,118 +6,98 @@ use std::{
 use adw::prelude::*;
 use gtk::glib;
 
-thread_local! {
-    static CSS_INSTALLED: Cell<bool> = const { Cell::new(false) };
-}
+use super::InspectorCard;
 
 pub fn live_performance() -> gtk::Widget {
-    let status = adw::ExpanderRow::builder()
-        .title(crate::tr!("Live Performance").as_ref())
-        .hexpand(true)
+    let rows_box = gtk::ListBox::builder()
+        .selection_mode(gtk::SelectionMode::None)
+        .css_classes(["boxed-list"])
         .build();
-    let clear = gtk::Button::builder()
-        .icon_name("edit-clear-symbolic")
-        .tooltip_text(crate::tr!("Clear").as_ref())
-        .valign(gtk::Align::Center)
-        .css_classes(["flat", "live-performance-action"])
-        .build();
-    let copy = gtk::Button::builder()
-        .icon_name("edit-copy-symbolic")
-        .tooltip_text(crate::tr!("Copy JSON").as_ref())
-        .valign(gtk::Align::Center)
-        .css_classes(["flat", "live-performance-action"])
-        .build();
-    install_css(&status.display());
-    status.add_suffix(&clear);
-    status.add_suffix(&copy);
-
-    let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    content.add_css_class("card");
-    content.append(&status);
+    let expanded = Rc::new(Cell::new(false));
     let rows = Rc::new(RefCell::new(Vec::<adw::ActionRow>::new()));
     let performance = Rc::new(RefCell::new(
         shrimply_components_core::performance::PerformanceRows::default(),
     ));
+    let refresh_source = Rc::new(RefCell::new(None::<glib::SourceId>));
 
+    let card =
+        InspectorCard::with_expansion(crate::tr!("Live Performance").as_ref(), false, None, {
+            let expanded = expanded.clone();
+            let rows_box = rows_box.clone();
+            let rows = rows.clone();
+            let performance = performance.clone();
+            let refresh_source = refresh_source.clone();
+            move |is_expanded| {
+                expanded.set(is_expanded);
+                if let Some(source) = refresh_source.borrow_mut().take() {
+                    source.remove();
+                }
+                if is_expanded {
+                    refresh(&rows_box, &rows, &performance);
+                    let weak_box = rows_box.downgrade();
+                    let expanded = expanded.clone();
+                    let rows = rows.clone();
+                    let performance = performance.clone();
+                    *refresh_source.borrow_mut() = Some(glib::timeout_add_local(
+                        shrimply_components_core::performance::REFRESH_INTERVAL,
+                        move || {
+                            let Some(rows_box) = weak_box.upgrade() else {
+                                return glib::ControlFlow::Break;
+                            };
+                            if !expanded.get() {
+                                return glib::ControlFlow::Break;
+                            }
+                            refresh(&rows_box, &rows, &performance);
+                            glib::ControlFlow::Continue
+                        },
+                    ));
+                } else {
+                    for row in rows.take() {
+                        rows_box.remove(&row);
+                    }
+                    *performance.borrow_mut() = Default::default();
+                }
+            }
+        });
+    card.root().set_hexpand(true);
+    card.append(&rows_box);
+
+    let clear = gtk::Button::builder()
+        .icon_name("edit-clear-symbolic")
+        .tooltip_text(crate::tr!("Clear").as_ref())
+        .css_classes(["flat"])
+        .build();
     clear.connect_clicked({
-        let status = status.clone();
+        let expanded = expanded.clone();
+        let rows_box = rows_box.clone();
         let rows = rows.clone();
         let performance = performance.clone();
         move |_| {
             shrimply_components_core::performance::clear();
-            if status.is_expanded() {
-                refresh(&status, &rows, &performance);
+            if expanded.get() {
+                refresh(&rows_box, &rows, &performance);
             }
         }
     });
+    let copy = gtk::Button::builder()
+        .icon_name("edit-copy-symbolic")
+        .tooltip_text(crate::tr!("Copy JSON").as_ref())
+        .css_classes(["flat"])
+        .build();
     copy.connect_clicked(|button| {
         button
             .display()
             .clipboard()
             .set_text(&shrimply_components_core::performance::report_json());
     });
-    let refresh_source = Rc::new(RefCell::new(None::<glib::SourceId>));
-    status.connect_expanded_notify({
-        let rows = rows.clone();
-        let performance = performance.clone();
-        let refresh_source = refresh_source.clone();
-        move |status| {
-            if let Some(source) = refresh_source.borrow_mut().take() {
-                source.remove();
-            }
-            if status.is_expanded() {
-                refresh(status, &rows, &performance);
-                let status = status.downgrade();
-                let rows = rows.clone();
-                let performance = performance.clone();
-                *refresh_source.borrow_mut() = Some(glib::timeout_add_local(
-                    shrimply_components_core::performance::REFRESH_INTERVAL,
-                    move || {
-                        let Some(status) = status.upgrade() else {
-                            return glib::ControlFlow::Break;
-                        };
-                        if !status.is_expanded() {
-                            return glib::ControlFlow::Break;
-                        }
-                        refresh(&status, &rows, &performance);
-                        glib::ControlFlow::Continue
-                    },
-                ));
-            } else {
-                for row in rows.take() {
-                    status.remove(&row);
-                }
-                *performance.borrow_mut() = Default::default();
-            }
-        }
-    });
-    content.upcast()
-}
+    card.append_after_reset(&clear);
+    card.append_after_reset(&copy);
 
-fn install_css(display: &gtk::gdk::Display) {
-    CSS_INSTALLED.with(|installed| {
-        if installed.replace(true) {
-            return;
-        }
-        let provider = gtk::CssProvider::new();
-        provider.load_from_string(
-            ".live-performance-action, \
-             .live-performance-action:hover, \
-             .live-performance-action:active { \
-                 background: transparent; \
-                 box-shadow: none; \
-             }",
-        );
-        gtk::style_context_add_provider_for_display(
-            display,
-            &provider,
-            gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
-        );
-    });
+    card.widget().clone()
 }
 
 fn refresh(
-    status: &adw::ExpanderRow,
+    rows_box: &gtk::ListBox,
     rows: &RefCell<Vec<adw::ActionRow>>,
     performance: &RefCell<shrimply_components_core::performance::PerformanceRows>,
 ) {
@@ -129,18 +109,17 @@ fn refresh(
         performance.rows().to_vec()
     };
     for row in rows.take() {
-        status.remove(&row);
+        rows_box.remove(&row);
     }
-    let next_rows = entries
+    *rows.borrow_mut() = entries
         .into_iter()
         .map(|entry| {
             let row = adw::ActionRow::builder()
                 .title(entry.title)
                 .subtitle(entry.subtitle)
                 .build();
-            status.add_row(&row);
+            rows_box.append(&row);
             row
         })
         .collect();
-    *rows.borrow_mut() = next_rows;
 }

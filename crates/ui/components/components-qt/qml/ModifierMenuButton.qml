@@ -13,7 +13,7 @@ Button {
     property string searchPlaceholderText: ""
     signal selected(string value)
     flat: true
-    icon.source: "qrc:/qt/qml/dev/shrimply/components/icons/add-modifier.svg"
+    icon.source: "qrc:/shrimply/icons/list-add-symbolic.svg"
     icon.color: palette.buttonText
     display: AbstractButton.TextBesideIcon
     onClicked: menu.presentForInput(anchor, menuInput.takeTouch())

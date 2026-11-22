@@ -1,3 +1,5 @@
+mod icons;
+
 #[cxx_qt::bridge]
 mod ffi {
     unsafe extern "C++" {
@@ -10,6 +12,8 @@ mod ffi {
         include!("cxx-qt-lib/qurl.h");
         type QUrl = cxx_qt_lib::QUrl;
 
+        #[namespace = "shrimply"]
+        unsafe fn register_rcc_resource(rcc_data: *const u8) -> bool;
         #[namespace = "shrimply"]
         fn new_widget_application() -> UniquePtr<QGuiApplication>;
         #[namespace = "shrimply"]
@@ -26,6 +30,9 @@ mod ffi {
     }
 }
 
-pub use ffi::{
-    apply_windows_system_backdrop, new_widget_application, open_file_dialog, save_file_dialog,
-};
+pub fn new_widget_application() -> cxx::UniquePtr<cxx_qt_lib::QGuiApplication> {
+    icons::register_bundled();
+    ffi::new_widget_application()
+}
+
+pub use ffi::{apply_windows_system_backdrop, open_file_dialog, save_file_dialog};

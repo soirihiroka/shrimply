@@ -7,6 +7,7 @@ edition = "2024"
 cxx.workspace = true
 cxx-qt.workspace = true
 cxx-qt-lib = { workspace = true, features = ["qt_full"] }
+shrimply-components-core = { workspace = true }
 
 [build-dependencies]
 cxx-qt-build = { workspace = true, features = ["link_qt_object_files"] }

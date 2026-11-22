@@ -24,7 +24,6 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
@@ -53,7 +52,7 @@ internal fun PreviewControls(timeline: TimelineSession, modifier: Modifier = Mod
                         contentDescription = pendingOperation?.ifEmpty { controls.getString("loading_status") } ?: controls.getString("status")
                     }, strokeWidth = 2.dp)
                 } else {
-                    Icon(painterResource(R.drawable.check_plain), controls.getString("status"), Modifier.size(16.dp))
+                    Icon(iconVector("check-plain-symbolic"), controls.getString("status"), Modifier.size(16.dp))
                 }
             }
             Box(Modifier.size(size).semantics { contentDescription = controls.getString("frame_rate_label") }, contentAlignment = Alignment.Center) {
@@ -71,7 +70,7 @@ internal fun PreviewControls(timeline: TimelineSession, modifier: Modifier = Mod
                     } catch (error: Exception) { failure = error.message }
                 }
             }, modifier = Modifier.size(size)) {
-                Icon(painterResource(R.drawable.ruler_angled), guide.getString("label"), Modifier.size(16.dp))
+                Icon(iconVector("ruler-angled-symbolic"), guide.getString("label"), Modifier.size(16.dp))
             }
             controls.optJSONObject("paint")?.let { paint ->
                 PreviewPaintControls(paint, size, controls.getString("close_label")) { command ->
@@ -109,7 +108,7 @@ private fun PreviewPaintControls(paint: JSONObject, size: androidx.compose.ui.un
                             rgba.getDouble(2).toFloat(), rgba.getDouble(3).toFloat()), CircleShape)
                             .semantics { contentDescription = control.getString("label") })
                     }
-                    !control.isNull("icon") -> Icon(painterResource(inspectorIcon(control.getString("icon"))), control.getString("label"), Modifier.size(16.dp))
+                    !control.isNull("icon") -> Icon(iconVector(control.getString("icon")), control.getString("label"), Modifier.size(16.dp))
                     else -> Text(control.getString("text"), fontSize = 11.sp,
                         modifier = Modifier.semantics { contentDescription = control.getString("label") })
                 }
