@@ -51,13 +51,9 @@ define_class!(
 );
 
 impl ResponsiveInspector {
-    fn update(&self) {
+    fn inspector_width(&self, container_width: f64) -> f64 {
         let state = self.ivars();
-        if state.split.is_animating() {
-            return;
-        }
-        let bounds = self.bounds();
-        let width = if state.split.tracking() {
+        let desired = if state.split.tracking() {
             state.inspector.frame().size.width
         } else {
             f64::from(
@@ -66,6 +62,19 @@ impl ResponsiveInspector {
                     .inspector_width,
             )
         };
+        let max_width = f64::from(shrimply_components_core::layout::inspector_max_width(
+            container_width as f32,
+        ));
+        desired.clamp(INSPECTOR_MIN_WIDTH.min(max_width), max_width)
+    }
+
+    fn update(&self) {
+        let state = self.ivars();
+        if state.split.is_animating() {
+            return;
+        }
+        let bounds = self.bounds();
+        let width = self.inspector_width(bounds.size.width);
         let overlay = shrimply_components_core::layout::inspector_overlay(bounds.size.width as f32);
         if overlay != state.overlay.replace(overlay) {
             state
@@ -80,16 +89,28 @@ impl ResponsiveInspector {
                     .insertArrangedSubview_atIndex(&state.inspector, 0);
                 state.inspector.setFrame(NSRect::new(
                     NSPoint::ZERO,
-                    NSSize::new(width, bounds.size.height),
+                    NSSize::new(
+                        if state.inspector.isHidden() {
+                            0.0
+                        } else {
+                            width
+                        },
+                        bounds.size.height,
+                    ),
                 ));
             }
         }
         state.split.setFrame(bounds);
         if overlay {
             state.preview.setFrame(state.split.bounds());
+            let x = if state.inspector.isHidden() {
+                bounds.origin.x - width - OVERLAY_SHADOW_BLUR_RADIUS
+            } else {
+                bounds.origin.x
+            };
             state.inspector.setFrame(NSRect::new(
-                bounds.origin,
-                NSSize::new(width.min(bounds.size.width), bounds.size.height),
+                NSPoint::new(x, bounds.origin.y),
+                NSSize::new(width, bounds.size.height),
             ));
         } else {
             state.split.adjustSubviews();
@@ -218,24 +239,19 @@ impl InspectorSplit {
             self.set_collapsed(collapsed, false);
             return;
         }
-        let saved = f64::from(
-            preferences::snapshot(&state.preferences)
-                .editor_layout
-                .inspector_width,
-        );
         let overlay = state.overlay.get();
         let divider = state.split.dividerThickness();
-        let max_width = f64::from(shrimply_components_core::layout::inspector_max_width(
-            bounds.size.width as f32,
-        ));
-        let width = saved.clamp(INSPECTOR_MIN_WIDTH.min(max_width), max_width);
+        let width = self.host.inspector_width(bounds.size.width);
         let height = bounds.size.height;
         let generation = state.split.begin_animation();
 
         if !collapsed && self.inspector.isHidden() {
             if overlay {
                 self.inspector.setFrame(NSRect::new(
-                    NSPoint::new(-width, bounds.origin.y),
+                    NSPoint::new(
+                        bounds.origin.x - width - OVERLAY_SHADOW_BLUR_RADIUS,
+                        bounds.origin.y,
+                    ),
                     NSSize::new(width, height),
                 ));
             } else {
@@ -247,11 +263,19 @@ impl InspectorSplit {
                 ));
             }
             self.inspector.setHidden(false);
+            self.inspector.layoutSubtreeIfNeeded();
         }
 
         let target_inspector = if overlay {
             NSRect::new(
-                NSPoint::new(if collapsed { -width } else { 0.0 }, bounds.origin.y),
+                NSPoint::new(
+                    if collapsed {
+                        bounds.origin.x - width - OVERLAY_SHADOW_BLUR_RADIUS
+                    } else {
+                        bounds.origin.x
+                    },
+                    bounds.origin.y,
+                ),
                 NSSize::new(width, height),
             )
         } else {

@@ -346,6 +346,7 @@ define_class!(
                 let time = NSString::from_str(&format!("{} / {}", shrimply_project_document::time_format::playback_time(player.position), shrimply_project_document::time_format::playback_time(player.duration)));
                 if layout.time.stringValue() != time {
                     layout.time.setStringValue(&time);
+                    layout.playbar.setNeedsLayout(true);
                 }
             }
             if previous.is_none_or(|old| old.playback_speed != player.playback_speed) {

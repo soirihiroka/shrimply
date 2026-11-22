@@ -103,6 +103,9 @@ impl Editor {
                 last_playing: playing,
                 ..Default::default()
             };
+            for constraint in &layout.preview_layout_constraints {
+                constraint.setActive(false);
+            }
             layout.preview_tools.removeFromSuperview();
             layout.playbar.removeFromSuperview();
             layout
@@ -163,6 +166,9 @@ impl Editor {
             layout
                 .viewer
                 .insertArrangedSubview_atIndex(&layout.preview_tools, 0);
+            for constraint in &layout.preview_layout_constraints {
+                constraint.setActive(true);
+            }
             let preferences = &self
                 .ivars()
                 .session

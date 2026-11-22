@@ -262,5 +262,16 @@ pub fn build(
     timeline.addArrangedSubview(&tool_container);
     timeline.addArrangedSubview(&tracks);
     timeline.addArrangedSubview(&meter_container);
+    let tracks_view: &NSView = &tracks;
+    for child in [&*tool_container, tracks_view, &*meter_container] {
+        child
+            .topAnchor()
+            .constraintEqualToAnchor(&timeline.topAnchor())
+            .setActive(true);
+        child
+            .bottomAnchor()
+            .constraintEqualToAnchor(&timeline.bottomAnchor())
+            .setActive(true);
+    }
     (timeline, tracks, meter)
 }
