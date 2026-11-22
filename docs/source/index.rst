@@ -23,6 +23,7 @@ Start here
 * :doc:`Linux <linux>`
 * :doc:`macOS <macos>`
 * :doc:`Windows <windows>`
+* :doc:`Android <android>`
 
 Editing
 -------
@@ -54,6 +55,7 @@ License
    linux
    macos
    windows
+   android
 
 .. toctree::
    :maxdepth: 2

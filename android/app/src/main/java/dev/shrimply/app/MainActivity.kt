@@ -4,13 +4,13 @@ import android.os.Bundle
 import android.os.Build
 import android.app.ActivityManager
 import android.content.pm.PackageManager
+import android.graphics.SurfaceTexture
+import android.view.TextureView
 import android.view.WindowInsetsController
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.compose.foundation.AndroidExternalSurface
-import androidx.compose.foundation.AndroidEmbeddedExternalSurface
-import androidx.compose.foundation.AndroidExternalSurfaceScope
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
@@ -244,27 +244,65 @@ internal fun NativeSurface(timeline: TimelineSession, modifier: Modifier, role: 
             }
             true
         }
-    val onInit: AndroidExternalSurfaceScope.() -> Unit = {
-        onSurface { surface, width, height ->
-            timeline.surface(role, surface, width, height, density)
-            if (graph) timeline.visible(role, visible.value)
-            surface.onChanged { w, h -> timeline.resize(role, w, h) }
-            surface.onDestroyed { timeline.surface(role, null, 0, 0, density) }
-        }
+    NativeTextureSurface(timeline, role, density, surfaceModifier) {
+        if (graph) timeline.visible(role, visible.value)
     }
-    // A scrolling graph must be composited and clipped with its inspector ancestors.
-    if (graph) AndroidEmbeddedExternalSurface(surfaceModifier.clipToBounds(), onInit = onInit)
-    else AndroidExternalSurface(surfaceModifier, onInit = onInit)
 }
 
 @Composable
 internal fun NativePreview(timeline: TimelineSession, modifier: Modifier) {
-    val density = LocalDensity.current.density
-    AndroidExternalSurface(modifier.previewInput(timeline)) {
-        onSurface { surface, width, height ->
-            timeline.surface(1, surface, width, height, density)
-            surface.onChanged { w, h -> timeline.resize(1, w, h) }
-            surface.onDestroyed { timeline.surface(1, null, 0, 0, density) }
+    NativeTextureSurface(timeline, 1, LocalDensity.current.density, modifier.previewInput(timeline))
+}
+
+@Composable
+private fun NativeTextureSurface(
+    timeline: TimelineSession,
+    role: Int,
+    density: Float,
+    modifier: Modifier,
+    onAttached: () -> Unit = {},
+) {
+    val currentDensity by rememberUpdatedState(density)
+    val currentOnAttached by rememberUpdatedState(onAttached)
+    key(timeline.identity, role) {
+        val activeSurface = remember { arrayOfNulls<android.view.Surface>(1) }
+        val detach: () -> Unit = {
+            if (activeSurface[0] != null) {
+                timeline.surface(role, null, 0, 0, currentDensity)
+                activeSurface[0]?.release()
+                activeSurface[0] = null
+            }
         }
+        AndroidView(
+            modifier = modifier.clipToBounds(),
+            factory = { context ->
+                TextureView(context).apply {
+                    isOpaque = true
+                    surfaceTextureListener = object : TextureView.SurfaceTextureListener {
+                        override fun onSurfaceTextureAvailable(texture: SurfaceTexture, width: Int, height: Int) {
+                            val surface = android.view.Surface(texture)
+                            activeSurface[0] = surface
+                            timeline.surface(role, surface, width, height, currentDensity)
+                            currentOnAttached()
+                        }
+
+                        override fun onSurfaceTextureSizeChanged(texture: SurfaceTexture, width: Int, height: Int) {
+                            timeline.resize(role, width, height)
+                        }
+
+                        override fun onSurfaceTextureDestroyed(texture: SurfaceTexture): Boolean {
+                            detach()
+                            return true
+                        }
+
+                        override fun onSurfaceTextureUpdated(texture: SurfaceTexture) = Unit
+                    }
+                }
+            },
+            onRelease = { view ->
+                view.surfaceTextureListener = null
+                detach()
+            },
+        )
     }
 }

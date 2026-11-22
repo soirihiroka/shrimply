@@ -64,7 +64,7 @@ internal fun EditorPanes(
         ListDetailPaneScaffold(
             directive = PaneScaffoldDirective(2, 0.dp, 2, 0.dp, inspectorWidth.dp, emptyList()),
             value = value,
-            detailPane = { AnimatedPane { preview() } },
+            detailPane = { preview() },
             listPane = { AnimatedPane(enterTransition = slideInHorizontally { -it }, exitTransition = slideOutHorizontally { -it }) { inspector() } },
             extraPane = { AnimatedPane(enterTransition = slideInVertically { it }, exitTransition = slideOutVertically { it }) { timeline() } },
         )

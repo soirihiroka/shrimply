@@ -10,6 +10,7 @@ requirements and installation:
 * :doc:`linux`
 * :doc:`macos`
 * :doc:`windows`
+* :doc:`android`
 * Build from source: :doc:`development`
 
 Create a project

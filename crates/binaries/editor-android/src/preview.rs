@@ -65,7 +65,13 @@ impl Frame {
     }
 }
 
-pub(crate) fn draw(renderer: &mut Renderer, frame: &Frame, density: f32) -> bool {
+pub(crate) fn draw(
+    renderer: &mut Renderer,
+    frame: &Frame,
+    density: f32,
+    overlay_valid: bool,
+) -> bool {
+    let overlay = frame.overlay.as_ref().filter(|_| overlay_valid);
     shrimply_profiling::increment(if frame.texture.is_some() {
         "Preview / Frames with texture"
     } else {
@@ -75,7 +81,7 @@ pub(crate) fn draw(renderer: &mut Renderer, frame: &Frame, density: f32) -> bool
         frame.texture.as_ref(),
         None,
         |target, image, width, height| {
-            let rect = frame.overlay.as_ref().map_or_else(
+            let rect = overlay.map_or_else(
                 || {
                     math::video_content_rect(
                         glam::ivec2(width as i32, height as i32),
@@ -90,7 +96,7 @@ pub(crate) fn draw(renderer: &mut Renderer, frame: &Frame, density: f32) -> bool
                     )
                 },
             );
-            let clip_rect = frame.overlay.as_ref().map_or_else(
+            let clip_rect = overlay.map_or_else(
                 || {
                     shrimply_preview_provider_skia::Rect::from_min_size(
                         glam::Vec2::ZERO,
@@ -115,7 +121,7 @@ pub(crate) fn draw(renderer: &mut Renderer, frame: &Frame, density: f32) -> bool
                 },
             );
             target.save();
-            if let Some(overlay) = &frame.overlay {
+            if let Some(overlay) = overlay {
                 let clip = overlay.clip;
                 target.clip_rect(
                     skia_safe::Rect::from_xywh(
@@ -160,7 +166,7 @@ pub(crate) fn draw(renderer: &mut Renderer, frame: &Frame, density: f32) -> bool
                 },
                 None,
             );
-            if let Some(overlay) = &frame.overlay {
+            if let Some(overlay) = overlay {
                 target.draw_picture(&overlay.picture, None, None);
             }
             target.restore();

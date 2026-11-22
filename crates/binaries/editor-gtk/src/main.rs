@@ -352,7 +352,7 @@ fn connect_panel_toggle(
     let divider = shrimply_components_core::layout::PANEL_DIVIDER_WIDTH.round() as i32;
     let is_overlay = {
         let overlay_mode = overlay_mode.clone();
-        move || overlay_mode.as_ref().is_some_and(Cell::get)
+        move || overlay_mode.as_deref().is_some_and(Cell::get)
     };
     let finish: Rc<dyn Fn()> = {
         let weak_paned = paned.downgrade();
