@@ -138,7 +138,11 @@ pub fn set_toggle_selected(button: &NSButton, selected: bool, style: ToggleStyle
 
 fn circular_glass_button(button: &NSButton, mtm: MainThreadMarker) -> Retained<NSView> {
     button.setBordered(false);
-    let effect = EffectView::new(NSRect::ZERO, EffectRole::Controls, mtm);
+    let effect = EffectView::new(
+        NSRect::new(NSPoint::ZERO, NSSize::new(BUTTON_SIZE, BUTTON_SIZE)),
+        EffectRole::Controls,
+        mtm,
+    );
     effect.set_corner_radius(BUTTON_SIZE / 2.0);
     let glass = effect.view();
     button.setTranslatesAutoresizingMaskIntoConstraints(false);
@@ -199,10 +203,8 @@ pub fn build(editor: &Editor) -> Layout {
 
     // GTK: preview tools on the left, playback strip directly below the viewer.
     let preview_tools = stack(true, mtm);
-    preview_tools.setHidden(
-        !shrimply_editor_state::preferences::snapshot(&session.preferences)
-            .preview_controls_visible,
-    );
+    let preview_tools_hidden = !shrimply_editor_state::preferences::snapshot(&session.preferences)
+        .preview_controls_visible;
     preview_tools.setSpacing(GAP);
     preview_tools.setAlignment(NSLayoutAttribute::CenterX);
     preview_tools
@@ -503,6 +505,11 @@ pub fn build(editor: &Editor) -> Layout {
         playbar
             .trailingAnchor()
             .constraintEqualToAnchor(&preview_layout.trailingAnchor()),
+    ];
+    for constraint in &preview_layout_constraints {
+        constraint.setActive(true);
+    }
+    let preview_tools_constraints = vec![
         preview_tools
             .topAnchor()
             .constraintEqualToAnchor(&viewer.topAnchor()),
@@ -510,9 +517,6 @@ pub fn build(editor: &Editor) -> Layout {
             .bottomAnchor()
             .constraintEqualToAnchor(&viewer.bottomAnchor()),
     ];
-    for constraint in &preview_layout_constraints {
-        constraint.setActive(true);
-    }
     let inspector = super::inspector_split::InspectorSplit::new(
         editor,
         inspector_controller.view(),
@@ -557,7 +561,7 @@ pub fn build(editor: &Editor) -> Layout {
             .bottomAnchor()
             .constraintEqualToAnchor(&root.view().bottomAnchor()),
     ];
-    Layout {
+    let layout = Layout {
         root,
         root_split,
         inspector_controller,
@@ -576,7 +580,10 @@ pub fn build(editor: &Editor) -> Layout {
         fullscreen_button: fullscreen,
         controls_overlay,
         preview_layout_constraints,
+        preview_tools_constraints,
         overlay_constraints,
         fullscreen_constraints,
-    }
+    };
+    layout.set_preview_tools_hidden(preview_tools_hidden);
+    layout
 }

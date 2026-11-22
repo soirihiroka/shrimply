@@ -247,6 +247,7 @@ pub fn build(
         meter_width,
     });
     let timeline = stack(false, mtm);
+    timeline.setDetachesHiddenViews(false);
     timeline.setDistribution(NSStackViewDistribution::Fill);
     timeline.setSpacing(0.0);
     for axis in [

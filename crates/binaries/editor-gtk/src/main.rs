@@ -189,14 +189,16 @@ fn build_ui(window: &adw::ApplicationWindow, project: project::Project) {
     let overlay_mode = Rc::new(Cell::new(false));
     let top = gtk::Paned::new(gtk::Orientation::Horizontal);
     top.set_wide_handle(false);
-    top.set_start_child(Some(&inspector_pane));
+    top.set_start_child(Some(&inspector_pane.container));
     top.set_end_child(Some(&video_player));
     top.set_position(if editor_layout.inspector_visible {
         inspector_width
     } else {
         0
     });
-    inspector_pane.set_visible(editor_layout.inspector_visible);
+    inspector_pane
+        .container
+        .set_visible(editor_layout.inspector_visible);
     top.set_resize_start_child(true);
     top.set_resize_end_child(true);
     top.set_shrink_start_child(false);
@@ -207,11 +209,13 @@ fn build_ui(window: &adw::ApplicationWindow, project: project::Project) {
     let timeline_pane = panel_pane(&timeline, PanelSide::End);
     let layout = gtk::Paned::new(gtk::Orientation::Vertical);
     layout.set_wide_handle(false);
-    layout.set_end_child(Some(&timeline_pane));
+    layout.set_end_child(Some(&timeline_pane.container));
     layout.set_position(
         ((1.0 - editor_layout.timeline_fraction) * DEFAULT_WINDOW_HEIGHT as f32).round() as i32,
     );
-    timeline_pane.set_visible(editor_layout.timeline_visible);
+    timeline_pane
+        .container
+        .set_visible(editor_layout.timeline_visible);
     layout.set_resize_start_child(true);
     layout.set_resize_end_child(true);
     layout.set_shrink_start_child(false);
@@ -227,7 +231,6 @@ fn build_ui(window: &adw::ApplicationWindow, project: project::Project) {
         &inspector_toggle,
         &top,
         &inspector_pane,
-        &inspector,
         PanelSide::Start,
         inspector_width,
         Some(overlay_mode.clone()),
@@ -235,7 +238,7 @@ fn build_ui(window: &adw::ApplicationWindow, project: project::Project) {
     );
     let inspector_host = inspector_layout::connect(
         &top,
-        inspector_pane.upcast_ref(),
+        inspector_pane.container.upcast_ref(),
         &inspector_toggle,
         overlay_mode,
         stop_inspector,
@@ -251,7 +254,6 @@ fn build_ui(window: &adw::ApplicationWindow, project: project::Project) {
         &timeline_toggle,
         &layout,
         &timeline_pane,
-        &timeline,
         PanelSide::End,
         timeline_height,
         None,
@@ -301,12 +303,17 @@ fn build_ui(window: &adw::ApplicationWindow, project: project::Project) {
     video_player.grab_focus();
 }
 
-fn panel_pane(child: &gtk::Widget, side: PanelSide) -> gtk::ScrolledWindow {
+struct PanelPane {
+    container: gtk::ScrolledWindow,
+    child: gtk::Widget,
+}
+
+fn panel_pane(child: &gtk::Widget, side: PanelSide) -> PanelPane {
     let (hpolicy, vpolicy) = match side {
         PanelSide::Start => (gtk::PolicyType::External, gtk::PolicyType::Never),
         PanelSide::End => (gtk::PolicyType::Never, gtk::PolicyType::External),
     };
-    let pane = gtk::ScrolledWindow::builder()
+    let container = gtk::ScrolledWindow::builder()
         .hscrollbar_policy(hpolicy)
         .vscrollbar_policy(vpolicy)
         .propagate_natural_width(false)
@@ -314,27 +321,30 @@ fn panel_pane(child: &gtk::Widget, side: PanelSide) -> gtk::ScrolledWindow {
         .kinetic_scrolling(false)
         .child(child)
         .build();
-    side.set_size_request(&pane, side.min_size(child));
-    pane
+    side.set_size_request(&container, side.min_size(child));
+    PanelPane {
+        container,
+        child: child.clone(),
+    }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn connect_panel_toggle(
     button: &gtk::ToggleButton,
     paned: &gtk::Paned,
-    pane: &gtk::ScrolledWindow,
-    child: &gtk::Widget,
+    pane: &PanelPane,
     side: PanelSide,
     default_size: i32,
     overlay_mode: Option<Rc<Cell<bool>>>,
     preferences: &preferences::SharedPreferences,
 ) -> Rc<dyn Fn()> {
+    let container = &pane.container;
+    let child = &pane.child;
     let divider = shrimply_components_core::layout::PANEL_DIVIDER_WIDTH.round() as i32;
     let expanded_size = Rc::new(Cell::new(default_size));
     let animating = Rc::new(Cell::new(false));
     if matches!(side, PanelSide::Start) {
         let animating = animating.clone();
-        pane.hadjustment().connect_changed(move |adj| {
+        container.hadjustment().connect_changed(move |adj| {
             if animating.get() {
                 adj.set_value((adj.upper() - adj.page_size()).max(0.0));
             }
@@ -342,7 +352,7 @@ fn connect_panel_toggle(
     }
     let finish: Rc<dyn Fn()> = {
         let weak_paned = paned.downgrade();
-        let weak_pane = pane.downgrade();
+        let weak_pane = container.downgrade();
         let weak_child = child.downgrade();
         let animating = animating.clone();
         Rc::new(move || {
@@ -390,7 +400,7 @@ fn connect_panel_toggle(
     );
     animation.connect_done({
         let weak_button = button.downgrade();
-        let weak_pane = pane.downgrade();
+        let weak_pane = container.downgrade();
         let overlay_mode = overlay_mode.clone();
         let finish = finish.clone();
         move |_| {
@@ -408,7 +418,7 @@ fn connect_panel_toggle(
 
     button.connect_toggled({
         let paned = paned.clone();
-        let pane = pane.clone();
+        let pane = container.clone();
         let child = child.clone();
         let expanded_size = expanded_size.clone();
         let animating = animating.clone();

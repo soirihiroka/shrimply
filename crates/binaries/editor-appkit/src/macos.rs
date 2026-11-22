@@ -328,7 +328,7 @@ define_class!(
             let tools_hidden = self.ivars().fullscreen_preview.get()
                 || !preferences.preview_controls_visible;
             if layout.preview_tools.isHidden() != tools_hidden {
-                layout.preview_tools.setHidden(tools_hidden);
+                layout.set_preview_tools_hidden(tools_hidden);
             }
             let inspector_errors = {
                 let _timing = shrimply_process_reporting::diagnostics::timing("Inspector polling and rebuild");

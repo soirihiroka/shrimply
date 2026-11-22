@@ -103,6 +103,9 @@ impl Editor {
                 last_playing: playing,
                 ..Default::default()
             };
+            for constraint in &layout.preview_tools_constraints {
+                constraint.setActive(false);
+            }
             for constraint in &layout.preview_layout_constraints {
                 constraint.setActive(false);
             }
@@ -162,20 +165,20 @@ impl Editor {
                 .preview_layout
                 .insertArrangedSubview_atIndex(&layout.preview_host, 0);
             layout.preview_layout.addArrangedSubview(&layout.playbar);
+            for constraint in &layout.preview_layout_constraints {
+                constraint.setActive(true);
+            }
             layout.playbar.setHidden(restore.controls_hidden);
             layout
                 .viewer
                 .insertArrangedSubview_atIndex(&layout.preview_tools, 0);
-            for constraint in &layout.preview_layout_constraints {
-                constraint.setActive(true);
-            }
             let preferences = &self
                 .ivars()
                 .session
                 .get()
                 .expect("project loaded")
                 .preferences;
-            layout.preview_tools.setHidden(
+            layout.set_preview_tools_hidden(
                 !shrimply_editor_state::preferences::snapshot(preferences).preview_controls_visible,
             );
             if let Some(toolbar) = window.toolbar() {
