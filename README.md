@@ -13,8 +13,6 @@
 
 <img width="1150" height="791" alt="image" src="https://github.com/user-attachments/assets/97bbadac-d930-46ae-9df8-033bd81ab6ce" />
 
-<img width="2206" height="1584" alt="image" src="https://github.com/user-attachments/assets/1fc005bd-9fc9-45d2-afe5-ea884bb1a99f" />
-
 Shrimply is a simple yet powerful cross-platform video editor.
 
 System requirements:
