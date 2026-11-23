@@ -7,7 +7,7 @@ Contributions of code, documentation, translations, and other improvements are w
 AI-assisted contributions are welcome. However, you are responsible for understanding,
 reviewing, and testing everything you submit.
 
-You don't have to disclose any AI usage in your submission, but if I have any questions about the code change, "idk, claude did it" or "claude said: xxx" are not acceptable.
+You don't have to disclose any AI usage in your submission, however, if you don't understand what your AI did after talking to them, it might be a sign that no one can understands it, in which case I will reject the PR.
 
 ## Translations
 
@@ -15,7 +15,7 @@ Translation contributions are welcome. Interface translations live in
 [`crates/i18n/locales`](crates/i18n/locales). Preserve placeholders such
 as `%{count}` when translating strings.
 
-Only contribute to languages you speak. I don't need another person to ask Claude/ChatGPT for me (I can do that myself).
+You MUST NOT contribute to languages you are not fluent in. I don't need another person to ask Claude/ChatGPT for me (I can do that myself).
 
 ## Spam
 
