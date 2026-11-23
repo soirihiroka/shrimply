@@ -4,24 +4,20 @@ Contributions of code, documentation, translations, and other improvements are w
 
 ## AI Policy
 
-AI-assisted contributions are welcome. AI disclosures are welcomed but not required.
+AI-assisted contributions are welcome. AI disclosures are appreciated but not required.
 
-You are responsible for understanding, reviewing, and testing everything you submit. 
-If you don't understand what your AI did after talking to them, it might be a sign that no one can understands it, in which case I will reject the PR.
+You are responsible for understanding, reviewing, and testing everything you submit. If you cannot understand what your AI did after talking to it, nobody else will either, and the PR will be rejected.
 
 ## Translations
 
-Translation contributions are welcome. Interface translations live in
-[`crates/i18n/locales`](crates/i18n/locales). Preserve placeholders such
-as `%{count}` when translating strings.
+Interface translations live in [`crates/i18n/locales`](crates/i18n/locales). Preserve placeholders such as `%{count}` when translating strings.
 
-You MUST NOT contribute to languages you are not fluent in. I don't need another person to ask Claude/ChatGPT for me (I can do that myself).
+Do **not** contribute to languages you are not fluent in. Maintainers can ask Claude or ChatGPT themselves.
 
 ## Spam
 
-Submitting untested code, constantly reopening explicit out-of-scope requests, and other spamming behavior are not permitted for this project, and I will try to inform anyone who engages in behavior that is considered spam. Repeated spam may result in a ban.
+Submitting untested code, repeatedly reopening explicitly out-of-scope requests, and other spam behavior are not permitted. Maintainers will warn contributors when behavior is considered spam; repeated violations may result in a ban.
 
-## Submission terms
+## Submission Terms
 
 By submitting a contribution, you grant the project maintainers a perpetual, worldwide, irrevocable, royalty-free license to use, modify, sublicense, and distribute it under any license, now or in the future, without further permission or notice to you. You represent that you have the right to grant this license.
-
