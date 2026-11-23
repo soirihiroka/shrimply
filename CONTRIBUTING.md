@@ -7,7 +7,7 @@ Contributions of code, documentation, translations, and other improvements are w
 AI-assisted contributions are welcome. However, you are responsible for understanding,
 reviewing, and testing everything you submit.
 
-Discloses are welcomed but not required. However, if you don't understand what your AI did after talking to them, it might be a sign that no one can understands it, in which case I will reject the PR.
+Disclosures are welcomed but not required. However, if you don't understand what your AI did after talking to them, it might be a sign that no one can understands it, in which case I will reject the PR.
 
 ## Translations
 
