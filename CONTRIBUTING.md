@@ -4,7 +4,7 @@ Contributions of code, documentation, translations, and other improvements are w
 
 ## AI Policy
 
-AI-assisted contributions are welcome. AI Disclosures are welcomed but not required.
+AI-assisted contributions are welcome. AI disclosures are welcomed but not required.
 
 You are responsible for understanding, reviewing, and testing everything you submit. 
 If you don't understand what your AI did after talking to them, it might be a sign that no one can understands it, in which case I will reject the PR.
