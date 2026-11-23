@@ -170,7 +170,7 @@ pub(super) fn remux_to(
 fn remux(input: &Path, output: &Path, cancellation: CancelToken) -> Result<(), String> {
     let interrupt = cancellation.clone();
     let mut input_context =
-        shrimply_media_info::demux::open_with_interrupt(input, move || interrupt.is_cancelled())
+        shrimply_media_info::demux::open_for_remux(input, move || interrupt.is_cancelled())
             .map_err(|error| format!("could not open {}: {error}", input.display()))?;
     let mut output_context = format::output(output)
         .map_err(|error| format!("could not create {}: {error}", output.display()))?;

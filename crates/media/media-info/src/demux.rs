@@ -10,6 +10,28 @@ pub fn open_with_interrupt(
     path: &Path,
     cancelled: impl FnMut() -> bool + Send + 'static,
 ) -> Result<Input, ffmpeg::Error> {
+    open_input(path, cancelled, true)
+}
+
+/// Open a file that will be copied into another container.
+///
+/// Playback opens keep video codecs off the probe list so FFmpeg does not decode
+/// pictures on the CPU. A stream copy still needs the sequence header: Matroska
+/// stores presentation timestamps, and an H.265 stream with B-frames only gets
+/// monotonic decode timestamps once the probe can see that header. The probe
+/// skips picture reconstruction. The packets themselves are copied.
+pub fn open_for_remux(
+    path: &Path,
+    cancelled: impl FnMut() -> bool + Send + 'static,
+) -> Result<Input, ffmpeg::Error> {
+    open_input(path, cancelled, false)
+}
+
+fn open_input(
+    path: &Path,
+    cancelled: impl FnMut() -> bool + Send + 'static,
+    restrict_video_probe: bool,
+) -> Result<Input, ffmpeg::Error> {
     // ffmpeg-next converts filenames to C strings internally. Reject unrepresentable
     // names before its unchecked conversion can panic on a user-selected file.
     let path = path
@@ -33,7 +55,9 @@ pub fn open_with_interrupt(
         names.join(",")
     });
     let mut options = ffmpeg::Dictionary::new();
-    options.set("codec_whitelist", codecs);
+    if restrict_video_probe {
+        options.set("codec_whitelist", codecs);
+    }
     let input = ffmpeg::format::input_with_interrupt_and_dictionary(path, cancelled, options)?;
     for stream in input.streams() {
         // Parsers can supply the source dimensions and pixel format without reconstructing
