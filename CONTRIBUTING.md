@@ -19,7 +19,7 @@ Only contribute to languages you speak. I don't need another person to ask Claud
 
 ## Spam
 
-Submitting untested code, constantly reopening explicit out-of-scope requests, and other spamming behavior are not permitted for this project, and I will try to inform anyone who engages in behavior that is considered spam. However, repeated spam may result in a ban.
+Submitting untested code, constantly reopening explicit out-of-scope requests, and other spamming behavior are not permitted for this project, and I will try to inform anyone who engages in behavior that is considered spam. Repeated spam may result in a ban.
 
 ## Submission terms
 
