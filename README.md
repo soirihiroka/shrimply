@@ -9,7 +9,7 @@
 
 # Shrimply
 
-> you're telling me a shrimp made this video?!
+**you're telling me a shrimp made this video?! Σ( ﾟдﾟ)**
 
 <img width="1150" height="791" alt="image" src="https://github.com/user-attachments/assets/97bbadac-d930-46ae-9df8-033bd81ab6ce" />
 
