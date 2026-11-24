@@ -142,106 +142,159 @@ ApplicationWindow {
         }
     }
 
-    menuBar: MenuBar {
+    menuBar: ToolBar {
         visible: backend.ready && !window.fullscreenPreview
-        delegate: MenuBarItem {
-            id: menuItem
-            MenuInput { id: menuInput }
-            onPressed: if (menu) menu.bottomSheet = menu.usesBottomSheet(menuInput.takeTouch())
-        }
-
-        AdaptiveMenu {
-            id: fileMenu
-            title: backend.translate("File")
-            pointerPopupType: Popup.Native
-
-            Action { text: backend.translate("Save"); shortcut: StandardKey.Save; onTriggered: backend.save() }
-            Action {
-                text: backend.translate("Save As…")
-                shortcut: StandardKey.SaveAs
-                onTriggered: Qt.callLater(backend.showSaveAsDialog)
-            }
-            MenuSeparator {}
-            AdaptiveMenu {
-                bottomSheet: fileMenu.bottomSheet
-                pointerPopupType: Popup.Native
-                title: backend.translate("Export")
-                enabled: !exportWindow.busy
-
-                Action {
-                    text: backend.translate("Export video")
-                    shortcut: "Ctrl+E"
-                    onTriggered: exportWindow.openVideo()
+        implicitHeight: visible ? menuLayout.implicitHeight : 0
+        RowLayout {
+            id: menuLayout
+            anchors.fill: parent
+            spacing: 0
+            MenuBar {
+                Layout.fillWidth: true
+                delegate: MenuBarItem {
+                    id: menuItem
+                    MenuInput { id: menuInput }
+                    onPressed: if (menu) menu.bottomSheet = menu.usesBottomSheet(menuInput.takeTouch())
                 }
-                Action {
-                    text: backend.translate("Export captions (YTT)")
-                    onTriggered: exportWindow.openCaptions()
+
+                AdaptiveMenu {
+                    id: fileMenu
+                    title: backend.translate("File")
+                    pointerPopupType: Popup.Native
+
+                    AdaptiveMenu {
+                        bottomSheet: fileMenu.bottomSheet
+                        pointerPopupType: Popup.Native
+                        title: backend.translate("Export")
+                        enabled: !exportWindow.busy
+
+                        Action {
+                            text: backend.translate("Export video")
+                            shortcut: "Ctrl+E"
+                            onTriggered: exportWindow.openVideo()
+                        }
+                        Action {
+                            text: backend.translate("Export captions (YTT)")
+                            onTriggered: exportWindow.openCaptions()
+                        }
+                        Action {
+                            text: backend.translate("Export JSON")
+                            onTriggered: exportWindow.exportJson()
+                        }
+                    }
+                    MenuSeparator {}
+                    Action { text: backend.translate("Quit"); shortcut: StandardKey.Quit; onTriggered: Qt.quit() }
                 }
-                Action {
-                    text: backend.translate("Export JSON")
-                    onTriggered: exportWindow.exportJson()
+
+                AdaptiveMenu {
+                    id: viewMenu
+                    title: backend.translate("View")
+                    pointerPopupType: Popup.Native
+                    onAboutToShow: {
+                        inspectorMenuItem.checked = window.inspectorVisible
+                        timelineMenuItem.checked = window.timelineVisible
+                    }
+
+                    MenuItem {
+                        id: inspectorMenuItem
+                        text: backend.translate("Inspector")
+                        checkable: true
+                        checked: window.inspectorVisible
+                        onClicked: backend.toggleInspector()
+                    }
+                    MenuItem {
+                        id: timelineMenuItem
+                        text: backend.translate("Timeline")
+                        checkable: true
+                        checked: window.timelineVisible
+                        onClicked: backend.toggleTimeline()
+                    }
+                    Action {
+                        text: backend.translate("Fullscreen Preview")
+                        shortcut: "F11"
+                        checkable: true
+                        Binding on checked { value: window.fullscreenPreview }
+                        onTriggered: window.setPreviewFullscreen(!window.fullscreenPreview)
+                    }
                 }
             }
-            MenuSeparator {}
-            Action { text: backend.translate("Quit"); shortcut: StandardKey.Quit; onTriggered: Qt.quit() }
-        }
-
-        AdaptiveMenu {
-            title: backend.translate("Edit")
-            pointerPopupType: Popup.Native
-
-            Action { text: backend.translate("Undo"); shortcut: StandardKey.Undo; onTriggered: backend.undo() }
-            Action { text: backend.translate("Redo"); shortcut: StandardKey.Redo; onTriggered: backend.redo() }
-            MenuSeparator {}
-            Action {
-                text: backend.translate("Preferences…")
-                shortcut: StandardKey.Preferences
-                onTriggered: preferencesWindow.openPreferences()
+            ToolButton {
+                id: projectMenuButton
+                display: AbstractButton.IconOnly
+                property var document: JSON.parse(backend.projectMenu())
+                text: document.label
+                icon.source: "qrc:/shrimply/icons/" + document.icon + ".svg"
+                MenuInput { id: projectMenuInput }
+                onClicked: {
+                    projectMenuButton.document = JSON.parse(backend.projectMenu())
+                    projectOptions.presentForInput(projectMenuButton, projectMenuInput.takeTouch())
+                }
+                ToolTip.visible: hovered
+                ToolTip.text: text
             }
         }
+    }
 
-        AdaptiveMenu {
-            id: viewMenu
-            title: backend.translate("View")
-            pointerPopupType: Popup.Native
-            onAboutToShow: {
-                inspectorMenuItem.checked = window.inspectorVisible
-                timelineMenuItem.checked = window.timelineVisible
-            }
+    Shortcut { sequence: StandardKey.Save; enabled: backend.ready; onActivated: backend.save() }
+    Shortcut { sequence: StandardKey.SaveAs; enabled: backend.ready; onActivated: Qt.callLater(backend.showSaveAsDialog) }
+    Shortcut { sequences: [StandardKey.Undo]; enabled: backend.ready; onActivated: backend.undo() }
+    Shortcut { sequences: [StandardKey.Redo]; enabled: backend.ready; onActivated: backend.redo() }
+    Shortcut { sequence: StandardKey.Preferences; enabled: backend.ready; onActivated: preferencesWindow.openPreferences() }
 
-            MenuItem {
-                id: inspectorMenuItem
-                text: backend.translate("Inspector")
-                checkable: true
-                checked: window.inspectorVisible
-                onClicked: backend.toggleInspector()
+    Connections {
+        target: backend
+        function onProjectPreferencesRequested() { preferencesWindow.openPreferences() }
+        function onProjectAboutRequested() { aboutWindow.openAbout() }
+        function onProjectCloseRequested() { window.close() }
+    }
+
+    component ProjectMenu: AdaptiveMenu {
+        id: menu
+        required property var entries
+        pointerPopupType: Qt.platform.os === "windows" ? Popup.Item : Popup.Window
+        Instantiator {
+            model: menu.entries
+            delegate: projectMenuDelegates
+            onObjectAdded: (index, object) => {
+                if (object instanceof Menu) menu.insertMenu(index, object)
+                else menu.insertItem(index, object)
             }
-            MenuItem {
-                id: timelineMenuItem
-                text: backend.translate("Timeline")
-                checkable: true
-                checked: window.timelineVisible
-                onClicked: backend.toggleTimeline()
-            }
-            Action {
-                text: backend.translate("Fullscreen Preview")
-                shortcut: "F11"
-                checkable: true
-                Binding on checked { value: window.fullscreenPreview }
-                onTriggered: window.setPreviewFullscreen(!window.fullscreenPreview)
+            onObjectRemoved: (index, object) => {
+                if (object instanceof Menu) menu.takeMenu(index)
+                else menu.takeItem(index)
             }
         }
+    }
 
-        AdaptiveMenu {
-            title: backend.translate("Help")
-            pointerPopupType: Popup.Native
-
-            Action { text: backend.translate("Keyboard Shortcuts") }
-            Action {
-                text: backend.translate("About Shrimply")
-                onTriggered: aboutWindow.openAbout()
+    DelegateChooser {
+        id: projectMenuDelegates
+        role: "kind"
+        DelegateChoice {
+            roleValue: "action"
+            delegate: MenuItem {
+                required property var modelData
+                text: modelData.label
+                enabled: modelData.enabled
+                onTriggered: Qt.callLater(backend.activateProjectMenu, modelData.action)
             }
         }
+        DelegateChoice { roleValue: "separator"; delegate: MenuSeparator {} }
+        DelegateChoice {
+            roleValue: "submenu"
+            delegate: ProjectMenu {
+                required property var modelData
+                title: modelData.label
+                entries: modelData.entries
+                bottomSheet: projectOptions.bottomSheet
+            }
+        }
+    }
+
+    ProjectMenu {
+        id: projectOptions
+        entries: projectMenuButton.document.entries
+        pointerAnchor: projectMenuButton
+        pointerOffsetY: projectMenuButton.height
     }
 
     AboutWindow {

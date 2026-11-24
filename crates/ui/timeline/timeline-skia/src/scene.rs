@@ -175,6 +175,7 @@ pub struct TrackAddMenuRequest {
     pub key: TrackKey,
     pub touch: bool,
     pub point: Vec2,
+    pub button_bounds: Option<Rect>,
     pub import_targets: Vec<TrackKey>,
     pub position: Time,
 }

@@ -152,27 +152,13 @@ pub fn remove_recent_project(path: &Path) -> Result<(), String> {
 }
 
 pub fn create_project(
-    mut path: PathBuf,
+    path: PathBuf,
     name: &str,
     canvas_size: CanvasSize,
     fps: Fraction,
     tags: &[String],
 ) -> Result<PathBuf, String> {
-    if !has_shrimp_extension(&path) {
-        path.set_extension("shrimp");
-    }
-    let project = project::Project {
-        name: name.to_string(),
-        tags: project::normalize_tags(tags),
-        fps,
-        canvas_size,
-        caption_tracks: vec![project::CaptionTrack::default()],
-        video_tracks: vec![project::VisualTrack::default()],
-        audio_tracks: vec![project::AudioTrack::default()],
-        ..Default::default()
-    };
-    project::create_project_file(&path, &project)?;
-    Ok(path)
+    project::creation::NewProject::from_settings(name, canvas_size, fps, tags)?.write(path, true)
 }
 
 pub fn create_project_from_values(
@@ -194,13 +180,7 @@ pub fn create_project_from_values(
 }
 
 pub fn default_project_filename(name: &str) -> String {
-    let safe_name = name
-        .chars()
-        .map(|character| match character {
-            '/' | '\\' | '\0' => '_',
-            character => character,
-        })
-        .collect::<String>();
+    let safe_name = project::creation::filename_stem(name);
     let timestamp = glib::DateTime::now_local()
         .and_then(|time| time.format("%Y-%m-%d_%H-%M-%S"))
         .map(|value| value.to_string())
@@ -313,10 +293,4 @@ pub fn preset_frame_rate(index: usize) -> usize {
                 .position(|rate| rate.value == shrimply_project_types::DEFAULT_PROJECT_FPS)
                 .unwrap_or(0)
         })
-}
-
-fn has_shrimp_extension(path: &Path) -> bool {
-    path.extension()
-        .and_then(|extension| extension.to_str())
-        .is_some_and(|extension| extension.eq_ignore_ascii_case("shrimp"))
 }

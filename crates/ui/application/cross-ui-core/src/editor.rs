@@ -3,6 +3,7 @@ use shrimply_editor_state::{player_state, preferences, preview_focus};
 use shrimply_math_core::Fraction;
 use shrimply_project_document::project::{self, CanvasSize, Project, ProjectPreparation};
 use shrimply_resource_pipeline::CancelToken;
+pub use shrimply_timeline_edit::project_menu;
 use shrimply_timeline_edit::selection_state;
 use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
@@ -78,6 +79,42 @@ pub struct EditorSession {
 }
 
 impl EditorSession {
+    /// Execute shared menu commands and return window-level requests to the host.
+    pub fn activate_project_menu(
+        &self,
+        action: project_menu::Action,
+    ) -> Result<Option<project_menu::Action>, String> {
+        if let Some(edit) = action.edit() {
+            let kind = {
+                let mut project = self.project.borrow_mut();
+                let kind = edit.apply(&mut project)?;
+                project::commit_edit(&project, project_menu::Edit::DESCRIPTION);
+                kind
+            };
+            player_state::refresh_project(
+                &self.player_state,
+                player_state::ProjectChange {
+                    audio: kind == project::ItemKind::Audio,
+                    video: kind == project::ItemKind::Video,
+                    captions: kind == project::ItemKind::Caption,
+                    inspector: true,
+                    ..Default::default()
+                },
+            );
+        } else if let Some(redo) = action.history() {
+            change_history(
+                &self.project,
+                &self.player_state,
+                if redo { project::redo } else { project::undo },
+            );
+        } else if action == project_menu::Action::Save {
+            self.save()?;
+        } else {
+            return Ok(Some(action));
+        }
+        Ok(None)
+    }
+
     pub fn new(project: Project) -> Result<Self, String> {
         let playback_performance = shrimply_playback_performance::open(Arc::new(project.clone()));
         let project = Rc::new(RefCell::new(project));

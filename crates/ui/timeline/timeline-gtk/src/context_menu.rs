@@ -1,3 +1,4 @@
+use crate::renderer::{Rect, Vec2};
 use adw::prelude::*;
 use gtk::{gdk, gio};
 
@@ -66,29 +67,39 @@ pub(super) fn popup(
     menu: &gio::Menu,
     actions: &gio::SimpleActionGroup,
     custom_children: &[gtk::Widget],
-    x: f64,
-    y: f64,
+    point: Vec2,
 ) -> gtk::PopoverMenu {
-    let parent = area.parent().expect("timeline GLArea must have a parent");
-    let point = area
-        .compute_point(&parent, &gtk::graphene::Point::new(x as f32, y as f32))
-        .expect("timeline coordinates must translate to its parent");
     let popover = gtk::PopoverMenu::from_model(Some(menu));
     for (index, child) in custom_children.iter().enumerate() {
         assert!(popover.add_child(child, &format!("control-{index}")));
     }
     popover.set_has_arrow(false);
-    popover.set_position(gtk::PositionType::Bottom);
     popover.set_halign(gtk::Align::Start);
     popover.insert_action_group("timeline", Some(actions));
+    popup_at(
+        area,
+        popover.upcast_ref(),
+        Rect::from_min_size(point, Vec2::ONE),
+    );
+    popover
+}
+
+pub(super) fn popup_at(area: &gtk::GLArea, popover: &gtk::Popover, bounds: Rect) {
+    let parent = area.parent().expect("timeline GLArea must have a parent");
+    let point = area
+        .compute_point(
+            &parent,
+            &gtk::graphene::Point::new(bounds.left(), bounds.top()),
+        )
+        .expect("timeline coordinates must translate to its parent");
+    popover.set_position(gtk::PositionType::Bottom);
     popover.set_parent(&parent);
     popover.set_pointing_to(Some(&gdk::Rectangle::new(
         point.x() as i32,
         point.y() as i32,
-        1,
-        1,
+        bounds.width().round() as i32,
+        bounds.height().round() as i32,
     )));
-    shrimply_components_gtk::ui::unparent_on_close(&popover);
+    shrimply_components_gtk::ui::unparent_on_close(popover);
     popover.popup();
-    popover
 }

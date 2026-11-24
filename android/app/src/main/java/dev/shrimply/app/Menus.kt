@@ -2,15 +2,22 @@ package dev.shrimply.app
 
 import android.content.ClipData
 import android.content.ClipboardManager
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerType
@@ -21,14 +28,14 @@ import androidx.compose.ui.unit.dp
 import org.json.JSONObject
 import org.json.JSONArray
 
-/** SettingsLib Spa's preference layout: 24/16dp edges and 16dp text padding. */
 @Composable
 internal fun SettingsRow(title: String, summary: String = "", enabled: Boolean = true,
     modifier: Modifier = Modifier, leading: (@Composable () -> Unit)? = null,
     trailing: (@Composable () -> Unit)? = null) {
-    Row(modifier.fillMaxWidth().padding(end = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-        if (leading == null) Spacer(Modifier.width(24.dp))
-        else Box(Modifier.size(72.dp).alpha(if (enabled) 1f else 0.38f), contentAlignment = Alignment.Center) { leading() }
+    Row(Modifier.fillMaxWidth().clip(MaterialTheme.shapes.extraSmall)
+        .background(MaterialTheme.colorScheme.surfaceContainerLow).then(modifier).padding(end = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+        if (leading == null) Spacer(Modifier.width(16.dp))
+        else Box(Modifier.size(56.dp).alpha(if (enabled) 1f else 0.38f), contentAlignment = Alignment.Center) { leading() }
         Column(Modifier.weight(1f).padding(vertical = 16.dp).alpha(if (enabled) 1f else 0.38f)) {
             Text(title, Modifier.padding(vertical = 2.dp), style = MaterialTheme.typography.titleMedium)
             if (summary.isNotEmpty()) Text(summary, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -36,6 +43,8 @@ internal fun SettingsRow(title: String, summary: String = "", enabled: Boolean =
         if (trailing != null) { Spacer(Modifier.width(16.dp)); trailing() }
     }
 }
+
+private val LocalMenuBottomSheet = staticCompositionLocalOf { false }
 
 internal val LocalMenuInputSource = staticCompositionLocalOf<MutableState<String>> { error("Native menus need an input source") }
 
@@ -68,7 +77,9 @@ internal fun AdaptiveMenu(expanded: Boolean, bottomSheet: Boolean, dismiss: () -
     offset: DpOffset = DpOffset.Zero, atPoint: Boolean = false, content: @Composable () -> Unit) {
     if (!expanded) return
     if (bottomSheet) ModalBottomSheet(onDismissRequest = dismiss) {
-        Column(Modifier.fillMaxWidth().heightIn(max = 560.dp).verticalScroll(rememberScrollState()).navigationBarsPadding()) { content() }
+        CompositionLocalProvider(LocalMenuBottomSheet provides true) {
+            Column(Modifier.fillMaxWidth().heightIn(max = 560.dp).verticalScroll(rememberScrollState()).navigationBarsPadding()) { content() }
+        }
     } else if (atPoint) Box(Modifier.offset(offset.x, offset.y)) {
         DropdownMenu(expanded = true, onDismissRequest = dismiss) { content() }
     } else DropdownMenu(expanded = true, onDismissRequest = dismiss, offset = offset) { content() }
@@ -92,28 +103,96 @@ internal fun AdaptiveMenuButton(enabled: Boolean, modifier: Modifier = Modifier,
     AdaptiveMenuAnchor(anchor = { open -> IconButton(onClick = open, enabled = enabled, modifier = modifier) { icon() } }, content = content)
 }
 
-/** Native settings rows share the same searched, input-aware choice menu. */
+@Composable
+internal fun InspectorInput(
+    modifier: Modifier = Modifier, enabled: Boolean = true, content: @Composable RowScope.() -> Unit,
+) {
+    Surface(modifier, shape = MaterialTheme.shapes.small, color = MaterialTheme.colorScheme.surfaceContainerHigh) {
+        Row(Modifier.heightIn(min = 40.dp).padding(horizontal = 8.dp).alpha(if (enabled) 1f else 0.38f),
+            horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically,
+            content = content)
+    }
+}
+
+@Composable
+internal fun InspectorField(label: String, field: @Composable (Modifier) -> Unit) {
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically) {
+        if (label.isNotEmpty()) Text(label, Modifier.weight(1f), style = MaterialTheme.typography.labelMedium)
+        field(Modifier.weight(1.5f))
+    }
+}
+
 @Composable
 internal fun ChoiceInput(label: String, selected: String, labels: List<String>, enabled: Boolean = true,
-    button: Boolean = false, summary: String = "", settings: Boolean = false, description: String = "", buttonIcon: String? = null, select: (Int) -> Unit) {
-    AdaptiveMenuAnchor(anchor = { open ->
+    button: Boolean = false, buttonIcon: String? = null, select: (Int) -> Unit) {
+    val active = enabled && labels.isNotEmpty()
+    val anchor: @Composable (open: () -> Unit) -> Unit = { open ->
         if (button) Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-            TextButton(onClick = open, enabled = enabled) {
+            TextButton(onClick = open, enabled = active) {
                 buttonIcon?.let { Icon(iconVector(it), null, Modifier.padding(end = 6.dp).size(16.dp)) }
                 Text(label)
             }
-        } else if (settings) SettingsRow(label, listOf(selected, summary).filter { it.isNotEmpty() }.joinToString("\n"), enabled,
-            modifier = Modifier.clickable(enabled = enabled, onClick = open),
-            trailing = { Icon(iconVector("go-down-symbolic"), null, Modifier.size(20.dp).alpha(if (enabled) 1f else 0.38f)) })
-        else ListItem(headlineContent = { Text(label) },
-            supportingContent = if (selected.isEmpty() && summary.isEmpty()) null else { { Text(listOf(selected, summary).filter { it.isNotEmpty() }.joinToString("\n")) } },
-            trailingContent = { Icon(iconVector("go-down-symbolic"), null, Modifier.size(16.dp)) },
-            colors = ListItemDefaults.colors(containerColor = if (settings) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.surfaceContainerLow),
-            modifier = Modifier.fillMaxWidth().clickable(enabled = enabled, onClick = open)
-                .then(if (settings) Modifier.padding(start = 8.dp).heightIn(min = 72.dp) else Modifier))
-    }) { dismiss ->
-        if (description.isNotEmpty()) Text(description, Modifier.padding(horizontal = 24.dp, vertical = 16.dp), style = MaterialTheme.typography.bodyMedium)
+        } else InspectorField(label) { modifier ->
+            InspectorInput(modifier.clickable(enabled = active, role = Role.Button, onClick = open), active) {
+                Text(selected, Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    style = MaterialTheme.typography.bodyMedium)
+                Icon(iconVector("go-down-symbolic"), null, Modifier.size(16.dp))
+            }
+        }
+    }
+    AdaptiveMenuAnchor(anchor) { dismiss ->
         ChoiceMenuItems(labels, selected = labels.indexOf(selected)) { index -> dismiss(); select(index) }
+    }
+}
+
+@Composable
+internal fun SettingsChoice(control: JSONObject, enabled: Boolean, send: (JSONObject) -> Unit) {
+    var open by rememberSaveable { mutableStateOf(false) }
+    val title = control.getString("label")
+    val choices = control.getJSONArray("choices").objects()
+    val labels = choices.map { it.getString("label") }
+    val selected = control.getString("display")
+    val summary = listOf(selected, control.getString("subtitle")).filter { it.isNotEmpty() }.joinToString("\n")
+    val active = enabled && choices.isNotEmpty()
+    SettingsRow(title, summary, active, Modifier.clickable(enabled = active, role = Role.Button) { open = true },
+        trailing = { Icon(iconVector("go-down-symbolic"), null, Modifier.size(20.dp).alpha(if (active) 1f else 0.38f)) })
+    if (open && active) AlertDialog(onDismissRequest = { open = false }, title = { Text(title) },
+        text = {
+            val index = labels.indexOf(selected)
+            Column(Modifier.verticalScroll(rememberScrollState()).selectableGroup()) {
+                control.optString("choice_description").takeIf { it.isNotEmpty() }?.let {
+                    Text(it, Modifier.padding(bottom = 12.dp))
+                }
+                ChoiceMenuItems(labels, index, radioRows = true) { choice ->
+                    open = false
+                    send(choices[choice].getJSONObject("command"))
+                }
+            }
+        }, confirmButton = { TextButton(onClick = { open = false }) { Text(tr("Cancel")) } })
+}
+
+@Composable
+internal fun ProjectMenuItems(menu: JSONObject, dismiss: () -> Unit, activate: (String) -> Unit) {
+    var path by remember { mutableStateOf(emptyList<String>()) }
+    val active = path.fold(menu) { parent, id ->
+        parent.getJSONArray("entries").objects().firstOrNull { it.optString("id") == id } ?: parent
+    }
+    if (path.isNotEmpty()) {
+        DropdownMenuItem(text = { Text(active.getString("label")) },
+            leadingIcon = { Icon(iconVector("go-previous-symbolic"), tr("Back"), Modifier.size(16.dp)) },
+            onClick = { path = path.dropLast(1) })
+        HorizontalDivider()
+    }
+    active.getJSONArray("entries").objects().forEach { entry ->
+        when (entry.getString("kind")) {
+            "separator" -> HorizontalDivider()
+            "submenu" -> DropdownMenuItem(text = { Text(entry.getString("label")) },
+                trailingIcon = { Icon(iconVector("go-next-symbolic"), null, Modifier.size(16.dp)) },
+                onClick = { path = path + entry.getString("id") })
+            "action" -> DropdownMenuItem(text = { Text(entry.getString("label")) },
+                enabled = entry.getBoolean("enabled"), onClick = { dismiss(); activate(entry.getString("action")) })
+        }
     }
 }
 
@@ -169,17 +248,24 @@ internal fun TimelineContextMenu(menu: JSONObject, enabled: Boolean, origin: DpO
 
 /** Search eligibility and matching are the same Rust selector contract used by GTK. */
 @Composable
-internal fun ChoiceMenuItems(labels: List<String>, selected: Int = -1, select: (Int) -> Unit) {
+internal fun ChoiceMenuItems(labels: List<String>, selected: Int = -1, radioRows: Boolean = false, select: (Int) -> Unit) {
     var query by remember { mutableStateOf("") }
     val encoded = remember(labels) { JSONArray(labels).toString() }
     val matches = remember(encoded, query) { JSONArray(NativeLayout.matchingChoices(encoded, query)) }
-    if (NativeLayout.choiceSearchable(labels.size)) OutlinedTextField(
-        value = query, onValueChange = { query = it }, singleLine = true,
-        label = { Text(tr("Search")) }, modifier = Modifier.padding(12.dp).widthIn(min = 240.dp))
+    if (NativeLayout.choiceSearchable(labels.size)) {
+        val width = if (LocalMenuBottomSheet.current || radioRows) Modifier.fillMaxWidth() else Modifier.widthIn(min = 240.dp)
+        OutlinedTextField(value = query, onValueChange = { query = it }, singleLine = true,
+            label = { Text(tr("Search")) }, modifier = Modifier.padding(12.dp).then(width))
+    }
     for (index in 0 until matches.length()) {
         val choice = matches.getInt(index)
-        DropdownMenuItem(text = { Text(labels[choice]) },
-            trailingIcon = if (selected < 0) null else { { RadioButton(selected = choice == selected, onClick = null) } },
-            onClick = { select(choice) })
+        if (radioRows || selected >= 0) Row(
+            Modifier.fillMaxWidth().selectable(selected = choice == selected, role = Role.RadioButton,
+                onClick = { select(choice) }).heightIn(min = 48.dp).padding(horizontal = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically,
+        ) {
+            RadioButton(selected = choice == selected, onClick = null)
+            Text(labels[choice])
+        } else DropdownMenuItem(text = { Text(labels[choice]) }, onClick = { select(choice) })
     }
 }

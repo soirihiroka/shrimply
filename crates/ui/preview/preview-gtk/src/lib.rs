@@ -306,13 +306,13 @@ fn player(
 
     player_state::set_duration(&player_state, duration);
 
-    let updating_progress = Rc::new(Cell::new(false));
+    let playbar_seek = transport::PlaybarSeek::attach(&progress_scale, &player_state);
     update_controls(
         &play_button,
         &time_label,
         &playback_speed_label,
         &progress_scale,
-        &updating_progress,
+        &playbar_seek,
         &player_state,
     );
 
@@ -323,6 +323,7 @@ fn player(
             loading_spinner: loading_spinner.clone(),
             loading_indicator: loading_indicator.clone(),
             frame_rate_label: frame_rate_label.clone(),
+            playbar_seek: playbar_seek.clone(),
         },
         project.clone(),
         player_state.clone(),
@@ -347,26 +348,15 @@ fn player(
     let controls_time_label = time_label.clone();
     let controls_playback_speed_label = playback_speed_label.clone();
     let controls_progress_scale = progress_scale.clone();
-    let controls_updating_progress = updating_progress.clone();
     player_state::connect_named(&player_state, "video player controls update", move |_| {
         update_controls(
             &controls_play_button,
             &controls_time_label,
             &controls_playback_speed_label,
             &controls_progress_scale,
-            &controls_updating_progress,
+            &playbar_seek,
             &controls_state,
         );
-    });
-
-    let progress_state = player_state.clone();
-    let progress_updating = updating_progress.clone();
-    progress_scale.connect_value_changed(move |scale| {
-        if progress_updating.get() {
-            return;
-        }
-
-        player_state::seek_time(&progress_state, Time::from_seconds_f64(scale.value()));
     });
 
     let play_state = player_state.clone();
@@ -424,6 +414,7 @@ struct PreviewFramePumpWidgets {
     loading_spinner: adw::Spinner,
     loading_indicator: gtk::Stack,
     frame_rate_label: gtk::Label,
+    playbar_seek: Rc<transport::PlaybarSeek>,
 }
 
 fn attach_frame_pump(
@@ -438,11 +429,13 @@ fn attach_frame_pump(
         loading_spinner,
         loading_indicator,
         frame_rate_label,
+        playbar_seek,
     } = widgets;
     let displayed_position = Cell::new(None);
     let render_loading = Cell::new(false);
     let loading = LoadingIndicator::default();
     preview_area.add_tick_callback(move |_, _| {
+        playbar_seek.flush(&player_state);
         let update = media.poll();
         if !update.running {
             return glib::ControlFlow::Break;
@@ -724,7 +717,7 @@ fn update_controls(
     time_label: &gtk::Label,
     playback_speed_label: &gtk::Button,
     progress_scale: &gtk::Scale,
-    updating_progress: &Rc<Cell<bool>>,
+    playbar_seek: &transport::PlaybarSeek,
     player_state: &SharedPlayerState,
 ) {
     let snapshot = player_state::snapshot(player_state);
@@ -744,17 +737,7 @@ fn update_controls(
         &[("speed", playback_speed_text)],
     )));
 
-    updating_progress.set(true);
-    progress_scale.set_range(
-        0.0,
-        (snapshot
-            .duration
-            .as_secs_f64()
-            .max(snapshot.position.as_secs_f64()))
-        .max(0.01),
-    );
-    progress_scale.set_value(snapshot.position.as_secs_f64());
-    updating_progress.set(false);
+    playbar_seek.sync(progress_scale, snapshot);
 }
 
 fn attach_step_button(

@@ -10,12 +10,15 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
@@ -25,6 +28,7 @@ import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.input.nestedscroll.nestedScroll
@@ -41,6 +45,8 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import org.json.JSONObject
 import java.io.File
 
@@ -64,16 +70,23 @@ internal fun PreferencesScreen(timeline: TimelineSession, files: ProjectFiles, d
     val pages = rememberSaveableStateHolder()
     val progress = remember { Animatable(0f) }
     var edge by remember { mutableIntStateOf(BackEventCompat.EDGE_LEFT) }
-    val currentBusy by rememberUpdatedState(busy)
-    suspend fun request(command: JSONObject) {
-        busy = true
+    var backPage by remember { mutableStateOf<String?>(null) }
+    val requests = remember { Mutex() }
+    suspend fun request(command: JSONObject) = requests.withLock {
+        val interactive = command.optString("action") !in listOf("font_visible", "font_search")
+        if (interactive) busy = true
         try {
             val result = timeline.request("preferences", *command.keys().asSequence().map { it to command.get(it) }.toList().toTypedArray())
             description = result
             if (result.has("show_in_files")) files.showInFiles(result.getString("show_in_files"))
-            failure = null
-        } catch (error: Exception) { failure = error.message }
-        finally { busy = false }
+            if (interactive) failure = null
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            failure = error.message
+        } finally {
+            if (interactive) busy = false
+        }
     }
     val send: (JSONObject) -> Unit = { command -> scope.launch { request(command) } }
     val sourcePicker = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
@@ -106,9 +119,14 @@ internal fun PreferencesScreen(timeline: TimelineSession, files: ProjectFiles, d
         try { timeline.request("inspector_visible", "visible" to false) }
         catch (error: Exception) { failure = error.message }
         while (isActive) {
-            if (!currentBusy) {
-                try { description = timeline.request("preferences_schema") }
-                catch (error: Exception) { failure = error.message }
+            requests.withLock {
+                try {
+                    description = timeline.request("preferences_schema")
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (error: Exception) {
+                    failure = error.message
+                }
             }
             delay(1_000)
         }
@@ -148,11 +166,13 @@ internal fun PreferencesScreen(timeline: TimelineSession, files: ProjectFiles, d
             ) {
                 if (active) failure?.let { Text(it, Modifier.padding(horizontal = 24.dp), color = MaterialTheme.colorScheme.error) }
                 if (document == null) LinearProgressIndicator(Modifier.fillMaxWidth())
-                else if (root) groups.forEach { group ->
-                    SettingsRow(group.getString("label"), group.getString("summary"), active,
-                        leading = { Icon(iconVector(group.getString("icon")), null, Modifier.size(24.dp)) },
-                        trailing = { Icon(iconVector("go-next-symbolic"), null, Modifier.size(20.dp)) },
-                        modifier = Modifier.clickable(enabled = active) { page = group.getString("id") })
+                else if (root) SettingsGroup {
+                    groups.forEach { group ->
+                        SettingsRow(group.getString("label"), group.getString("summary"), active,
+                            leading = { SettingsIcon(group.getString("icon")) },
+                            trailing = { Icon(iconVector("go-next-symbolic"), null, Modifier.size(20.dp)) },
+                            modifier = Modifier.clickable(enabled = active) { page = group.getString("id") })
+                    }
                 }
                 else if (fonts) FontPreferences(document, active && !busy, send)
                 else document.getJSONArray("controls").objects().forEach { control -> key(control.getString("id")) {
@@ -162,13 +182,21 @@ internal fun PreferencesScreen(timeline: TimelineSession, files: ProjectFiles, d
             }
         }
     }
-    Box(Modifier.fillMaxSize()) {
-        if (progress.value > 0f) {
-            if (stack.size == 1) workspace()
-            else showPage(stack[stack.lastIndex - 1], Modifier.clearAndSetSemantics {}.focusProperties { canFocus = false }, false)
+    Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceContainerLowest)) {
+        val swiping = progress.value > 0f && backPage == stack.last().first
+        if (swiping && stack.size == 1) {
+            workspace()
             Surface(Modifier.fillMaxSize(), color = Color.Transparent) {}
         }
-        showPage(stack.last(), transform, true)
+        stack.forEachIndexed { index, entry ->
+            val active = index == stack.lastIndex
+            if (active || (swiping && index == stack.lastIndex - 1)) key(entry.first) {
+                val modifier = if (active) {
+                    if (swiping) transform else Modifier
+                } else Modifier.clearAndSetSemantics {}.focusProperties { canFocus = false }
+                showPage(entry, modifier, active)
+            }
+        }
     }
     model?.optJSONObject("dialog")?.let { dialog ->
         val close = { send(dialog.getJSONObject("command")) }
@@ -178,6 +206,7 @@ internal fun PreferencesScreen(timeline: TimelineSession, files: ProjectFiles, d
     }
     PredictiveBackHandler {
         val target = back
+        backPage = stack.last().first
         try {
             it.collect { event -> edge = event.swipeEdge; progress.snapTo(event.progress) }
             if (progress.value > 0f) progress.animateTo(1f, tween(BackAnimationMillis))
@@ -186,7 +215,31 @@ internal fun PreferencesScreen(timeline: TimelineSession, files: ProjectFiles, d
         } catch (cancelled: CancellationException) {
             withContext(NonCancellable) { progress.animateTo(0f, tween(BackAnimationMillis)) }
             throw cancelled
+        } finally {
+            backPage = null
         }
+    }
+}
+
+@Composable
+private fun SettingsIcon(icon: String) {
+    Surface(
+        Modifier.size(36.dp), shape = CircleShape,
+        color = MaterialTheme.colorScheme.secondaryContainer,
+        contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+    ) {
+        Box(contentAlignment = Alignment.Center) { Icon(iconVector(icon), null, Modifier.size(20.dp)) }
+    }
+}
+
+@Composable
+internal fun SettingsGroup(title: String = "", content: @Composable ColumnScope.() -> Unit) {
+    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
+        if (title.isNotEmpty()) Text(title, Modifier.padding(start = 4.dp, top = 8.dp, bottom = 8.dp),
+            color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.titleSmall)
+        Column(Modifier.fillMaxWidth().clip(MaterialTheme.shapes.extraLarge),
+            verticalArrangement = Arrangement.spacedBy(2.dp), content = content)
     }
 }
 
@@ -239,6 +292,7 @@ private fun PreferencesPage(title: String, backLabel: String, back: () -> Unit,
     var titleHeight by remember(title, configuration.screenWidthDp, configuration.fontScale) { mutableStateOf(0.dp) }
     Scaffold(modifier = modifier.fillMaxSize().nestedScroll(scroll.nestedScrollConnection),
         containerColor = MaterialTheme.colorScheme.surface,
+        contentWindowInsets = WindowInsets.safeDrawing,
         topBar = {
             MaterialTheme(typography = MaterialTheme.typography.copy(headlineMedium = MaterialTheme.typography.displaySmall,
                 titleLarge = MaterialTheme.typography.titleMedium)) {
@@ -247,12 +301,17 @@ private fun PreferencesPage(title: String, backLabel: String, back: () -> Unit,
                         val measured = with(densityForTitle) { result.size.height.toDp() }
                         if (measured > titleHeight) titleHeight = measured
                     }) }, scrollBehavior = scroll,
+                    windowInsets = WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal),
                     collapsedHeight = 56.dp, expandedHeight = maxOf(152.dp, 56.dp + titleHeight + 28.dp),
                     colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface,
                         scrolledContainerColor = MaterialTheme.colorScheme.surfaceContainer),
-                    navigationIcon = { IconButton(onClick = back, enabled = enabled) {
-                        Icon(iconVector("go-previous-symbolic"), backLabel, Modifier.size(24.dp))
-                    } })
+                    navigationIcon = {
+                        OutlinedIconButton(onClick = back, enabled = enabled, modifier = Modifier.padding(start = 8.dp),
+                            colors = IconButtonDefaults.outlinedIconButtonColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
+                            Icon(iconVector("go-previous-symbolic"), backLabel, Modifier.size(24.dp))
+                        }
+                    })
             }
         }) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding).navigationBarsPadding().imePadding()

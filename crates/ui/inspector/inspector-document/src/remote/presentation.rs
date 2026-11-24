@@ -48,39 +48,42 @@ pub(super) fn control(control: &InspectorControl, item: &str, id: &str) -> Value
     if control.kind == K::MultilineText && control.path == "/tags" {
         return super::tags::presentation(control, item, id);
     }
-    let widget =
-        match control.kind {
-            K::FontFamilies => return super::fonts::presentation(control, item, id),
-            K::TtsEditor => return super::tts::presentation(control, item, id),
-            K::Boolean | K::LayeredBoolean | K::BeatDetection => "toggle",
-            K::Color | K::LayeredColor => "color",
-            K::Selector
-            | K::OptionalSelector
-            | K::OptionalNumberSelector
-            | K::LayeredSelector
-            | K::VoiceModel
-            | K::AudioCachePreset
-            | K::VisualCacheQuality
-            | K::AudioModifierMenu
-            | K::VisualModifierMenu => "choice",
-            K::Action => "button",
-            K::Analysis | K::AudioCache | K::VisualCache => "progress",
-            K::Performance => "live_rows",
-            K::ReadOnly | K::InfoHeading | K::LayeredDrawing => "text",
-            K::FileLocation => "file_location",
-            K::InfoArtwork => "image",
-            K::InfoLoading => "loading",
-            K::Number
-            | K::Fraction
-            | K::LayeredNumber
-            | K::Vector2
-            | K::Vector3
-            | K::LayeredVector2
-            | K::LayeredVector3 => "number",
-            K::Text | K::MultilineText | K::LayeredText | K::ProjectSettings => {
-                if control.editable { "editor" } else { "text" }
+    let widget = match control.kind {
+        K::FontFamilies => return super::fonts::presentation(control, item, id),
+        K::TtsEditor => return super::tts::presentation(control, item, id),
+        K::Boolean | K::LayeredBoolean | K::BeatDetection => "toggle",
+        K::Color | K::LayeredColor => "color",
+        K::Selector
+        | K::OptionalSelector
+        | K::OptionalNumberSelector
+        | K::LayeredSelector
+        | K::VoiceModel
+        | K::AudioCachePreset
+        | K::VisualCacheQuality
+        | K::AudioModifierMenu
+        | K::VisualModifierMenu => "choice",
+        K::Action => "button",
+        K::Analysis | K::AudioCache | K::VisualCache => "progress",
+        K::Performance => "live_rows",
+        K::ReadOnly | K::InfoHeading | K::LayeredDrawing => "text",
+        K::FileLocation => "file_location",
+        K::InfoArtwork => "image",
+        K::InfoLoading => "loading",
+        K::Number
+        | K::Fraction
+        | K::LayeredNumber
+        | K::Vector2
+        | K::Vector3
+        | K::LayeredVector2
+        | K::LayeredVector3 => "number",
+        K::Text | K::MultilineText | K::LayeredText | K::ProjectSettings => {
+            if control.editable {
+                "inline_text"
+            } else {
+                "text"
             }
-        };
+        }
+    };
     let command = |action: &str| json!({"item":item,"control":id,"action":action});
     let editable = control.editable && control.sensitive;
     let display = if control.components.is_empty() {
@@ -225,13 +228,15 @@ pub(super) fn control(control: &InspectorControl, item: &str, id: &str) -> Value
                 result["command"] = command("activate");
             }
         }
-        "editor" => {
-            let mut next = command("edit");
-            next["editor"] = json!("value");
-            result["editor"] = editor(control, next, false);
-        }
+        "inline_text" => result["editor"] = editor(control, command("text_commit"), false),
         "live_rows" => result["resource"] = live_rows(),
         _ => {}
+    }
+    if matches!(
+        control.kind,
+        K::MultilineText | K::LayeredText | K::LayeredDrawing
+    ) {
+        result["wide"] = json!(true);
     }
     if control.timeline_path.is_some() {
         result["toggles"] = json!(
@@ -257,7 +262,6 @@ pub(super) fn control(control: &InspectorControl, item: &str, id: &str) -> Value
             })
             .collect::<Vec<_>>()
         );
-        result["wide"] = json!(matches!(control.kind, K::LayeredText | K::LayeredDrawing));
         result["reveal_duration_ms"] = json!(shrimply_components_core::layered::REVEAL_DURATION_MS);
         if control.layered.expression {
             let mut next = command("edit");

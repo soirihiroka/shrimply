@@ -70,7 +70,6 @@ use frame::timeline_gtk;
 use recording::handle_video_recording;
 use renderer::{TimelinePainter, TimelineRenderer};
 use runtime::*;
-use setup::*;
 use track_controls::{show_track_add_menu, timeline_sidebar};
 use view::*;
 

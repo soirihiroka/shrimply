@@ -3,7 +3,11 @@
 mod watch;
 use serde_json::{Value, json};
 use shrimply_math_core::Time;
-use shrimply_project_document::{self as document, Project};
+use shrimply_project_document::{
+    self as document, Project,
+    creation::{NewProject, apply_project_settings},
+};
+use shrimply_timeline_edit::project_menu::{self, Action};
 use shrimply_timeline_edit::selection_state;
 use std::{
     cell::{Ref, RefCell},
@@ -93,27 +97,26 @@ impl ProjectBackend {
 
     pub fn dispatch(&mut self, request: &Value) -> Result<Value, String> {
         self.validate_target(request)?;
-        match string(request, "op")? {
+        let operation = operation(request)?;
+        match operation {
             "status" => {}
             "recents" => self.recents = recent_presentations()?,
             "create" => {
                 if self.project.is_some() {
                     return Err("close the current project before creating another project".into());
                 }
-                let path = PathBuf::from(string(request, "path")?);
-                string(request, "name")?;
-                let mut project = Project::default();
-                apply_settings(&mut project, request)?;
-                project.validate()?;
-                fs::create_dir_all(path.parent().ok_or("project path requires a directory")?)
-                    .map_err(|error| format!("could not create project directory: {error}"))?;
-                document::create_new_project_file(&path, &project)?;
+                let project = NewProject::from_fields(request)?;
+                let path = if let Some(path) = request["path"].as_str() {
+                    project.write(PathBuf::from(path), false)?
+                } else {
+                    project.write_in(Path::new(string(request, "directory")?))?
+                };
                 self.open(&path, None)?;
             }
             "settings_schema" => return Ok(settings_schema()),
             "settings" => {
                 self.edit("Change project settings", |project| {
-                    apply_settings(project, request)?;
+                    apply_project_settings(project, request)?;
                     if request["repair_frame_grid"] == true {
                         project.repair_frame_grid();
                     }
@@ -174,7 +177,7 @@ impl ProjectBackend {
                 }
             }
             "undo" | "redo" => {
-                let redo = request["op"] == "redo";
+                let redo = operation == "redo";
                 self.reload()?;
                 let mut candidate = self.required()?.clone();
                 if document::change_history_saved(&mut candidate, redo)? {
@@ -183,17 +186,20 @@ impl ProjectBackend {
                     self.revision += 1;
                 }
             }
-            "add_track" => {
-                let kind = track_kind(string(request, "kind")?)?;
-                self.edit("Add track", |project| {
-                    shrimply_timeline_edit::edit::create_track(
-                        project,
-                        &document::SequenceScopeId::root(),
-                        kind,
-                        true,
-                    )?;
-                    Ok(())
-                })?;
+            "project_menu" => {
+                let action = menu_action(request)?;
+                if let Some(edit) = action.edit() {
+                    self.edit(project_menu::Edit::DESCRIPTION, |project| {
+                        edit.apply(project)
+                    })?;
+                } else {
+                    if action == Action::Save {
+                        self.save()?;
+                    }
+                    let effect =
+                        menu_effect(action).ok_or("project menu callback is unavailable")?;
+                    return Ok(json!({"effect":effect}));
+                }
             }
             "toggle_track" => {
                 let kind = track_kind(string(request, "kind")?)?;
@@ -579,9 +585,13 @@ impl ProjectBackend {
             document::CommitStatus::SaveFailed(message) => ("failed", Some(message.clone())),
             document::CommitStatus::Idle => ("saved", None),
         };
-        Ok(
-            json!({"project":project,"can_undo":self.project.is_some()&&document::can_undo(),"can_redo":self.project.is_some()&&document::can_redo(),"save_state":state,"save_error":save_error,"watch_error":self.error,"revision":self.revision,"recents":self.recents}),
-        )
+        let can_undo = project.is_some() && document::can_undo();
+        let can_redo = project.is_some() && document::can_redo();
+        let menu = project.as_ref().map(|_| {
+            project_menu::document(|action| menu_effect(action).is_some(), can_undo, can_redo)
+        });
+        Ok(json!({"project":project,"project_menu":menu,
+            "save_state":state,"save_error":save_error,"watch_error":self.error,"revision":self.revision,"recents":self.recents}))
     }
 
     pub fn stage_picked_file(
@@ -815,6 +825,31 @@ fn string<'a>(request: &'a Value, key: &str) -> Result<&'a str, String> {
         .ok_or_else(|| format!("'{key}' must be a string"))
 }
 
+pub(super) fn operation(request: &Value) -> Result<&str, String> {
+    let operation = string(request, "op")?;
+    if operation == "project_menu" {
+        let action = menu_action(request)?;
+        if action.history().is_some() {
+            return Ok(action.id());
+        }
+    }
+    Ok(operation)
+}
+
+fn menu_effect(action: Action) -> Option<&'static str> {
+    Some(match action {
+        Action::Save => "flush",
+        Action::Preferences => "show_preferences",
+        Action::Import => "pick_media",
+        Action::Close => "close_workspace",
+        _ => return None,
+    })
+}
+
+fn menu_action(request: &Value) -> Result<Action, String> {
+    Action::from_id(string(request, "action")?).ok_or_else(|| "unknown project menu action".into())
+}
+
 fn track_kind(name: &str) -> Result<shrimply_timeline_edit::TrackKind, String> {
     use shrimply_timeline_edit::TrackKind;
     match name {
@@ -850,48 +885,6 @@ pub(super) fn target_index(
             .unwrap_or(0),
     )
     .map_err(|_| "track index is too large".into())
-}
-
-fn apply_settings(project: &mut Project, request: &Value) -> Result<(), String> {
-    if let Some(name) = request.get("name") {
-        let name = name.as_str().ok_or("project name must be a string")?.trim();
-        if name.is_empty() {
-            return Err("project name cannot be empty".into());
-        }
-        project.name = name.into();
-    }
-    let frame_rate = request
-        .get("fps")
-        .map(|value| {
-            value
-                .as_str()
-                .ok_or("fps must be an exact string, for example 30 or 30000/1001")?
-                .parse()
-                .map_err(|_| "invalid exact project frame rate")
-        })
-        .transpose()?
-        .unwrap_or(project.fps);
-    let mut canvas_size = project.canvas_size;
-    for (key, dimension) in [
-        ("canvas_width", &mut canvas_size.width),
-        ("canvas_height", &mut canvas_size.height),
-    ] {
-        if let Some(value) = request.get(key) {
-            *dimension = u32::try_from(
-                value
-                    .as_u64()
-                    .ok_or_else(|| format!("{key} must be a positive integer"))?,
-            )
-            .map_err(|_| format!("{key} is too large"))?;
-        }
-    }
-    project.set_video_settings(canvas_size, frame_rate)?;
-    if let Some(value) = request.get("tags") {
-        let tags: Vec<String> =
-            serde_json::from_value(value.clone()).map_err(|_| "tags must be a list of strings")?;
-        project.tags = document::normalize_tags(&tags);
-    }
-    Ok(())
 }
 
 fn settings_schema() -> Value {

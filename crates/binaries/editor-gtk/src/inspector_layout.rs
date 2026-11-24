@@ -1,6 +1,7 @@
 use std::{cell::Cell, rc::Rc};
 
 use adw::prelude::*;
+use gtk::glib;
 use shrimply_components_core::layout::INSPECTOR_OVERLAY_WIDTH;
 use shrimply_preferences_core as preferences;
 
@@ -21,12 +22,31 @@ pub(super) fn connect(
         .max_sidebar_width(0.0)
         .sidebar_width_unit(adw::LengthUnit::Px)
         .overflow(gtk::Overflow::Hidden)
+        .show_sidebar(false)
         .build();
-    toggle
-        .bind_property("active", &split, "show-sidebar")
-        .bidirectional()
-        .sync_create()
-        .build();
+    // An empty sidebar has zero slide distance. Only animate the native overlay
+    // once it owns the inspector and has allocated it.
+    toggle.connect_toggled({
+        let split = split.downgrade();
+        move |toggle| {
+            if let Some(split) = split.upgrade()
+                && split.is_collapsed()
+                && split.distance() > 0.0
+            {
+                split.set_show_sidebar(toggle.is_active());
+            }
+        }
+    });
+    split.connect_show_sidebar_notify({
+        let toggle = toggle.downgrade();
+        move |split| {
+            if split.is_collapsed()
+                && let Some(toggle) = toggle.upgrade()
+            {
+                toggle.set_active(split.shows_sidebar());
+            }
+        }
+    });
     let bin = adw::BreakpointBin::new();
     bin.set_child(Some(&split));
     let preview = paned.end_child().expect("persistent preview pane");
@@ -52,6 +72,7 @@ pub(super) fn connect(
         let split = split.downgrade();
         let paned = paned.downgrade();
         let inspector = inspector.downgrade();
+        let toggle = toggle.downgrade();
         let overlay_mode = overlay_mode.clone();
         let stop_panel = stop_panel.clone();
         let saved_width = saved_width.clone();
@@ -68,6 +89,19 @@ pub(super) fn connect(
             split.set_max_sidebar_width(f64::from(saved_width()));
             split.set_sidebar(Some(&inspector));
             split.set_collapsed(true);
+            let toggle = toggle.clone();
+            split.add_tick_callback(move |split, _| {
+                if !split.is_collapsed() {
+                    return glib::ControlFlow::Break;
+                }
+                if split.distance() <= 0.0 {
+                    return glib::ControlFlow::Continue;
+                }
+                if let Some(toggle) = toggle.upgrade() {
+                    split.set_show_sidebar(toggle.is_active());
+                }
+                glib::ControlFlow::Break
+            });
         }
     });
     breakpoint.connect_unapply({
@@ -85,9 +119,10 @@ pub(super) fn connect(
                 return;
             };
             stop_panel();
+            split.set_collapsed(false);
+            split.set_show_sidebar(false);
             split.set_sidebar(None::<&gtk::Widget>);
             split.set_max_sidebar_width(0.0);
-            split.set_collapsed(false);
             overlay_mode.set(false);
             inspector.set_visible(toggle.is_active());
             paned.set_start_child(Some(&inspector));

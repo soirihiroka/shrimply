@@ -455,6 +455,7 @@ impl Scene {
                             key,
                             touch: self.context.touch,
                             point: self.context.point,
+                            button_bounds: None,
                             import_targets: vec![key],
                             position,
                         })

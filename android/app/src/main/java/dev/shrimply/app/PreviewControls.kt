@@ -34,6 +34,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
 
+internal val ColorScheme.previewBackground: Color get() = surfaceContainerLowest
+
 /** Native widgets bind Rust's preview presentation and opaque commands. */
 @Composable
 internal fun PreviewControls(timeline: TimelineSession, modifier: Modifier = Modifier, compact: Boolean = false, pendingOperation: String? = null) {
@@ -44,7 +46,7 @@ internal fun PreviewControls(timeline: TimelineSession, modifier: Modifier = Mod
     val size = if (compact) 40.dp else 48.dp
     val scope = rememberCoroutineScope()
     var failure by remember { mutableStateOf<String?>(null) }
-    Surface(modifier.width(size), color = MaterialTheme.colorScheme.surfaceContainerLow) {
+    Surface(modifier.width(size), color = MaterialTheme.colorScheme.previewBackground) {
         Column(Modifier.verticalScroll(rememberScrollState()), horizontalAlignment = Alignment.CenterHorizontally) {
             Box(Modifier.size(size), contentAlignment = Alignment.Center) {
                 if (controls.getBoolean("loading") || pendingOperation != null) {

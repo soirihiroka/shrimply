@@ -4,6 +4,7 @@ pub use track_add_actions::{
     track_add_menu,
 };
 pub mod edit;
+pub mod project_menu;
 pub mod selection_state;
 
 use shrimply_project_document::project::Project;

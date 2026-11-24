@@ -248,9 +248,7 @@ impl Runtime {
             self.refresh(false);
         }
         self.backend.validate_target(request)?;
-        let operation = request["op"]
-            .as_str()
-            .ok_or("request requires an operation")?;
+        let operation = crate::project::operation(request)?;
         let inspector_handled = if matches!(operation, "inspector" | "inspector_numeric") {
             let revision = player::snapshot(&self.player).revision;
             let controller = self.inspector.as_ref().ok_or("Open a project first")?;

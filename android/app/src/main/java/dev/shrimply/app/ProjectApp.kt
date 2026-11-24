@@ -260,11 +260,19 @@ internal fun ProjectApp(timeline: TimelineSession, files: ProjectFiles, caption:
                         .put("command", control.getJSONObject("command")).toString()
                     inspectorFile.launch(arrayOf(control.getString("mime")))
                 },
-                preferences = { preferences = true },
-                close = ::closeProject,
                 command = ::command,
-                save = { action { timeline.request("save"); files.flush(project.getString("path")) } },
-                importFile = { importTarget = defaultTarget(); importFile.launch(arrayOf("*/*")) },
+                activateProjectMenu = { callback -> action {
+                    val path = project.getString("path")
+                    val result = timeline.request("project_menu", "action" to callback, "project_path" to path)
+                    when (val effect = result.optString("effect")) {
+                        "" -> Unit
+                        "flush" -> files.flush(path)
+                        "pick_media" -> { importTarget = defaultTarget(); importFile.launch(arrayOf("*/*")) }
+                        "show_preferences" -> preferences = true
+                        "close_workspace" -> closeProject()
+                        else -> error("Unknown Android project menu effect: $effect")
+                    }
+                } },
                 export = { exportFolder.launch(null) },
                 exportVideo = { exportSettings = "video" },
                 exportCaptions = { exportSettings = "captions" },
@@ -290,7 +298,7 @@ internal fun ProjectApp(timeline: TimelineSession, files: ProjectFiles, caption:
     }
     } }
     if (preferences) PreferencesScreen(timeline, files, { preferences = false }) { workspace(true) } else workspace(false)
-    if (create) AlertDialog(
+    if (create && schema.has("frame_rates")) AlertDialog(
         modifier = Modifier.imePadding(),
         onDismissRequest = { if (!busy) { create = false } },
         title = { Text(tr("Create Project")) },
@@ -316,13 +324,11 @@ internal fun ProjectApp(timeline: TimelineSession, files: ProjectFiles, caption:
                 rates.map { it.getString("label") }, !busy) { fps = rates[it].getString("value") }
         } },
         confirmButton = { TextButton(enabled = !busy && name.isNotBlank(), onClick = {
-            create = false
             action {
-                val width = canvasWidth.toIntOrNull() ?: throw IllegalArgumentException("Width must be a whole number.")
-                val height = canvasHeight.toIntOrNull() ?: throw IllegalArgumentException("Height must be a whole number.")
-                val values = arrayOf<Pair<String, Any>>("name" to name.trim(), "canvas_width" to width, "canvas_height" to height,
-                    "fps" to fps.trim(), "tags" to JSONArray(tags.split(',').map(String::trim).filter(String::isNotEmpty)))
-                timeline.request("create", "path" to files.newPath(name).absolutePath, *values)
+                timeline.request("create", "directory" to files.projectDirectory().absolutePath,
+                    "name" to name, "canvas_width" to canvasWidth, "canvas_height" to canvasHeight,
+                    "fps" to fps, "tags" to tags)
+                create = false
             }
         }) { Text(tr("Create")) } },
         dismissButton = { TextButton(onClick = { create = false }) { Text(tr("Cancel")) } })
@@ -470,8 +476,8 @@ private fun ActionIcon(icon: String, description: String, enabled: Boolean = tru
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun Editor(timeline: TimelineSession, files: ProjectFiles, project: JSONObject, playback: JSONObject, status: JSONObject, enabled: Boolean,
-    onError: (String) -> Unit, selectFile: (JSONObject) -> Unit, preferences: () -> Unit, close: () -> Unit, command: (String, Array<out Pair<String, Any>>) -> Unit, save: () -> Unit,
-    importFile: () -> Unit, export: () -> Unit, exportVideo: () -> Unit, exportCaptions: () -> Unit, viewChange: (JSONObject, () -> Unit) -> Unit,
+    onError: (String) -> Unit, selectFile: (JSONObject) -> Unit, command: (String, Array<out Pair<String, Any>>) -> Unit,
+    activateProjectMenu: (String) -> Unit, export: () -> Unit, exportVideo: () -> Unit, exportCaptions: () -> Unit, viewChange: (JSONObject, () -> Unit) -> Unit,
     pendingOperation: String? = null, renderOnly: Boolean = false, windowCaption: WindowCaption = WindowCaption()) {
     var fullscreen by rememberSaveable(project.getString("path")) { mutableStateOf(false) }
     val inspectorState = rememberSaveableStateHolder()
@@ -551,13 +557,12 @@ private fun Editor(timeline: TimelineSession, files: ProjectFiles, project: JSON
                         DropdownMenuItem(text = { Text(tr("Export Captions")) }, onClick = { dismiss(); exportCaptions() })
                         DropdownMenuItem(text = { Text(tr("Export Project")) }, onClick = { dismiss(); export() })
                     }
-                    AdaptiveMenuButton(enabled, Modifier.size(targetSize), icon = { Icon(iconVector("view-more-symbolic"), tr("Project options"), Modifier.size(16.dp)) }) { dismiss ->
-                        DropdownMenuItem(text = { Text(tr("Undo")) }, enabled = status.optBoolean("can_undo"), onClick = { dismiss(); command("undo", emptyArray()) })
-                        DropdownMenuItem(text = { Text(tr("Redo")) }, enabled = status.optBoolean("can_redo"), onClick = { dismiss(); command("redo", emptyArray()) })
-                        DropdownMenuItem(text = { Text(tr("Save")) }, onClick = { dismiss(); save() })
-                        DropdownMenuItem(text = { Text(tr("Import")) }, onClick = { dismiss(); importFile() })
-                        DropdownMenuItem(text = { Text(tr("Preferences")) }, onClick = { dismiss(); preferences() })
-                        DropdownMenuItem(text = { Text(tr("Close")) }, onClick = { dismiss(); close() })
+                    status.optJSONObject("project_menu")?.let { menu ->
+                        AdaptiveMenuButton(enabled, Modifier.size(targetSize), icon = {
+                            Icon(iconVector(menu.getString("icon")), menu.getString("label"), Modifier.size(16.dp))
+                        }) { dismiss ->
+                            ProjectMenuItems(menu, dismiss, activateProjectMenu)
+                        }
                     }
                 } })
             if (!fullscreen) HorizontalDivider()
@@ -575,7 +580,7 @@ private fun Editor(timeline: TimelineSession, files: ProjectFiles, project: JSON
                     timelineVisible = timelineOpen && !fullscreen,
                     overlay = !sideBySide,
                     preview = {
-                        Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+                        Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.previewBackground) {
                             BoxWithConstraints(Modifier.fillMaxSize()) {
                                 val previewCompact = NativeLayout.compactControls(maxWidth.value, maxHeight.value)
                                 Column(Modifier.fillMaxSize()) {

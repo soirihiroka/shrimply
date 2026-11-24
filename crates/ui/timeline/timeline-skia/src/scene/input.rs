@@ -227,24 +227,16 @@ impl Scene {
                 let project = self.project.borrow();
                 self.touch_button_feedback =
                     track_button_at(&project, self.view, origin.x.into(), origin.y.into())
-                        .and_then(|(key, action)| {
-                            let row = shrimply_timeline_paint_skia::rows::row_for_track(
-                                &project,
-                                key.kind,
-                                key.track_index,
-                            )?;
-                            let bounds = shrimply_timeline_paint_skia::math::track_button_bounds(
-                                self.view.into(),
-                                row,
-                                action,
-                            )?;
+                        .and_then(|button| {
+                            let bounds =
+                                track_controls::track_button_bounds(&project, self.view, button)?;
                             self.button_feedback_serial = self
                                 .button_feedback_serial
                                 .checked_add(1)
                                 .expect("button feedback serial overflow");
                             Some(TouchButtonFeedback {
                                 serial: self.button_feedback_serial,
-                                button: (key, action),
+                                button,
                                 bounds,
                                 origin,
                                 phase: TouchButtonPhase::Pressed,

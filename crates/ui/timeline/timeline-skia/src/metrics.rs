@@ -32,5 +32,3 @@ pub const RECORDING_DURATION_HEADROOM_SECONDS: i64 = 10;
 pub const VIDEO_RECORDING_POLL_INTERVAL: Duration = Duration::from_millis(33);
 pub const PERFORMANCE_MARKER_HEIGHT: f64 = 3.0;
 pub const PERFORMANCE_VISUAL_ALPHA: f32 = 0.42;
-pub const SIDEBAR_WIDTH: i32 = 44;
-pub const SIDEBAR_ICON_SIZE: i32 = 28;

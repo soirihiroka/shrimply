@@ -2,6 +2,7 @@ use core::pin::Pin;
 use cxx_qt::CxxQtType;
 use cxx_qt_lib::{QString, QStringList, QUrl};
 use shrimply_components_qt::about;
+use shrimply_cross_ui_core::editor::project_menu::{self, Action as ProjectAction};
 use shrimply_cross_ui_core::editor::{EditorSession, LoadEvent, ProjectLoader};
 use shrimply_editor_state::player_state;
 use shrimply_math_core::{Fraction, frame_count, frame_index, time_from_signed_frame};
@@ -132,6 +133,12 @@ pub mod qobject {
         #[cxx_name = "seekFrame"]
         fn seek_frame(self: Pin<&mut EditorBackend>, frame: i64);
         #[qinvokable]
+        #[cxx_name = "projectMenu"]
+        fn project_menu(self: &EditorBackend) -> QString;
+        #[qinvokable]
+        #[cxx_name = "activateProjectMenu"]
+        fn activate_project_menu(self: Pin<&mut EditorBackend>, id: &QString);
+        #[qinvokable]
         fn save(self: Pin<&mut EditorBackend>);
         #[qinvokable]
         #[cxx_name = "showSaveAsDialog"]
@@ -260,6 +267,15 @@ pub mod qobject {
         #[cxx_name = "selectPreferenceServerDevice"]
         fn select_preference_server_device(self: Pin<&mut EditorBackend>, index: i32);
 
+        #[qsignal]
+        #[cxx_name = "projectPreferencesRequested"]
+        fn project_preferences_requested(self: Pin<&mut EditorBackend>);
+        #[qsignal]
+        #[cxx_name = "projectAboutRequested"]
+        fn project_about_requested(self: Pin<&mut EditorBackend>);
+        #[qsignal]
+        #[cxx_name = "projectCloseRequested"]
+        fn project_close_requested(self: Pin<&mut EditorBackend>);
         #[qsignal]
         #[cxx_name = "requestTrust"]
         fn request_trust(
@@ -658,14 +674,49 @@ impl qobject::EditorBackend {
         }
     }
 
-    pub fn save(self: Pin<&mut Self>) {
+    pub fn project_menu(&self) -> QString {
+        let document = project_menu::document(
+            |action| Self::project_host_action(action).is_some(),
+            project::can_undo(),
+            project::can_redo(),
+        );
+        QString::from(document.to_string().as_str())
+    }
+
+    pub fn activate_project_menu(self: Pin<&mut Self>, id: &QString) {
+        let Some(action) = ProjectAction::from_id(&id.to_string()) else {
+            return;
+        };
+        self.run_project_menu(action);
+    }
+
+    fn project_host_action(action: ProjectAction) -> Option<fn(Pin<&mut Self>)> {
+        Some(match action {
+            ProjectAction::SaveAs => Self::show_save_as_dialog,
+            ProjectAction::Preferences => Self::project_preferences_requested,
+            ProjectAction::About => Self::project_about_requested,
+            ProjectAction::Close => Self::project_close_requested,
+            _ => return None,
+        })
+    }
+
+    fn run_project_menu(self: Pin<&mut Self>, action: ProjectAction) {
         let Some(session) = self.session.as_deref() else {
             return;
         };
-        if let Err(error) = session.save() {
-            tracing::error!(%error, "Qt project save failed");
-            self.emit_error("Could not save project", &error);
+        match session.activate_project_menu(action) {
+            Ok(Some(action)) => {
+                if let Some(activate) = Self::project_host_action(action) {
+                    activate(self);
+                }
+            }
+            Ok(None) => {}
+            Err(error) => self.emit_error(action.label(), &error),
         }
+    }
+
+    pub fn save(self: Pin<&mut Self>) {
+        self.run_project_menu(ProjectAction::Save);
     }
 
     pub fn show_save_as_dialog(mut self: Pin<&mut Self>) {
@@ -733,11 +784,11 @@ impl qobject::EditorBackend {
     }
 
     pub fn undo(self: Pin<&mut Self>) {
-        self.history_action(project::undo);
+        self.run_project_menu(ProjectAction::Undo);
     }
 
     pub fn redo(self: Pin<&mut Self>) {
-        self.history_action(project::redo);
+        self.run_project_menu(ProjectAction::Redo);
     }
 
     pub fn inspector_overlay(self: Pin<&mut Self>, width: f64) -> bool {
@@ -1089,28 +1140,6 @@ impl qobject::EditorBackend {
                     ));
             }
             None | Some(Err(TryRecvError::Empty)) => {}
-        }
-    }
-
-    fn history_action(self: Pin<&mut Self>, action: fn(&mut project::Project) -> bool) {
-        let Some(session) = self.session.as_deref() else {
-            return;
-        };
-        if action(&mut session.project.borrow_mut()) {
-            let duration = session.project.borrow().duration();
-            player_state::refresh_project(
-                &session.player_state,
-                player_state::ProjectChange {
-                    duration: Some(duration),
-                    audio: true,
-                    audio_beats: true,
-                    audio_waveforms: true,
-                    video: true,
-                    captions: true,
-                    inspector: true,
-                    ..Default::default()
-                },
-            );
         }
     }
 

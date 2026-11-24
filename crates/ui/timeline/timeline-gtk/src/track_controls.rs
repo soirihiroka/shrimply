@@ -1,4 +1,5 @@
 use super::*;
+use renderer::{Rect, Vec2};
 use shrimply_components_gtk::ui::I18nWidgetExt;
 
 const TRACK_ADD_MENU_ICON_SIZE: i32 = 16;
@@ -15,8 +16,7 @@ pub(super) fn timeline_sidebar(
     area: &gtk::GLArea,
     preferences: &preferences_store::SharedPreferences,
 ) -> gtk::Box {
-    let toolbar = gtk::Box::new(gtk::Orientation::Vertical, 6);
-    toolbar.set_width_request(SIDEBAR_WIDTH);
+    let toolbar = gtk::Box::new(gtk::Orientation::Vertical, 4);
     toolbar.set_margin_top(4);
     toolbar.set_margin_bottom(4);
     toolbar.set_margin_start(4);
@@ -25,7 +25,10 @@ pub(super) fn timeline_sidebar(
     use shrimply_timeline_skia::TimelineTool;
     let button = |tool: TimelineTool| {
         let description = tool.description();
-        let button = timeline_tool_button(description.icon);
+        let button = gtk::ToggleButton::builder()
+            .icon_name(description.icon)
+            .has_frame(false)
+            .build();
         button.set_tooltip_i18n(description.label);
         button
     };
@@ -164,6 +167,7 @@ pub(super) fn show_track_add_menu(
         position,
         touch,
         point,
+        button_bounds,
     } = request;
     if let Some(existing) = runtime.borrow_mut().active_context_menu.take() {
         existing.close();
@@ -182,25 +186,13 @@ pub(super) fn show_track_add_menu(
         let dialog = crate::context_menu::bottom_sheet(area, &menu);
         crate::context_menu::PresentedMenu::Sheet(dialog)
     } else {
-        let parent = area.parent().expect("timeline GLArea must have a parent");
-        let point = area
-            .compute_point(&parent, &gtk::graphene::Point::new(point.x, point.y))
-            .expect("timeline coordinates must translate to its parent");
         let popover = gtk::Popover::builder()
             .has_arrow(true)
-            .position(gtk::PositionType::Bottom)
             .halign(gtk::Align::Center)
             .child(&menu)
             .build();
-        popover.set_parent(&parent);
-        popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(
-            point.x() as i32,
-            point.y() as i32,
-            1,
-            1,
-        )));
-        shrimply_components_gtk::ui::unparent_on_close(&popover);
-        popover.popup();
+        let bounds = button_bounds.unwrap_or_else(|| Rect::from_min_size(point, Vec2::ONE));
+        crate::context_menu::popup_at(area, &popover, bounds);
         crate::context_menu::PresentedMenu::Popover(popover)
     };
     for entry in track_add_menu(key.kind) {

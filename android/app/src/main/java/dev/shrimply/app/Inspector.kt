@@ -16,12 +16,15 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CornerSize
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -30,10 +33,18 @@ import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isCtrlPressed
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
@@ -171,19 +182,23 @@ internal fun InspectorControl(timeline: TimelineSession, control: JSONObject, en
                 when (val widget = control.getString("widget")) {
                     "tags" -> Tags(control, editable, send)
                     "group" -> {
-                        if (label.isNotEmpty()) Text(label, Modifier.padding(if (settings) PaddingValues(start = 24.dp, top = 20.dp, end = 16.dp, bottom = 8.dp) else PaddingValues()), color = if (settings) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant, style = if (settings) MaterialTheme.typography.labelMedium else MaterialTheme.typography.labelLarge)
-                        control.getJSONArray("controls").objects().forEach { child ->
-                            key(child.getString("id")) { InspectorControl(timeline, child, active, send, selectFile, settings) }
+                        val children: @Composable ColumnScope.() -> Unit = {
+                            control.getJSONArray("controls").objects().forEach { child ->
+                                key(child.getString("id")) { InspectorControl(timeline, child, active, send, selectFile, settings) }
+                            }
+                        }
+                        if (settings) SettingsGroup(label, children)
+                        else {
+                            if (label.isNotEmpty()) Text(label, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                style = MaterialTheme.typography.labelLarge)
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp), content = children)
                         }
                     }
                     "file" -> {
-                        Text(label, style = MaterialTheme.typography.labelMedium)
-                        if (control.getString("display").isNotEmpty()) Text(control.getString("display"))
-                        Row {
-                            TextButton(onClick = { selectFile(control) }, enabled = editable) { Text(control.getString("choose_label")) }
-                            control.optJSONObject("clear")?.let { clear ->
-                                TextButton(onClick = { send(clear.getJSONObject("command")) }, enabled = editable) { Text(clear.getString("label")) }
-                            }
+                        val value = control.getString("display").ifEmpty { control.getString("choose_label") }
+                        InspectorEditorButton(label, value, editable) { selectFile(control) }
+                        control.optJSONObject("clear")?.let { clear ->
+                            TextButton(onClick = { send(clear.getJSONObject("command")) }, enabled = editable) { Text(clear.getString("label")) }
                         }
                     }
                     "actions" -> Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
@@ -235,11 +250,10 @@ internal fun InspectorControl(timeline: TimelineSession, control: JSONObject, en
                         Switch(checked = control.getBoolean("selected"), enabled = editable, onCheckedChange = { send(control.getJSONObject("command")) },
                             modifier = Modifier.semantics { contentDescription = label })
                     }
-                    "choice" -> {
+                    "choice" -> if (settings) SettingsChoice(control, editable, send) else {
                         val choices = control.getJSONArray("choices").objects()
                         ChoiceInput(label, control.getString("display"), choices.map { it.getString("label") }, editable,
-                            control.getString("choice_style") == "button", summary = if (settings) summary else "", settings = settings,
-                            description = control.optString("choice_description"),
+                            button = control.getString("choice_style") == "button",
                             buttonIcon = control.optString("choice_icon").takeIf { it.isNotEmpty() }) { send(choices[it].getJSONObject("command")) }
                     }
                     "progress" -> Column(Modifier.fillMaxWidth()) {
@@ -256,26 +270,33 @@ internal fun InspectorControl(timeline: TimelineSession, control: JSONObject, en
                     else TextButton(onClick = { send(control.getJSONObject("command")) }, enabled = active) { Text(label) }
                     "live_rows" -> LiveRows(timeline, control.getJSONObject("resource"))
                     "text", "loading" -> {
-                        if (settings) SettingsRow(label, control.getString("display"), active)
-                        else {
+                        val display = control.getString("display")
+                        if (settings) SettingsRow(label, display, active)
+                        else if (display.isEmpty()) {
                             if (label.isNotEmpty()) Text(label, style = MaterialTheme.typography.labelMedium)
-                            if (control.getString("display").isNotEmpty()) Text(control.getString("display"), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        } else InspectorField(label) { modifier ->
+                            Text(display, modifier, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                style = MaterialTheme.typography.bodyMedium)
                         }
                         if (widget == "loading") LinearProgressIndicator(Modifier.fillMaxWidth())
                     }
                     "color" -> ColorInput(control, editable, send)
                     "number" -> NumberInput(timeline, control, editable)
-                    "font" -> SettingsRow(label, control.getString("display"), editable,
-                        modifier = Modifier.clickable(enabled = editable) { send(control.getJSONObject("command")) },
-                        trailing = { Icon(iconVector("go-next-symbolic"), null, Modifier.size(20.dp)) })
-                    "editor" -> if (settings) SettingsRow(label,
-                        listOf(control.getString("display"), summary).filter { it.isNotEmpty() }.joinToString("\n"), editable,
-                        modifier = Modifier.clickable(enabled = editable) { editor = control.getJSONObject("editor") })
-                    else ListItem(headlineContent = { Text(if (label.isEmpty()) control.getString("display") else label) },
-                        supportingContent = if (label.isNotEmpty()) { { Text(control.getString("display")) } } else null,
-                        colors = ListItemDefaults.colors(containerColor = if (settings) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.surfaceContainerLow),
-                        modifier = Modifier.fillMaxWidth().clickable(enabled = editable) { editor = control.getJSONObject("editor") }
-                            .then(if (settings) Modifier.padding(start = 8.dp).heightIn(min = 72.dp) else Modifier))
+                    "font" -> {
+                        val open = { send(control.getJSONObject("command")) }
+                        if (settings) SettingsRow(label, control.getString("display"), editable,
+                            modifier = Modifier.clickable(enabled = editable, onClick = open),
+                            trailing = { Icon(iconVector("go-next-symbolic"), null, Modifier.size(20.dp)) })
+                        else InspectorEditorButton(label, control.getString("display"), editable, open)
+                    }
+                    "inline_text" -> InlineTextInput(label, control.getJSONObject("editor"), editable, send)
+                    "editor" -> {
+                        val description = control.getJSONObject("editor")
+                        if (settings) SettingsRow(label,
+                            listOf(control.getString("display"), summary).filter { it.isNotEmpty() }.joinToString("\n"), editable,
+                            modifier = Modifier.clickable(enabled = editable) { editor = description })
+                        else InspectorEditorButton(label, control.getString("display"), editable) { editor = description }
+                    }
                     else -> error("Unknown native widget: $widget")
                 }
             }
@@ -300,6 +321,81 @@ internal fun InspectorControl(timeline: TimelineSession, control: JSONObject, en
             title = { Text(dialog.getString("title")) }, text = { Text(dialog.getString("message")) },
             confirmButton = { TextButton(onClick = { send(action.getJSONObject("command")); confirmation = null }) { Text(dialog.getString("confirm_label")) } },
             dismissButton = { TextButton(onClick = { confirmation = null }) { Text(dialog.getString("cancel_label")) } })
+    }
+}
+
+@Composable
+private fun InspectorEditorButton(label: String, value: String, enabled: Boolean, open: () -> Unit) {
+    InspectorField(label) { modifier ->
+        InspectorInput(modifier.clickable(enabled = enabled, role = Role.Button, onClick = open), enabled) {
+            Text(value, Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis,
+                style = MaterialTheme.typography.bodyMedium)
+            Icon(iconVector("go-next-symbolic"), null, Modifier.size(16.dp))
+        }
+    }
+}
+
+@Composable
+private fun InlineTextInput(label: String, editor: JSONObject, enabled: Boolean, send: (JSONObject) -> Unit) {
+    val command = editor.getJSONObject("command")
+    val field = editor.getJSONArray("fields").getJSONObject(0)
+    val value = field.getString("value")
+    val multiline = field.getBoolean("multiline")
+    val focus = LocalFocusManager.current
+    val owner = command.toString()
+    key(owner) {
+        var draft by remember { mutableStateOf(value) }
+        var initial by remember { mutableStateOf(value) }
+        var editing by remember { mutableStateOf(false) }
+        fun commit() {
+            if (enabled && draft != initial) {
+                send(JSONObject(owner).put("value", draft))
+                initial = draft
+            }
+        }
+        val finish by rememberUpdatedState { if (editing) commit() }
+        DisposableEffect(Unit) { onDispose { finish() } }
+        InspectorField(label) { modifier ->
+            InspectorInput(modifier, enabled) {
+                BasicTextField(
+                    value = if (editing) draft else value, onValueChange = { draft = it }, enabled = enabled,
+                    modifier = Modifier.weight(1f).padding(vertical = 10.dp)
+                        .semantics { contentDescription = editor.getString("title") }
+                        .onFocusChanged {
+                            if (it.isFocused && !editing) {
+                                initial = value
+                                draft = value
+                            } else if (!it.isFocused && editing) {
+                                commit()
+                            }
+                            editing = it.isFocused
+                        }
+                        .onPreviewKeyEvent {
+                            val enter = it.key == Key.Enter || it.key == Key.NumPadEnter
+                            when {
+                                enter && (!multiline || it.isCtrlPressed) -> {
+                                    if (it.type == KeyEventType.KeyDown) { commit(); focus.clearFocus() }
+                                    true
+                                }
+                                it.key == Key.Escape -> {
+                                    if (it.type == KeyEventType.KeyDown) { draft = initial; focus.clearFocus() }
+                                    true
+                                }
+                                else -> false
+                            }
+                        },
+                    textStyle = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onSurface),
+                    cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                    singleLine = !multiline, maxLines = if (multiline) 8 else 1,
+                    keyboardOptions = KeyboardOptions(imeAction = if (multiline) ImeAction.Default else ImeAction.Done),
+                    keyboardActions = KeyboardActions(onDone = { commit(); focus.clearFocus() }),
+                )
+                if (multiline && editing && draft != initial) IconButton(onClick = { commit(); focus.clearFocus() },
+                    enabled = enabled, modifier = Modifier.size(40.dp)) {
+                    Icon(iconVector("check-plain-symbolic"), editor.getString("confirm_label"), Modifier.size(16.dp))
+                }
+            }
+        }
     }
 }
 
@@ -395,10 +491,11 @@ private fun InspectorEdit(editor: JSONObject, dismiss: () -> Unit, send: (JSONOb
                 val choices = field.optJSONArray("choices")
                 if (choices != null) {
                     val options = choices.objects()
-                    ChoiceInput(if (field.isNull("label")) "" else field.getString("label"), options.first { it.getString("value") == values[index].value }.getString("label"), options.map { it.getString("label") }) {
+                    ChoiceInput(if (field.isNull("label")) "" else field.getString("label"), options.firstOrNull { it.getString("value") == values[index].value }?.getString("label").orEmpty(), options.map { it.getString("label") }) {
                         values[index].value = options[it].getString("value")
                     }
                 } else OutlinedTextField(value = values[index].value, onValueChange = { values[index].value = it },
+                modifier = Modifier.fillMaxWidth(),
                 label = if (!field.isNull("label") && field.getString("label").isNotEmpty()) { { Text(field.getString("label")) } } else null,
                 singleLine = !field.getBoolean("multiline"),
                 keyboardOptions = KeyboardOptions(keyboardType = if (field.getString("keyboard") == "decimal") KeyboardType.Decimal else KeyboardType.Text)) }

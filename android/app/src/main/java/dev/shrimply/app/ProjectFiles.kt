@@ -76,11 +76,9 @@ internal class ProjectFiles(context: Context) : AutoCloseable {
     private fun hashLabel(hash: ByteArray?) = hash?.joinToString("") { "%02x".format(it) }
     private fun ensureOpen() { if (closed) throw CancellationException("Project session closed") }
 
-    fun newPath(name: String): File {
+    fun projectDirectory(): File {
         check(!closing) { "Project session closed" }
-        val folder = File(root, UUID.randomUUID().toString())
-        val fileName = name.trim().replace(Regex("[\\\\/:*?\"<>|]"), "_").ifEmpty { "Untitled" }
-        return File(folder, "$fileName.shrimp")
+        return root
     }
 
     suspend fun openTree(tree: Uri, progress: (String) -> Unit): List<File> = withContext(Dispatchers.IO) {

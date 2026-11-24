@@ -26,6 +26,8 @@ use shrimply_visual_modifiers::{ModifierEffect, ModifierModel};
 mod audio_generator;
 mod comment;
 mod conversion;
+#[cfg(feature = "editor")]
+pub mod creation;
 pub use comment::{CommentColor, CommentItem, CommentTrack};
 mod generated;
 #[cfg(feature = "editor")]

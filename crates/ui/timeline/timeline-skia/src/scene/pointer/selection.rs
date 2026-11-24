@@ -24,6 +24,11 @@ pub(in crate::scene) fn activate_track_button(
                     .pointer_release_pos
                     .or(runtime.pointer_pos)
                     .unwrap_or(Vec2::ZERO),
+                button_bounds: track_controls::track_button_bounds(
+                    &runtime.project.borrow(),
+                    runtime.view,
+                    (key, action),
+                ),
                 position,
                 import_targets: if selected_tracks.contains(&key) {
                     selected_tracks

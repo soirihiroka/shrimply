@@ -205,25 +205,46 @@ impl Interaction {
         if let Some(completed) = self.complete(request)? {
             return Ok(Some(completed));
         }
-        if request["action"] != "edit" || request["editor"] != "expression" {
+        let text_commit = request["action"] == "text_commit";
+        if !text_commit && (request["action"] != "edit" || request["editor"] != "expression") {
             return Ok(None);
         }
         let serial = request["edit_serial"]
             .as_u64()
-            .ok_or("Expression session is required")?;
+            .ok_or("Inspector edit session is required")?;
         let edit = self
             .sessions
             .get(&serial)
-            .ok_or("Expression editor is closed")?;
+            .ok_or("Inspector edit session is closed")?;
         if edit.key != key(request) {
-            return Err("Expression control changed".into());
+            return Err("Inspector control changed".into());
         }
         if busy || self.active.is_some() {
-            return Err("Finish the current control gesture before editing the expression".into());
+            return Err("Finish the current control gesture before editing another control".into());
         }
         let revision = shrimply_project_document::project::history_revision();
         if edit.history_revision != revision {
-            return Err("The project changed while the expression editor was open".into());
+            return Err("The project changed while the control was being edited".into());
+        }
+        if text_commit {
+            if !edit.control.editable
+                || !edit.control.sensitive
+                || !matches!(
+                    edit.control.kind,
+                    ControlKind::Text | ControlKind::MultilineText | ControlKind::LayeredText
+                )
+            {
+                return Err("Inspector text control is unavailable".into());
+            }
+            let value = request["value"]
+                .as_str()
+                .ok_or("Inspector text value is required")?;
+            self.finish_expression();
+            let edit = self.sessions.get(&serial).expect("retained text control");
+            controller.set_basic_control_value(&edit.target, &edit.control, value)?;
+            controller.commit_basic_control(&edit.target, &edit.control)?;
+            self.advance_sessions(revision);
+            return Ok(Some(Value::Null));
         }
         if self.expression != Some(serial) {
             self.finish_expression();
@@ -331,6 +352,10 @@ impl Interaction {
                             self.advertise(document, &control["expression_editor"]["command"]);
                         control["expression_editor"]["command"]["edit_serial"] = json!(serial);
                         control["expression_editor"]["finish"]["edit_serial"] = json!(serial);
+                    }
+                    if control["widget"] == "inline_text" {
+                        let command = &mut control["editor"]["command"];
+                        command["edit_serial"] = json!(self.advertise(document, command));
                     }
                     if control["widget"] != "number" {
                         continue;

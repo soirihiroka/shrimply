@@ -34,11 +34,3 @@ pub(super) fn watch_updates(area: &gtk::GLArea, runtime: &Rc<RefCell<TimelineRun
         glib::ControlFlow::Continue
     });
 }
-
-pub(super) fn timeline_tool_button(icon_name: &str) -> gtk::ToggleButton {
-    let button = gtk::ToggleButton::new();
-    button.set_child(Some(&gtk::Image::from_icon_name(icon_name)));
-    button.set_size_request(SIDEBAR_ICON_SIZE, SIDEBAR_ICON_SIZE);
-    button.add_css_class("flat");
-    button
-}

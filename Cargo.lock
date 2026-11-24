@@ -8174,6 +8174,8 @@ dependencies = [
 name = "shrimply-timeline-edit"
 version = "0.1.0"
 dependencies = [
+ "serde_json",
+ "shrimply-i18n",
  "shrimply-math-core",
  "shrimply-process-reporting",
  "shrimply-project-document",

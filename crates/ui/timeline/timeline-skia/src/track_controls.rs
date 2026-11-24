@@ -49,6 +49,15 @@ pub fn track_button_at(
     }
 }
 
+pub(crate) fn track_button_bounds(
+    project: &Project,
+    view: TimelineViewState,
+    (key, action): TrackButtonId,
+) -> Option<Rect> {
+    let row = row_for_track(project, key.kind, key.track_index)?;
+    shrimply_timeline_paint_skia::math::track_button_bounds(view.into(), row, action)
+}
+
 pub use shrimply_timeline_paint_skia::math::track_label_button_y;
 pub use shrimply_timeline_paint_skia::track_controls::track_enabled;
 

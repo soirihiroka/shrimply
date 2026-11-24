@@ -1,6 +1,7 @@
 use shrimply_math_core::Fraction;
 use shrimply_project_types::{
-    COMMON_FRAME_RATES, CanvasSize, MAX_CANVAS_DIMENSION, MIN_CANVAS_DIMENSION, PROJECT_PRESETS,
+    COMMON_FRAME_RATES, CanvasSize, DEFAULT_CANVAS_SIZE, DEFAULT_PROJECT_FPS, MAX_CANVAS_DIMENSION,
+    MIN_CANVAS_DIMENSION, PROJECT_PRESETS,
 };
 
 pub const CUSTOM_PRESET_INDEX: usize = PROJECT_PRESETS.len();
@@ -17,22 +18,9 @@ pub struct ProjectSettings {
 
 impl Default for ProjectSettings {
     fn default() -> Self {
-        let preset = PROJECT_PRESETS
-            .iter()
-            .position(|preset| preset.label == "1080p 30 FPS")
-            .unwrap_or_default();
-        let selected = &PROJECT_PRESETS[preset];
-        let frame_rate = COMMON_FRAME_RATES
-            .iter()
-            .position(|rate| rate.value == selected.fps)
-            .unwrap_or_default();
         Self {
             original: None,
-            preset,
-            width: selected.canvas_size.width,
-            height: selected.canvas_size.height,
-            frame_rate,
-            custom_frame_rate: None,
+            ..Self::from_values(DEFAULT_CANVAS_SIZE, DEFAULT_PROJECT_FPS)
         }
     }
 }

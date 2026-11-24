@@ -75,7 +75,7 @@ pub(super) fn add_control(
     target: &InspectorTarget,
     control: InspectorControl,
 ) {
-    let first_row = section.row.get();
+    let previous_row = section.rows.last_child();
     let focus = control.preview_focus.clone();
     match control.kind {
         ControlKind::Action => value::action(section, context, target, control),
@@ -152,11 +152,11 @@ pub(super) fn add_control(
                 crate::preview_focus::set(&state, focused);
             }
         });
-        for row in first_row..section.row.get() {
-            let widget = section
-                .grid
-                .child_at(0, row)
-                .expect("inserted inspector row");
+        let first = previous_row.as_ref().map_or_else(
+            || section.rows.first_child(),
+            |widget| widget.next_sibling(),
+        );
+        for widget in std::iter::successors(first, |widget| widget.next_sibling()) {
             let click = gtk::GestureClick::new();
             click.set_button(0);
             click.set_propagation_phase(gtk::PropagationPhase::Capture);

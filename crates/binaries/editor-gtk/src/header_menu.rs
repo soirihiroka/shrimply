@@ -3,8 +3,10 @@ use adw::prelude::*;
 use gtk::gio;
 use shrimply_components_gtk::tr;
 use shrimply_components_gtk::ui::I18nMenuExt;
-use shrimply_cross_ui_core::editor::change_history;
-use std::cell::RefCell;
+use shrimply_cross_ui_core::editor::{
+    EditorSession,
+    project_menu::{self, Action, Entry},
+};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::rc::Rc;
@@ -13,140 +15,130 @@ pub(crate) fn add(
     header_bar: &adw::HeaderBar,
     window: &adw::ApplicationWindow,
     toasts: &adw::ToastOverlay,
-    session: Rc<shrimply_cross_ui_core::editor::EditorSession>,
+    session: Rc<EditorSession>,
 ) {
-    let project = session.project.clone();
-    let player_state = session.player_state.clone();
-    let preferences = session.preferences.clone();
     let menu = gio::Menu::new();
-    let project_menu = gio::Menu::new();
-    project_menu.append_i18n("New Project", "win.new-project");
-    project_menu.append_i18n("Open Project…", "win.open-project");
-    let track_menu = gio::Menu::new();
-    track_menu.append_i18n("Comment Track", "win.new-comment-track");
-    track_menu.append_i18n("Caption Track", "win.new-caption-track");
-    track_menu.append_i18n("Video Track", "win.new-video-track");
-    track_menu.append_i18n("Audio Track", "win.new-audio-track");
-    project_menu.append_submenu_i18n("New Track", &track_menu);
-    project_menu.append_i18n("Save", "win.save");
-    project_menu.append_i18n("Save As…", "win.save-as");
-    menu.append_section(None, &project_menu);
-
-    let history_menu = gio::Menu::new();
-    history_menu.append_i18n("Undo", "win.undo");
-    history_menu.append_i18n("Redo", "win.redo");
-    menu.append_section(None, &history_menu);
-
-    let settings_menu = gio::Menu::new();
-    settings_menu.append_i18n("Preferences", "win.preferences");
-    settings_menu.append_i18n("Keyboard Shortcuts", "win.show-shortcuts");
-    menu.append_section(None, &settings_menu);
-
-    let about_menu = gio::Menu::new();
-    about_menu.append_i18n("About Shrimply", "win.about");
-    menu.append_section(None, &about_menu);
-
-    add_action(window, "new-project", {
-        let window = window.clone();
-        move || {
-            if let Err(error) = launch_sibling("shrimply", None) {
-                show_error_dialog(&window, "Could not create project", &error);
+    let sections = project_menu::sections(|action| host_action(action).is_some());
+    let mut history = Vec::new();
+    for section in sections {
+        let group = gio::Menu::new();
+        append_entries(&group, &section, &mut |action| {
+            let command = add_action(window, action.id(), {
+                let window = window.clone();
+                let toasts = toasts.clone();
+                let session = session.clone();
+                move || match session.activate_project_menu(action) {
+                    Ok(Some(action)) => host_action(action).expect("advertised window callback")(
+                        &window, &toasts, &session,
+                    ),
+                    Ok(None) => {}
+                    Err(error) => show_error_dialog(&window, action.label(), &error),
+                }
+            });
+            if action.history().is_some() {
+                command.set_enabled(action.enabled(project::can_undo(), project::can_redo()));
+                history.push((action, command.downgrade()));
             }
-        }
-    });
-    add_action(window, "open-project", {
-        let window = window.clone();
-        move || show_open_project_dialog(&window)
-    });
-    for (name, kind) in [
-        ("new-comment-track", NewTrackKind::Comment),
-        ("new-caption-track", NewTrackKind::Caption),
-        ("new-video-track", NewTrackKind::Video),
-        ("new-audio-track", NewTrackKind::Audio),
-    ] {
-        add_action(window, name, {
-            let project = project.clone();
-            let player_state = player_state.clone();
-            move || add_track(&project, &player_state, kind)
         });
+        menu.append_section(None, &group);
     }
-    add_action(window, "save-as", {
-        let window = window.clone();
-        let toasts = toasts.clone();
-        let session = session.clone();
-        move || show_save_as_dialog(&window, &toasts, &session)
-    });
-    add_action(window, "save", {
-        let window = window.clone();
-        let session = session.clone();
-        move || {
-            if let Err(error) = session.save() {
-                show_error_dialog(&window, "Could not save project", &error);
+    player_state::connect_named(
+        &session.player_state,
+        "project menu history",
+        move |event| {
+            if matches!(event, player_state::PlayerEvent::Project(_)) {
+                let (can_undo, can_redo) = (project::can_undo(), project::can_redo());
+                for (action, command) in &history {
+                    if let Some(command) = command.upgrade() {
+                        command.set_enabled(action.enabled(can_undo, can_redo));
+                    }
+                }
             }
-        }
-    });
-    add_action(window, "undo", {
-        let project = project.clone();
-        let player_state = player_state.clone();
-        move || change_history(&project, &player_state, project::undo)
-    });
-    add_action(window, "redo", {
-        let project = project.clone();
-        let player_state = player_state.clone();
-        move || change_history(&project, &player_state, project::redo)
-    });
-    add_action(window, "show-shortcuts", {
-        let window = window.clone();
-        move || show_shortcuts_dialog(&window)
-    });
-    add_action(window, "preferences", {
-        let window = window.clone();
-        let preferences = preferences.clone();
-        move || {
-            shrimply_preferences_gtk::page::show_preferences_dialog(&window, preferences.clone())
-        }
-    });
-    add_action(window, "about", {
-        let window = window.clone();
-        move || show_about_dialog(&window)
-    });
+        },
+    );
 
     if let Some(app) = window.application() {
         for (action, accelerators) in [
-            ("win.new-project", &["<Primary>n"][..]),
-            ("win.open-project", &["<Primary>o"][..]),
-            ("win.save", &["<Primary>s"][..]),
-            ("win.save-as", &["<Primary><Shift>s"][..]),
-            ("win.undo", &["<Primary>z"][..]),
-            ("win.redo", &["<Primary><Shift>z", "<Primary>y"][..]),
-            ("win.preferences", &["<Primary>comma"][..]),
-            ("win.show-shortcuts", &["<Primary>question"][..]),
+            (Action::NewProject, &["<Primary>n"][..]),
+            (Action::OpenProject, &["<Primary>o"][..]),
+            (Action::Save, &["<Primary>s"][..]),
+            (Action::SaveAs, &["<Primary><Shift>s"][..]),
+            (Action::Undo, &["<Primary>z"][..]),
+            (Action::Redo, &["<Primary><Shift>z", "<Primary>y"][..]),
+            (Action::Preferences, &["<Primary>comma"][..]),
+            (Action::Shortcuts, &["<Primary>question"][..]),
         ] {
-            app.set_accels_for_action(action, accelerators);
+            app.set_accels_for_action(&format!("win.{}", action.id()), accelerators);
         }
     }
 
     let popover = gtk::PopoverMenu::from_model(Some(&menu));
     let menu_button = gtk::MenuButton::builder()
-        .icon_name("open-menu-symbolic")
+        .icon_name(project_menu::ICON)
+        .tooltip_text(tr!(project_menu::LABEL).as_ref())
         .has_frame(false)
         .popover(&popover)
         .build();
     shrimply_components_gtk::ui::adaptive_menu(&menu_button, "win", window);
-    let export_button = export::build_export_button(window, toasts, project, preferences);
+    let export_button = export::build_export_button(
+        window,
+        toasts,
+        session.project.clone(),
+        session.preferences.clone(),
+    );
     let header_right = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     header_right.append(&export_button);
     header_right.append(&menu_button);
     header_bar.pack_end(&header_right);
 }
 
-fn add_action<F>(window: &adw::ApplicationWindow, name: &str, activate: F)
+type HostAction = fn(&adw::ApplicationWindow, &adw::ToastOverlay, &Rc<EditorSession>);
+
+fn host_action(action: Action) -> Option<HostAction> {
+    Some(match action {
+        Action::NewProject => |window, _, _| {
+            if let Err(error) = launch_sibling("shrimply", None) {
+                show_error_dialog(window, "Could not create project", &error);
+            }
+        },
+        Action::OpenProject => |window, _, _| show_open_project_dialog(window),
+        Action::SaveAs => show_save_as_dialog,
+        Action::Shortcuts => |window, _, _| show_shortcuts_dialog(window),
+        Action::Preferences => |window, _, session| {
+            shrimply_preferences_gtk::page::show_preferences_dialog(
+                window,
+                session.preferences.clone(),
+            );
+        },
+        Action::About => |window, _, _| show_about_dialog(window),
+        _ => return None,
+    })
+}
+
+fn append_entries(menu: &gio::Menu, entries: &[Entry], register: &mut impl FnMut(Action)) {
+    for entry in entries {
+        match entry {
+            Entry::Action(action) => {
+                register(*action);
+                menu.append_i18n(action.label(), &format!("win.{}", action.id()));
+            }
+            Entry::Submenu(label, entries) => {
+                let submenu = gio::Menu::new();
+                append_entries(&submenu, entries, register);
+                menu.append_submenu_i18n(label, &submenu);
+            }
+        }
+    }
+}
+
+fn add_action<F>(window: &adw::ApplicationWindow, name: &str, activate: F) -> gio::SimpleAction
 where
     F: Fn() + 'static,
 {
     let action = gio::SimpleAction::new(name, None);
     action.connect_activate(move |_, _| activate());
     window.add_action(&action);
+    action
 }
 
 fn show_shortcuts_dialog(window: &adw::ApplicationWindow) {
@@ -330,39 +322,4 @@ fn show_about_dialog(window: &adw::ApplicationWindow) {
         }
     }
     dialog.present(Some(window));
-}
-
-#[derive(Clone, Copy)]
-enum NewTrackKind {
-    Comment,
-    Caption,
-    Video,
-    Audio,
-}
-
-fn add_track(
-    project: &Rc<RefCell<project::Project>>,
-    player_state: &player_state::SharedPlayerState,
-    kind: NewTrackKind,
-) {
-    {
-        let mut project = project.borrow_mut();
-        match kind {
-            NewTrackKind::Comment => project.comment_tracks.push(Default::default()),
-            NewTrackKind::Caption => project.caption_tracks.push(Default::default()),
-            NewTrackKind::Video => project.video_tracks.push(Default::default()),
-            NewTrackKind::Audio => project.audio_tracks.push(Default::default()),
-        }
-        project::commit_edit(&project, "create-timeline-track");
-    }
-    player_state::refresh_project(
-        player_state,
-        player_state::ProjectChange {
-            audio: matches!(kind, NewTrackKind::Audio),
-            video: matches!(kind, NewTrackKind::Video),
-            captions: matches!(kind, NewTrackKind::Caption),
-            inspector: true,
-            ..Default::default()
-        },
-    );
 }

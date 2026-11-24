@@ -87,17 +87,19 @@ define_class!(
         #[unsafe(method(validateMenuItem:))]
         fn validate_menu_item(&self, item: &NSMenuItem) -> bool {
             if self.ivars().loading.borrow().is_some() { return false.into(); }
-            match item.action() {
-                Some(action) if action == sel!(undo:) => {
-                    text_undo_manager(self, false).is_some()
-                        || shrimply_project_document::project::can_undo()
+            let redo = match item.action() {
+                Some(action) if action == sel!(undo:) => Some(false),
+                Some(action) if action == sel!(redo:) => Some(true),
+                Some(action) if action == sel!(activateProjectMenu:) => menus::selected_action(item).history(),
+                _ => None,
+            };
+            redo.is_none_or(|redo| {
+                text_undo_manager(self, redo).is_some() || if redo {
+                    shrimply_project_document::project::can_redo()
+                } else {
+                    shrimply_project_document::project::can_undo()
                 }
-                Some(action) if action == sel!(redo:) => {
-                    text_undo_manager(self, true).is_some()
-                        || shrimply_project_document::project::can_redo()
-                }
-                _ => true,
-            }
+            })
         }
     }
 
@@ -392,6 +394,21 @@ define_class!(
             player_state::seek_time(&session.player_state, player.duration.scaled(shrimply_math_core::fraction_from_f64(sender.doubleValue())));
         }
 
+        #[unsafe(method(activateProjectMenu:))]
+        fn activate_project_menu(&self, sender: &NSMenuItem) {
+            let action = menus::selected_action(sender);
+            if let Some(redo) = action.history() {
+                self.project_history(redo);
+                return;
+            }
+            let session = self.ivars().session.get().expect("project loaded");
+            match session.activate_project_menu(action) {
+                Ok(Some(action)) => Self::project_host_action(action).expect("advertised window callback")(self, sender),
+                Ok(None) => {}
+                Err(error) => self.show_error(&error),
+            }
+        }
+
         #[unsafe(method(importMedia:))]
         fn import_media(&self, _sender: &NSObject) {
             let session = self.ivars().session.get().expect("project loaded");
@@ -400,40 +417,12 @@ define_class!(
 
         #[unsafe(method(undo:))]
         fn undo(&self, _sender: &NSObject) {
-            if let Some(manager) = text_undo_manager(self, false) {
-                manager.undo();
-                return;
-            }
-            // Finish an active field edit before restoring the project snapshot.
-            if !self.ivars().window.get().expect("window created").makeFirstResponder(None) {
-                return;
-            }
-            let session = self.ivars().session.get().expect("project loaded");
-            shrimply_cross_ui_core::editor::change_history(
-                &session.project, &session.player_state, shrimply_project_document::project::undo,
-            );
+            self.project_history(false);
         }
 
         #[unsafe(method(redo:))]
         fn redo(&self, _sender: &NSObject) {
-            if let Some(manager) = text_undo_manager(self, true) {
-                manager.redo();
-                return;
-            }
-            // Finish an active field edit before restoring the project snapshot.
-            if !self.ivars().window.get().expect("window created").makeFirstResponder(None) {
-                return;
-            }
-            let session = self.ivars().session.get().expect("project loaded");
-            shrimply_cross_ui_core::editor::change_history(
-                &session.project, &session.player_state, shrimply_project_document::project::redo,
-            );
-        }
-
-        #[unsafe(method(saveProject:))]
-
-        fn save_project(&self, _sender: &NSObject) {
-            if let Err(error) = self.ivars().session.get().expect("project loaded").save() { self.show_error(&error); }
+            self.project_history(true);
         }
 
         #[unsafe(method(saveProjectAs:))]
@@ -677,6 +666,58 @@ define_class!(
         }
     }
 );
+
+impl Editor {
+    fn project_host_action(
+        action: shrimply_cross_ui_core::editor::project_menu::Action,
+    ) -> Option<fn(&Self, &NSObject)> {
+        use shrimply_cross_ui_core::editor::project_menu::Action;
+        Some(match action {
+            Action::Import => Self::import_media,
+            Action::SaveAs => Self::save_project_as,
+            Action::Preferences => Self::show_settings,
+            Action::Shortcuts => Self::show_shortcuts,
+            Action::About => Self::show_about,
+            Action::Close => |editor, _| {
+                editor
+                    .ivars()
+                    .window
+                    .get()
+                    .expect("project window")
+                    .performClose(None)
+            },
+            _ => return None,
+        })
+    }
+
+    fn project_history(&self, redo: bool) {
+        use shrimply_cross_ui_core::editor::project_menu::Action;
+
+        if let Some(manager) = text_undo_manager(self, redo) {
+            if redo {
+                manager.redo();
+            } else {
+                manager.undo();
+            }
+            return;
+        }
+        if !self
+            .ivars()
+            .window
+            .get()
+            .expect("window created")
+            .makeFirstResponder(None)
+        {
+            return;
+        }
+        let session = self.ivars().session.get().expect("project loaded");
+        if let Err(error) =
+            session.activate_project_menu(if redo { Action::Redo } else { Action::Undo })
+        {
+            self.show_error(&error);
+        }
+    }
+}
 
 fn text_undo_manager(
     editor: &Editor,

@@ -1,23 +1,19 @@
-use std::cell::Cell;
-
 use gtk::prelude::*;
 
 use crate::ui::control_row;
 
 pub(super) struct InspectorSection {
-    pub(super) grid: gtk::Grid,
-    pub(super) row: Cell<i32>,
+    pub(super) rows: gtk::Box,
 }
 
 impl InspectorSection {
     pub(super) fn controls() -> Self {
         Self {
-            grid: gtk::Grid::builder()
-                .column_spacing(6)
-                .row_spacing(8)
+            rows: gtk::Box::builder()
+                .orientation(gtk::Orientation::Vertical)
+                .spacing(8)
                 .hexpand(true)
                 .build(),
-            row: Cell::new(0),
         }
     }
 
@@ -26,12 +22,10 @@ impl InspectorSection {
     }
 
     pub(super) fn add_wide_control(&self, child: &impl IsA<gtk::Widget>) {
-        let row = self.row.get();
-        self.row.set(row + 1);
-        self.grid.attach(child, 0, row, 2, 1);
+        self.rows.append(child);
     }
 
     pub(super) fn into_widget(self) -> gtk::Widget {
-        self.grid.upcast()
+        self.rows.upcast()
     }
 }

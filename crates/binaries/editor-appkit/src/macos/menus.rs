@@ -7,6 +7,7 @@ use objc2_app_kit::{
     NSToolbarFlexibleSpaceItemIdentifier, NSToolbarItem,
 };
 use objc2_foundation::{MainThreadMarker, NSArray, NSString, ns_string};
+use shrimply_cross_ui_core::editor::project_menu::{self, Action, Entry};
 
 fn item(
     menu: &NSMenu,
@@ -63,23 +64,9 @@ pub fn install(editor: &Editor) {
     let app = NSApplication::sharedApplication(mtm);
     let main = NSMenu::initWithTitle(NSMenu::alloc(mtm), ns_string!(""));
     let application = submenu(&main, "Shrimply", mtm);
-    let about = item(
-        &application,
-        "About Shrimply",
-        "",
-        Some(sel!(showAbout:)),
-        mtm,
-    );
-    unsafe { about.setTarget(Some(editor)) };
+    command(&application, editor, Action::About, "");
     application.addItem(&NSMenuItem::separatorItem(mtm));
-    let settings = item(
-        &application,
-        "Settings…",
-        ",",
-        Some(sel!(showSettings:)),
-        mtm,
-    );
-    unsafe { settings.setTarget(Some(editor)) };
+    command(&application, editor, Action::Preferences, ",");
     application.addItem(&NSMenuItem::separatorItem(mtm));
     item(
         &application,
@@ -90,16 +77,9 @@ pub fn install(editor: &Editor) {
     );
 
     let file = submenu(&main, "File", mtm);
-    let import = item(&file, "Import Media…", "i", Some(sel!(importMedia:)), mtm);
-    unsafe {
-        import.setTarget(Some(editor));
-    }
-    let save = item(&file, "Save", "s", Some(sel!(saveProject:)), mtm);
-    unsafe {
-        save.setTarget(Some(editor));
-    }
-    let save_as = item(&file, "Save As…", "s", Some(sel!(saveProjectAs:)), mtm);
-    unsafe { save_as.setTarget(Some(editor)) };
+    command(&file, editor, Action::Import, "i");
+    command(&file, editor, Action::Save, "s");
+    let save_as = command(&file, editor, Action::SaveAs, "s");
     save_as
         .setKeyEquivalentModifierMask(NSEventModifierFlags::Command | NSEventModifierFlags::Shift);
     file.addItem(&NSMenuItem::separatorItem(mtm));
@@ -111,13 +91,9 @@ pub fn install(editor: &Editor) {
 
     let edit = submenu(&main, "Edit", mtm);
     edit.setAutoenablesItems(true);
-    let undo = item(&edit, "Undo", "z", Some(sel!(undo:)), mtm);
-    let redo = item(&edit, "Redo", "z", Some(sel!(redo:)), mtm);
-    redo.setKeyEquivalentModifierMask(NSEventModifierFlags::Command | NSEventModifierFlags::Shift);
-    unsafe {
-        undo.setTarget(Some(editor));
-        redo.setTarget(Some(editor));
-    }
+    command(&edit, editor, Action::Undo, "z");
+    command(&edit, editor, Action::Redo, "z")
+        .setKeyEquivalentModifierMask(NSEventModifierFlags::Command | NSEventModifierFlags::Shift);
     edit.addItem(&NSMenuItem::separatorItem(mtm));
     item(&edit, "Cut", "x", Some(sel!(cut:)), mtm);
     item(&edit, "Copy", "c", Some(sel!(copy:)), mtm);
@@ -146,16 +122,60 @@ pub fn install(editor: &Editor) {
         .set(view_items)
         .expect("view menu already installed");
     let help = submenu(&main, "Help", mtm);
-    let shortcuts = item(
-        &help,
-        "Keyboard Shortcuts",
-        "",
-        Some(sel!(showShortcuts:)),
-        mtm,
-    );
-    unsafe { shortcuts.setTarget(Some(editor)) };
+    command(&help, editor, Action::Shortcuts, "");
     app.setHelpMenu(Some(&help));
     app.setMainMenu(Some(&main));
+}
+
+fn project_options(editor: &Editor) -> Retained<NSMenu> {
+    let mtm = editor.mtm();
+    let label = shrimply_i18n::text(project_menu::LABEL);
+    let menu = NSMenu::initWithTitle(NSMenu::alloc(mtm), &NSString::from_str(&label));
+    for (index, section) in
+        project_menu::sections(|action| Editor::project_host_action(action).is_some())
+            .into_iter()
+            .enumerate()
+    {
+        if index > 0 {
+            menu.addItem(&NSMenuItem::separatorItem(mtm));
+        }
+        append_entries(editor, &menu, &section);
+    }
+    menu
+}
+
+fn command(menu: &NSMenu, editor: &Editor, action: Action, key: &str) -> Retained<NSMenuItem> {
+    let title = shrimply_i18n::text(action.label());
+    let row = item(
+        menu,
+        &title,
+        key,
+        Some(sel!(activateProjectMenu:)),
+        editor.mtm(),
+    );
+    row.setTag(action as isize);
+    unsafe { row.setTarget(Some(editor)) };
+    row
+}
+
+fn append_entries(editor: &Editor, menu: &NSMenu, entries: &[Entry]) {
+    let mtm = editor.mtm();
+    for entry in entries {
+        match entry {
+            Entry::Action(action) => {
+                command(menu, editor, *action, "");
+            }
+            Entry::Submenu(label, children) => {
+                let title = shrimply_i18n::text(label);
+                append_entries(editor, &submenu(menu, &title, mtm), children)
+            }
+        }
+    }
+}
+
+pub(super) fn selected_action(item: &NSMenuItem) -> Action {
+    let index = usize::try_from(item.tag()).expect("project menu action index");
+    Action::ALL[index]
 }
 
 pub fn toolbar_identifiers() -> Retained<NSArray<NSString>> {
@@ -164,24 +184,37 @@ pub fn toolbar_identifiers() -> Retained<NSArray<NSString>> {
         ns_string!("timeline"),
         unsafe { NSToolbarFlexibleSpaceItemIdentifier },
         ns_string!("export"),
+        ns_string!("project-options"),
     ])
 }
 
 pub fn toolbar_item(editor: &Editor, identifier: &NSString) -> Option<Retained<NSToolbarItem>> {
-    if identifier.to_string() == "export" {
+    let identifier_name = identifier.to_string();
+    let menu = match identifier_name.as_str() {
+        "export" => Some(("Export", "square.and.arrow.up", export_menu(editor))),
+        "project-options" => Some((
+            project_menu::LABEL,
+            "ellipsis.circle",
+            project_options(editor),
+        )),
+        _ => None,
+    };
+    if let Some((label, symbol, menu)) = menu {
         let item = NSMenuToolbarItem::initWithItemIdentifier(
             NSMenuToolbarItem::alloc(editor.mtm()),
             identifier,
         );
-        item.setLabel(ns_string!("Export"));
-        item.setToolTip(Some(ns_string!("Export")));
-        item.setImage(Some(&layout::symbol("square.and.arrow.up", "Export")));
-        item.setMenu(&export_menu(editor));
+        let label = shrimply_i18n::text(label);
+        let title = NSString::from_str(&label);
+        item.setLabel(&title);
+        item.setToolTip(Some(&title));
+        item.setImage(Some(&layout::symbol(symbol, &label)));
+        item.setMenu(&menu);
         item.setShowsIndicator(true);
         item.setBordered(true);
         return Some(item.into_super());
     }
-    let (label, symbol, action) = match identifier.to_string().as_str() {
+    let (label, symbol, action) = match identifier_name.as_str() {
         "inspector" => ("Toggle Inspector", "sidebar.left", sel!(toggleInspector:)),
         "timeline" => (
             "Toggle Timeline",

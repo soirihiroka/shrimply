@@ -1,7 +1,118 @@
-use std::rc::Rc;
+use std::{cell::Cell, rc::Rc};
 
 use adw::prelude::*;
+use gtk::{gdk, glib};
 use shrimply_components_gtk::layout::TRANSPORT_ROW_MIN_WIDTH;
+
+use crate::{player_state, project::Time};
+use player_state::{SharedPlayerState, Snapshot};
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SeekInput {
+    Button(u32),
+    Touch(usize),
+}
+
+#[derive(Default)]
+pub(super) struct PlaybarSeek {
+    input: Cell<Option<SeekInput>>,
+    pending: Cell<Option<Time>>,
+    syncing: Cell<bool>,
+}
+
+impl PlaybarSeek {
+    pub(super) fn attach(scale: &gtk::Scale, player: &SharedPlayerState) -> Rc<Self> {
+        let seek = Rc::new(Self::default());
+        let events = gtk::EventControllerLegacy::new();
+        events.set_propagation_phase(gtk::PropagationPhase::Capture);
+        events.connect_event({
+            let seek = seek.clone();
+            let player = player.clone();
+            let scale = scale.downgrade();
+            move |_, event| {
+                let kind = event.event_type();
+                let input = match kind {
+                    gdk::EventType::ButtonPress | gdk::EventType::ButtonRelease => event
+                        .downcast_ref::<gdk::ButtonEvent>()
+                        .map(|event| SeekInput::Button(event.button())),
+                    gdk::EventType::TouchBegin
+                    | gdk::EventType::TouchEnd
+                    | gdk::EventType::TouchCancel => {
+                        Some(SeekInput::Touch(event.event_sequence().as_ptr() as usize))
+                    }
+                    _ => None,
+                };
+                if matches!(
+                    kind,
+                    gdk::EventType::ButtonPress | gdk::EventType::TouchBegin
+                ) && seek.input.get().is_none()
+                    && input.is_some()
+                {
+                    seek.input.set(input);
+                    player_state::set_scrubbing(&player, true);
+                }
+                let finishing = match kind {
+                    gdk::EventType::ButtonRelease
+                    | gdk::EventType::TouchEnd
+                    | gdk::EventType::TouchCancel => input == seek.input.get(),
+                    gdk::EventType::GrabBroken => true,
+                    _ => false,
+                };
+                if finishing && let Some(scale) = scale.upgrade() {
+                    seek.finish(&scale, &player);
+                }
+                glib::Propagation::Proceed
+            }
+        });
+        scale.add_controller(events);
+        scale.connect_unmap({
+            let seek = seek.clone();
+            let player = player.clone();
+            move |scale| seek.finish(scale, &player)
+        });
+        scale.connect_value_changed({
+            let seek = seek.clone();
+            let player = player.clone();
+            move |scale| {
+                if seek.syncing.get() {
+                    return;
+                }
+                let position = Time::from_seconds_f64(scale.value());
+                if seek.input.get().is_some() {
+                    seek.pending.set(Some(position));
+                } else {
+                    player_state::seek_time(&player, position);
+                }
+            }
+        });
+        seek
+    }
+
+    pub(super) fn sync(&self, scale: &gtk::Scale, snapshot: Snapshot) {
+        if self.input.get().is_some() {
+            return;
+        }
+        let position = snapshot.position.as_secs_f64();
+        self.syncing.set(true);
+        scale.set_range(0.0, snapshot.duration.as_secs_f64().max(position).max(0.01));
+        scale.set_value(position);
+        self.syncing.set(false);
+    }
+
+    pub(super) fn flush(&self, player: &SharedPlayerState) {
+        if let Some(position) = self.pending.take() {
+            player_state::seek_time(player, position);
+        }
+    }
+
+    fn finish(&self, scale: &gtk::Scale, player: &SharedPlayerState) {
+        if self.input.take().is_some() {
+            player_state::set_scrubbing(player, false);
+            self.flush(player);
+            self.sync(scale, player_state::snapshot(player));
+        }
+    }
+}
 
 pub(super) fn controls(
     buttons: [&gtk::Button; 3],

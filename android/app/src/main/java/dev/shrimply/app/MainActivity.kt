@@ -135,7 +135,7 @@ class MainActivity : ComponentActivity() {
                 }
             }
             val palette = arrayOf(
-                "window_bg" to colors.surfaceContainerLowest, "window_fg" to colors.onSurface,
+                "window_bg" to colors.previewBackground, "window_fg" to colors.onSurface,
                 "view_bg" to colors.surfaceContainerLow, "view_fg" to colors.onSurface,
                 "alternate_bg" to colors.surfaceContainer, "button_bg" to colors.surfaceContainerHigh,
                 "button_fg" to colors.onSurface, "border" to colors.outlineVariant,

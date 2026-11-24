@@ -46,6 +46,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import org.json.JSONArray
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.style.TextOverflow
 import org.json.JSONObject
 
 private val ColorDialogWidth = 880.dp
@@ -61,20 +63,19 @@ internal fun ColorInput(control: JSONObject, enabled: Boolean, send: (JSONObject
     var picker by remember { mutableStateOf<JSONObject?>(null) }
     val input = LocalMenuInputSource.current
     var bottomSheet by remember { mutableStateOf(false) }
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(control.getString("label"), Modifier.weight(1f), style = MaterialTheme.typography.labelMedium)
-        FilledTonalButton(enabled = enabled, onClick = {
+    InspectorField(control.getString("label")) { modifier ->
+        InspectorInput(modifier.clickable(enabled = enabled, role = Role.Button) {
             bottomSheet = NativeLayout.menuUsesBottomSheet(input.value)
             val request = JSONObject(control.getJSONObject("picker").toString())
                 .put("recent", JSONArray(storage.getString("recent", "[]")))
             picker = JSONObject(NativeColor.request(request.toString()))
-        }, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)) {
+        }, enabled) {
             Canvas(Modifier.size(22.dp).clip(RoundedCornerShape(4.dp))) {
                 checkerboard(control)
                 drawRect(Color(control.getLong("argb").toInt()))
             }
-            Spacer(Modifier.width(8.dp))
-            Text(control.getString("display"), fontFamily = FontFamily.Monospace, maxLines = 1)
+            Text(control.getString("display"), Modifier.weight(1f), fontFamily = FontFamily.Monospace, maxLines = 1,
+                overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyMedium)
         }
     }
     picker?.let { initial ->

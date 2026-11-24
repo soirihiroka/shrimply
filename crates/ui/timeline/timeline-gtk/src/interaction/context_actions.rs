@@ -122,15 +122,7 @@ pub(crate) fn show_timeline_item_context_menu(
         context_menu::sheet(area, &menu, &actions, &custom_children)
     } else {
         context_menu::PresentedMenu::Popover(
-            context_menu::popup(
-                area,
-                &menu,
-                &actions,
-                &custom_children,
-                f64::from(point.x),
-                f64::from(point.y),
-            )
-            .upcast(),
+            context_menu::popup(area, &menu, &actions, &custom_children, point).upcast(),
         )
     };
     runtime.borrow_mut().active_context_menu = Some(presented);
