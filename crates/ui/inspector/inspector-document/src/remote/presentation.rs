@@ -326,13 +326,22 @@ fn project_settings(control: &InspectorControl, item: &str, id: &str) -> Value {
         .position(|value| value == &rate.value)
         .expect("current frame rate is a choice");
     let resolution = &model.resolution;
-    let mut stage = command("settings_stage");
-    stage["field"] = json!(resolution.path);
-    let mut resolution_editor = editor(resolution, stage, false);
-    resolution_editor["confirm_label"] = json!(text("Done"));
+    let mut resolution_row = super::numeric::presentation(
+        resolution,
+        &super::numeric::values(resolution).expect("valid project dimensions"),
+        resolution.lock,
+    );
+    resolution_row["id"] = json!(resolution.path);
+    resolution_row["label"] = json!(text(&resolution.label));
+    resolution_row["subtitle"] = json!("");
+    resolution_row["widget"] = json!("number");
+    resolution_row["inline_label"] = json!(true);
+    resolution_row["enabled"] = json!(true);
+    resolution_row["editable"] = json!(true);
+    resolution_row["command"] = json!({"op":"inspector_numeric","item":item,"control":id,"action":"number","field":resolution.path});
     let mut controls = vec![
         json!({"id":"frame_rate","widget":"choice","label":text(&rate.label),"subtitle":"","enabled":true,"editable":true,"display":choices[selected]["label"],"choice_style":"row","choices":choices}),
-        json!({"id":"resolution","widget":"editor","label":text(&resolution.label),"subtitle":"","enabled":true,"editable":true,"display":resolution.components.join(" × "),"editor":resolution_editor}),
+        resolution_row,
     ];
     if model.dirty {
         controls.push(json!({"id":"actions","widget":"actions","label":"","subtitle":"","enabled":true,"editable":true,"actions":[

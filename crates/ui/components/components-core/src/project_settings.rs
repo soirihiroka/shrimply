@@ -18,10 +18,9 @@ pub struct ProjectSettings {
 
 impl Default for ProjectSettings {
     fn default() -> Self {
-        Self {
-            original: None,
-            ..Self::from_values(DEFAULT_CANVAS_SIZE, DEFAULT_PROJECT_FPS)
-        }
+        let mut settings = Self::from_values(DEFAULT_CANVAS_SIZE, DEFAULT_PROJECT_FPS);
+        settings.original = None;
+        settings
     }
 }
 

@@ -15,12 +15,40 @@ pub enum CollisionBehavior {
     Overwrite,
 }
 
+pub const CREATE_TRACK_EDIT: &str = "create-timeline-track";
+
+#[derive(Clone, Copy)]
+pub enum TrackPlacement {
+    Append,
+    Top,
+    Bottom,
+}
+
 pub fn create_track(
     project: &mut Project,
     scope: &SequenceScopeId,
     kind: ItemKind,
     enabled: bool,
 ) -> Result<Uuid, String> {
+    create_track_at(project, scope, kind, enabled, TrackPlacement::Append)
+}
+
+pub fn create_track_at(
+    project: &mut Project,
+    scope: &SequenceScopeId,
+    kind: ItemKind,
+    enabled: bool,
+    placement: TrackPlacement,
+) -> Result<Uuid, String> {
+    fn insert<T>(tracks: &mut Vec<T>, track: T, at_start: bool) {
+        tracks.insert(if at_start { 0 } else { tracks.len() }, track);
+    }
+
+    let at_start = match placement {
+        TrackPlacement::Append => false,
+        TrackPlacement::Top => kind == ItemKind::Audio,
+        TrackPlacement::Bottom => kind != ItemKind::Audio,
+    };
     if matches!(kind, ItemKind::Caption | ItemKind::Comment) && !scope.is_root() {
         return Err("caption and comment tracks can only be created in the root scope".to_string());
     }
@@ -34,7 +62,7 @@ pub fn create_track(
                 ..Default::default()
             };
             let id = track.id;
-            project.comment_tracks.push(track);
+            insert(&mut project.comment_tracks, track, at_start);
             Ok(id)
         }
         (ItemKind::Caption, None) => {
@@ -43,7 +71,7 @@ pub fn create_track(
                 ..Default::default()
             };
             let id = track.id;
-            project.caption_tracks.push(track);
+            insert(&mut project.caption_tracks, track, at_start);
             Ok(id)
         }
         (ItemKind::Video, sequence_id) => {
@@ -52,14 +80,16 @@ pub fn create_track(
                 ..Default::default()
             };
             let id = track.id;
-            match sequence_id {
-                Some(sequence_id) => project
-                    .folded_sequence_mut(sequence_id)
-                    .expect("resolved sequence must exist")
-                    .video_tracks
-                    .push(track),
-                None => project.video_tracks.push(track),
-            }
+            let tracks = match sequence_id {
+                Some(sequence_id) => {
+                    &mut project
+                        .folded_sequence_mut(sequence_id)
+                        .expect("resolved sequence must exist")
+                        .video_tracks
+                }
+                None => &mut project.video_tracks,
+            };
+            insert(tracks, track, at_start);
             Ok(id)
         }
         (ItemKind::Audio, sequence_id) => {
@@ -68,14 +98,16 @@ pub fn create_track(
                 ..Default::default()
             };
             let id = track.id;
-            match sequence_id {
-                Some(sequence_id) => project
-                    .folded_sequence_mut(sequence_id)
-                    .expect("resolved sequence must exist")
-                    .audio_tracks
-                    .push(track),
-                None => project.audio_tracks.push(track),
-            }
+            let tracks = match sequence_id {
+                Some(sequence_id) => {
+                    &mut project
+                        .folded_sequence_mut(sequence_id)
+                        .expect("resolved sequence must exist")
+                        .audio_tracks
+                }
+                None => &mut project.audio_tracks,
+            };
+            insert(tracks, track, at_start);
             Ok(id)
         }
         (ItemKind::Comment, Some(_)) => unreachable!(),

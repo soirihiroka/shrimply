@@ -7,7 +7,7 @@ use shrimply_i18n::text;
 use shrimply_inspector_core::{
     ControlKind, InspectorControl, InspectorController, InspectorEditTransaction, InspectorTarget,
 };
-use shrimply_math_core::{Fraction, fraction_as_f64};
+use shrimply_math_core::{Fraction, fraction_as_f64, fraction_scaled_integer};
 
 use crate::InspectorDocument;
 
@@ -45,11 +45,11 @@ struct Edit {
     touch: bool,
     drag: Option<NumberDrag>,
     values: Vec<Fraction>,
-    transaction: InspectorEditTransaction,
+    transaction: Option<InspectorEditTransaction>,
 }
 
 fn key(request: &Value) -> String {
-    json!([request["item"], request["control"]]).to_string()
+    json!([request["item"], request["control"], request["field"]]).to_string()
 }
 
 pub(super) fn values(control: &InspectorControl) -> Result<Vec<Fraction>, String> {
@@ -311,7 +311,13 @@ impl Interaction {
 
     pub fn cancel(&mut self, controller: &InspectorController) -> Result<(), String> {
         if let Some(edit) = self.active.take() {
-            edit.transaction.cancel(controller)?;
+            if let Some(transaction) = edit.transaction {
+                transaction.cancel(controller)?;
+            } else if self.sessions.get(&edit.serial).is_some_and(|session| {
+                session.history_revision == shrimply_project_document::project::history_revision()
+            }) {
+                stage_dimensions(controller, &values(&edit.control)?)?;
+            }
         }
         Ok(())
     }
@@ -347,42 +353,7 @@ impl Interaction {
                         "command":{"item":item["id"],"action":"expand","expanded":!expanded}});
                 }
                 for control in item["controls"].as_array_mut().expect("inspector controls") {
-                    if control["expression_editor"].is_object() {
-                        let serial =
-                            self.advertise(document, &control["expression_editor"]["command"]);
-                        control["expression_editor"]["command"]["edit_serial"] = json!(serial);
-                        control["expression_editor"]["finish"]["edit_serial"] = json!(serial);
-                    }
-                    if control["widget"] == "inline_text" {
-                        let command = &mut control["editor"]["command"];
-                        command["edit_serial"] = json!(self.advertise(document, command));
-                    }
-                    if control["widget"] != "number" {
-                        continue;
-                    }
-                    let serial = self.advertise(document, &control["command"]);
-                    control["command"]["edit_serial"] = json!(serial);
-                    let key = key(&control["command"]);
-                    control["interaction_active"] =
-                        json!(self.active.as_ref().is_some_and(|edit| edit.key == key));
-                    if let Some(edit) = self.active.as_ref().filter(|edit| edit.key == key) {
-                        let locked = self.locked(&key, &edit.control);
-                        let number = presentation(&edit.control, &edit.values, locked);
-                        for (field, value) in number.as_object().expect("number widget") {
-                            if field != "interaction_active" {
-                                control[field] = value.clone();
-                            }
-                        }
-                    } else if let Some(lock) = self.locks.get(&key)
-                        && control["lock"].is_object()
-                    {
-                        control["lock"]["checked"] = json!(lock.enabled);
-                        control["lock"]["icon"] = json!(if lock.enabled {
-                            "padlock2-symbolic"
-                        } else {
-                            "padlock2-open-symbolic"
-                        });
-                    }
+                    self.decorate_control(document, control);
                 }
             }
         }
@@ -397,6 +368,49 @@ impl Interaction {
                     .is_some_and(|active| active.serial == *serial)
         });
         snapshot
+    }
+
+    fn decorate_control(&mut self, document: &InspectorDocument, control: &mut Value) {
+        if let Some(children) = control.get_mut("controls").and_then(Value::as_array_mut) {
+            for child in children {
+                self.decorate_control(document, child);
+            }
+        }
+        if control["expression_editor"].is_object() {
+            let serial = self.advertise(document, &control["expression_editor"]["command"]);
+            control["expression_editor"]["command"]["edit_serial"] = json!(serial);
+            control["expression_editor"]["finish"]["edit_serial"] = json!(serial);
+        }
+        if control["widget"] == "inline_text" {
+            let command = &mut control["editor"]["command"];
+            command["edit_serial"] = json!(self.advertise(document, command));
+        }
+        if control["widget"] != "number" {
+            return;
+        }
+        let serial = self.advertise(document, &control["command"]);
+        control["command"]["edit_serial"] = json!(serial);
+        let key = key(&control["command"]);
+        control["interaction_active"] =
+            json!(self.active.as_ref().is_some_and(|edit| edit.key == key));
+        if let Some(edit) = self.active.as_ref().filter(|edit| edit.key == key) {
+            let locked = self.locked(&key, &edit.control);
+            let number = presentation(&edit.control, &edit.values, locked);
+            for (field, value) in number.as_object().expect("number widget") {
+                if field != "interaction_active" {
+                    control[field] = value.clone();
+                }
+            }
+        } else if let Some(lock) = self.locks.get(&key)
+            && control["lock"].is_object()
+        {
+            control["lock"]["checked"] = json!(lock.enabled);
+            control["lock"]["icon"] = json!(if lock.enabled {
+                "padlock2-symbolic"
+            } else {
+                "padlock2-open-symbolic"
+            });
+        }
     }
 
     fn advertise(&mut self, document: &InspectorDocument, request: &Value) -> u64 {
@@ -463,17 +477,19 @@ impl Interaction {
     }
 
     pub fn finish(&mut self, controller: &InspectorController) -> Result<(), String> {
-        if let Some(mut edit) = self.active.take() {
+        if let Some(edit) = self.active.take()
+            && let Some(mut transaction) = edit.transaction
+        {
             let revision = shrimply_project_document::project::history_revision();
             let commit = |controller: &InspectorController| {
                 controller.commit_basic_control(&edit.target, &edit.control)
             };
             if edit.detached {
-                edit.transaction.apply_retained(controller, commit)?;
+                transaction.apply_retained(controller, commit)?;
             } else {
-                edit.transaction.apply(controller, commit)?;
+                transaction.apply(controller, commit)?;
             }
-            edit.transaction.finish(controller)?;
+            transaction.finish(controller)?;
             self.advance_sessions(revision);
         }
         Ok(())
@@ -613,7 +629,9 @@ impl Interaction {
                 touch: request["touch"].as_bool().unwrap_or(false),
                 drag: (event == "begin").then(|| NumberDrag::begin(current[axis])),
                 values: current.clone(),
-                transaction: controller.begin_control_edit(target)?,
+                transaction: (request["field"] != "resolution")
+                    .then(|| controller.begin_control_edit(target))
+                    .transpose()?,
             });
         } else if self.active.as_ref().is_none_or(|edit| edit.key != key) {
             if matches!(event, "move" | "end" | "cancel" | "commit") {
@@ -808,11 +826,25 @@ fn apply_value(
             )
         }
     };
-    if edit.detached {
-        edit.transaction.apply_retained(controller, write)?;
+    if let Some(transaction) = edit.transaction.as_mut() {
+        if edit.detached {
+            transaction.apply_retained(controller, write)?;
+        } else {
+            transaction.apply(controller, write)?;
+        }
     } else {
-        edit.transaction.apply(controller, write)?;
+        stage_dimensions(controller, &values)?;
     }
     edit.values = values;
     Ok(())
+}
+
+fn stage_dimensions(controller: &InspectorController, values: &[Fraction]) -> Result<(), String> {
+    let [width, height] = values else {
+        return Err("Resolution requires two dimensions".into());
+    };
+    let dimension = |value| {
+        u32::try_from(fraction_scaled_integer(value, 1)).map_err(|_| "Invalid project dimension")
+    };
+    controller.stage_project_dimensions(dimension(*width)?, dimension(*height)?)
 }

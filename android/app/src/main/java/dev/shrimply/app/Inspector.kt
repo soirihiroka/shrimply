@@ -120,13 +120,20 @@ internal fun Inspector(timeline: TimelineSession, document: JSONObject?, enabled
 }
 
 @Composable
+internal fun InspectorDisclosure(expanded: Boolean, label: String, enabled: Boolean, toggle: () -> Unit) {
+    val rotation by animateFloatAsState(if (expanded) 90f else 0f, label = "Inspector fold")
+    IconButton(onClick = toggle, enabled = enabled) {
+        Icon(iconVector("go-next-symbolic"), label, Modifier.size(16.dp).rotate(rotation))
+    }
+}
+
+@Composable
 private fun InspectorItemHeader(item: JSONObject, enabled: Boolean, send: (JSONObject) -> Unit) {
     val title = item.getString("title")
     if (title.isNotEmpty()) Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         item.optJSONObject("expansion")?.let { expansion ->
-            val rotation by animateFloatAsState(if (item.getBoolean("expanded")) 90f else 0f, label = "Inspector fold")
-            IconButton(onClick = { send(expansion.getJSONObject("command")) }, enabled = enabled) {
-                Icon(iconVector("go-next-symbolic"), expansion.getString("label"), Modifier.size(16.dp).rotate(rotation))
+            InspectorDisclosure(item.getBoolean("expanded"), expansion.getString("label"), enabled) {
+                send(expansion.getJSONObject("command"))
             }
         }
         Text(title, Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
@@ -268,7 +275,7 @@ internal fun InspectorControl(timeline: TimelineSession, control: JSONObject, en
                     "button" -> if (settings) SettingsRow(label, summary, active,
                         modifier = Modifier.clickable(enabled = active) { send(control.getJSONObject("command")) })
                     else TextButton(onClick = { send(control.getJSONObject("command")) }, enabled = active) { Text(label) }
-                    "live_rows" -> LiveRows(timeline, control.getJSONObject("resource"))
+                    "live_rows" -> LiveRows(timeline, control.getJSONObject("resource"), active)
                     "text", "loading" -> {
                         val display = control.getString("display")
                         if (settings) SettingsRow(label, display, active)
@@ -434,17 +441,22 @@ private fun InspectorExpression(timeline: TimelineSession, editor: JSONObject, e
         } }
     }
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        OutlinedTextField(value = value, onValueChange = {
-            value = it
-            submit(JSONObject(editor.getJSONObject("command").toString()).put("values", JSONArray(listOf(it))))
-        }, enabled = enabled, singleLine = false,
-            label = if (!field.isNull("label") && field.getString("label").isNotEmpty()) { { Text(field.getString("label")) } } else null,
-            textStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
-            keyboardOptions = KeyboardOptions(autoCorrectEnabled = false, keyboardType = KeyboardType.Text),
-            modifier = Modifier.fillMaxWidth().height(editor.getInt("height").dp).onFocusChanged {
-                if (focused && !it.isFocused) submit(finish)
-                focused = it.isFocused
-            })
+        InspectorInput(Modifier.fillMaxWidth().height(editor.getInt("height").dp), enabled) {
+            BasicTextField(value = value, onValueChange = {
+                value = it
+                submit(JSONObject(owner).put("values", JSONArray(listOf(it))))
+            }, enabled = enabled, singleLine = false,
+                textStyle = MaterialTheme.typography.bodyMedium.copy(
+                    color = MaterialTheme.colorScheme.onSurface, fontFamily = FontFamily.Monospace),
+                cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                keyboardOptions = KeyboardOptions(autoCorrectEnabled = false, keyboardType = KeyboardType.Text),
+                modifier = Modifier.fillMaxSize().padding(vertical = 8.dp)
+                    .semantics { contentDescription = editor.getString("title") }
+                    .onFocusChanged {
+                        if (focused && !it.isFocused) submit(finish)
+                        focused = it.isFocused
+                    })
+        }
         editor.getJSONObject("output").let { output ->
             val error = failure ?: output.optString("error").takeUnless { it.isEmpty() || it == "null" }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {

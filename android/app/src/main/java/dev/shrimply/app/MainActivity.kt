@@ -9,6 +9,7 @@ import android.view.TextureView
 import android.view.WindowInsetsController
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -54,6 +55,7 @@ class MainActivity : ComponentActivity() {
             finish()
             return
         }
+        if (Build.VERSION.SDK_INT < 35) enableEdgeToEdge()
         val fontDirectories = android.graphics.fonts.SystemFonts.getAvailableFonts()
             .mapNotNull { it.file?.parentFile?.absolutePath }.distinct().sorted()
         NativeTimeline.initialize(applicationContext, java.io.File(filesDir, "config").absolutePath,

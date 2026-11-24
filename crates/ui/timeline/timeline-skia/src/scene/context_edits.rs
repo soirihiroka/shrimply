@@ -1,5 +1,5 @@
 use super::*;
-use crate::project::{ItemAddress, ItemKind, ItemMut, TrackMut};
+use crate::project::{ItemAddress, ItemMut, TrackMut};
 use crate::timeline_operation::{SequenceTimeline, TimelineOperationContext};
 
 /// Captures the copied items and destination before an asynchronous native clipboard read.
@@ -250,31 +250,22 @@ impl Scene {
                     A::AddVideoTrack => TrackKind::Video,
                     _ => TrackKind::Audio,
                 };
-                let count = match kind {
-                    TrackKind::Comment => edited.comment_tracks.len(),
-                    TrackKind::Caption => edited.caption_tracks.len(),
-                    TrackKind::Video => edited.video_tracks.len(),
-                    TrackKind::Audio => edited.audio_tracks.len(),
+                let placement = if self.context.at_top {
+                    edit::TrackPlacement::Top
+                } else {
+                    edit::TrackPlacement::Bottom
                 };
-                let index = match (kind, self.context.at_top) {
-                    (TrackKind::Audio, true)
-                    | (TrackKind::Comment | TrackKind::Caption | TrackKind::Video, false) => 0,
-                    _ => count,
-                };
-                match kind {
-                    TrackKind::Comment => edited.comment_tracks.insert(index, Default::default()),
-                    TrackKind::Caption => edited.caption_tracks.insert(index, Default::default()),
-                    TrackKind::Video => edited.video_tracks.insert(index, Default::default()),
-                    TrackKind::Audio => edited.audio_tracks.insert(index, Default::default()),
-                }
-                selected_track = selection_state::track_address(
-                    &edited,
-                    TrackKey {
-                        kind,
-                        track_index: index,
-                    },
-                );
-                "create-timeline-track"
+                let id = edit::create_track_at(
+                    &mut edited,
+                    &project::SequenceScopeId::root(),
+                    kind,
+                    true,
+                    placement,
+                )?;
+                selected_track = edited.root_track_index(kind, id).and_then(|track_index| {
+                    selection_state::track_address(&edited, TrackKey { kind, track_index })
+                });
+                edit::CREATE_TRACK_EDIT
             }
             A::AddFolderTrackTop | A::AddFolderTrackBottom => {
                 let folder = self
@@ -282,43 +273,22 @@ impl Scene {
                     .item
                     .as_ref()
                     .ok_or("No folded sequence is selected")?;
-                let (kind, reference) = match edited.item(folder) {
-                    Some(project::ItemRef::Video(item)) => match item.content {
-                        project::VideoItemContent::FoldedSequence(reference) => {
-                            (ItemKind::Video, reference)
-                        }
-                        _ => return Err("Selected item is not a folded sequence".into()),
-                    },
-                    Some(project::ItemRef::Audio(item)) => match item.source {
-                        project::AudioSource::FoldedSequence(reference) => {
-                            (ItemKind::Audio, reference)
-                        }
-                        _ => return Err("Selected item is not a folded sequence".into()),
-                    },
-                    _ => return Err("Selected item is not a folded sequence".into()),
-                };
-                let sequence = edited
-                    .folded_sequence_mut(reference.sequence_id)
-                    .ok_or("Folded sequence was removed")?;
-                let top = action == A::AddFolderTrackTop;
-                match kind {
-                    ItemKind::Video => {
-                        let index = if top { sequence.video_tracks.len() } else { 0 };
-                        sequence.video_tracks.insert(index, Default::default());
-                    }
-                    ItemKind::Audio => {
-                        let index = if top { 0 } else { sequence.audio_tracks.len() };
-                        sequence.audio_tracks.insert(index, Default::default());
-                    }
-                    ItemKind::Comment => unreachable!(),
-                    ItemKind::Caption => unreachable!(),
-                }
+                let kind = folder.kind();
                 let path = folder
                     .sequence_path()
                     .iter()
                     .copied()
                     .chain(std::iter::once(folder.item_id()))
                     .collect::<Vec<_>>();
+                let scope = edited
+                    .sequence_scope_for_path(kind, &path)
+                    .ok_or("Selected item is not an available folded sequence")?;
+                let placement = if action == A::AddFolderTrackTop {
+                    edit::TrackPlacement::Top
+                } else {
+                    edit::TrackPlacement::Bottom
+                };
+                edit::create_track_at(&mut edited, &scope, kind, true, placement)?;
                 if !edited.expanded_sequence_paths.contains(&path) {
                     edited.expanded_sequence_paths.push(path);
                 }

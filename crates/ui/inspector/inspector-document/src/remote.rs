@@ -206,6 +206,14 @@ fn read_control<'a>(
     if !control.visible {
         return Err("inspector control is unavailable".into());
     }
+    if request["op"] == "inspector_numeric" && request["field"] == "resolution" {
+        return control
+            .project_settings
+            .as_ref()
+            .filter(|_| control.sensitive && control.editable)
+            .map(|settings| &settings.resolution)
+            .ok_or_else(|| "Project resolution is unavailable".into());
+    }
     Ok(control)
 }
 
@@ -384,34 +392,16 @@ fn apply_control(
             if control.kind != ControlKind::ProjectSettings {
                 return Err("control is not project settings".into());
             }
-            match request["field"].as_str() {
-                Some("frame_rate") => controller.stage_project_frame_rate(
-                    request["value"]
-                        .as_str()
-                        .ok_or("frame rate is required")?
-                        .parse()
-                        .map_err(|_| "invalid project frame rate")?,
-                )?,
-                Some("resolution") => {
-                    let values = request["values"]
-                        .as_array()
-                        .filter(|values| values.len() == 2)
-                        .ok_or("project dimensions are required")?;
-                    controller.stage_project_dimensions(
-                        values[0]
-                            .as_str()
-                            .ok_or("width is required")?
-                            .parse()
-                            .map_err(|_| "invalid project width")?,
-                        values[1]
-                            .as_str()
-                            .ok_or("height is required")?
-                            .parse()
-                            .map_err(|_| "invalid project height")?,
-                    )?;
-                }
-                _ => return Err("unknown project settings field".into()),
+            if request["field"] != "frame_rate" {
+                return Err("unknown project settings field".into());
             }
+            controller.stage_project_frame_rate(
+                request["value"]
+                    .as_str()
+                    .ok_or("frame rate is required")?
+                    .parse()
+                    .map_err(|_| "invalid project frame rate")?,
+            )?;
             return Ok(());
         }
         "settings_discard" | "settings_apply" => {

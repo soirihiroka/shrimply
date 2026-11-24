@@ -87,7 +87,7 @@ pub struct Edit {
 }
 
 impl Edit {
-    pub const DESCRIPTION: &str = "create-timeline-track";
+    pub const DESCRIPTION: &str = edit::CREATE_TRACK_EDIT;
 
     pub fn apply(self, project: &mut Project) -> Result<TrackKind, String> {
         edit::create_track(

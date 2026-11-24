@@ -14,9 +14,11 @@ impl NewProject {
         fps: Fraction,
         tags: &[String],
     ) -> Result<Self, String> {
-        let mut project = Project::default();
-        project.name = project_name(name)?;
-        project.tags = normalize_tags(tags);
+        let mut project = Project {
+            name: project_name(name)?,
+            tags: normalize_tags(tags),
+            ..Project::default()
+        };
         project.set_video_settings(size, fps)?;
         Ok(Self::with_initial_tracks(project))
     }

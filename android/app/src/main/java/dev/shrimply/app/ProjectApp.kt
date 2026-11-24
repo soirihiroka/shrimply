@@ -529,8 +529,9 @@ private fun Editor(timeline: TimelineSession, files: ProjectFiles, project: JSON
     val density = LocalDensity.current.density
     val divider = MaterialTheme.colorScheme.outlineVariant
     val caption = if (!fullscreen) windowCaption else WindowCaption()
-    val safeInsets = if (caption.height > 0) ComposeInsets.safeDrawing.exclude(ComposeInsets.captionBar)
-        .union(ComposeInsets.statusBars).union(ComposeInsets.displayCutout) else ComposeInsets.safeDrawing
+    val systemInsets = ComposeInsets.systemBars.union(ComposeInsets.displayCutout)
+    val safeInsets = if (caption.height > 0) systemInsets.exclude(ComposeInsets.captionBar)
+        .union(ComposeInsets.statusBars).union(ComposeInsets.displayCutout) else systemInsets
     BoxWithConstraints(Modifier.fillMaxSize().windowInsetsPadding(safeInsets).background(MaterialTheme.colorScheme.background)
         .fileDropTarget(timeline, files, project.getString("path").takeUnless { renderOnly }, false, onError)) {
         val availableWidth = maxWidth.value
@@ -578,7 +579,6 @@ private fun Editor(timeline: TimelineSession, files: ProjectFiles, project: JSON
                     timelineFraction = timelineFraction.coerceIn(minimumTimelineFraction, MaximumTimelineFraction),
                     inspectorVisible = inspectorOpen && !fullscreen,
                     timelineVisible = timelineOpen && !fullscreen,
-                    overlay = !sideBySide,
                     preview = {
                         Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.previewBackground) {
                             BoxWithConstraints(Modifier.fillMaxSize()) {
@@ -599,9 +599,11 @@ private fun Editor(timeline: TimelineSession, files: ProjectFiles, project: JSON
                     inspector = {
                         Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surfaceContainerLow) {
                             inspectorState.SaveableStateProvider("inspector") {
+                                val timelineInset = if (timelineOpen) timelineSize + dividerSize else 0.dp
+                                val inspectorIme = ComposeInsets.ime.exclude(ComposeInsets(bottom = timelineInset))
                                 Inspector(timeline, timeline.snapshot.value.optJSONObject("inspector"), enabled,
                                     { arguments -> command("inspector", arrayOf("project_path" to project.getString("path"), *arguments)) },
-                                    Modifier.requiredWidth(expandedInspectorWidth).fillMaxHeight(), selectFile)
+                                    Modifier.requiredWidth(expandedInspectorWidth).fillMaxHeight().windowInsetsPadding(inspectorIme), selectFile)
                             }
                         }
                     },

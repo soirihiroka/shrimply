@@ -116,9 +116,8 @@ internal fun NumberInput(timeline: TimelineSession, control: JSONObject, enabled
             }
         }
     }
-    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        if (control.getString("label").isNotEmpty()) Text(control.getString("label"), style = MaterialTheme.typography.labelMedium)
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+    val renderFields: @Composable (Modifier) -> Unit = { modifier ->
+        Row(modifier, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             model.optJSONObject("lock")?.let { lock ->
                 IconToggleButton(checked = lock.getBoolean("checked"), enabled = enabled,
                     onCheckedChange = { events.trySend(JSONObject().put("event", "lock")) }, modifier = Modifier.size(40.dp)) {
@@ -186,6 +185,19 @@ internal fun NumberInput(timeline: TimelineSession, control: JSONObject, enabled
                     }
                 }
             }
+        }
+    }
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        val label = control.getString("label")
+        if (control.optBoolean("inline_label")) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically) {
+                Text(label, Modifier.widthIn(max = 80.dp), style = MaterialTheme.typography.labelMedium)
+                renderFields(Modifier.weight(1f))
+            }
+        } else {
+            if (label.isNotEmpty()) Text(label, style = MaterialTheme.typography.labelMedium)
+            renderFields(Modifier.fillMaxWidth())
         }
         val message = failure ?: response?.optString("validation_message").orEmpty()
         if (message.isNotEmpty()) Text(message, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
