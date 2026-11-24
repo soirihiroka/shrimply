@@ -403,16 +403,10 @@ define_class!(
             }
             let session = self.ivars().session.get().expect("project loaded");
             match session.activate_project_menu(action) {
-                Ok(Some(action)) => Self::project_host_action(action).expect("advertised window callback")(self, sender),
+                Ok(Some(action)) => Self::project_host_action(action).expect("advertised window callback")(self),
                 Ok(None) => {}
                 Err(error) => self.show_error(&error),
             }
-        }
-
-        #[unsafe(method(importMedia:))]
-        fn import_media(&self, _sender: &NSObject) {
-            let session = self.ivars().session.get().expect("project loaded");
-            if let Err(error) = media::choose_files(&self.ivars().imports, session, &[], player_state::current_time(&session.player_state), self.mtm()) { self.show_error(&error); }
         }
 
         #[unsafe(method(undo:))]
@@ -423,32 +417,6 @@ define_class!(
         #[unsafe(method(redo:))]
         fn redo(&self, _sender: &NSObject) {
             self.project_history(true);
-        }
-
-        #[unsafe(method(saveProjectAs:))]
-        fn save_project_as(&self, _sender: &NSObject) {
-            let window = self.ivars().window.get().expect("window created");
-            if !window.makeFirstResponder(None) { return; }
-            if let Err(error) = save::show(window, self.ivars().session.get().expect("project loaded")) {
-                self.show_error(&error);
-            }
-        }
-
-        #[unsafe(method(showAbout:))]
-        fn show_about(&self, _sender: &NSObject) {
-            about::show(self.mtm());
-        }
-
-        #[unsafe(method(showSettings:))]
-        fn show_settings(&self, _sender: &NSObject) {
-            if let Some(window) = self.ivars().settings_window.borrow().as_ref() {
-                window.makeKeyAndOrderFront(None);
-                settings::sync_cli_window(window, self.mtm());
-                self.refresh_compute_servers();
-                return;
-            }
-            self.ivars().settings_window.replace(Some(settings::show(self)));
-            self.refresh_compute_servers();
         }
 
         #[unsafe(method(changeNumericPreference:))]
@@ -656,29 +624,21 @@ define_class!(
         fn toggle_fullscreen(&self, _sender: &NSObject) {
             self.toggle_preview_fullscreen();
         }
-
-        #[unsafe(method(showShortcuts:))]
-        fn show_shortcuts(&self, _sender: &NSObject) {
-            let alert = NSAlert::new(self.mtm());
-            alert.setMessageText(ns_string!("Keyboard Shortcuts"));
-            alert.setInformativeText(ns_string!("⌘1  Toggle Inspector\n⌘2  Toggle Timeline\n⌃⌘F  Fullscreen Preview\n⌘W  Close Window\n⌘Q  Quit\n\nSpace  Play / Pause"));
-            alert.runModal();
-        }
     }
 );
 
 impl Editor {
     fn project_host_action(
         action: shrimply_cross_ui_core::editor::project_menu::Action,
-    ) -> Option<fn(&Self, &NSObject)> {
+    ) -> Option<fn(&Self)> {
         use shrimply_cross_ui_core::editor::project_menu::Action;
         Some(match action {
             Action::Import => Self::import_media,
             Action::SaveAs => Self::save_project_as,
             Action::Preferences => Self::show_settings,
             Action::Shortcuts => Self::show_shortcuts,
-            Action::About => Self::show_about,
-            Action::Close => |editor, _| {
+            Action::About => |editor| about::show(editor.mtm()),
+            Action::Close => |editor| {
                 editor
                     .ivars()
                     .window
@@ -688,6 +648,50 @@ impl Editor {
             },
             _ => return None,
         })
+    }
+
+    fn import_media(&self) {
+        let session = self.ivars().session.get().expect("project loaded");
+        if let Err(error) = media::choose_files(
+            &self.ivars().imports,
+            session,
+            &[],
+            player_state::current_time(&session.player_state),
+            self.mtm(),
+        ) {
+            self.show_error(&error);
+        }
+    }
+
+    fn save_project_as(&self) {
+        let window = self.ivars().window.get().expect("window created");
+        if !window.makeFirstResponder(None) {
+            return;
+        }
+        if let Err(error) = save::show(window, self.ivars().session.get().expect("project loaded"))
+        {
+            self.show_error(&error);
+        }
+    }
+
+    fn show_settings(&self) {
+        if let Some(window) = self.ivars().settings_window.borrow().as_ref() {
+            window.makeKeyAndOrderFront(None);
+            settings::sync_cli_window(window, self.mtm());
+            self.refresh_compute_servers();
+            return;
+        }
+        self.ivars()
+            .settings_window
+            .replace(Some(settings::show(self)));
+        self.refresh_compute_servers();
+    }
+
+    fn show_shortcuts(&self) {
+        let alert = NSAlert::new(self.mtm());
+        alert.setMessageText(ns_string!("Keyboard Shortcuts"));
+        alert.setInformativeText(ns_string!("⌘1  Toggle Inspector\n⌘2  Toggle Timeline\n⌃⌘F  Fullscreen Preview\n⌘W  Close Window\n⌘Q  Quit\n\nSpace  Play / Pause"));
+        alert.runModal();
     }
 
     fn project_history(&self, redo: bool) {
