@@ -123,7 +123,7 @@
  } MediaCodecEncContext;
  
  enum {
-@@ -126,27 +127,58 @@
+@@ -126,27 +127,48 @@
      AV_PIX_FMT_NONE
  };
  
@@ -167,16 +167,6 @@
 +    av_log(avctx, AV_LOG_DEBUG, "MediaCodec encoder %s output format %s\n",
 +           s->name ? s->name : "unknown", str);
 +    av_free(str);
-+    if (avctx->max_b_frames > 0) {
-+        int32_t value;
-+        /* Optional format keys may be ignored. Require encoder readback before
-+         * constructing decode timestamps for the requested reorder bound. */
-+        if (!ff_AMediaFormat_getInt32(out_format, "max-bframes", &value) ||
-+            value != avctx->max_b_frames) {
-+            av_log(avctx, AV_LOG_ERROR, "Hardware encoder did not accept the B-frame limit\n");
-+            return AVERROR(ENOSYS);
-+        }
-+    }
 +    if (s->qcom_fixed_qp) {
 +        for (unsigned i = 0; i < FF_ARRAY_ELEMS(qcom_qp_range_keys); i++) {
 +            int32_t value;
@@ -201,7 +191,7 @@
  }
  
  static int extract_extradata_support(AVCodecContext *avctx)
-@@ -310,7 +342,9 @@
+@@ -310,7 +332,9 @@
  static void on_format_changed(FFAMediaCodec *codec, void *userdata,
                                FFAMediaFormat *format)
  {
@@ -212,7 +202,7 @@
  }
  
  static int mediacodec_init_async_state(AVCodecContext *avctx)
-@@ -358,10 +392,24 @@
+@@ -358,10 +382,24 @@
  
  static int mediacodec_generate_extradata(AVCodecContext *avctx);
  
@@ -241,7 +231,7 @@
  
      // Handle common options in AVCodecContext first.
      if (avctx->qmin >= 0) {
-@@ -389,6 +437,7 @@
+@@ -389,6 +427,7 @@
          ff_AMediaFormat_setInt32(format, "video-qp-p-max", s->qp_p_max);
      if (s->qp_b_max >= 0)
          ff_AMediaFormat_setInt32(format, "video-qp-b-max", s->qp_b_max);
@@ -249,7 +239,7 @@
  }
  
  static av_cold int mediacodec_init(AVCodecContext *avctx)
-@@ -527,7 +576,9 @@
+@@ -527,7 +566,9 @@
          if (s->bitrate_mode == BITRATE_MODE_CQ && avctx->global_quality > 0)
              ff_AMediaFormat_setInt32(format, "quality", avctx->global_quality);
      }
@@ -260,7 +250,7 @@
  
      // frame-rate and i-frame-interval are required to configure codec
      if (avctx->framerate.num >= avctx->framerate.den && avctx->framerate.den > 0) {
-@@ -604,7 +655,9 @@
+@@ -604,7 +645,9 @@
      if (ret)
          goto bailout;
  
@@ -271,7 +261,7 @@
  
      s->frame = av_frame_alloc();
      if (!s->frame) {
-@@ -686,8 +739,8 @@
+@@ -686,8 +729,8 @@
          return AVERROR(EAGAIN);
  
      if (ff_AMediaCodec_infoOutputFormatChanged(codec, index)) {

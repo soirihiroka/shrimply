@@ -13,8 +13,7 @@ pub(crate) struct Muxer {
     video_time_base: Option<ffmpeg::Rational>,
     audio_stream: Option<(usize, ffmpeg::Rational)>,
     audio_time_base: Option<ffmpeg::Rational>,
-    /// Audio packets remain in the encoder time base until the header has fixed
-    /// the container's stream time bases (Matroska uses millisecond ticks).
+    /// Audio packets stay in the encoder time base until they are written.
     pub audio_packets: VecDeque<ffmpeg::Packet>,
     decode_order: Option<crate::math::decode_order::DecodeOrder>,
 }
@@ -61,21 +60,7 @@ impl Muxer {
                     .ok_or_else(|| "Audio stream disappeared after writing the header".to_string())
             })
             .transpose()?;
-        if let (Some((_, source)), Some(destination)) = (self.audio_stream, self.audio_time_base) {
-            for packet in &mut self.audio_packets {
-                packet.rescale_ts(source, destination);
-            }
-        }
         Ok(())
-    }
-
-    pub fn queue_audio(&mut self, mut packets: VecDeque<ffmpeg::Packet>) {
-        if let (Some((_, source)), Some(destination)) = (self.audio_stream, self.audio_time_base) {
-            for packet in &mut packets {
-                packet.rescale_ts(source, destination);
-            }
-        }
-        self.audio_packets = packets;
     }
 
     pub fn write_video(
@@ -87,7 +72,9 @@ impl Muxer {
             let pts = packet
                 .pts()
                 .ok_or("Encoder returned a video packet without a presentation timestamp")?;
-            let dts = clock.next(pts).map_err(str::to_owned)?;
+            let dts = clock
+                .next(pts)
+                .map_err(|error| format!("{error} (PTS {pts})"))?;
             if packet.dts().is_some_and(|native| native != dts) {
                 return Err("Encoder returned an unexpected decode timestamp".into());
             }
@@ -122,8 +109,8 @@ impl Muxer {
         if packet.duration() == 0 {
             packet.set_duration(1);
         }
-        packet.rescale_ts(encoder.time_base(), time_base);
-        if let Some(audio_time_base) = self.audio_time_base {
+        let source = encoder.time_base();
+        if let Some((_, audio_time_base)) = self.audio_stream {
             while self.audio_packets.front().is_some_and(|audio| {
                 crate::math::compare_timestamps(
                     (
@@ -133,8 +120,8 @@ impl Muxer {
                     ),
                     (
                         packet.dts().or_else(|| packet.pts()).unwrap_or(0),
-                        time_base.0,
-                        time_base.1,
+                        source.0,
+                        source.1,
                     ),
                 )
                 .is_le()
@@ -143,18 +130,20 @@ impl Muxer {
                 self.write_audio(audio)?;
             }
         }
+        packet.rescale_ts(source, time_base);
         packet
             .write_interleaved(&mut self.output)
             .map_err(|error| error.to_string())
     }
 
     pub fn write_audio(&mut self, mut packet: ffmpeg::Packet) -> Result<(), String> {
-        let (index, _) = self
+        let (index, source) = self
             .audio_stream
             .ok_or("Audio packet requires an audio stream")?;
-        if self.audio_time_base.is_none() {
-            return Err("Audio packet requires a complete media header".into());
-        }
+        let destination = self
+            .audio_time_base
+            .ok_or("Audio packet requires a complete media header")?;
+        packet.rescale_ts(source, destination);
         packet.set_stream(index);
         packet
             .write_interleaved(&mut self.output)

@@ -158,9 +158,9 @@ fn open_encoder(
         .then(|| encoder_window(&mut encoder))
         .transpose()?;
     let encoder = encoder.open_with(options).map_err(|error| match error {
-        ffmpeg::Error::Other { errno } if errno == libc::ENOSYS => format!(
-            "MediaCodec encoder {name} does not support the requested quality or B-frame settings"
-        ),
+        ffmpeg::Error::Other { errno } if errno == libc::ENOSYS => {
+            format!("MediaCodec encoder {name} does not support the requested fixed QP")
+        }
         _ => format!("Open MediaCodec encoder {name}: {error}"),
     })?;
     let dimensions = (encoder.width(), encoder.height());
@@ -200,8 +200,6 @@ fn open_project_encoder(
                 (*encoder.as_mut_ptr()).profile = sys::AV_PROFILE_H264_MAIN;
             }
             (*encoder.as_mut_ptr()).strict_std_compliance = sys::FF_COMPLIANCE_EXPERIMENTAL;
-            (*encoder.as_mut_ptr()).has_b_frames = i32::try_from(settings.b_frames)
-                .map_err(|_| "B-frame count exceeds the encoder range")?;
         }
     }
     let mut options = ffmpeg::Dictionary::new();
@@ -260,8 +258,10 @@ impl VideoBackend for Backend {
         "android-vulkan-mediacodec"
     }
 
-    fn decode_order_delay(&self, settings: &ExportSettings) -> Option<u32> {
-        Some(settings.b_frames)
+    fn decode_order_delay(&self) -> Option<u32> {
+        // AVC and HEVC bound decoded-picture buffering to 16 pictures.
+        // MediaCodec's max-bframes config is a GOP setting, not a DTS offset.
+        Some(16)
     }
 
     fn validate(&self, _project: &Project, settings: &ExportSettings) -> Result<(), String> {
@@ -286,16 +286,29 @@ impl VideoBackend for Backend {
         settings: &ExportSettings,
         _global_header: bool,
     ) -> Result<ffmpeg::codec::encoder::video::Encoder, String> {
+        let mut attempt = settings.clone();
         let mut first_error = None;
-        for pixel in media_inputs(settings.video_encoder) {
-            match open_project_encoder(project, settings, pixel) {
-                Ok((encoder, surface)) => {
-                    self.surface = surface;
-                    self.buffer_format = (pixel != Pixel::MEDIACODEC).then_some(pixel);
-                    return Ok(encoder);
-                }
-                Err(error) => {
-                    first_error.get_or_insert(error);
+        for b_frames in
+            std::iter::once(settings.b_frames).chain((settings.b_frames != 0).then_some(0))
+        {
+            attempt.b_frames = b_frames;
+            for pixel in media_inputs(settings.video_encoder) {
+                match open_project_encoder(project, &attempt, pixel) {
+                    Ok((encoder, surface)) => {
+                        self.surface = surface;
+                        self.buffer_format = (pixel != Pixel::MEDIACODEC).then_some(pixel);
+                        if b_frames != settings.b_frames {
+                            tracing::warn!(
+                                requested = settings.b_frames,
+                                "MediaCodec opened without B-frames"
+                            );
+                        }
+                        return Ok(encoder);
+                    }
+                    Err(error) => {
+                        tracing::debug!(?pixel, b_frames, %error, "MediaCodec export input failed");
+                        first_error.get_or_insert(error);
+                    }
                 }
             }
         }

@@ -5,85 +5,145 @@
  #include "libavutil/opt.h"
  #include "libavutil/thread.h"
 +#include "libavutil/time.h"
- 
+
  #include "avcodec.h"
  #include "bsf.h"
-@@ -83,6 +84,9 @@
+@@ -44,6 +45,7 @@
+
+ #define INPUT_DEQUEUE_TIMEOUT_US 8000
+ #define OUTPUT_DEQUEUE_TIMEOUT_US 8000
++#define ENCODE_TIMEOUT_US (5 * AV_TIME_BASE)
+
+ enum BitrateMode {
+     /* Constant quality mode */
+@@ -68,7 +70,6 @@
+     const char *name;
+     FFANativeWindow *window;
+
+-    int fps;
+     int width;
+     int height;
+
+@@ -83,6 +84,8 @@
      int level;
      int pts_as_dts;
      int extract_extradata;
 +    int screen_capture;
-+    int64_t capture_stop_us;
-+    int capture_output_eos;
++    int output_eos;
      // Ref. MediaFormat KEY_OPERATING_RATE
      int operating_rate;
      int async_mode;
-@@ -597,7 +601,12 @@
-         av_log(avctx, AV_LOG_DEBUG, "Set i-frame-interval to %d\n", gop);
-     }
- 
+@@ -586,23 +589,18 @@
+         goto bailout;
+
+     // frame-rate and i-frame-interval are required to configure codec
+-    if (avctx->framerate.num >= avctx->framerate.den && avctx->framerate.den > 0) {
+-        s->fps = avctx->framerate.num / avctx->framerate.den;
+-    } else {
+-        s->fps = 30;
+-        av_log(avctx, AV_LOG_INFO, "Use %d as the default MediaFormat frame-rate\n", s->fps);
+-    }
+-    gop = round(avctx->gop_size / s->fps);
+-    if (gop == 0) {
+-        gop = 1;
+-        av_log(avctx, AV_LOG_INFO,
+-                "Use %d as the default MediaFormat i-frame-interval, "
+-                "please set gop_size properly (>= fps)\n", gop);
+-    } else {
+-        av_log(avctx, AV_LOG_DEBUG, "Set i-frame-interval to %d\n", gop);
+-    }
+-
 -    ff_AMediaFormat_setInt32(format, "frame-rate", s->fps);
-+    if (s->screen_capture) {
-+        ff_AMediaFormat_setFloat(format, "frame-rate", av_q2d(avctx->framerate));
-+        ff_AMediaFormat_setFloat(format, "max-fps-to-encoder", av_q2d(avctx->framerate));
-+    } else {
-+        ff_AMediaFormat_setInt32(format, "frame-rate", s->fps);
-+    }
++    AVRational rate = avctx->framerate;
++    if (rate.num <= 0 || rate.den <= 0)
++        rate = (AVRational){ 30, 1 };
++    gop = av_clip64(av_rescale_q(avctx->gop_size, av_inv_q(rate),
++                                 (AVRational){ 1, 1 }), 1, INT_MAX);
++
++    if (s->screen_capture || rate.num % rate.den)
++        ff_AMediaFormat_setFloat(format, "frame-rate", av_q2d(rate));
++    else
++        ff_AMediaFormat_setInt32(format, "frame-rate", rate.num / rate.den);
++    if (s->screen_capture)
++        ff_AMediaFormat_setFloat(format, "max-fps-to-encoder", av_q2d(rate));
      ff_AMediaFormat_setInt32(format, "i-frame-interval", gop);
- 
+
      ret = ff_AMediaCodecProfile_getProfileFromAVCodecContext(avctx);
-@@ -731,6 +740,9 @@
+@@ -736,6 +734,9 @@
      int ret;
      int extradata_size = 0;
- 
-+    if (s->capture_output_eos)
+
++    if (s->output_eos)
 +        return AVERROR_EOF;
 +
      ret = mediacodec_get_output_index(avctx, &index, &out_info);
      if (ret < 0)
          return ret;
-@@ -751,8 +763,14 @@
+@@ -756,8 +757,14 @@
      if (index < 0)
          return AVERROR_EXTERNAL;
- 
+
 -    if (out_info.flags & ff_AMediaCodec_getBufferFlagEndOfStream(codec))
 -        return AVERROR_EOF;
 +    if (out_info.flags & ff_AMediaCodec_getBufferFlagEndOfStream(codec)) {
-+        if (!s->screen_capture || !out_info.size) {
++        s->output_eos = 1;
++        if (!out_info.size) {
 +            ff_AMediaCodec_releaseOutputBuffer(codec, index, false);
 +            return AVERROR_EOF;
 +        }
-+        // Some encoders flag the final nonempty output buffer with EOS.
-+        s->capture_output_eos = 1;
++        // A nonempty EOS buffer still contains the final packet.
 +    }
- 
+
      out_buf = ff_AMediaCodec_getOutputBuffer(codec, index, &out_size);
      if (!out_buf) {
-@@ -852,12 +870,18 @@
-     uint32_t flags = 0;
+@@ -907,13 +914,15 @@
+ static int mediacodec_encode(AVCodecContext *avctx, AVPacket *pkt)
+ {
+     MediaCodecEncContext *s = avctx->priv_data;
++    int64_t deadline = av_gettime_relative() + ENCODE_TIMEOUT_US;
      int ret;
- 
--    if (s->eof_sent)
-+    if (s->eof_sent) {
-+        // A stalled surface encoder must not keep the foreground capture service alive.
-+        if (s->screen_capture && av_gettime_relative() - s->capture_stop_us >= 5 * AV_TIME_BASE)
-+            return AVERROR(ETIMEDOUT);
-         return 0;
-+    }
- 
-     if (s->window) {
-         if (!frame) {
-             s->eof_sent = 1;
-+            if (s->screen_capture)
-+                s->capture_stop_us = av_gettime_relative();
-             return ff_AMediaCodec_signalEndOfInputStream(codec);
-         }
- 
-@@ -1100,6 +1124,8 @@
+
+     // Return on three case:
+     // 1. Serious error
+     // 2. Got a packet success
+     // 3. No AVFrame is available yet (don't return if get_frame return EOF)
+-    while (1) {
++    // Bound synchronous input and output polling within a single FFmpeg call.
++    while (s->async_mode || av_gettime_relative() < deadline) {
+         if (s->bsf) {
+             ret = av_bsf_receive_packet(s->bsf, pkt);
+             if (!ret)
+@@ -947,7 +956,7 @@
+             return ret;
+     }
+
+-    return 0;
++    return AVERROR(ETIMEDOUT);
+ }
+
+ static int mediacodec_send_dummy_frame(AVCodecContext *avctx)
+@@ -1048,6 +1057,7 @@
+ bailout:
+     if (s->eof_sent) {
+         s->eof_sent = 0;
++        s->output_eos = 0;
+         ff_AMediaCodec_flush(s->codec);
+     }
+     av_bsf_flush(s->bsf);
+@@ -1083,6 +1093,8 @@
+     if (s->bsf)
+         av_bsf_flush(s->bsf);
+     av_frame_unref(s->frame);
++    s->eof_sent = 0;
++    s->output_eos = 0;
+     ff_AMediaCodec_flush(s->codec);
+ }
+
+@@ -1112,6 +1124,8 @@
                      OFFSET(use_ndk_codec), AV_OPT_TYPE_BOOL, {.i64 = -1}, -1, 1, VE },                      \
      { "ndk_async", "Try NDK MediaCodec in async mode",                                                      \
                      OFFSET(async_mode), AV_OPT_TYPE_BOOL, {.i64 = 0}, 0, 1, VE },                           \
-+    { "screen_capture", "Configure a live input Surface and bounded drain",                              \
++    { "screen_capture", "Configure frame-rate limiting for a live input Surface",                              \
 +                    OFFSET(screen_capture), AV_OPT_TYPE_BOOL, {.i64 = 0}, 0, 1, VE },                        \
      { "codec_name", "Select codec by name",                                                                 \
                      OFFSET(name), AV_OPT_TYPE_STRING, {0}, 0, 0, VE },                                      \

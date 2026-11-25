@@ -125,7 +125,7 @@ pub trait VideoBackend {
 
     /// MediaCodec exposes output in decode order with PTS only. Other encoders
     /// keep their native DTS and do not opt into this CFR clock.
-    fn decode_order_delay(&self, _settings: &ExportSettings) -> Option<u32> {
+    fn decode_order_delay(&self) -> Option<u32> {
         None
     }
 
@@ -272,6 +272,10 @@ where
     shrimply_visual_core::sam2::validate_cache(project)?;
     shrimply_visual_core::transparent_fill::validate_cache(project)?;
     validate_settings(project, settings)?;
+    let duration = export_duration(project);
+    let total_frames = frame_count(duration, settings.fps)
+        .filter(|&frames| i64::try_from(frames).is_ok())
+        .ok_or("Export duration and frame rate exceed the exact range")?;
     let software = matches!(
         settings.video_encoder,
         VideoEncoder::X264 | VideoEncoder::X265
@@ -293,7 +297,7 @@ where
         "video_export",
         path = %settings.path.display(),
         backend = backend.name(),
-        duration = %export_duration(project).as_label(),
+        duration = %duration.as_label(),
         fps.numerator = project::fraction_numerator(settings.fps),
         fps.denominator = project::fraction_denominator(settings.fps),
         video_codec = ?settings.video_encoder.codec(),
@@ -328,13 +332,14 @@ where
         let mut output = ffmpeg::format::output_to_stream(stream, None, Some(format))
             .map_err(|error| error.to_string())?;
         if !seekable && settings.container == ExportContainer::Mp4 {
-            // A nonseekable destination needs a fragmented MP4.
+            // Delay the first fragment's header so it can account for
+            // video decode lead and audio encoder priming in the edit lists.
             ffmpeg_check(
                 unsafe {
                     sys::av_opt_set(
                         (*output.as_mut_ptr()).priv_data,
                         c"movflags".as_ptr(),
-                        c"empty_moov+frag_keyframe+default_base_moof".as_ptr(),
+                        c"delay_moov+frag_keyframe+default_base_moof".as_ptr(),
                         0,
                     )
                 },
@@ -434,15 +439,8 @@ where
             None
         } else {
             backend
-                .decode_order_delay(settings)
-                .map(|delay| {
-                    frame_count(export_duration(project), settings.fps)
-                        .ok_or_else(|| {
-                            "Export duration and frame rate exceed the exact range".to_string()
-                        })
-                        .map(|frames| crate::math::decode_order::DecodeOrder::new(frames, delay))
-                })
-                .transpose()?
+                .decode_order_delay()
+                .map(|delay| crate::math::decode_order::DecodeOrder::new(total_frames, delay))
         },
     )?;
     let setup_ns = setup_started.elapsed().as_nanos();
@@ -459,7 +457,7 @@ where
         )?,
         _ => VecDeque::new(),
     };
-    output.queue_audio(audio_packets);
+    output.audio_packets = audio_packets;
     let audio_encode_ns = audio_encode_started.elapsed().as_nanos();
 
     let video_encode_started = Instant::now();
@@ -469,6 +467,7 @@ where
         backend,
         &mut video_encoder,
         &mut output,
+        total_frames,
         cancelled,
         &assets,
         &mut progress,
@@ -502,7 +501,7 @@ where
             encoder: encoder_label,
             canvas_width: project.canvas_size.width,
             canvas_height: project.canvas_size.height,
-            project_duration: export_duration(project),
+            project_duration: duration,
             fps_numerator: project::fraction_numerator(settings.fps),
             fps_denominator: project::fraction_denominator(settings.fps),
             video_codec: format!("{:?}", settings.video_encoder.codec()),
@@ -779,12 +778,11 @@ fn encode_video_packets<B: VideoBackend>(
     backend: &mut B,
     encoder: &mut ffmpeg::codec::encoder::video::Encoder,
     output: &mut mux::Muxer,
+    total: u64,
     cancelled: &AtomicBool,
     assets: &[project::AssetSnapshot],
     progress: &mut dyn FnMut(ExportProgress),
 ) -> Result<Vec<ExportFrameBenchmark>, String> {
-    let total = frame_count(export_duration(project), settings.fps)
-        .ok_or_else(|| "export duration and frame rate exceed the exact range".to_string())?;
     progress(ExportProgress::EncodingVideo {
         current_frame: 0,
         total_frames: total,
