@@ -9,6 +9,18 @@ pub mod video;
 use shrimply_math_media as math;
 use shrimply_project_document::project::{AssetSnapshot, Project};
 
+pub(crate) fn write_packet(
+    output: &mut ffmpeg_next::format::context::Output,
+    mut packet: ffmpeg_next::Packet,
+    stream: usize,
+    source: ffmpeg_next::Rational,
+    destination: ffmpeg_next::Rational,
+) -> Result<(), ffmpeg_next::Error> {
+    packet.set_stream(stream);
+    packet.rescale_ts(source, destination);
+    packet.write_interleaved(output)
+}
+
 pub fn snapshot_assets(project: &Project) -> Result<Vec<AssetSnapshot>, String> {
     project
         .assets()

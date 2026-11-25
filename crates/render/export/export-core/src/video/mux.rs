@@ -1,38 +1,89 @@
 //! Container headers and timestamp conversion, independent of the GPU backend.
-use super::ffmpeg_check;
+use super::{check_cancelled, ffmpeg_check};
+use crate::audio::AudioPackets;
 use ffmpeg_next::{
     self as ffmpeg,
     packet::{Mut as _, Ref as _},
     sys,
 };
-use std::{collections::VecDeque, ptr};
+use std::{
+    ptr,
+    sync::atomic::{AtomicBool, Ordering},
+};
 
-pub(crate) struct Muxer {
+pub(crate) struct Muxer<'a> {
     output: ffmpeg::format::context::Output,
     video_index: usize,
     video_time_base: Option<ffmpeg::Rational>,
-    audio_stream: Option<(usize, ffmpeg::Rational)>,
-    audio_time_base: Option<ffmpeg::Rational>,
-    /// Audio packets stay in the encoder time base until they are written.
-    pub audio_packets: VecDeque<ffmpeg::Packet>,
+    audio: Option<AudioTrack<'a>>,
     decode_order: Option<crate::math::decode_order::DecodeOrder>,
 }
 
-impl Muxer {
+pub(crate) struct AudioTrack<'a> {
+    index: usize,
+    time_base: Option<ffmpeg::Rational>,
+    packets: AudioPackets<'a>,
+    pending: Option<ffmpeg::Packet>,
+    cancelled: &'a AtomicBool,
+}
+
+impl<'a> AudioTrack<'a> {
+    pub fn new(index: usize, packets: AudioPackets<'a>, cancelled: &'a AtomicBool) -> Self {
+        Self {
+            index,
+            time_base: None,
+            packets,
+            pending: None,
+            cancelled,
+        }
+    }
+
+    fn write_through(
+        &mut self,
+        output: &mut ffmpeg::format::context::Output,
+        limit: Option<(i64, i32, i32)>,
+    ) -> Result<(), String> {
+        let source = self.packets.time_base();
+        let destination = self
+            .time_base
+            .ok_or("Audio packet requires a complete media header")?;
+        loop {
+            check_cancelled(self.cancelled)?;
+            let packet = match self.pending.take() {
+                Some(packet) => Some(packet),
+                None => self
+                    .packets
+                    .next(|_| !self.cancelled.load(Ordering::Relaxed))?,
+            };
+            let Some(packet) = packet else {
+                return Ok(());
+            };
+            let timestamp = packet.dts().or_else(|| packet.pts()).unwrap_or(0);
+            if limit.is_some_and(|limit| {
+                crate::math::compare_timestamps((timestamp, source.0, source.1), limit).is_gt()
+            }) {
+                self.pending = Some(packet);
+                return Ok(());
+            }
+            crate::write_packet(output, packet, self.index, source, destination)
+                .map_err(|error| format!("Write audio packet: {error}"))?;
+        }
+    }
+}
+
+impl<'a> Muxer<'a> {
     pub fn new(
         output: ffmpeg::format::context::Output,
         video_index: usize,
-        audio_stream: Option<(usize, ffmpeg::Rational)>,
+        audio: Option<AudioTrack<'a>>,
         wait_for_header: bool,
         decode_order: Option<crate::math::decode_order::DecodeOrder>,
     ) -> Result<Self, String> {
         let mut muxer = Self {
             output,
             video_index,
-            audio_stream,
             video_time_base: None,
-            audio_time_base: None,
-            audio_packets: VecDeque::new(),
+            audio,
             decode_order,
         };
         if !wait_for_header {
@@ -51,15 +102,14 @@ impl Muxer {
                 .ok_or("Video stream disappeared after writing the header")?
                 .time_base(),
         );
-        self.audio_time_base = self
-            .audio_stream
-            .map(|(index, _)| {
+        if let Some(audio) = &mut self.audio {
+            audio.time_base = Some(
                 self.output
-                    .stream(index)
-                    .map(|stream| stream.time_base())
-                    .ok_or_else(|| "Audio stream disappeared after writing the header".to_string())
-            })
-            .transpose()?;
+                    .stream(audio.index)
+                    .ok_or("Audio stream disappeared after writing the header")?
+                    .time_base(),
+            );
+        }
         Ok(())
     }
 
@@ -73,11 +123,8 @@ impl Muxer {
                 .pts()
                 .ok_or("Encoder returned a video packet without a presentation timestamp")?;
             let dts = clock
-                .next(pts)
+                .next(pts, packet.dts())
                 .map_err(|error| format!("{error} (PTS {pts})"))?;
-            if packet.dts().is_some_and(|native| native != dts) {
-                return Err("Encoder returned an unexpected decode timestamp".into());
-            }
             packet.set_dts(Some(dts));
         }
         if self.video_time_base.is_none() {
@@ -105,49 +152,28 @@ impl Muxer {
             self.write_header()?;
         }
         let time_base = self.video_time_base.expect("written media header");
-        packet.set_stream(self.video_index);
         if packet.duration() == 0 {
             packet.set_duration(1);
         }
         let source = encoder.time_base();
-        if let Some((_, audio_time_base)) = self.audio_stream {
-            while self.audio_packets.front().is_some_and(|audio| {
-                crate::math::compare_timestamps(
-                    (
-                        audio.dts().or_else(|| audio.pts()).unwrap_or(0),
-                        audio_time_base.0,
-                        audio_time_base.1,
-                    ),
-                    (
-                        packet.dts().or_else(|| packet.pts()).unwrap_or(0),
-                        source.0,
-                        source.1,
-                    ),
-                )
-                .is_le()
-            }) {
-                let audio = self.audio_packets.pop_front().expect("front audio packet");
-                self.write_audio(audio)?;
-            }
+        if let Some(audio) = &mut self.audio {
+            let timestamp = packet.dts().or_else(|| packet.pts()).unwrap_or(0);
+            audio.write_through(&mut self.output, Some((timestamp, source.0, source.1)))?;
         }
-        packet.rescale_ts(source, time_base);
-        packet
-            .write_interleaved(&mut self.output)
-            .map_err(|error| error.to_string())
+        crate::write_packet(
+            &mut self.output,
+            packet,
+            self.video_index,
+            source,
+            time_base,
+        )
+        .map_err(|error| format!("Write video packet: {error}"))
     }
 
-    pub fn write_audio(&mut self, mut packet: ffmpeg::Packet) -> Result<(), String> {
-        let (index, source) = self
-            .audio_stream
-            .ok_or("Audio packet requires an audio stream")?;
-        let destination = self
-            .audio_time_base
-            .ok_or("Audio packet requires a complete media header")?;
-        packet.rescale_ts(source, destination);
-        packet.set_stream(index);
-        packet
-            .write_interleaved(&mut self.output)
-            .map_err(|error| format!("Write audio packet: {error}"))
+    pub fn audio_timings(&self) -> (u128, u128) {
+        self.audio.as_ref().map_or((0, 0), |audio| {
+            (audio.packets.mix_ns, audio.packets.encode_ns)
+        })
     }
 
     pub fn finish(&mut self) -> Result<(), String> {
@@ -156,6 +182,9 @@ impl Muxer {
         }
         if self.video_time_base.is_none() {
             return Err("Video encoder produced no codec header".into());
+        }
+        if let Some(audio) = &mut self.audio {
+            audio.write_through(&mut self.output, None)?;
         }
         self.output
             .write_trailer()

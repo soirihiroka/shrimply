@@ -8,7 +8,7 @@ use shrimply_asset::AssetSnapshot;
 use shrimply_math_core::{Fraction, fraction_floor_i64, time_from_sample_frame};
 use shrimply_project_document::project::{
     AUDIO_TRACK_GAIN_MAX_DB, AUDIO_TRACK_GAIN_MIN_DB, AudioClipTransitionCurve, AudioGenerator,
-    AudioItem, AudioSource, AudioSpeedMethod, AudioWaveform, Project, RepeatStrategy,
+    AudioItem, AudioSource, AudioSpeedMethod, AudioTrack, AudioWaveform, Project, RepeatStrategy,
     SequenceReference, Time, audio_source_time_at, fraction_as_f64, fraction_denominator,
     fraction_numerator, playback_speed_is_negative, playback_speed_is_zero,
     playback_speed_or_default, scaled_time_delta,
@@ -473,48 +473,90 @@ pub fn mix_project_offline(
     sample_rate: u32,
     mut progress: impl FnMut(u64, u64) -> bool,
 ) -> Result<Vec<f32>, String> {
-    let total_frames = project.duration().as_sample_frame(sample_rate);
-    let mut mixed = vec![0.0; total_frames as usize * CHANNELS];
-    let enabled_track_count = project
-        .audio_tracks
-        .iter()
-        .filter(|track| track.enabled)
-        .count() as u64;
-    let total_work = total_frames.saturating_mul(enabled_track_count);
-    let mut completed = 0_u64;
-    let mut sessions = HashMap::new();
-    if !progress(0, total_work) {
+    let mut source = OfflineProjectMix::new(project, sample_rate);
+    if !progress(0, source.total_work) {
         return Err("Export cancelled".to_string());
     }
-    for track in &project.audio_tracks {
-        if !track.enabled {
-            continue;
+    let sample_count = usize::try_from(source.total_frames)
+        .ok()
+        .and_then(|frames| frames.checked_mul(CHANNELS))
+        .ok_or("Audio mix exceeds the supported length")?;
+    let mut mixed = Vec::new();
+    mixed
+        .try_reserve_exact(sample_count)
+        .map_err(|error| format!("Allocate audio mix: {error}"))?;
+    while let Some(samples) = source.next_chunk(&mut progress)? {
+        mixed.extend(samples);
+    }
+    Ok(mixed)
+}
+
+pub struct OfflineProjectMix<'a> {
+    project: &'a Project,
+    tracks: Vec<(&'a AudioTrack, HashMap<AudioSourceKey, AudioRenderSession>)>,
+    sample_rate: u32,
+    timeline_start: u64,
+    total_frames: u64,
+    completed: u64,
+    total_work: u64,
+}
+
+impl<'a> OfflineProjectMix<'a> {
+    pub fn new(project: &'a Project, sample_rate: u32) -> Self {
+        let total_frames = project.duration().as_sample_frame(sample_rate);
+        // Folded sequences may share inner items across top-level tracks.
+        let tracks: Vec<_> = project
+            .audio_tracks
+            .iter()
+            .filter(|track| track.enabled)
+            .map(|track| (track, HashMap::new()))
+            .collect();
+        Self {
+            project,
+            total_work: total_frames.saturating_mul(tracks.len() as u64),
+            tracks,
+            sample_rate,
+            timeline_start: 0,
+            total_frames,
+            completed: 0,
         }
-        let mut timeline_start = 0_u64;
-        while timeline_start < total_frames {
-            let frames = total_frames
-                .saturating_sub(timeline_start)
-                .min(OFFLINE_MIX_CHUNK_FRAMES) as usize;
-            let mut samples = vec![0.0; frames * CHANNELS];
+    }
+
+    pub fn total_frames(&self) -> u64 {
+        self.total_frames
+    }
+
+    pub fn next_chunk(
+        &mut self,
+        mut progress: impl FnMut(u64, u64) -> bool,
+    ) -> Result<Option<Vec<f32>>, String> {
+        if self.timeline_start == self.total_frames {
+            return Ok(None);
+        }
+        let frames = (self.total_frames - self.timeline_start).min(OFFLINE_MIX_CHUNK_FRAMES);
+        let end = self.timeline_start + frames;
+        let mut mixed = vec![0.0; frames as usize * CHANNELS];
+        for (track, sessions) in &mut self.tracks {
+            let mut samples = vec![0.0; mixed.len()];
             mix_track_range_result(
-                project,
+                self.project,
                 track,
-                &mut sessions,
+                sessions,
                 &mut samples,
-                timeline_start,
-                timeline_start.saturating_add(frames as u64),
-                sample_rate,
+                self.timeline_start,
+                end,
+                self.sample_rate,
                 &mut Vec::new(),
             )?;
-            mix_samples(&mut mixed, timeline_start as usize, &samples);
-            timeline_start = timeline_start.saturating_add(frames as u64);
-            completed = completed.saturating_add(frames as u64);
-            if !progress(completed, total_work) {
+            mix_samples(&mut mixed, 0, &samples);
+            self.completed = self.completed.saturating_add(frames);
+            if !progress(self.completed, self.total_work) {
                 return Err("Export cancelled".to_string());
             }
         }
+        self.timeline_start = end;
+        Ok(Some(mixed))
     }
-    Ok(mixed)
 }
 
 pub struct OfflineAudioRenderer {

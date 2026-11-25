@@ -1,5 +1,5 @@
 use std::collections::VecDeque;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
@@ -9,14 +9,13 @@ use ffmpeg::sys;
 use ffmpeg_next as ffmpeg;
 use libc::EAGAIN;
 use serde::{Deserialize, Serialize};
-use shrimply_audio_engine::streaming;
 use shrimply_math_core::{Fraction, frame_count, time_from_frame};
 use shrimply_project_document::project::{self, Project, Time};
 
-const AUDIO_CHANNELS: usize = 2;
-const DEFAULT_AUDIO_FRAME_SIZE: usize = 1024;
 const EXPORT_DEBUG_FRAME_PERIOD: u64 = 300;
 const VIDEO_ENCODER_STALL_TIMEOUT: Duration = Duration::from_secs(5);
+// AVC and HEVC bound decoded-picture buffering to 16 pictures.
+const AVC_HEVC_REORDER_CAPACITY: u32 = 16;
 pub(crate) mod mux;
 pub mod progress;
 pub mod settings;
@@ -122,12 +121,6 @@ pub struct RenderedFrame {
 
 pub trait VideoBackend {
     fn name(&self) -> &'static str;
-
-    /// MediaCodec exposes output in decode order with PTS only. Other encoders
-    /// keep their native DTS and do not opt into this CFR clock.
-    fn decode_order_delay(&self) -> Option<u32> {
-        None
-    }
 
     fn validate(&self, project: &Project, settings: &ExportSettings) -> Result<(), String>;
 
@@ -306,26 +299,33 @@ where
     .entered();
     tracing::info!("video export started");
 
-    let audio_mix_started = Instant::now();
-    let audio_samples = if settings.video_encoder == VideoEncoder::Gif {
-        Vec::new()
-    } else {
-        mix_entire_audio_track(
-            project,
-            settings.audio_sample_rate,
-            cancelled,
-            &mut progress,
-        )?
-    };
-    crate::ensure_assets_current(&assets)?;
-    let audio_mix_ns = audio_mix_started.elapsed().as_nanos();
-
     let setup_started = Instant::now();
     progress(ExportProgress::SettingUp("Preparing video renderer"));
     backend.prepare(project, settings, cancelled)?;
     check_cancelled(cancelled)?;
-    progress(ExportProgress::SettingUp("Opening output file"));
     let format = container_name(settings.container);
+    let global_header = crate::output::needs_global_header(format)?;
+    progress(ExportProgress::SettingUp("Opening video encoder"));
+    let mut video_encoder = if settings.video_encoder == VideoEncoder::Gif {
+        open_gif_encoder(project, settings, global_header)?
+    } else if software {
+        software::open(project, settings, global_header)?
+    } else {
+        backend.open_video_encoder(project, settings, global_header)?
+    };
+    let encoder_label = video_encoder
+        .codec()
+        .ok_or("Missing open video encoder")?
+        .name()
+        .to_owned();
+    let audio_encoder = if settings.video_encoder == VideoEncoder::Gif {
+        None
+    } else {
+        progress(ExportProgress::SettingUp("Opening audio encoder"));
+        Some(open_audio_encoder(settings, global_header)?)
+    };
+    check_cancelled(cancelled)?;
+    progress(ExportProgress::SettingUp("Opening output file"));
     let (temporary, mut output) = if let Some(open) = stream {
         let mut stream = open()?;
         let seekable = unsafe { (*stream.as_mut_ptr()).seekable } != 0;
@@ -348,36 +348,12 @@ where
         }
         (None, output)
     } else {
-        let parent = settings
-            .path
-            .parent()
-            .filter(|parent| !parent.as_os_str().is_empty())
-            .unwrap_or_else(|| Path::new("."));
-        let suffix = format!(".{}", extension_for_container(settings.container));
-        let temporary = tempfile::Builder::new()
-            .prefix(".shrimply-video-")
-            .suffix(&suffix)
-            .tempfile_in(parent)
-            .map_err(|error| format!("Could not prepare video export: {error}"))?
-            .into_temp_path();
+        let temporary = crate::output::temporary_sibling(&settings.path)
+            .map_err(|error| format!("Could not prepare video export: {error}"))?;
         let output =
             ffmpeg::format::output_as(&temporary, format).map_err(|error| error.to_string())?;
         (Some(temporary), output)
     };
-    let global_header = output_needs_global_header(&output);
-    progress(ExportProgress::SettingUp("Opening video encoder"));
-    let mut video_encoder = if settings.video_encoder == VideoEncoder::Gif {
-        open_gif_encoder(project, settings, global_header)?
-    } else if software {
-        software::open(project, settings, global_header)?
-    } else {
-        backend.open_video_encoder(project, settings, global_header)?
-    };
-    let encoder_label = video_encoder
-        .codec()
-        .ok_or("Missing open video encoder")?
-        .name()
-        .to_owned();
     let video_time_base = video_time_base(settings.fps)?;
     let video_stream_index = {
         let mut stream = output
@@ -397,20 +373,18 @@ where
         stream.index()
     };
 
-    let audio_time_base = ffmpeg::Rational(1, settings.audio_sample_rate as i32);
-    let (mut audio_encoder, audio_stream_index) = if settings.video_encoder == VideoEncoder::Gif {
-        (None, None)
-    } else {
-        progress(ExportProgress::SettingUp("Opening audio encoder"));
-        let encoder = open_audio_encoder(settings, global_header)?;
-        let stream_index = {
+    let audio = if let Some(encoder) = audio_encoder {
+        let index = {
             let mut stream = output
                 .add_stream_with(encoder.as_ref())
                 .map_err(|error| error.to_string())?;
-            stream.set_time_base(audio_time_base);
+            stream.set_time_base(encoder.time_base());
             stream.index()
         };
-        (Some(encoder), Some(stream_index))
+        let packets = crate::audio::AudioPackets::new(encoder, project, &assets);
+        Some(mux::AudioTrack::new(index, packets, cancelled))
+    } else {
+        None
     };
 
     // MediaCodec can provide global headers with the first real packet.
@@ -425,40 +399,13 @@ where
     let mut output = mux::Muxer::new(
         output,
         video_stream_index,
-        audio_stream_index.map(|index| {
-            (
-                index,
-                audio_encoder
-                    .as_ref()
-                    .expect("audio stream encoder")
-                    .time_base(),
-            )
-        }),
+        audio,
         wait_for_header,
-        if software || settings.video_encoder == VideoEncoder::Gif {
-            None
-        } else {
-            backend
-                .decode_order_delay()
-                .map(|delay| crate::math::decode_order::DecodeOrder::new(total_frames, delay))
-        },
+        (settings.video_encoder != VideoEncoder::Gif).then(|| {
+            crate::math::decode_order::DecodeOrder::new(total_frames, AVC_HEVC_REORDER_CAPACITY)
+        }),
     )?;
     let setup_ns = setup_started.elapsed().as_nanos();
-
-    let audio_encode_started = Instant::now();
-    let audio_packets = match (audio_encoder.as_mut(), audio_stream_index) {
-        (Some(encoder), Some(stream_index)) => encode_audio_packets(
-            encoder,
-            &audio_samples,
-            settings,
-            stream_index,
-            cancelled,
-            &mut progress,
-        )?,
-        _ => VecDeque::new(),
-    };
-    output.audio_packets = audio_packets;
-    let audio_encode_ns = audio_encode_started.elapsed().as_nanos();
 
     let video_encode_started = Instant::now();
     let frames = encode_video_packets(
@@ -472,17 +419,19 @@ where
         &assets,
         &mut progress,
     )?;
-    let video_encode_ns = video_encode_started.elapsed().as_nanos();
+    let (mix_during_video_ns, audio_during_video_ns) = output.audio_timings();
+    let video_encode_ns = video_encode_started
+        .elapsed()
+        .as_nanos()
+        .saturating_sub(mix_during_video_ns + audio_during_video_ns);
 
     progress(ExportProgress::Finalizing);
     let finalize_started = Instant::now();
-    while let Some(packet) = output.audio_packets.pop_front() {
-        check_cancelled(cancelled)?;
-        crate::ensure_assets_current(&assets)?;
-        output.write_audio(packet)?;
-    }
-    crate::verify_assets_current(&assets)?;
     output.finish()?;
+    crate::verify_assets_current(&assets)?;
+    let (audio_mix_ns, audio_encode_ns) = output.audio_timings();
+    let audio_during_finalize_ns =
+        (audio_mix_ns - mix_during_video_ns) + (audio_encode_ns - audio_during_video_ns);
     drop(output);
     check_cancelled(cancelled)?;
     if let Some(temporary) = temporary {
@@ -492,7 +441,10 @@ where
             temporary.persist_noclobber(&settings.path)
         }
         .map_err(|error| format!("Could not save video export: {error}"))?;
-        let finalize_ns = finalize_started.elapsed().as_nanos();
+        let finalize_ns = finalize_started
+            .elapsed()
+            .as_nanos()
+            .saturating_sub(audio_during_finalize_ns);
 
         let benchmark = ExportBenchmark {
             version: 3,
@@ -603,24 +555,6 @@ fn validate_settings(project: &Project, settings: &ExportSettings) -> Result<(),
     Ok(())
 }
 
-fn mix_entire_audio_track<F>(
-    project: &Project,
-    sample_rate: u32,
-    cancelled: &AtomicBool,
-    progress: &mut F,
-) -> Result<Vec<f32>, String>
-where
-    F: FnMut(ExportProgress),
-{
-    streaming::mix_project_offline(project, sample_rate, |current_frame, total_frames| {
-        progress(ExportProgress::MixingAudio {
-            current_frame,
-            total_frames,
-        });
-        !cancelled.load(Ordering::Relaxed)
-    })
-}
-
 fn open_gif_encoder(
     project: &Project,
     settings: &ExportSettings,
@@ -705,70 +639,13 @@ fn open_audio_encoder(
     let encoder_name = audio_encoder_name(settings.audio_encoder);
     let codec = ffmpeg::codec::encoder::find_by_name(encoder_name)
         .ok_or_else(|| format!("FFmpeg encoder {encoder_name} was not found"))?;
-    let mut encoder = ffmpeg::codec::Context::new_with_codec(codec)
-        .encoder()
-        .audio()
-        .map_err(|error| error.to_string())?;
-    encoder.set_rate(settings.audio_sample_rate as i32);
-    encoder.set_channel_layout(ffmpeg::channel_layout::ChannelLayout::STEREO);
-    encoder.set_format(audio_sample_format(settings.audio_encoder));
-    encoder.set_time_base(ffmpeg::Rational(1, settings.audio_sample_rate as i32));
-    encoder.set_bit_rate(settings.audio_bitrate_kbps as usize * 1_000);
-    unsafe {
-        if global_header {
-            (*encoder.as_mut_ptr()).flags |= sys::AV_CODEC_FLAG_GLOBAL_HEADER as i32;
-        }
-    }
-    encoder
-        .open_as_with(codec, ffmpeg::Dictionary::new())
-        .map_err(|error| format!("Could not open {encoder_name}: {error}"))
-}
-
-fn encode_audio_packets(
-    encoder: &mut ffmpeg::codec::encoder::audio::Encoder,
-    samples: &[f32],
-    settings: &ExportSettings,
-    stream_index: usize,
-    cancelled: &AtomicBool,
-    progress: &mut dyn FnMut(ExportProgress),
-) -> Result<VecDeque<ffmpeg::Packet>, String> {
-    let input_frames = samples.len() / AUDIO_CHANNELS;
-    progress(ExportProgress::EncodingAudio {
-        current_frame: 0,
-        total_frames: input_frames as u64,
-    });
-    let frame_size = usize::try_from(encoder.frame_size())
-        .ok()
-        .filter(|value| *value > 0)
-        .unwrap_or(DEFAULT_AUDIO_FRAME_SIZE);
-    let mut packets = VecDeque::new();
-    let mut next_pts = 0_i64;
-    let mut start_frame = 0;
-    while start_frame < input_frames {
-        check_cancelled(cancelled)?;
-        let frames = frame_size.min(input_frames - start_frame);
-        let mut frame = ffmpeg::frame::Audio::new(
-            encoder.format(),
-            frame_size,
-            ffmpeg::channel_layout::ChannelLayout::STEREO,
-        );
-        frame.set_rate(settings.audio_sample_rate);
-        frame.set_pts(Some(next_pts));
-        fill_audio_frame(&mut frame, &samples[start_frame * AUDIO_CHANNELS..], frames);
-        encoder
-            .send_frame(&frame)
-            .map_err(|error| error.to_string())?;
-        receive_audio_packets(encoder, stream_index, &mut packets)?;
-        start_frame += frames;
-        next_pts += frame_size as i64;
-        progress(ExportProgress::EncodingAudio {
-            current_frame: start_frame.min(input_frames) as u64,
-            total_frames: input_frames as u64,
-        });
-    }
-    encoder.send_eof().map_err(|error| error.to_string())?;
-    receive_audio_packets(encoder, stream_index, &mut packets)?;
-    Ok(packets)
+    crate::audio::open_encoder(
+        codec,
+        settings.audio_sample_rate,
+        audio_sample_format(settings.audio_encoder),
+        Some(settings.audio_bitrate_kbps as usize * 1_000),
+        global_header,
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -777,7 +654,7 @@ fn encode_video_packets<B: VideoBackend>(
     settings: &ExportSettings,
     backend: &mut B,
     encoder: &mut ffmpeg::codec::encoder::video::Encoder,
-    output: &mut mux::Muxer,
+    output: &mut mux::Muxer<'_>,
     total: u64,
     cancelled: &AtomicBool,
     assets: &[project::AssetSnapshot],
@@ -821,7 +698,7 @@ fn encode_video_packets<B: VideoBackend>(
         let drained = send_video_frame(encoder, output, Some(&frame), cancelled)?;
         let encoder_send_ns = encoder_send_started.elapsed().as_nanos();
         let packet_started = Instant::now();
-        let packets_received = drained + receive_video_packets(encoder, output)?;
+        let packets_received = drained + receive_video_packets(encoder, output, cancelled, false)?;
         let current_frame = frame_index + 1;
         let completed_at = Instant::now();
         fps_window.push_back((current_frame, completed_at));
@@ -862,7 +739,7 @@ fn encode_video_packets<B: VideoBackend>(
     }
     crate::ensure_assets_current(assets)?;
     send_video_frame(encoder, output, None, cancelled)?;
-    receive_video_packets(encoder, output)?;
+    receive_video_packets(encoder, output, cancelled, true)?;
     Ok(benchmarks)
 }
 
@@ -923,28 +800,9 @@ pub fn rgba_frame(width: u32, height: u32, bytes: &[u8]) -> Result<ffmpeg::frame
     Ok(frame)
 }
 
-fn receive_audio_packets(
-    encoder: &mut ffmpeg::codec::encoder::audio::Encoder,
-    stream_index: usize,
-    packets: &mut VecDeque<ffmpeg::Packet>,
-) -> Result<(), String> {
-    loop {
-        let mut packet = ffmpeg::Packet::empty();
-        match encoder.receive_packet(&mut packet) {
-            Ok(()) => {
-                packet.set_stream(stream_index);
-                packets.push_back(packet);
-            }
-            Err(ffmpeg::Error::Other { errno }) if errno == EAGAIN => return Ok(()),
-            Err(ffmpeg::Error::Eof) => return Ok(()),
-            Err(error) => return Err(error.to_string()),
-        }
-    }
-}
-
 fn send_video_frame(
     encoder: &mut ffmpeg::codec::encoder::video::Encoder,
-    output: &mut mux::Muxer,
+    output: &mut mux::Muxer<'_>,
     frame: Option<&ffmpeg::frame::Video>,
     cancelled: &AtomicBool,
 ) -> Result<usize, String> {
@@ -960,7 +818,7 @@ fn send_video_frame(
             Ok(()) => return Ok(written),
             Err(ffmpeg::Error::Eof) if frame.is_none() => return Ok(written),
             Err(ffmpeg::Error::Other { errno }) if errno == EAGAIN => {
-                let drained = receive_video_packets(encoder, output)?;
+                let drained = receive_video_packets(encoder, output, cancelled, false)?;
                 written += drained;
                 if drained != 0 {
                     last_progress = Instant::now();
@@ -977,73 +835,34 @@ fn send_video_frame(
 
 fn receive_video_packets(
     encoder: &mut ffmpeg::codec::encoder::video::Encoder,
-    output: &mut mux::Muxer,
+    output: &mut mux::Muxer<'_>,
+    cancelled: &AtomicBool,
+    draining: bool,
 ) -> Result<usize, String> {
     let mut written = 0;
+    let mut last_packet = Instant::now();
     loop {
+        check_cancelled(cancelled)?;
         let mut packet = ffmpeg::Packet::empty();
         match encoder.receive_packet(&mut packet) {
             Ok(()) => {
                 output.write_video(packet, encoder)?;
                 written += 1;
+                last_packet = Instant::now();
             }
-            Err(ffmpeg::Error::Other { errno }) if errno == EAGAIN => return Ok(written),
-            Err(ffmpeg::Error::Eof) => return Ok(written),
-            Err(error) => return Err(error.to_string()),
+            Err(ffmpeg::Error::Other { errno }) if errno == EAGAIN => {
+                if !draining {
+                    return Ok(written);
+                }
+                if last_packet.elapsed() >= VIDEO_ENCODER_STALL_TIMEOUT {
+                    return Err("Video encoder stalled while draining packets".into());
+                }
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            Err(ffmpeg::Error::Eof) if draining => return Ok(written),
+            Err(error) => return Err(format!("Receive encoded video: {error}")),
         }
     }
-}
-
-fn fill_audio_frame(frame: &mut ffmpeg::frame::Audio, samples: &[f32], frames: usize) {
-    let frame_samples = frame.samples();
-    match frame.format() {
-        ffmpeg::format::Sample::F32(ffmpeg::format::sample::Type::Planar) => {
-            for (index, sample) in frame.plane_mut::<f32>(0).iter_mut().enumerate() {
-                *sample = if index < frames {
-                    samples[index * AUDIO_CHANNELS].clamp(-1.0, 1.0)
-                } else {
-                    0.0
-                };
-            }
-            for (index, sample) in frame.plane_mut::<f32>(1).iter_mut().enumerate() {
-                *sample = if index < frames {
-                    samples[index * AUDIO_CHANNELS + 1].clamp(-1.0, 1.0)
-                } else {
-                    0.0
-                };
-            }
-        }
-        ffmpeg::format::Sample::F32(ffmpeg::format::sample::Type::Packed) => {
-            for (index, sample) in frame.plane_mut::<(f32, f32)>(0).iter_mut().enumerate() {
-                *sample = if index < frames {
-                    (
-                        samples[index * AUDIO_CHANNELS].clamp(-1.0, 1.0),
-                        samples[index * AUDIO_CHANNELS + 1].clamp(-1.0, 1.0),
-                    )
-                } else {
-                    (0.0, 0.0)
-                };
-            }
-        }
-        ffmpeg::format::Sample::I16(ffmpeg::format::sample::Type::Packed) => {
-            for (index, sample) in frame.plane_mut::<(i16, i16)>(0).iter_mut().enumerate() {
-                *sample = if index < frames {
-                    (
-                        sample_i16(samples[index * AUDIO_CHANNELS]),
-                        sample_i16(samples[index * AUDIO_CHANNELS + 1]),
-                    )
-                } else {
-                    (0, 0)
-                };
-            }
-        }
-        _ => panic!("unsupported export audio sample format"),
-    }
-    debug_assert_eq!(frame_samples, frame.samples());
-}
-
-fn sample_i16(sample: f32) -> i16 {
-    (sample.clamp(-1.0, 1.0) * i16::MAX as f32).round() as i16
 }
 
 pub fn available_audio_encoders() -> impl Iterator<Item = (ExportAudioEncoder, &'static str)> {
@@ -1143,13 +962,6 @@ pub fn ffmpeg_check(result: i32, operation: &str) -> Result<(), String> {
         Ok(())
     } else {
         Err(format!("{operation}: {}", ffmpeg::Error::from(result)))
-    }
-}
-
-fn output_needs_global_header(output: &ffmpeg::format::context::Output) -> bool {
-    unsafe {
-        let format = (*output.as_ptr()).oformat;
-        !format.is_null() && ((*format).flags & sys::AVFMT_GLOBALHEADER) != 0
     }
 }
 

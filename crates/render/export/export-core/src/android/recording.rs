@@ -21,7 +21,7 @@ pub struct Settings {
 
 pub struct Recording {
     encoder: Encoder,
-    muxer: Muxer,
+    muxer: Muxer<'static>,
     first_pts: Option<i64>,
     pending: Option<ffmpeg::Packet>,
     frame_duration: i64,

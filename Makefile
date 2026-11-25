@@ -458,6 +458,9 @@ check: sanim-check sanim-integration-check
 check: media-system-check
 media-system-check:
 	$(DEV_BUILD_ENV) $(CARGO) test -p shrimply-asset remote --lib
+.PHONY: export-check
+export-check: native-deps
+	$(DEV_BUILD_ENV) $(CARGO) test -p shrimply-math-media -p shrimply-export-core --lib
 .PHONY: font-shaping-check font-shaping-bench
 .PHONY: resource-cache-check
 check: resource-cache-check

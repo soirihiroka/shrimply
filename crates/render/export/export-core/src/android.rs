@@ -258,12 +258,6 @@ impl VideoBackend for Backend {
         "android-vulkan-mediacodec"
     }
 
-    fn decode_order_delay(&self) -> Option<u32> {
-        // AVC and HEVC bound decoded-picture buffering to 16 pictures.
-        // MediaCodec's max-bframes config is a GOP setting, not a DTS offset.
-        Some(16)
-    }
-
     fn validate(&self, _project: &Project, settings: &ExportSettings) -> Result<(), String> {
         core::settings::validate_rate_control(settings)
     }

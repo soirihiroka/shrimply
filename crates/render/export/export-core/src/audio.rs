@@ -1,7 +1,6 @@
 use crate::video::ExportProgress;
-use std::path::Path;
+use std::{collections::VecDeque, path::Path, time::Instant};
 
-use ffmpeg::packet::Mut as _;
 use ffmpeg_next as ffmpeg;
 use libc::EAGAIN;
 
@@ -61,6 +60,13 @@ impl Format {
             Self::Opus => "opus",
         }
     }
+
+    fn container(self) -> &'static str {
+        match self {
+            Self::Opus => "ogg",
+            _ => self.extension(),
+        }
+    }
 }
 
 pub fn export_with_progress(
@@ -71,23 +77,21 @@ pub fn export_with_progress(
 ) -> Result<(), String> {
     crate::ensure_output_is_not_an_asset(project, path)?;
     let assets = crate::snapshot_assets(project)?;
-    let mut output_opened = false;
-    let result = export_inner(
+    let temporary = crate::output::temporary_sibling(path)
+        .map_err(|error| format!("Could not prepare audio export: {error}"))?;
+    export_inner(
         project,
         format,
         &assets,
         || {
-            let output = ffmpeg::format::output(path)
-                .map_err(|error| format!("Could not create the {format:?} output file: {error}"))?;
-            output_opened = true;
-            Ok(output)
+            ffmpeg::format::output_as(&temporary, format.container())
+                .map_err(|error| format!("Could not create the {format:?} output file: {error}"))
         },
         &mut progress,
-    );
-    if result.is_err() && output_opened {
-        let _ = std::fs::remove_file(path);
-    }
-    result
+    )?;
+    temporary
+        .persist(path)
+        .map_err(|error| format!("Could not save audio export: {error}"))
 }
 
 pub fn export_to_stream(
@@ -96,17 +100,13 @@ pub fn export_to_stream(
     open: impl FnOnce() -> Result<ffmpeg::format::context::StreamIo, String>,
     mut progress: impl FnMut(ExportProgress) -> bool,
 ) -> Result<(), String> {
-    let container = match format {
-        Format::Ogg | Format::Opus => "ogg",
-        _ => format.extension(),
-    };
     let assets = crate::snapshot_assets(project)?;
     export_inner(
         project,
         format,
         &assets,
         || {
-            ffmpeg::format::output_to_stream(open()?, None, Some(container))
+            ffmpeg::format::output_to_stream(open()?, None, Some(format.container()))
                 .map_err(|error| format!("Could not create the {format:?} output file: {error}"))
         },
         &mut progress,
@@ -124,22 +124,6 @@ fn export_inner(
     let total_frames = project.duration().as_sample_frame(SAMPLE_RATE);
     if total_frames == 0 {
         return Err("The selected audio has no duration.".to_string());
-    }
-
-    let samples =
-        streaming::mix_project_offline(project, SAMPLE_RATE, |completed_frames, total_frames| {
-            progress(ExportProgress::MixingAudio {
-                current_frame: completed_frames,
-                total_frames,
-            })
-        })?;
-    crate::ensure_assets_current(assets)?;
-
-    if !progress(ExportProgress::EncodingAudio {
-        current_frame: 0,
-        total_frames,
-    }) {
-        return Err("Export cancelled".to_string());
     }
 
     let encoder_name = match format {
@@ -173,139 +157,222 @@ fn export_inner(
             "The {encoder_name} encoder does not support the {sample_format:?} sample format required for {format:?} export"
         ));
     }
-    let mut encoder = ffmpeg::codec::Context::new_with_codec(codec)
-        .encoder()
-        .audio()
-        .map_err(|error| format!("Could not configure the {encoder_name} encoder: {error}"))?;
-    encoder.set_rate(SAMPLE_RATE as i32);
-    encoder.set_channel_layout(ffmpeg::channel_layout::ChannelLayout::STEREO);
-    encoder.set_format(sample_format);
-    encoder.set_time_base(ffmpeg::Rational(1, SAMPLE_RATE as i32));
-    if matches!(format, Format::Mp3 | Format::Ogg | Format::Opus) {
-        encoder.set_bit_rate(192_000);
+    if !progress(ExportProgress::EncodingAudio {
+        current_frame: 0,
+        total_frames,
+    }) {
+        return Err("Export cancelled".into());
     }
-
+    let encoder = open_encoder(
+        codec,
+        SAMPLE_RATE,
+        sample_format,
+        matches!(format, Format::Mp3 | Format::Ogg | Format::Opus).then_some(192_000),
+        crate::output::needs_global_header(format.container())?,
+    )?;
+    let mut packets = AudioPackets::new(encoder, project, assets);
+    let mut packet = packets
+        .next(&mut *progress)?
+        .ok_or("Audio encoder produced no packets")?;
     let mut output = open()?;
-    if output
-        .format()
-        .flags()
-        .contains(ffmpeg::format::Flags::GLOBAL_HEADER)
-    {
-        unsafe {
-            (*encoder.as_mut_ptr()).flags |= ffmpeg::sys::AV_CODEC_FLAG_GLOBAL_HEADER as i32;
-        }
-    }
-    let mut encoder = encoder
-        .open_as(codec)
-        .map_err(|error| format!("Could not open {encoder_name}: {error}"))?;
     let stream_index = {
         let mut stream = output
-            .add_stream_with(encoder.as_ref())
+            .add_stream_with(packets.encoder.as_ref())
             .map_err(|error| format!("Could not add the {format:?} audio stream: {error}"))?;
-        stream.set_time_base(ffmpeg::Rational(1, SAMPLE_RATE as i32));
+        stream.set_time_base(packets.time_base());
         stream.index()
     };
     output
         .write_header()
         .map_err(|error| format!("Could not write the {format:?} file header: {error}"))?;
     let stream_time_base = output.stream(stream_index).unwrap().time_base();
-    let frame_size = usize::try_from(encoder.frame_size())
-        .ok()
-        .filter(|size| *size > 0)
-        .unwrap_or(1024);
-    let mut offset = 0;
-    let mut pts = 0;
-    while offset < total_frames as usize {
-        crate::ensure_assets_current(assets)?;
-        let frames = frame_size.min(total_frames as usize - offset);
-        let mut frame = ffmpeg::frame::Audio::new(
-            sample_format,
-            frame_size,
-            ffmpeg::channel_layout::ChannelLayout::STEREO,
-        );
-        frame.set_rate(SAMPLE_RATE);
-        frame.set_pts(Some(pts));
-        fill_frame(
-            &mut frame,
-            sample_format,
-            &samples[offset * CHANNELS..],
-            frames,
-        );
-        encoder
-            .send_frame(&frame)
-            .map_err(|error| format!("Could not encode {format:?} audio: {error}"))?;
-        write_packets(
-            &mut encoder,
+    loop {
+        crate::write_packet(
             &mut output,
+            packet,
             stream_index,
+            packets.time_base(),
             stream_time_base,
-            format,
-        )?;
-        offset += frames;
-        pts += frame_size as i64;
-        if !progress(ExportProgress::EncodingAudio {
-            current_frame: offset as u64,
-            total_frames,
-        }) {
-            return Err("Export cancelled".to_string());
-        }
+        )
+        .map_err(|error| format!("Could not write {format:?} audio data: {error}"))?;
+        let Some(next) = packets.next(&mut *progress)? else {
+            break;
+        };
+        packet = next;
     }
-    encoder
-        .send_eof()
-        .map_err(|error| format!("Could not finalize the {format:?} encoder: {error}"))?;
-    write_packets(
-        &mut encoder,
-        &mut output,
-        stream_index,
-        stream_time_base,
-        format,
-    )?;
     crate::verify_assets_current(assets)?;
     output
         .write_trailer()
         .map_err(|error| format!("Could not finalize the {format:?} file: {error}"))
 }
 
-fn fill_frame(
-    frame: &mut ffmpeg::frame::Audio,
-    format: ffmpeg::format::Sample,
-    samples: &[f32],
-    frames: usize,
-) {
-    match format {
-        ffmpeg::format::Sample::I16(ffmpeg::format::sample::Type::Packed) => {
-            for (index, sample) in frame.plane_mut::<(i16, i16)>(0).iter_mut().enumerate() {
-                *sample = if index < frames {
-                    (
-                        to_i16(samples[index * CHANNELS]),
-                        to_i16(samples[index * CHANNELS + 1]),
-                    )
-                } else {
-                    (0, 0)
+pub(crate) fn open_encoder(
+    codec: ffmpeg::Codec,
+    sample_rate: u32,
+    sample_format: ffmpeg::format::Sample,
+    bitrate: Option<usize>,
+    global_header: bool,
+) -> Result<ffmpeg::codec::encoder::audio::Encoder, String> {
+    let mut encoder = ffmpeg::codec::Context::new_with_codec(codec)
+        .encoder()
+        .audio()
+        .map_err(|error| format!("Configure {} audio encoder: {error}", codec.name()))?;
+    encoder.set_rate(sample_rate as i32);
+    encoder.set_channel_layout(ffmpeg::channel_layout::ChannelLayout::STEREO);
+    encoder.set_format(sample_format);
+    encoder.set_time_base(ffmpeg::Rational(1, sample_rate as i32));
+    if let Some(bitrate) = bitrate {
+        encoder.set_bit_rate(bitrate);
+    }
+    if global_header {
+        unsafe {
+            (*encoder.as_mut_ptr()).flags |= ffmpeg::sys::AV_CODEC_FLAG_GLOBAL_HEADER as i32;
+        }
+    }
+    encoder
+        .open_as(codec)
+        .map_err(|error| format!("Open {} audio encoder: {error}", codec.name()))
+}
+
+pub(crate) struct AudioPackets<'a> {
+    encoder: ffmpeg::codec::encoder::audio::Encoder,
+    mixer: streaming::OfflineProjectMix<'a>,
+    assets: &'a [shrimply_project_document::project::AssetSnapshot],
+    samples: VecDeque<f32>,
+    frame_size: usize,
+    submitted: u64,
+    draining: bool,
+    pub mix_ns: u128,
+    pub encode_ns: u128,
+}
+
+impl<'a> AudioPackets<'a> {
+    pub fn new(
+        encoder: ffmpeg::codec::encoder::audio::Encoder,
+        project: &'a Project,
+        assets: &'a [shrimply_project_document::project::AssetSnapshot],
+    ) -> Self {
+        Self {
+            mixer: streaming::OfflineProjectMix::new(project, encoder.rate()),
+            frame_size: usize::try_from(encoder.frame_size())
+                .ok()
+                .filter(|&size| size > 0)
+                .unwrap_or(1024),
+            encoder,
+            assets,
+            samples: VecDeque::new(),
+            submitted: 0,
+            draining: false,
+            mix_ns: 0,
+            encode_ns: 0,
+        }
+    }
+
+    pub fn time_base(&self) -> ffmpeg::Rational {
+        self.encoder.time_base()
+    }
+
+    pub fn next(
+        &mut self,
+        mut progress: impl FnMut(ExportProgress) -> bool,
+    ) -> Result<Option<ffmpeg::Packet>, String> {
+        let started = Instant::now();
+        let initial_mix_ns = self.mix_ns;
+        let mut packet = ffmpeg::Packet::empty();
+        let packet = loop {
+            match self.encoder.receive_packet(&mut packet) {
+                Ok(()) => break Some(packet),
+                Err(ffmpeg::Error::Eof) if self.draining => break None,
+                Err(ffmpeg::Error::Other { errno }) if errno == EAGAIN && !self.draining => {}
+                Err(error) => return Err(format!("Receive encoded audio: {error}")),
+            }
+            while self.samples.len() < self.frame_size * CHANNELS {
+                crate::ensure_assets_current(self.assets)?;
+                let started = Instant::now();
+                let total_frames = self.mixer.total_frames();
+                let samples = self.mixer.next_chunk(|_, _| {
+                    progress(ExportProgress::EncodingAudio {
+                        current_frame: self.submitted,
+                        total_frames,
+                    })
+                })?;
+                self.mix_ns += started.elapsed().as_nanos();
+                let Some(samples) = samples else {
+                    break;
                 };
+                self.samples.extend(samples);
+            }
+            if self.samples.is_empty() {
+                self.encoder
+                    .send_eof()
+                    .map_err(|error| format!("Finalize audio encoder: {error}"))?;
+                self.draining = true;
+                continue;
+            }
+            let frames = self.frame_size.min(self.samples.len() / CHANNELS);
+            let format = self.encoder.format();
+            let mut frame = ffmpeg::frame::Audio::new(
+                format,
+                frames,
+                ffmpeg::channel_layout::ChannelLayout::STEREO,
+            );
+            frame.set_rate(self.encoder.rate());
+            let pts = i64::try_from(self.submitted)
+                .map_err(|_| "Audio timestamp exceeds the exact range")?;
+            frame.set_pts(Some(pts));
+            fill_frame(
+                &mut frame,
+                &self.samples.make_contiguous()[..frames * CHANNELS],
+            );
+            drop(self.samples.drain(..frames * CHANNELS));
+            self.encoder
+                .send_frame(&frame)
+                .map_err(|error| format!("Encode audio frame: {error}"))?;
+            self.submitted += frames as u64;
+            if !progress(ExportProgress::EncodingAudio {
+                current_frame: self.submitted,
+                total_frames: self.mixer.total_frames(),
+            }) {
+                return Err("Export cancelled".into());
+            }
+        };
+        self.encode_ns += started
+            .elapsed()
+            .as_nanos()
+            .saturating_sub(self.mix_ns - initial_mix_ns);
+        Ok(packet)
+    }
+}
+
+fn fill_frame(frame: &mut ffmpeg::frame::Audio, samples: &[f32]) {
+    match frame.format() {
+        ffmpeg::format::Sample::I16(ffmpeg::format::sample::Type::Packed) => {
+            for (sample, stereo) in frame
+                .plane_mut::<(i16, i16)>(0)
+                .iter_mut()
+                .zip(samples.chunks_exact(CHANNELS))
+            {
+                *sample = (to_i16(stereo[0]), to_i16(stereo[1]));
             }
         }
         ffmpeg::format::Sample::F32(ffmpeg::format::sample::Type::Planar) => {
             for channel in 0..CHANNELS {
-                for (index, sample) in frame.plane_mut::<f32>(channel).iter_mut().enumerate() {
-                    *sample = if index < frames {
-                        samples[index * CHANNELS + channel].clamp(-1.0, 1.0)
-                    } else {
-                        0.0
-                    };
+                for (sample, value) in frame
+                    .plane_mut::<f32>(channel)
+                    .iter_mut()
+                    .zip(samples[channel..].iter().step_by(CHANNELS))
+                {
+                    *sample = value.clamp(-1.0, 1.0);
                 }
             }
         }
         ffmpeg::format::Sample::F32(ffmpeg::format::sample::Type::Packed) => {
-            for (index, sample) in frame.plane_mut::<(f32, f32)>(0).iter_mut().enumerate() {
-                *sample = if index < frames {
-                    (
-                        samples[index * CHANNELS].clamp(-1.0, 1.0),
-                        samples[index * CHANNELS + 1].clamp(-1.0, 1.0),
-                    )
-                } else {
-                    (0.0, 0.0)
-                };
+            for (sample, stereo) in frame
+                .plane_mut::<(f32, f32)>(0)
+                .iter_mut()
+                .zip(samples.chunks_exact(CHANNELS))
+            {
+                *sample = (stereo[0].clamp(-1.0, 1.0), stereo[1].clamp(-1.0, 1.0));
             }
         }
         _ => unreachable!(),
@@ -314,42 +381,6 @@ fn fill_frame(
 
 fn to_i16(sample: f32) -> i16 {
     (sample.clamp(-1.0, 1.0) * i16::MAX as f32).round() as i16
-}
-
-fn write_packets(
-    encoder: &mut ffmpeg::codec::encoder::audio::Encoder,
-    output: &mut ffmpeg::format::context::Output,
-    stream_index: usize,
-    stream_time_base: ffmpeg::Rational,
-    format: Format,
-) -> Result<(), String> {
-    loop {
-        let mut packet = ffmpeg::Packet::empty();
-        match encoder.receive_packet(&mut packet) {
-            Ok(()) => {
-                packet.set_stream(stream_index);
-                packet.rescale_ts(encoder.time_base(), stream_time_base);
-                let result = if packet.size() == 0 {
-                    unsafe {
-                        match ffmpeg::sys::av_interleaved_write_frame(
-                            output.as_mut_ptr(),
-                            packet.as_mut_ptr(),
-                        ) {
-                            0 => Ok(()),
-                            error => Err(ffmpeg::Error::from(error)),
-                        }
-                    }
-                } else {
-                    packet.write_interleaved(output)
-                };
-                result
-                    .map_err(|error| format!("Could not write {format:?} audio data: {error}"))?;
-            }
-            Err(ffmpeg::Error::Other { errno }) if errno == EAGAIN => return Ok(()),
-            Err(ffmpeg::Error::Eof) => return Ok(()),
-            Err(error) => return Err(format!("Could not receive {format:?} audio: {error}")),
-        }
-    }
 }
 
 #[cfg(test)]
@@ -375,8 +406,10 @@ mod tests {
             },
         )
         .unwrap();
+        let duration = Time::from_fraction(5, 4);
+        let sample_frames = duration.as_sample_frame(SAMPLE_RATE);
         let mut random = fastrand::Rng::with_seed(0);
-        for _ in 0..SAMPLE_RATE as usize * CHANNELS {
+        for _ in 0..sample_frames as usize * CHANNELS {
             let sample = random.f32() * 4.0 - 2.0;
             source
                 .write_sample((sample.clamp(-1.0, 1.0) * i16::MAX as f32).round() as i16)
@@ -384,9 +417,9 @@ mod tests {
         }
         source.finalize().unwrap();
 
-        let item = AudioItem::builder(Time::ZERO, Time::from_fraction(1, 1))
+        let item = AudioItem::builder(Time::ZERO, duration)
             .id(Default::default())
-            .source_duration(Time::from_fraction(1, 1))
+            .source_duration(duration)
             .repeat_strategy(RepeatStrategy::Empty)
             .file(&source_path)
             .build();
@@ -416,6 +449,12 @@ mod tests {
         ] {
             let path = directory.join(format!("audio.{}", format.extension()));
             export_with_progress(&project, &path, format, |_| true).unwrap();
+            if matches!(format, Format::Wav) {
+                assert_eq!(
+                    u64::from(hound::WavReader::open(&path).unwrap().duration()),
+                    sample_frames
+                );
+            }
             let input = ffmpeg::format::input(&path).unwrap();
             assert_eq!(input.format().name(), container_name);
             let stream = input.streams().best(ffmpeg::media::Type::Audio).unwrap();

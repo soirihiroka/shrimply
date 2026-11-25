@@ -1,7 +1,29 @@
-use std::path::PathBuf;
+use std::ffi::CString;
+use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use shrimply_project_document::project::Project;
+
+pub(crate) fn temporary_sibling(path: &Path) -> Result<tempfile::TempPath, std::io::Error> {
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    tempfile::Builder::new()
+        .prefix(".shrimply-export-")
+        .tempfile_in(parent)
+        .map(tempfile::NamedTempFile::into_temp_path)
+}
+
+pub(crate) fn needs_global_header(container: &str) -> Result<bool, String> {
+    use ffmpeg_next::sys;
+    let name = CString::new(container).map_err(|error| error.to_string())?;
+    let format = unsafe { sys::av_guess_format(name.as_ptr(), std::ptr::null(), std::ptr::null()) };
+    if format.is_null() {
+        return Err(format!("FFmpeg output format {container} is unavailable"));
+    }
+    Ok(unsafe { (*format).flags & sys::AVFMT_GLOBALHEADER != 0 })
+}
 
 pub fn default_filename(project: &Project, extension: &str) -> String {
     let mut base = strip_human_timestamp_suffix(project.name.trim());
