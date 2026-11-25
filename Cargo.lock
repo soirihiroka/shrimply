@@ -6781,6 +6781,7 @@ dependencies = [
  "cxx-qt-lib",
  "serde_json",
  "shrimply-application-qt",
+ "shrimply-caption-export-core",
  "shrimply-components-qt",
  "shrimply-cross-ui-core",
  "shrimply-editor-state",

@@ -10,16 +10,9 @@ use objc2_foundation::{
     ns_string,
 };
 use objc2_uniform_type_identifiers::UTTypePNG;
+use shrimply_export_core::job::{Event, Job, Outcome};
 use shrimply_timeline_skia::{VideoFrameSelection, video_selection};
-use std::{
-    io::Write,
-    path::PathBuf,
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-        mpsc::{self, Receiver, TryRecvError},
-    },
-};
+use std::{io::Write, path::PathBuf, sync::atomic::Ordering};
 
 enum Destination {
     Clipboard,
@@ -40,15 +33,8 @@ enum Captured {
 }
 
 pub(super) struct FrameCapture {
-    receiver: Receiver<Result<Captured, String>>,
-    cancelled: Arc<AtomicBool>,
+    job: Job<Captured>,
     alert: Retained<NSAlert>,
-}
-
-impl Drop for FrameCapture {
-    fn drop(&mut self) {
-        self.cancelled.store(true, Ordering::Relaxed);
-    }
 }
 
 impl CanvasView {
@@ -166,86 +152,75 @@ impl CanvasView {
             "Rendering Selected Frame"
         }));
         alert.addButtonWithTitle(ns_string!("Cancel"));
-        let cancelled = Arc::new(AtomicBool::new(false));
-        let completion = RcBlock::new({
-            let cancelled = Arc::clone(&cancelled);
-            move |response| {
-                if response == NSAlertFirstButtonReturn {
-                    cancelled.store(true, Ordering::Relaxed);
-                }
-            }
-        });
-        let (sender, receiver) = mpsc::sync_channel(1);
-        let task = FrameCapture {
-            receiver,
-            cancelled: Arc::clone(&cancelled),
-            alert: alert.clone(),
-        };
         let maximum_decoders =
             shrimply_editor_state::preferences::snapshot(&self.ivars().session.preferences)
                 .temporal_decoder_pool_size as usize;
         let source_scopes = self.ivars().imports.borrow().retain_scopes();
-        std::thread::Builder::new()
-            .name("frame-capture".into())
-            .spawn(move || {
+        let job = Job::spawn(
+            move |cancelled, _| {
                 let _source_scopes = source_scopes;
-                let result = (|| {
-                    if let Destination::File(path, _) = &destination {
-                        shrimply_export_core::ensure_output_is_not_an_asset(&original, path)?;
+                if let Destination::File(path, _) = &destination {
+                    shrimply_export_core::ensure_output_is_not_an_asset(&original, path)?;
+                }
+                if cancelled.load(Ordering::Acquire) {
+                    return Err("Frame capture cancelled".into());
+                }
+                let png = match source {
+                    Source::Selected { project, position } => {
+                        shrimply_preview_render_metal::render_png_cancelable(
+                            &project,
+                            position,
+                            maximum_decoders,
+                            &cancelled,
+                        )?
                     }
-                    if cancelled.load(Ordering::Relaxed) {
-                        return Err("Frame capture cancelled".into());
+                    Source::Presented(image) => {
+                        skia_safe::png_encoder::encode_image(None, &image, &Default::default())
+                            .ok_or("Could not encode the preview image")?
+                            .as_bytes()
+                            .to_vec()
                     }
-                    let png = match source {
-                        Source::Selected { project, position } => {
-                            shrimply_preview_render_metal::render_png(
-                                &project,
-                                position,
-                                maximum_decoders,
-                            )?
-                        }
-                        Source::Presented(image) => {
-                            skia_safe::png_encoder::encode_image(None, &image, &Default::default())
-                                .ok_or("Could not encode the preview image")?
-                                .as_bytes()
-                                .to_vec()
-                        }
-                    };
-                    if cancelled.load(Ordering::Relaxed) {
-                        return Err("Frame capture cancelled".into());
-                    }
-                    match destination {
-                        Destination::Clipboard => Ok(Captured::Clipboard(png)),
-                        Destination::File(path, _scope) => {
-                            let parent =
-                                path.parent().ok_or("Frame destination has no directory.")?;
-                            let mut temporary = tempfile::Builder::new()
-                                .prefix(".shrimply-frame-")
-                                .suffix(".png")
-                                .tempfile_in(parent)
-                                .map_err(|error| {
-                                    format!("Could not prepare frame export: {error}")
-                                })?;
-                            temporary
-                                .write_all(&png)
-                                .and_then(|()| temporary.as_file().sync_all())
-                                .map_err(|error| {
-                                    format!("Could not write the selected frame: {error}")
-                                })?;
-                            if cancelled.load(Ordering::Relaxed) {
-                                return Err("Frame capture cancelled".into());
-                            }
-                            temporary.persist(path).map_err(|error| {
-                                format!("Could not save the selected frame: {error}")
+                };
+                if cancelled.load(Ordering::Acquire) {
+                    return Err("Frame capture cancelled".into());
+                }
+                match destination {
+                    Destination::Clipboard => Ok(Captured::Clipboard(png)),
+                    Destination::File(path, _scope) => {
+                        let parent = path.parent().ok_or("Frame destination has no directory.")?;
+                        let mut temporary = tempfile::Builder::new()
+                            .prefix(".shrimply-frame-")
+                            .suffix(".png")
+                            .tempfile_in(parent)
+                            .map_err(|error| format!("Could not prepare frame export: {error}"))?;
+                        temporary
+                            .write_all(&png)
+                            .and_then(|()| temporary.as_file().sync_all())
+                            .map_err(|error| {
+                                format!("Could not write the selected frame: {error}")
                             })?;
-                            Ok(Captured::File)
+                        if cancelled.load(Ordering::Acquire) {
+                            return Err("Frame capture cancelled".into());
                         }
+                        temporary.persist(path).map_err(|error| {
+                            format!("Could not save the selected frame: {error}")
+                        })?;
+                        Ok(Captured::File)
                     }
-                })();
-                let _ = sender.send(result);
-            })
-            .map_err(|error| format!("Could not start frame capture: {error}"))?;
-        self.ivars().frame_capture.replace(Some(task));
+                }
+            },
+            || {},
+        )?;
+        let cancelled = job.cancellation_flag();
+        let completion = RcBlock::new(move |response| {
+            if response == NSAlertFirstButtonReturn {
+                cancelled.store(true, Ordering::Release);
+            }
+        });
+        self.ivars().frame_capture.replace(Some(FrameCapture {
+            job,
+            alert: alert.clone(),
+        }));
         alert.beginSheetModalForWindow_completionHandler(
             &self.window().expect("canvas must be attached"),
             Some(&completion),
@@ -254,18 +229,18 @@ impl CanvasView {
     }
 
     pub(super) fn poll_frame_capture(&self) -> Result<(), String> {
-        let result = {
-            let state = self.ivars().frame_capture.borrow();
-            let Some(task) = state.as_ref() else {
+        let outcome = {
+            let mut state = self.ivars().frame_capture.borrow_mut();
+            let Some(task) = state.as_mut() else {
                 return Ok(());
             };
-            match task.receiver.try_recv() {
-                Ok(result) => result,
-                Err(TryRecvError::Empty) => return Ok(()),
-                Err(TryRecvError::Disconnected) => {
-                    Err("The frame renderer stopped unexpectedly.".into())
-                }
-            }
+            task.job.poll().find_map(|event| match event {
+                Event::Finished(outcome) => Some(outcome),
+                _ => None,
+            })
+        };
+        let Some(outcome) = outcome else {
+            return Ok(());
         };
         let task = self
             .ivars()
@@ -276,10 +251,15 @@ impl CanvasView {
         if let Some(parent) = task.alert.window().sheetParent() {
             parent.endSheet_returnCode(&task.alert.window(), NSModalResponseStop);
         }
-        if task.cancelled.load(Ordering::Relaxed) {
+        if task.job.cancellation_flag().load(Ordering::Acquire) {
             return Ok(());
         }
-        if let Captured::Clipboard(png) = result? {
+        let captured = match outcome {
+            Outcome::Complete(captured) => captured,
+            Outcome::Cancelled => return Ok(()),
+            Outcome::Failed(error) => return Err(error),
+        };
+        if let Captured::Clipboard(png) = captured {
             let pasteboard = NSPasteboard::generalPasteboard();
             pasteboard.clearContents();
             if !pasteboard.setData_forType(Some(&NSData::with_bytes(&png)), unsafe {

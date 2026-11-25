@@ -1,10 +1,9 @@
-use super::{
-    CaptionEdgeStyle, CaptionItem, CaptionWritingDirection, HorizontalAlign, VerticalAlign, markup,
+use shrimply_project_document::caption::{
+    CaptionEdgeStyle, CaptionFont, CaptionItem, CaptionWritingDirection, HorizontalAlign,
+    VerticalAlign, markup,
 };
-use crate::project::{Color, Project};
+use shrimply_project_document::project::Color;
 use std::fmt::Write;
-use std::fs;
-use std::path::{Path, PathBuf};
 
 const YOUTUBE_MAX_OPACITY: u8 = 254;
 const YOUTUBE_VIEWPORT_INSET_PERCENT: f32 = 2.0;
@@ -61,39 +60,6 @@ enum YttFont {
     SmallCapitals,
 }
 
-#[derive(Clone, Copy)]
-pub enum ExportMode {
-    Merge,
-    Separate,
-}
-
-pub fn export(project: &Project, path: &Path, mode: ExportMode) -> Result<Vec<PathBuf>, String> {
-    let tracks = project.caption_tracks.iter().filter(|track| track.enabled);
-    let outputs: Vec<(PathBuf, Vec<&CaptionItem>)> = match mode {
-        ExportMode::Merge => vec![(
-            path.to_path_buf(),
-            tracks.flat_map(|track| &track.items).collect(),
-        )],
-        ExportMode::Separate => tracks
-            .enumerate()
-            .map(|(index, track)| (track_path(path, index + 1), track.items.iter().collect()))
-            .collect(),
-    };
-    for (path, cues) in &outputs {
-        fs::write(path, document(cues))
-            .map_err(|error| format!("Could not save {}: {error}", path.display()))?;
-    }
-    Ok(outputs.into_iter().map(|(path, _)| path).collect())
-}
-
-fn track_path(path: &Path, number: usize) -> PathBuf {
-    let stem = path
-        .file_stem()
-        .and_then(|value| value.to_str())
-        .unwrap_or("captions");
-    path.with_file_name(format!("{stem}-track-{number}.ytt"))
-}
-
 struct Cue<'a> {
     item: &'a CaptionItem,
     wp: usize,
@@ -106,16 +72,10 @@ struct Part {
     start_millis: u32,
 }
 
-pub fn document(items: &[&CaptionItem]) -> String {
-    let mut items = items
-        .iter()
-        .copied()
-        .filter(|item| !markup::plain_text(&item.text).trim().is_empty())
-        .collect::<Vec<_>>();
-    items.sort_by_key(|item| (item.start, item.end));
+pub(super) fn document(items: &[&CaptionItem]) -> String {
     let mut pens = vec![String::from("<pen id=\"0\"/>")];
     let mut cues = Vec::new();
-    for (index, item) in items.into_iter().enumerate() {
+    for (index, item) in items.iter().copied().enumerate() {
         let mut parts = Vec::new();
         for span in markup::parse(&item.text) {
             if let Some(ruby) = span.ruby {
@@ -327,15 +287,15 @@ fn youtube_font_scale(value: u16) -> u16 {
 fn opacity(color: Color<u8>) -> u8 {
     color.a.min(YOUTUBE_MAX_OPACITY)
 }
-fn font_id(font: super::CaptionFont) -> u8 {
+fn font_id(font: CaptionFont) -> u8 {
     (match font {
-        super::CaptionFont::Roboto => YttFont::Roboto,
-        super::CaptionFont::MonospaceSerif => YttFont::MonospaceSerif,
-        super::CaptionFont::Serif => YttFont::Serif,
-        super::CaptionFont::MonospaceSans => YttFont::MonospaceSans,
-        super::CaptionFont::Casual => YttFont::Casual,
-        super::CaptionFont::Cursive => YttFont::Cursive,
-        super::CaptionFont::SmallCapitals => YttFont::SmallCapitals,
+        CaptionFont::Roboto => YttFont::Roboto,
+        CaptionFont::MonospaceSerif => YttFont::MonospaceSerif,
+        CaptionFont::Serif => YttFont::Serif,
+        CaptionFont::MonospaceSans => YttFont::MonospaceSans,
+        CaptionFont::Casual => YttFont::Casual,
+        CaptionFont::Cursive => YttFont::Cursive,
+        CaptionFont::SmallCapitals => YttFont::SmallCapitals,
     }) as u8
 }
 fn color(color: Color<u8>) -> String {
@@ -357,7 +317,7 @@ fn escape(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::project::{CaptionEdgeStyle, Color, Time};
+    use shrimply_project_document::project::Time;
 
     #[test]
     fn writes_youtube_styles_and_spans() {

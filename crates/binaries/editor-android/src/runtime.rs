@@ -327,14 +327,10 @@ impl Runtime {
             "timeline_service_action" | "timeline_service_file" => {
                 self.timeline_service_request(request, source)
             }
-            "preview_image_dismiss" | "preview_image_save" => {
+            "preview_image_dismiss" => {
                 #[cfg(target_os = "android")]
                 {
-                    if operation == "preview_image_save" {
-                        self.save_preview_image(request)
-                    } else {
-                        self.dismiss_preview_image(request)
-                    }
+                    self.dismiss_preview_image(request)
                 }
                 #[cfg(not(target_os = "android"))]
                 {
@@ -350,6 +346,7 @@ impl Runtime {
             "export_schema"
             | "export_destination"
             | "export_start"
+            | "preview_image_save"
             | "caption_export_schema"
             | "export_cancel"
             | "export_dismiss" => {

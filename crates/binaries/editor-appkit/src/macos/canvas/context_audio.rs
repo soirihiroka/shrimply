@@ -67,7 +67,7 @@ impl CanvasView {
                     .tempfile_in(parent)
                     .map_err(|error| format!("Could not prepare audio export: {error}"))?;
                 audio::export_with_progress(&project, temporary.path(), format, |update| {
-                    progress(update.into());
+                    progress(update);
                     !cancelled.load(Ordering::Acquire)
                 })?;
                 if cancelled.load(Ordering::Acquire) {

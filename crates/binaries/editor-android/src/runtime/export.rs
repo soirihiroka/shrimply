@@ -145,7 +145,7 @@ impl Operation {
                             )
                         },
                         |event| {
-                            progress(event.into());
+                            progress(event);
                             !cancelled.load(Ordering::Acquire)
                         },
                     )
@@ -219,7 +219,20 @@ impl Runtime {
                 "formats":CaptionFormat::ALL.map(|format| json!({"value":format.extension(),"label":format.label()})),
                 "modes":[{"value":"merge","label":"Merge into one file"},{"value":"separate","label":"Export each track separately"}]
             })),
-            "export_start" => self.start_export(request),
+            "export_start" | "preview_image_save" => {
+                if self
+                    .export
+                    .as_ref()
+                    .is_some_and(|export| export.state["status"] == "running")
+                {
+                    return Err("An export is already running".into());
+                }
+                if operation == "export_start" {
+                    self.start_export(request)
+                } else {
+                    self.save_preview_image(request)
+                }
+            }
             "export_cancel" | "export_dismiss" => {
                 let export = self.export.as_mut().ok_or("No export is active")?;
                 if request["id"] != export.state["id"] {
@@ -244,13 +257,6 @@ impl Runtime {
     }
 
     fn start_export(&mut self, request: &Value) -> Result<Value, String> {
-        if self
-            .export
-            .as_ref()
-            .is_some_and(|export| export.state["status"] == "running")
-        {
-            return Err("An export is already running".into());
-        }
         let uri = destination(request)?;
         let kind = request["kind"].as_str().ok_or("Missing export kind")?;
         let (project, operation) = if kind == "audio" {
@@ -275,20 +281,33 @@ impl Runtime {
         };
         let limit = shrimply_preferences_core::snapshot(&self.backend.preferences)
             .temporal_decoder_pool_size as usize;
+        self.begin_export(kind, move |cancelled, progress| {
+            operation.run(project, &uri, limit, cancelled, progress)
+        })?;
+        if kind == "audio" {
+            self.timeline_service = None;
+        }
+        Ok(json!({}))
+    }
+
+    pub(super) fn begin_export(
+        &mut self,
+        kind: &str,
+        operation: impl FnOnce(
+            Arc<AtomicBool>,
+            &mut dyn FnMut(video::ExportProgress),
+        ) -> Result<Vec<String>, String>
+        + Send
+        + 'static,
+    ) -> Result<(), String> {
         let wake = self.backend.wake.clone();
-        let job = Job::spawn(
-            move |cancelled, progress| operation.run(project, &uri, limit, cancelled, progress),
-            move || wake(),
-        )?;
+        let job = Job::spawn(operation, move || wake())?;
         let id = uuid::Uuid::new_v4().to_string();
         let mut state = json!({"id":id,"status":"running","files":[],
             "kind":kind,"progress":null,"error":null,"cancelling":false});
         state["presentation"] = job_view(&state);
         self.export = Some(Export { job, state });
-        if kind == "audio" {
-            self.timeline_service = None;
-        }
-        Ok(json!({}))
+        Ok(())
     }
 }
 
@@ -297,23 +316,35 @@ fn job_view(state: &Value) -> Value {
     let running = state["status"] == "running";
     let complete = state["status"] == "complete";
     let cancelling = state["cancelling"] == true;
+    let (running_title, complete_title, failed_title) = match state["kind"].as_str() {
+        Some("captions") => (
+            "Export Captions",
+            "Captions exported",
+            "Could not export captions",
+        ),
+        Some("audio") => (
+            "Export Selected Audio",
+            "Audio exported",
+            "Could not export audio",
+        ),
+        Some("preview_image") => (
+            "Save Preview Image",
+            "Image saved",
+            "Could not save preview image",
+        ),
+        Some("selected_frame") => (
+            "Save Selected Frame",
+            "Image saved",
+            "Could not save selected frame",
+        ),
+        Some("video") => ("Export Video", "Video exported", "Could not export video"),
+        _ => unreachable!("export kind"),
+    };
     let title = match state["status"].as_str().expect("export status") {
-        "running" => match state["kind"].as_str() {
-            Some("captions") => "Export Captions",
-            Some("audio") => "Export Selected Audio",
-            _ => "Export Video",
-        },
-        "complete" => match state["kind"].as_str() {
-            Some("captions") => "Captions exported",
-            Some("audio") => "Audio exported",
-            _ => "Video exported",
-        },
+        "running" => running_title,
+        "complete" => complete_title,
         "cancelled" => "Export cancelled",
-        "failed" => match state["kind"].as_str() {
-            Some("captions") => "Could not export captions",
-            Some("audio") => "Could not export audio",
-            _ => "Could not export video",
-        },
+        "failed" => failed_title,
         _ => unreachable!("export job status"),
     };
     let dismiss = if running {

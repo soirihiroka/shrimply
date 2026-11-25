@@ -32,9 +32,13 @@ pub fn render_items_rgba(
     project: Project,
     position: Time,
     item_ids: &[uuid::Uuid],
+    cancelled: &AtomicBool,
 ) -> Result<RgbaVideoFrame, String> {
     if item_ids.is_empty() {
         return Err("no visual items were selected".into());
+    }
+    if cancelled.load(Ordering::Acquire) {
+        return Err("Frame render cancelled".into());
     }
     #[cfg(target_os = "linux")]
     if crate::gpu::intel_backend_selected() {
@@ -44,7 +48,7 @@ pub fn render_items_rgba(
             Some(shrimply_preview_render_core::CaptureTarget::Items(
                 item_ids.to_vec(),
             )),
-            &AtomicBool::new(false),
+            cancelled,
         );
     }
     let canvas_size = project.canvas_size;

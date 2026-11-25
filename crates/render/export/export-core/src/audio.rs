@@ -1,3 +1,4 @@
+use crate::video::ExportProgress;
 use std::path::Path;
 
 use ffmpeg::packet::Mut as _;
@@ -17,39 +18,6 @@ pub enum Format {
     Mp3,
     Ogg,
     Opus,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub enum ExportProgress {
-    Mixing {
-        completed_frames: u64,
-        total_frames: u64,
-    },
-    Encoding {
-        completed_frames: u64,
-        total_frames: u64,
-    },
-}
-
-impl From<ExportProgress> for crate::video::ExportProgress {
-    fn from(progress: ExportProgress) -> Self {
-        match progress {
-            ExportProgress::Mixing {
-                completed_frames,
-                total_frames,
-            } => Self::MixingAudio {
-                current_frame: completed_frames,
-                total_frames,
-            },
-            ExportProgress::Encoding {
-                completed_frames,
-                total_frames,
-            } => Self::EncodingAudio {
-                current_frame: completed_frames,
-                total_frames,
-            },
-        }
-    }
 }
 
 impl Format {
@@ -93,10 +61,6 @@ impl Format {
             Self::Opus => "opus",
         }
     }
-}
-
-pub fn export(project: &Project, path: &Path, format: Format) -> Result<(), String> {
-    export_with_progress(project, path, format, |_| true)
 }
 
 pub fn export_with_progress(
@@ -164,15 +128,15 @@ fn export_inner(
 
     let samples =
         streaming::mix_project_offline(project, SAMPLE_RATE, |completed_frames, total_frames| {
-            progress(ExportProgress::Mixing {
-                completed_frames,
+            progress(ExportProgress::MixingAudio {
+                current_frame: completed_frames,
                 total_frames,
             })
         })?;
     crate::ensure_assets_current(assets)?;
 
-    if !progress(ExportProgress::Encoding {
-        completed_frames: 0,
+    if !progress(ExportProgress::EncodingAudio {
+        current_frame: 0,
         total_frames,
     }) {
         return Err("Export cancelled".to_string());
@@ -279,8 +243,8 @@ fn export_inner(
         )?;
         offset += frames;
         pts += frame_size as i64;
-        if !progress(ExportProgress::Encoding {
-            completed_frames: offset as u64,
+        if !progress(ExportProgress::EncodingAudio {
+            current_frame: offset as u64,
             total_frames,
         }) {
             return Err("Export cancelled".to_string());
@@ -451,7 +415,7 @@ mod tests {
             (Format::Opus, "libopus", "ogg"),
         ] {
             let path = directory.join(format!("audio.{}", format.extension()));
-            export(&project, &path, format).unwrap();
+            export_with_progress(&project, &path, format, |_| true).unwrap();
             let input = ffmpeg::format::input(&path).unwrap();
             assert_eq!(input.format().name(), container_name);
             let stream = input.streams().best(ffmpeg::media::Type::Audio).unwrap();

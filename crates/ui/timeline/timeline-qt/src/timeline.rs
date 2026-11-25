@@ -533,7 +533,12 @@ impl ToolkitTimeline {
                 &self.selection,
                 selection,
             );
-        shrimply_visual_cuda::compositor::render_items_rgba(project, position, &ids)
+        shrimply_visual_cuda::compositor::render_items_rgba(
+            project,
+            position,
+            &ids,
+            &std::sync::atomic::AtomicBool::new(false),
+        )
     }
     pub fn context_file_path(&self) -> Option<PathBuf> {
         self.scene.context_file_path()

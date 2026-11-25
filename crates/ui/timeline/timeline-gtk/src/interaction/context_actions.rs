@@ -3,6 +3,7 @@ use crate::RenderedVideoFrame;
 use shrimply_components_gtk::tr;
 use shrimply_components_gtk::ui::I18nAlertDialogExt;
 use shrimply_components_gtk::ui::I18nFileFilterExt;
+use shrimply_export_core::job::{Event, Job, Outcome};
 use shrimply_timeline_skia::{ContextMenuControl, ContextMenuRequest, VideoFrameSelection};
 use std::sync::atomic::Ordering;
 
@@ -356,26 +357,34 @@ fn render_selected_video_frame(
             selection_state,
             selection,
         );
-    let (tx, rx) = mpsc::channel();
-    thread::spawn(move || {
-        let result =
-            shrimply_visual_cuda::compositor::render_items_rgba(project, position, &item_ids);
-        let _ = tx.send(result);
-    });
-
+    let mut job = match Job::spawn(
+        move |cancelled, _| {
+            shrimply_visual_cuda::compositor::render_items_rgba(
+                project, position, &item_ids, &cancelled,
+            )
+        },
+        || {},
+    ) {
+        Ok(job) => job,
+        Err(error) => {
+            done(Err(error));
+            return;
+        }
+    };
     let mut done = Some(done);
-    glib::timeout_add_local(Duration::from_millis(50), move || match rx.try_recv() {
-        Ok(result) => {
-            done.take().expect("frame callback must run once")(result);
-            glib::ControlFlow::Break
-        }
-        Err(TryRecvError::Empty) => glib::ControlFlow::Continue,
-        Err(TryRecvError::Disconnected) => {
-            done.take().expect("frame callback must run once")(Err(
-                "The frame renderer stopped unexpectedly.".to_string(),
-            ));
-            glib::ControlFlow::Break
-        }
+    glib::timeout_add_local(Duration::from_millis(50), move || {
+        let outcome = job.poll().find_map(|event| match event {
+            Event::Finished(outcome) => Some(outcome),
+            _ => None,
+        });
+        let result = match outcome {
+            Some(Outcome::Complete(frame)) => Ok(frame),
+            Some(Outcome::Failed(error)) => Err(error),
+            Some(Outcome::Cancelled) => Err("Frame capture cancelled".into()),
+            None => return glib::ControlFlow::Continue,
+        };
+        done.take().expect("frame callback must run once")(result);
+        glib::ControlFlow::Break
     });
 }
 
@@ -463,7 +472,6 @@ fn show_export_audio_dialog(
                     {
                         path.set_extension(format.extension());
                     }
-                    use shrimply_export_core::job::{Job, Outcome};
                     let exported_path = path.clone();
                     let job = Job::spawn(
                         move |cancelled, progress| {
@@ -472,7 +480,7 @@ fn show_export_audio_dialog(
                                 &path,
                                 format,
                                 |update| {
-                                    progress(update.into());
+                                    progress(update);
                                     !cancelled.load(Ordering::Acquire)
                                 },
                             )

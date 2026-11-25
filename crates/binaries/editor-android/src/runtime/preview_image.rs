@@ -3,11 +3,15 @@ use super::Runtime;
 use crate::bridge::export::write_document;
 use serde_json::{Value, json};
 use shrimply_export_core::job::{Event, Job, Outcome};
+use shrimply_export_core::video::ExportProgress;
 use shrimply_preview_render_core::playback::toolbar::ContextRequest;
-use std::sync::atomic::Ordering;
+use std::{
+    path::PathBuf,
+    sync::atomic::{AtomicBool, Ordering},
+};
 
 pub(super) struct PreviewImage {
-    job: Option<Job<Option<std::path::PathBuf>>>,
+    job: Option<Job<PathBuf>>,
     pending: Option<Capture>,
     state: Value,
 }
@@ -20,6 +24,35 @@ enum Capture {
         items: Vec<uuid::Uuid>,
         decoder_limit: usize,
     },
+}
+
+impl Capture {
+    fn png(self, cancelled: &AtomicBool) -> Result<Vec<u8>, String> {
+        let png = match self {
+            Self::Preview(frame) => frame.png()?,
+            Self::Selected {
+                project,
+                position,
+                items,
+                decoder_limit,
+            } => {
+                let mut compositor = shrimply_preview_render_vulkan::Compositor::new()?;
+                compositor.set_decoder_limit(decoder_limit);
+                compositor
+                    .render_rgba(
+                        &project,
+                        position,
+                        Some(shrimply_preview_render_core::CaptureTarget::Items(items)),
+                        cancelled,
+                    )?
+                    .png()?
+            }
+        };
+        if cancelled.load(Ordering::Acquire) {
+            return Err("Preview image capture cancelled".into());
+        }
+        Ok(png)
+    }
 }
 
 impl Runtime {
@@ -62,100 +95,52 @@ impl Runtime {
             return Err("An image capture is already pending".into());
         }
         let id = uuid::Uuid::new_v4().to_string();
-        let (action, label, error_title) = match (&capture, request) {
-            (Capture::Preview(_), ContextRequest::CopyImage) => {
-                ("copy", "Copy Preview Image", "Could not copy preview image")
-            }
-            (Capture::Preview(_), ContextRequest::SaveImage) => {
-                ("save", "Save Preview Image", "Could not save preview image")
-            }
-            (Capture::Selected { .. }, ContextRequest::CopyImage) => (
-                "copy",
-                "Copy Selected Frame",
-                "Could not copy selected frame",
-            ),
-            (Capture::Selected { .. }, ContextRequest::SaveImage) => (
-                "save",
-                "Save Selected Frame",
-                "Could not save selected frame",
-            ),
+        let preview = matches!(capture, Capture::Preview(_));
+        let saving = matches!(request, ContextRequest::SaveImage);
+        let error_title = match (preview, saving) {
+            (true, true) => "Could not save preview image",
+            (false, true) => "Could not save selected frame",
+            (true, false) => "Could not copy preview image",
+            (false, false) => "Could not copy selected frame",
         };
-        let filename = if matches!(capture, Capture::Preview(_)) {
-            "preview.png"
-        } else {
-            "frame.png"
-        };
-        let saving = action == "save";
+        let mut state = json!({
+            "id":id, "error_title":shrimply_i18n::text(error_title),
+            "close_label":shrimply_i18n::text("Close"),
+        });
         let (job, pending) = if saving {
+            state["status"] = json!("choose");
+            state["filename"] = json!(if preview { "preview.png" } else { "frame.png" });
+            state["mime"] = json!("image/png");
             (None, Some(capture))
         } else {
-            (Some(self.start_image_capture(capture, &id, None)?), None)
+            state["status"] = json!("running");
+            state["label"] = json!(shrimply_i18n::text(if preview {
+                "Copy Preview Image"
+            } else {
+                "Copy Selected Frame"
+            }));
+            let path = shrimply_path_core::cache_directory()?
+                .join("exports/preview-images")
+                .join(format!("{id}.png"));
+            let wake = self.wake.clone();
+            let job = Job::spawn(
+                move |cancelled, _| {
+                    let png = capture.png(&cancelled)?;
+                    std::fs::create_dir_all(path.parent().expect("preview image directory"))
+                        .map_err(|error| error.to_string())?;
+                    std::fs::write(&path, png).map_err(|error| error.to_string())?;
+                    Ok(path)
+                },
+                move || wake(),
+            )?;
+            (Some(job), None)
         };
         self.preview_image = Some(PreviewImage {
             job,
             pending,
-            state: json!({"id":id,"status":if saving {"choose"} else {"running"},"action":action,"filename":filename,
-                "mime":"image/png","label":shrimply_i18n::text(label),"saved_title":shrimply_i18n::text("Image saved"),
-                "error_title":shrimply_i18n::text(error_title),"close_label":shrimply_i18n::text("Close")}),
+            state,
         });
         Ok(())
-    }
-
-    fn start_image_capture(
-        &self,
-        capture: Capture,
-        id: &str,
-        destination: Option<String>,
-    ) -> Result<Job<Option<std::path::PathBuf>>, String> {
-        let path = if destination.is_none() {
-            Some(
-                shrimply_path_core::cache_directory()?
-                    .join("exports/preview-images")
-                    .join(format!("{id}.png")),
-            )
-        } else {
-            None
-        };
-        let wake = self.wake.clone();
-        Job::spawn(
-            move |cancelled, _| {
-                let png = match capture {
-                    Capture::Preview(frame) => frame.png()?,
-                    Capture::Selected {
-                        project,
-                        position,
-                        items,
-                        decoder_limit,
-                    } => {
-                        let mut compositor = shrimply_preview_render_vulkan::Compositor::new()?;
-                        compositor.set_decoder_limit(decoder_limit);
-                        compositor
-                            .render_rgba(
-                                &project,
-                                position,
-                                Some(shrimply_preview_render_core::CaptureTarget::Items(items)),
-                                &cancelled,
-                            )?
-                            .png()?
-                    }
-                };
-                if cancelled.load(Ordering::Acquire) {
-                    return Err("Preview image capture cancelled".into());
-                }
-                if let Some(destination) = destination {
-                    write_document(&destination, "image/png", None, |open| {
-                        shrimply_export_core::android::write_document(open()?, &png, cancelled)
-                            .map_err(|error| error.to_string())
-                    })?;
-                } else if let Some(path) = &path {
-                    std::fs::create_dir_all(path.parent().expect("preview image directory"))
-                        .map_err(|error| error.to_string())?;
-                    std::fs::write(path, png).map_err(|error| error.to_string())?;
-                }
-                Ok(path)
-            },
-            move || wake(),
-        )
     }
 
     pub(super) fn save_preview_image(&mut self, request: &Value) -> Result<Value, String> {
@@ -169,14 +154,21 @@ impl Runtime {
             .pending
             .take()
             .ok_or("No preview image is waiting to be saved")?;
-        let id = image.state["id"]
-            .as_str()
-            .expect("preview image ID")
-            .to_owned();
-        let job = self.start_image_capture(capture, &id, Some(uri))?;
-        let image = self.preview_image.as_mut().expect("pending preview image");
-        image.job = Some(job);
-        image.state["status"] = json!("running");
+        let kind = if matches!(capture, Capture::Preview(_)) {
+            "preview_image"
+        } else {
+            "selected_frame"
+        };
+        self.begin_export(kind, move |cancelled, progress| {
+            let png = capture.png(&cancelled)?;
+            progress(ExportProgress::Finalizing);
+            let name = write_document(&uri, "image/png", None, |open| {
+                shrimply_export_core::android::write_document(open()?, &png, cancelled)
+                    .map_err(|error| error.to_string())
+            })?;
+            Ok(vec![name])
+        })?;
+        self.preview_image = None;
         Ok(json!({}))
     }
 
@@ -194,11 +186,10 @@ impl Runtime {
             return false;
         };
         match result {
-            Outcome::Complete(Some(path)) => {
+            Outcome::Complete(path) => {
                 image.state["path"] = json!(path);
                 image.state["status"] = json!("ready");
             }
-            Outcome::Complete(None) => image.state["status"] = json!("complete"),
             Outcome::Failed(error) => {
                 image.state["status"] = json!("failed");
                 image.state["error"] = json!(error);

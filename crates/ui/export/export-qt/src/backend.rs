@@ -2,13 +2,16 @@ use core::pin::Pin;
 use cxx_qt::CxxQtType;
 use cxx_qt_lib::{QString, QUrl};
 use serde_json::Value;
+use shrimply_caption_export_core::{
+    CaptionFormat, ExportMode, ExportSettings, prepare_export, write_export,
+};
 use shrimply_cross_ui_core::editor::EditorSession;
 use shrimply_editor_state::preferences::{self, SharedPreferences};
-use shrimply_export_core::{caption::ytt, json, output, project, time_format};
 use shrimply_export_core::{
     job::{Event, Job, Outcome},
     video::{progress, settings},
 };
+use shrimply_export_core::{json, output, project, time_format};
 use shrimply_export_cuda as video;
 use std::cell::RefCell;
 use std::path::PathBuf;
@@ -223,24 +226,30 @@ impl qobject::ExportBackend {
             return false;
         }
         let project = context().project.borrow().clone();
-        let path = choose_path(
-            &output::default_filename(&project, "ytt"),
+        let format = CaptionFormat::Ytt;
+        let extension = format.extension();
+        let Some(path) = choose_path(
+            &output::default_filename(&project, extension),
             "Export YouTube Captions",
             "YouTube captions (*.ytt)",
-            "ytt",
-        );
-        let Some(path) = path else {
+            extension,
+        ) else {
             return false;
         };
-        let path = output::ensure_extension(path, "ytt");
-        let mode = if separate {
-            ytt::ExportMode::Separate
-        } else {
-            ytt::ExportMode::Merge
+        let settings = ExportSettings {
+            format,
+            mode: if separate {
+                ExportMode::Separate
+            } else {
+                ExportMode::Merge
+            },
         };
         self.as_mut().begin_job(
             Job::spawn(
-                move |_, _| ytt::export(&project, &path, mode).map(Completion::Captions),
+                move |_, _| {
+                    let outputs = prepare_export(&project, &path, settings)?;
+                    write_export(outputs).map(Completion::Captions)
+                },
                 || {},
             ),
             "Exporting Captions",
@@ -369,13 +378,10 @@ impl qobject::ExportBackend {
                 ));
             }
             Outcome::Complete(Completion::Captions(paths)) => {
-                let Some(path) = paths.first().cloned() else {
-                    self.as_mut().failed(
-                        shrimply_i18n_qt::text("Could not export captions"),
-                        shrimply_i18n_qt::text("No caption files were exported."),
-                    );
-                    return;
-                };
+                let path = paths
+                    .first()
+                    .expect("caption export produced no paths")
+                    .clone();
                 let title = if paths.len() == 1 {
                     shrimply_i18n_qt::text("Captions exported")
                 } else {

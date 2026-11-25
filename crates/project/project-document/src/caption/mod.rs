@@ -4,7 +4,6 @@ pub use shrimply_property_model::VerticalAlign;
 use uuid::Uuid;
 
 pub mod markup;
-pub mod ytt;
 
 pub fn clean_text_for_speech(source: &str) -> String {
     markup::parse(source)

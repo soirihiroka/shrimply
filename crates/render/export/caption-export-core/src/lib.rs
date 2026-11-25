@@ -1,6 +1,6 @@
 use shrimply_math_core::time_ticks;
 use shrimply_project_document::{
-    caption::{CaptionItem, markup, ytt},
+    caption::{CaptionItem, markup},
     project::Project,
 };
 use std::path::{Path, PathBuf};
@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 mod ass;
 mod math;
 mod text;
+mod ytt;
 
 pub(crate) const MILLIS_PER_SECOND: u32 = 1_000;
 pub(crate) const CENTIS_PER_SECOND: u32 = 100;
