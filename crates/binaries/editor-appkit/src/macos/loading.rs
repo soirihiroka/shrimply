@@ -5,7 +5,8 @@ use objc2_app_kit::{
     NSLayoutConstraint, NSStackView, NSUserInterfaceLayoutOrientation, NSView,
 };
 use objc2_foundation::{NSData, NSSize};
-use shrimply_project_document::project::{PreparedProject, ProjectLoadError};
+use shrimply_cross_ui_core::editor::{activate_project_session, load_project_session};
+use shrimply_project_document::project::Project;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 
 const SHRIMP_SIZE: NSSize = NSSize::new(160.0, 180.0);
@@ -115,7 +116,7 @@ impl View {
     }
 }
 
-pub(super) type Preparation = Receiver<Result<PreparedProject, ProjectLoadError>>;
+pub(super) type Preparation = Receiver<Result<Project, String>>;
 
 impl Editor {
     pub(super) fn begin_project_load(&self) {
@@ -125,7 +126,7 @@ impl Editor {
         std::thread::Builder::new()
             .name("project-load".into())
             .spawn(move || {
-                let _ = sender.send(shrimply_project_document::project::prepare_project(&path));
+                let _ = sender.send(load_project_session(&path));
             })
             .expect("start project loading worker");
     }
@@ -139,23 +140,24 @@ impl Editor {
             let result = match receiver.try_recv() {
                 Ok(result) => result,
                 Err(TryRecvError::Empty) => return,
-                Err(TryRecvError::Disconnected) => Err(ProjectLoadError::Other(
-                    "Project loading worker stopped unexpectedly".into(),
-                )),
+                Err(TryRecvError::Disconnected) => {
+                    Err("Project loading worker stopped unexpectedly".into())
+                }
             };
             pending.take();
             result
         };
         match result {
-            Ok(prepared) => {
+            Ok(project) => {
                 loop {
-                    let review = match prepared.trust_review() {
-                        Ok(review) => review,
-                        Err(error) => {
-                            self.fail_startup(&error);
-                            return;
-                        }
-                    };
+                    let review =
+                        match shrimply_trust_core::Review::new(project.executable_sources()) {
+                            Ok(review) => review,
+                            Err(error) => {
+                                self.fail_startup(&error);
+                                return;
+                            }
+                        };
                     if review.files.is_empty() {
                         break;
                     }
@@ -168,9 +170,8 @@ impl Editor {
                         return;
                     }
                 }
-                let session = match EditorSession::new(
-                    shrimply_project_document::project::activate_project(prepared),
-                ) {
+                activate_project_session(&self.ivars().project_path, &project);
+                let session = match EditorSession::new(project) {
                     Ok(session) => Rc::new(session),
                     Err(error) => {
                         self.fail_startup(&error);
@@ -190,38 +191,7 @@ impl Editor {
                     .set(layout)
                     .unwrap_or_else(|_| panic!("layout already installed"));
             }
-            Err(ProjectLoadError::LockedByOtherInstance { owner }) => {
-                let pid = owner.pid();
-                let alert = NSAlert::new(self.mtm());
-                alert.setMessageText(ns_string!("Project is in use"));
-                alert.setInformativeText(&NSString::from_str(&format!(
-                    "The project lock is held by another editor process (PID {pid})."
-                )));
-                alert.addButtonWithTitle(ns_string!("Retry"));
-                alert
-                    .addButtonWithTitle(ns_string!("Stop Other Editor"))
-                    .setHasDestructiveAction(true);
-                alert
-                    .addButtonWithTitle(ns_string!("Close"))
-                    .setKeyEquivalent(&NSString::from_str("\u{1b}"));
-                match alert.runModal() {
-                    response if response == NSAlertFirstButtonReturn => self.begin_project_load(),
-                    response if response == NSAlertSecondButtonReturn => {
-                        if shrimply_project_document::project::terminate_project_process(&owner) {
-                            self.begin_project_load();
-                        } else {
-                            self.fail_startup("Could not stop other editor: Shrimply could not signal the other process.");
-                        }
-                    }
-                    response if response == NSAlertThirdButtonReturn => {
-                        self.stop_loading(Ok(false))
-                    }
-                    _ => panic!("unexpected project-lock alert response"),
-                }
-            }
-            Err(ProjectLoadError::Other(error)) => {
-                self.fail_startup(&format!("Could not open project: {error}"))
-            }
+            Err(error) => self.fail_startup(&format!("Could not open project: {error}")),
         }
     }
 

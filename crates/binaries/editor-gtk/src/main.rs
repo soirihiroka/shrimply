@@ -285,7 +285,7 @@ fn build_ui(window: &adw::ApplicationWindow, project: project::Project) {
             return glib::ControlFlow::Break;
         };
         let update = polling_session.poll();
-        connection_indicator.set_visible(update.editing_api_active);
+        connection_indicator.set_visible(update.has_collaborators);
         if let Some(error) = update.audio_playback_stopped {
             let dialog = adw::AlertDialog::new(Some("Audio playback stopped"), Some(&error));
             dialog.present(Some(&polling_window));
@@ -581,9 +581,6 @@ fn handle_load_event(
             suggested_name,
         } => choose_project_destination(app, window, loader, title, suggested_name),
         LoadEvent::ImportWarnings(warnings) => show_import_warnings(app, window, loader, warnings),
-        LoadEvent::LockedByOtherInstance(owner) => {
-            show_project_lock_dialog(app, window, loader, owner)
-        }
         LoadEvent::Ready { path, project } => {
             if let Err(error) = shrimply_recent_projects::touch(&path, &project.name, &project.tags)
             {
@@ -762,53 +759,6 @@ fn show_import_warnings(
     );
 }
 
-fn show_project_lock_dialog(
-    app: &adw::Application,
-    window: &adw::ApplicationWindow,
-    loader: Rc<RefCell<ProjectLoader>>,
-    owner: project::ProjectLockOwner,
-) {
-    let body = match &owner {
-        project::ProjectLockOwner::System { pid } => {
-            format!("The project lock is held by another system editor process (PID {pid}).")
-        }
-        project::ProjectLockOwner::Flatpak { pid, instance_id } => format!(
-            "The project lock is held by another Flatpak editor instance ({instance_id}, sandbox PID {pid})."
-        ),
-    };
-    let dialog = adw::AlertDialog::builder()
-        .heading(tr!("Project is in use").as_ref())
-        .body(body)
-        .prefer_wide_layout(false)
-        .build();
-    dialog.add_responses_i18n(&[
-        ("close", "Close"),
-        ("stop", "Stop Other Editor"),
-        ("retry", "Retry"),
-    ]);
-    dialog.set_default_response(Some("retry"));
-    dialog.set_close_response("close");
-    dialog.set_response_appearance("stop", adw::ResponseAppearance::Destructive);
-    let callback_app = app.clone();
-    let callback_window = window.clone();
-    dialog.choose(
-        Some(window.upcast_ref::<gtk::Widget>()),
-        None::<&gio::Cancellable>,
-        move |answer| {
-            let event = match answer.as_str() {
-                "retry" => loader
-                    .borrow_mut()
-                    .retry_locked_project(false, owner.clone()),
-                "stop" => loader
-                    .borrow_mut()
-                    .retry_locked_project(true, owner.clone()),
-                _ => loader.borrow_mut().cancel(),
-            };
-            handle_load_event(&callback_app, &callback_window, loader, event);
-        },
-    );
-}
-
 fn show_project_load_error(
     app: &adw::Application,
     window: &adw::ApplicationWindow,
@@ -898,9 +848,9 @@ fn header_bar() -> (adw::HeaderBar, gtk::Label, gtk::Image) {
         .css_classes(["title"])
         .build();
     let connection_indicator = gtk::Image::builder()
-        .icon_name("network-server-symbolic")
+        .icon_name("system-users-symbolic")
         .pixel_size(16)
-        .tooltip_text(tr!("Editing API activity (active or within the last 3 seconds)").as_ref())
+        .tooltip_text(tr!("Collaborators are editing this project").as_ref())
         .visible(false)
         .build();
     let title_box = gtk::Box::new(gtk::Orientation::Horizontal, 6);

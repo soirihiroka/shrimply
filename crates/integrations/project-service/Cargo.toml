@@ -1,0 +1,18 @@
+[package]
+name = "shrimply-project-service"
+version.workspace = true
+edition = "2024"
+
+[dependencies]
+base64.workspace = true
+reqwest = { workspace = true, features = ["default", "blocking", "json"] }
+rusqlite.workspace = true
+serde = { workspace = true, features = ["derive", "rc"] }
+serde_json.workspace = true
+shrimply-editing-api.workspace = true
+shrimply-path-core.workspace = true
+shrimply-project-document.workspace = true
+shrimply-project-protocol.workspace = true
+shrimply-resource-pipeline.workspace = true
+tempfile.workspace = true
+uuid = { workspace = true, features = ["serde", "v4"] }

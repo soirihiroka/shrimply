@@ -46,44 +46,75 @@ impl SequenceScopeId {
     }
 }
 
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(
+    Clone, Debug, Eq, Hash, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+#[serde(tag = "kind", rename_all = "snake_case")]
 pub enum TrackAddress {
-    Comment {
-        track_id: Uuid,
-    },
-    Caption {
-        track_id: Uuid,
-    },
+    #[serde(deserialize_with = "deserialize_root_track")]
+    Comment { track_id: Uuid },
+    #[serde(deserialize_with = "deserialize_root_track")]
+    Caption { track_id: Uuid },
     Video {
+        #[serde(default)]
         sequence_path: Vec<Uuid>,
         track_id: Uuid,
     },
     Audio {
+        #[serde(default)]
         sequence_path: Vec<Uuid>,
         track_id: Uuid,
     },
 }
 
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(
+    Clone, Debug, Eq, Hash, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+#[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ItemAddress {
-    Comment {
-        track_id: Uuid,
-        item_id: Uuid,
-    },
-    Caption {
-        track_id: Uuid,
-        item_id: Uuid,
-    },
+    #[serde(deserialize_with = "deserialize_root_item")]
+    Comment { track_id: Uuid, item_id: Uuid },
+    #[serde(deserialize_with = "deserialize_root_item")]
+    Caption { track_id: Uuid, item_id: Uuid },
     Video {
+        #[serde(default)]
         sequence_path: Vec<Uuid>,
         track_id: Uuid,
         item_id: Uuid,
     },
     Audio {
+        #[serde(default)]
         sequence_path: Vec<Uuid>,
         track_id: Uuid,
         item_id: Uuid,
     },
+}
+
+// Older clients include an empty sequence path on root-only addresses.
+#[derive(serde::Deserialize)]
+struct RootAddress {
+    track_id: Uuid,
+    item_id: Option<Uuid>,
+    #[serde(default, rename = "sequence_path")]
+    _sequence_path: [Uuid; 0],
+}
+
+fn deserialize_root_track<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Uuid, D::Error> {
+    Ok(<RootAddress as serde::Deserialize>::deserialize(deserializer)?.track_id)
+}
+
+fn deserialize_root_item<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<(Uuid, Uuid), D::Error> {
+    let address = <RootAddress as serde::Deserialize>::deserialize(deserializer)?;
+    Ok((
+        address.track_id,
+        address
+            .item_id
+            .ok_or_else(|| serde::de::Error::missing_field("item_id"))?,
+    ))
 }
 
 pub enum TrackRef<'a> {
@@ -102,6 +133,13 @@ impl TrackRef<'_> {
             Self::Audio(track) => track.enabled,
         }
     }
+
+    pub fn caption_language(&self) -> Option<String> {
+        match self {
+            Self::Caption(track) => super::supported_caption_language(&track.language),
+            _ => None,
+        }
+    }
 }
 
 pub enum TrackMut<'a> {
@@ -111,6 +149,19 @@ pub enum TrackMut<'a> {
     Audio(&'a mut AudioTrack),
 }
 
+impl<'a> TrackMut<'a> {
+    pub fn enabled_mut(self) -> &'a mut bool {
+        match self {
+            Self::Comment(track) => &mut track.enabled,
+            Self::Caption(track) => &mut track.enabled,
+            Self::Video(track) => &mut track.enabled,
+            Self::Audio(track) => &mut track.enabled,
+        }
+    }
+}
+
+#[derive(serde::Serialize)]
+#[serde(untagged)]
 pub enum ItemRef<'a> {
     Comment(&'a CommentItem),
     Caption(&'a CaptionItem),
@@ -308,6 +359,18 @@ impl<'a> ItemRef<'a> {
             Self::Video(item) => (item.start, item.end),
             Self::Audio(item) => (item.start, item.end),
         }
+    }
+}
+
+impl ItemMut<'_> {
+    pub fn replace_from_json(self, value: serde_json::Value) -> serde_json::Result<()> {
+        match self {
+            Self::Comment(item) => *item = serde_json::from_value(value)?,
+            Self::Caption(item) => *item = serde_json::from_value(value)?,
+            Self::Video(item) => *item = serde_json::from_value(value)?,
+            Self::Audio(item) => *item = serde_json::from_value(value)?,
+        }
+        Ok(())
     }
 }
 

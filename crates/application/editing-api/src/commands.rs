@@ -60,14 +60,14 @@ pub static COMMANDS: &[Command] = &[
     command!(
         "connect_project",
         "project open",
-        "Reuse an existing project owner, or open the native editor (use --headless to start a managed headless owner). Does not keep this CLI connected",
+        "Connect to the local project session, starting the editing service if needed",
         ConnectProjectRequest,
         false
     ),
     command!(
         "get_editor_state",
         "editor get",
-        "Return project, playhead, selection, active scope, and track state from the active owner, or saved state when closed. Check execution_mode",
+        "Return project, playhead, selection, active scope, and track state from the editing service",
         GetEditorStateRequest,
         true
     ),
@@ -88,14 +88,14 @@ pub static COMMANDS: &[Command] = &[
     command!(
         "query_clips",
         "clips list",
-        "List clip summaries from the active owner or saved project. Filter TTS with --source-kind tts; use clips get for scripts. Frame range is independent from editor selection",
+        "List clip summaries from the editing service. Filter TTS with --source-kind tts; use clips get for scripts. Frame range is independent from editor selection",
         QueryClipsRequest,
         true
     ),
     command!(
         "get_clip",
         "clips get",
-        "Get full clip metadata from the active owner or saved project, including stored TTS text at metadata.source.inputs.text.value and source time_offset. Scripts describe the full source, including trimmed-out speech",
+        "Get full clip metadata from the editing service, including stored TTS text at metadata.source.inputs.text.value and source time_offset. Scripts describe the full source, including trimmed-out speech",
         GetClipRequest,
         true
     ),
@@ -137,7 +137,7 @@ pub static COMMANDS: &[Command] = &[
     command!(
         "query_expressions",
         "expressions list",
-        "Query expression IDs, property paths, enabled state, and source across clip metadata from the active owner or saved project",
+        "Query expression IDs, property paths, enabled state, and source across clip metadata from the editing service",
         QueryExpressionsRequest,
         true
     ),
@@ -284,7 +284,7 @@ pub static COMMANDS: &[Command] = &[
     command!(
         "upsert_property_expression",
         "property-expressions upsert",
-        "Create or update an expression directly on a scalar or vec2 TimelineValue addressed by its get_clip JSON property path",
+        "Create, update, or toggle an expression by its clip property path",
         UpsertPropertyExpressionRequest,
         false
     ),
@@ -314,13 +314,6 @@ pub static COMMANDS: &[Command] = &[
         "manim reload",
         "Invalidate a Manim clip's cached Python scene state and rebuild it from the current source file",
         ReloadManimSourceRequest,
-        false
-    ),
-    command!(
-        "set_expression",
-        "expressions set",
-        "Set an expression's source and/or enabled state by stable ID on its owning video or audio clip",
-        SetExpressionRequest,
         false
     ),
     command!(
@@ -359,7 +352,7 @@ pub static COMMANDS: &[Command] = &[
         true
     ),
     command!(
-        "project_set",
+        "set_project_settings",
         "project set",
         "Update project name, canvas size, or an empty timeline frame rate",
         ProjectSettingsRequest,

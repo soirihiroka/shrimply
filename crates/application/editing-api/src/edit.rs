@@ -3,11 +3,11 @@ use std::collections::HashSet;
 use shrimply_math_core::{Fraction, Time, fraction_new, time_from_frame};
 use shrimply_project_document::project::{
     AudioTransition, CaptionItem, ItemAddress, ItemKind, ItemMut, Project, ProjectItem,
-    RepeatStrategy, SequenceScopeId, Time as ProjectTime, TrackAddress as ModelTrackAddress,
-    TrackRef, Transform, TransitionSide, VideoItemContent, VisualTransition, caption_languages,
+    SequenceScopeId, Time as ProjectTime, TrackAddress as ModelTrackAddress, TrackRef, Transform,
+    TransitionSide, VideoItemContent, VisualTransition, caption_languages,
 };
 use shrimply_property_model::timeline_value::{TimelineBase, TimelineValue};
-use shrimply_timeline_edit::edit::{self, CollisionBehavior as ModelCollision};
+use shrimply_timeline_edit::edit;
 use shrimply_visual_modifiers::{
     ModifierEffect, RasterModifierEffect, VisualKind,
     crop::{CropEdges as ModelCropEdges, CropModifier},
@@ -16,11 +16,10 @@ use uuid::Uuid;
 
 use crate::protocol::{
     ClipAddress, ClipSummary, ClipTransitionInput, CollisionBehavior, CropEdges, CropMode,
-    EditOperation, ExactFraction, InsertCaptionsRequest, InsertTextOperation,
-    ReplaceClipSourceRequest, SetClipPropertiesRequest, SetClipTransitionsRequest,
+    EditOperation, ExactFraction, InsertCaptionsRequest, InsertTextRequest,
+    ReplaceClipSourceRequest, ScopeRef, SetClipPropertiesRequest, SetClipTransitionsRequest,
     SetVideoTransformRequest, TrackAddress, VideoFitMode,
 };
-use crate::query::{model_item_address, model_kind, model_track_address};
 
 #[derive(Default)]
 pub struct MutationResult {
@@ -35,11 +34,11 @@ pub fn source_replacement_target(
     project: &Project,
     request: &ReplaceClipSourceRequest,
 ) -> Result<ItemAddress, String> {
-    if request.address.kind != crate::protocol::ClipKind::Video {
+    if request.address.kind() != crate::protocol::ClipKind::Video {
         return Err("replace_clip_source requires a video clip address".into());
     }
-    let address = model_item_address(&request.address)?;
-    if project.video_item(&address).is_none() {
+    let address = &request.address;
+    if project.video_item(address).is_none() {
         return Err("replacement target video clip was not found".into());
     }
     if request.link && request.copy_root.is_some() {
@@ -48,7 +47,43 @@ pub fn source_replacement_target(
     if !std::path::Path::new(&request.source).is_file() {
         return Err(format!("source file does not exist: {}", request.source));
     }
-    Ok(address)
+    Ok(address.clone())
+}
+
+#[derive(Clone)]
+pub(crate) struct ResolvedScope {
+    pub(crate) logical: SequenceScopeId,
+    #[cfg(feature = "local")]
+    pub(crate) concrete_path: Option<Vec<Uuid>>,
+}
+
+pub(crate) fn resolve_scope(project: &Project, scope: &ScopeRef) -> Result<ResolvedScope, String> {
+    let path = &scope.sequence_path;
+    if path.is_empty() {
+        return Ok(ResolvedScope {
+            logical: SequenceScopeId::root(),
+            #[cfg(feature = "local")]
+            concrete_path: Some(path.clone()),
+        });
+    }
+    let video = project.sequence_scope_for_path(ItemKind::Video, path);
+    let audio = project.sequence_scope_for_path(ItemKind::Audio, path);
+    let logical = match (video, audio) {
+        (Some(video), Some(audio)) if video != audio => {
+            return Err(
+                "scope path ambiguously names different video and audio sequences".to_string(),
+            );
+        }
+        (Some(scope), _) | (_, Some(scope)) => scope,
+        (None, None) => {
+            return Err("scope does not resolve to a folded-sequence presentation".to_string());
+        }
+    };
+    Ok(ResolvedScope {
+        logical,
+        #[cfg(feature = "local")]
+        concrete_path: Some(path.clone()),
+    })
 }
 
 pub fn apply_non_import(
@@ -57,6 +92,16 @@ pub fn apply_non_import(
     anchor: u64,
     scope: &SequenceScopeId,
 ) -> Result<MutationResult, String> {
+    let requested_scope = match operation {
+        EditOperation::InsertText(request) => request.scope.as_ref(),
+        EditOperation::CreateTrack(request) => request.scope.as_ref(),
+        _ => None,
+    }
+    .map(|requested| resolve_scope(project, requested))
+    .transpose()?;
+    let scope = requested_scope
+        .as_ref()
+        .map_or(scope, |resolved| &resolved.logical);
     match operation {
         EditOperation::SetProjectSettings(request) => crate::extra::settings(project, request),
         EditOperation::SplitClip(request) => crate::extra::split(project, request),
@@ -72,13 +117,15 @@ pub fn apply_non_import(
         EditOperation::InsertTts(_) => {
             Err("insert_tts must be handled by the native editor".to_string())
         }
-        EditOperation::InsertText(request) => insert_text(project, request, anchor, scope),
+        EditOperation::InsertText(request) => {
+            insert_text(project, request, request.frame.unwrap_or(anchor), scope)
+        }
         EditOperation::InsertCaptions(request) => insert_captions(project, request),
         EditOperation::CreateTrack(request) => {
             let id = edit::create_track(
                 project,
                 scope,
-                model_kind(request.kind),
+                request.kind,
                 request.enabled.unwrap_or(true),
             )?;
             Ok(MutationResult {
@@ -87,12 +134,8 @@ pub fn apply_non_import(
             })
         }
         EditOperation::MoveClip(request) => {
-            let address = model_item_address(&request.address)?;
-            let destination = request
-                .destination
-                .as_ref()
-                .map(model_track_address)
-                .transpose()?;
+            let address = &request.address;
+            let destination = request.destination.clone();
             let projected = frame(
                 project,
                 resolve_frame(
@@ -107,12 +150,12 @@ pub fn apply_non_import(
                 .map(|track| track.sequence_path())
                 .unwrap_or_else(|| address.sequence_path());
             let local = project
-                .timeline_time_to_sequence_path(model_kind(request.address.kind), path, projected)
+                .timeline_time_to_sequence_path(request.address.kind(), path, projected)
                 .ok_or_else(|| "destination scope does not resolve in the project".to_string())?
                 .snapped(project.frame_step());
             let destination = destination.unwrap_or_else(|| address.track());
             let duration = project
-                .item(&address)
+                .item(address)
                 .map(|item| {
                     let (start, end) = item.times();
                     end.saturating_sub(start)
@@ -128,15 +171,15 @@ pub fn apply_non_import(
             )?;
             let result = edit::move_item(
                 project,
-                &address,
+                address,
                 Some(&destination),
                 local,
-                collision(request.collision),
+                request.collision,
             )?;
             changed_after_insert(project, &result, &destination, deleted)
         }
         EditOperation::TrimClip(request) => {
-            let address = model_item_address(&request.address)?;
+            let address = &request.address;
             let start = optional_frame(
                 project,
                 request.start_frame,
@@ -147,7 +190,7 @@ pub fn apply_non_import(
             .map(|time| {
                 project
                     .timeline_time_to_sequence_path(
-                        model_kind(request.address.kind),
+                        request.address.kind(),
                         address.sequence_path(),
                         time,
                     )
@@ -165,7 +208,7 @@ pub fn apply_non_import(
             .map(|time| {
                 project
                     .timeline_time_to_sequence_path(
-                        model_kind(request.address.kind),
+                        request.address.kind(),
                         address.sequence_path(),
                         time,
                     )
@@ -177,7 +220,7 @@ pub fn apply_non_import(
                 return Err("trim_clip requires a start or end frame".to_string());
             }
             let (old_start, old_end) = project
-                .item(&address)
+                .item(address)
                 .map(|item| item.times())
                 .ok_or_else(|| "clip was not found".to_string())?;
             let deleted = overwritten_presentations(
@@ -188,19 +231,14 @@ pub fn apply_non_import(
                 address.item_id(),
                 request.collision,
             )?;
-            let result =
-                edit::trim_item(project, &address, start, end, collision(request.collision))?;
+            let result = edit::trim_item(project, address, start, end, request.collision)?;
             changed_after_insert(project, &result, &address.track(), deleted)
         }
         EditOperation::DeleteClips(request) => {
             if request.addresses.is_empty() {
                 return Err("delete_clips requires at least one address".to_string());
             }
-            let mut addresses = request
-                .addresses
-                .iter()
-                .map(model_item_address)
-                .collect::<Result<Vec<_>, _>>()?;
+            let mut addresses = request.addresses.clone();
             for address in &addresses {
                 if project.item(address).is_none() {
                     return Err(format!("clip {} was not found", address.item_id()));
@@ -239,56 +277,28 @@ pub fn apply_non_import(
             crate::property::delete_expression(project, request)?,
         )),
         EditOperation::SetClipTransitions(request) => set_clip_transitions(project, request),
-        EditOperation::SetExpression(request) => {
-            Ok(changed(crate::expression::set(project, request)?))
-        }
         EditOperation::SetTrackEnabled(request) => {
-            let address = model_track_address(&request.address)?;
-            edit::set_track_enabled(project, &address, request.enabled)?;
-            let track_ids = [address.track_id()].into_iter().collect();
-            let presentations = crate::query::presentations_for_tracks(project, &track_ids)?;
-            Ok(MutationResult {
-                changed_item_ids: presentations
-                    .iter()
-                    .filter_map(|clip| Uuid::parse_str(&clip.address.item_id).ok())
-                    .collect(),
-                changed_tracks: crate::query::addresses_for_tracks(project, &track_ids)?,
-                ..Default::default()
-            })
+            let address = &request.address;
+            edit::set_track_enabled(project, address, request.enabled)
+                .ok_or("track was not found")?;
+            changed_track(project, address.track_id())
         }
         EditOperation::SetCaptionTrackLanguage(request) => {
-            if let Some(language) = &request.language
-                && !caption_languages().contains(language)
-            {
-                return Err(format!("{language} is not a supported caption language"));
-            }
-            let address = model_track_address(&request.address)?;
-            edit::set_caption_track_language(project, &address, request.language.clone())?;
-            let track_ids = [address.track_id()].into_iter().collect();
-            let presentations = crate::query::presentations_for_tracks(project, &track_ids)?;
-            Ok(MutationResult {
-                changed_item_ids: presentations
-                    .iter()
-                    .filter_map(|clip| Uuid::parse_str(&clip.address.item_id).ok())
-                    .collect(),
-                changed_tracks: crate::query::addresses_for_tracks(project, &track_ids)?,
-                ..Default::default()
-            })
+            let address = &request.address;
+            edit::set_caption_track_language(project, address, request.language.as_deref())?;
+            changed_track(project, address.track_id())
         }
         EditOperation::DeleteTrack(request) => {
-            let address = model_track_address(&request.address)?;
-            let item_ids = match project
-                .track(&address)
-                .ok_or_else(|| "track was not found".to_string())?
-            {
-                TrackRef::Comment(track) => track.items.iter().map(|item| item.id).collect(),
-                TrackRef::Caption(track) => track.items.iter().map(|item| item.id).collect(),
-                TrackRef::Video(track) => track.items.iter().map(|item| item.id).collect(),
-                TrackRef::Audio(track) => track.items.iter().map(|item| item.id).collect(),
-            };
+            let address = &request.address;
+            let item_ids = project
+                .track(address)
+                .ok_or("track was not found")?
+                .items()
+                .map(|item| item.id())
+                .collect();
             let deleted_presentations =
                 crate::query::presentations_affected_by_items(project, &item_ids)?;
-            edit::delete_track(project, &address)?;
+            edit::delete_track(project, address)?;
             Ok(MutationResult {
                 deleted_addresses: deleted_presentations
                     .iter()
@@ -328,9 +338,8 @@ fn insert_captions(
                 ));
             }
             let mut caption = if let Some(source) = &cue.copy_style_from {
-                let source = model_item_address(source)?;
                 project
-                    .caption_item(&source)
+                    .caption_item(source)
                     .cloned()
                     .ok_or_else(|| "copy_style_from must address a caption clip".to_string())?
             } else {
@@ -349,11 +358,7 @@ fn insert_captions(
         return Err("inserted captions cannot overlap each other".to_string());
     }
 
-    let requested_track = request
-        .track
-        .as_ref()
-        .map(model_track_address)
-        .transpose()?;
+    let requested_track = request.track.clone();
     if requested_track
         .as_ref()
         .is_some_and(|track| track.kind() != ItemKind::Caption)
@@ -390,14 +395,14 @@ fn insert_captions(
                 .expect("validated caption track must exist")
             {
                 TrackRef::Comment(_) => unreachable!("validated caption track must be a caption"),
-                TrackRef::Caption(track) => (track.enabled, track.language.clone()),
+                track @ TrackRef::Caption(_) => (track.enabled(), track.caption_language()),
                 TrackRef::Video(_) | TrackRef::Audio(_) => unreachable!(),
             };
             target = create_caption_track(project, request.enabled.unwrap_or(enabled))?;
             edit::set_caption_track_language(
                 project,
                 &target,
-                request.language.clone().or(language),
+                request.language.as_deref().or(language.as_deref()),
             )?;
             Vec::new()
         }
@@ -411,10 +416,10 @@ fn insert_captions(
     };
 
     if let Some(enabled) = request.enabled {
-        edit::set_track_enabled(project, &target, enabled)?;
+        edit::set_track_enabled(project, &target, enabled).ok_or("track was not found")?;
     }
     if let Some(language) = &request.language {
-        edit::set_caption_track_language(project, &target, Some(language.clone()))?;
+        edit::set_caption_track_language(project, &target, Some(language))?;
     }
     let mut changed_item_ids = Vec::with_capacity(captions.len());
     for caption in captions {
@@ -438,7 +443,7 @@ fn insert_captions(
 
 fn insert_text(
     project: &mut Project,
-    request: &InsertTextOperation,
+    request: &InsertTextRequest,
     anchor: u64,
     scope: &SequenceScopeId,
 ) -> Result<MutationResult, String> {
@@ -453,11 +458,7 @@ fn insert_text(
         .ok_or_else(|| "insert_text end frame overflow".to_string())?;
     let projected_start = frame(project, anchor)?;
     let projected_end = frame(project, end_frame)?;
-    let requested_track = request
-        .track
-        .as_ref()
-        .map(model_track_address)
-        .transpose()?;
+    let requested_track = request.track.clone();
     if requested_track
         .as_ref()
         .is_some_and(|track| track.kind() != ItemKind::Video)
@@ -546,7 +547,7 @@ fn insert_text(
     if request
         .track
         .as_ref()
-        .is_none_or(|track| track.track_id != inserted.track_id().to_string())
+        .is_none_or(|track| track.track_id() != inserted.track_id())
     {
         changed_tracks =
             crate::query::addresses_for_tracks(project, &HashSet::from([inserted.track_id()]))?;
@@ -586,37 +587,65 @@ fn set_properties(
     {
         return Err("set_clip_properties requires at least one property".to_string());
     }
-    let address = model_item_address(&request.address)?;
-    let has_playback = request.playback_speed.is_some() || request.repeat_strategy.is_some();
-    edit::validate_properties_target(
-        project,
-        &address,
-        request.text.is_some(),
-        request.enabled.is_some(),
-        request.gain_db.is_some(),
-        has_playback,
-    )?;
-    if let Some(text) = &request.text {
-        edit::set_item_text(project, &address, text.clone())?;
-    }
-    if let Some(enabled) = request.enabled {
-        edit::set_audio_enabled(project, &address, enabled)?;
-    }
-    if let Some(gain_db) = request.gain_db {
-        edit::set_audio_gain(project, &address, gain_db)?;
-    }
     let speed = request
         .playback_speed
         .as_ref()
         .map(positive_fraction)
         .transpose()?;
-    let repeat = request
-        .repeat_strategy
-        .as_deref()
-        .map(parse_repeat)
-        .transpose()?;
-    if has_playback {
-        edit::set_playback(project, &address, speed, repeat)?;
+    let audio_only = request.enabled.is_some() || request.gain_db.is_some();
+    let playback = speed.is_some() || request.repeat_strategy.is_some();
+    let address = &request.address;
+    let item = project.item_mut(address).ok_or("clip was not found")?;
+    let (playback_speed, repeat_strategy) = match item {
+        ItemMut::Comment(item) if !audio_only && !playback => {
+            item.text.clone_from(
+                request
+                    .text
+                    .as_ref()
+                    .expect("text is the only requested property"),
+            );
+            return Ok(changed(address.item_id()));
+        }
+        ItemMut::Caption(item) if !audio_only && !playback => {
+            item.text.clone_from(
+                request
+                    .text
+                    .as_ref()
+                    .expect("text is the only requested property"),
+            );
+            return Ok(changed(address.item_id()));
+        }
+        ItemMut::Video(item) if request.text.is_none() && !audio_only => {
+            (&mut item.playback_speed, &mut item.repeat_strategy)
+        }
+        ItemMut::Audio(item) if request.text.is_none() => {
+            if let Some(gain_db) = request.gain_db {
+                if !gain_db.is_finite() {
+                    return Err("gain_db must be finite".into());
+                }
+                let gain = &mut item.gain.decibels;
+                if gain
+                    .expression
+                    .as_ref()
+                    .is_some_and(|expression| expression.enabled)
+                    || !matches!(gain.base, TimelineBase::Const(_))
+                {
+                    return Err("gain_db cannot replace keyframed or expression-driven gain".into());
+                }
+                gain.base = TimelineBase::Const(gain_db);
+            }
+            if let Some(enabled) = request.enabled {
+                item.enabled = enabled;
+            }
+            (&mut item.playback_speed, &mut item.repeat_strategy)
+        }
+        _ => return Err("one or more properties do not apply to this clip kind".into()),
+    };
+    if let Some(speed) = speed {
+        *playback_speed = speed;
+    }
+    if let Some(repeat) = request.repeat_strategy {
+        *repeat_strategy = repeat;
     }
     Ok(changed(address.item_id()))
 }
@@ -625,7 +654,7 @@ fn set_video_transform(
     project: &mut Project,
     request: &SetVideoTransformRequest,
 ) -> Result<MutationResult, String> {
-    if request.address.kind != crate::protocol::ClipKind::Video {
+    if request.address.kind() != crate::protocol::ClipKind::Video {
         return Err("set_video_transform requires a video clip address".to_string());
     }
     if request.fit_mode.is_none()
@@ -664,10 +693,10 @@ fn set_video_transform(
         validate_crop(crop)?;
     }
 
-    let address = model_item_address(&request.address)?;
+    let address = &request.address;
     let canvas = project.canvas_size;
     let item = project
-        .video_item_mut(&address)
+        .video_item_mut(address)
         .ok_or_else(|| "video clip was not found".to_string())?;
     if let Some(mode) = request.fit_mode {
         item.transform = match mode {
@@ -798,10 +827,10 @@ fn set_clip_transitions(
             ))
         })
         .collect::<Result<Vec<_>, String>>()?;
-    let address = model_item_address(&request.address)?;
+    let address = &request.address;
     let canvas = project.canvas_size;
     match project
-        .item_mut(&address)
+        .item_mut(address)
         .ok_or_else(|| "clip was not found".to_string())?
     {
         ItemMut::Comment(_) => {
@@ -906,16 +935,6 @@ pub fn positive_fraction(value: &ExactFraction) -> Result<Fraction, String> {
     Ok(fraction_new(value.numerator, value.denominator))
 }
 
-fn parse_repeat(value: &str) -> Result<RepeatStrategy, String> {
-    match value {
-        "repeat" => Ok(RepeatStrategy::Repeat),
-        "ping_pong" => Ok(RepeatStrategy::PingPong),
-        "hold" => Ok(RepeatStrategy::Hold),
-        "empty" => Ok(RepeatStrategy::Empty),
-        _ => Err("repeat_strategy must be repeat, ping_pong, hold, or empty".to_string()),
-    }
-}
-
 fn frame(project: &Project, value: u64) -> Result<Time, String> {
     time_from_frame(value, project.fps)
         .ok_or_else(|| "frame exceeds the supported exact fraction range".to_string())
@@ -966,6 +985,18 @@ pub fn frame_with_offset(anchor: u64, offset: i64) -> Result<u64, String> {
     }
 }
 
+fn changed_track(project: &Project, id: Uuid) -> Result<MutationResult, String> {
+    let track_ids = HashSet::from([id]);
+    Ok(MutationResult {
+        changed_item_ids: crate::query::presentations_for_tracks(project, &track_ids)?
+            .iter()
+            .map(|clip| clip.address.item_id())
+            .collect(),
+        changed_tracks: crate::query::addresses_for_tracks(project, &track_ids)?,
+        ..Default::default()
+    })
+}
+
 fn changed(item_id: Uuid) -> MutationResult {
     MutationResult {
         changed_item_ids: vec![item_id],
@@ -1013,12 +1044,4 @@ fn overwritten_presentations(
         .filter(|item_id| *item_id != source)
         .collect();
     crate::query::presentations_affected_by_items(project, &item_ids)
-}
-
-fn collision(value: CollisionBehavior) -> ModelCollision {
-    match value {
-        CollisionBehavior::Reject => ModelCollision::Reject,
-        CollisionBehavior::NewTrack => ModelCollision::NewTrack,
-        CollisionBehavior::Overwrite => ModelCollision::Overwrite,
-    }
 }

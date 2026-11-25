@@ -9,13 +9,13 @@ pub(super) async fn analyze_transparent_fill(
     request: AnalyzeTransparentFillRequest,
     canceled: Arc<AtomicBool>,
 ) -> Result<Value, String> {
-    let address = shrimply_editing_api::query::model_item_address(&request.address)?;
+    let address = &request.address;
     let modifier_id = Uuid::parse_str(&request.modifier_id)
         .map_err(|error| format!("invalid modifier_id {:?}: {error}", request.modifier_id))?;
     let mut project = live.borrow().clone();
     let original = content_revision(&project)?;
     let fill = project
-        .video_item_mut(&address)
+        .video_item_mut(address)
         .ok_or_else(|| "Transparent Fill analysis requires a video clip address".to_string())?
         .modifiers
         .iter_mut()
@@ -33,7 +33,7 @@ pub(super) async fn analyze_transparent_fill(
     }
     fill.analysis_generation = fill.analysis_generation.wrapping_add(1).max(1);
     let generation = fill.analysis_generation;
-    let run_id = transparent_fill_analysis::analyze(project.clone(), &address, modifier_id)?;
+    let run_id = transparent_fill_analysis::analyze(project.clone(), address, modifier_id)?;
 
     loop {
         if canceled.load(Ordering::Acquire) {

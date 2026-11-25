@@ -28,6 +28,7 @@ const KEY_DEFAULT_VISUAL_DURATION_SECONDS: &str = "default_visual_duration_secon
 const KEY_DEFAULT_TEXT_FONT_FAMILY: &str = "default_text_font_family";
 const KEY_COMPUTE_SERVER_URL: &str = "compute_server_url";
 const KEY_COMPUTE_SERVER_URLS: &str = "compute_server_urls";
+const KEY_PROJECT_SERVER_URLS: &str = "project_server_urls";
 const KEY_LAST_STT_MODEL: &str = "last_stt_model";
 const KEY_LAST_TTS_MODEL: &str = "last_tts_model";
 const KEY_PREVIEW_IMAGE_FOLDER: &str = "preview_image_folder";
@@ -139,6 +140,7 @@ pub struct PreferencesSnapshot {
     pub default_text_font_family: FontFamily,
     pub compute_server_url: String,
     pub compute_server_urls: Vec<String>,
+    pub project_server_urls: Vec<String>,
     pub last_stt_model: String,
     pub last_tts_model: String,
     pub preview_padding_px: u32,
@@ -175,6 +177,7 @@ pub struct PreferencesStore {
     default_text_font_family: FontFamily,
     compute_server_url: String,
     compute_server_urls: Vec<String>,
+    project_server_urls: Vec<String>,
     last_stt_model: String,
     last_tts_model: String,
     preview_padding_px: u32,
@@ -299,17 +302,14 @@ impl PreferencesStore {
                 )
             },
         );
-        let mut compute_server_urls = conn.as_ref().map_or_else(
-            || vec![compute_server_url.clone()],
-            |conn| {
-                read_string_or_default(conn, KEY_COMPUTE_SERVER_URLS, &compute_server_url, |_| true)
-                    .lines()
-                    .map(str::trim)
-                    .filter(|url| !url.is_empty())
-                    .map(str::to_string)
-                    .collect::<Vec<_>>()
-            },
-        );
+        let read_urls = |key, default| {
+            conn.as_ref().map_or_else(Vec::new, |conn| {
+                let stored = read_string_or_default(conn, key, default, |_| true);
+                unique_server_urls(stored.lines())
+            })
+        };
+        let mut compute_server_urls = read_urls(KEY_COMPUTE_SERVER_URLS, &compute_server_url);
+        let project_server_urls = read_urls(KEY_PROJECT_SERVER_URLS, "");
         if compute_server_urls.is_empty() {
             compute_server_urls.push(if compute_server_url.is_empty() {
                 DEFAULT_COMPUTE_SERVER_URL.to_string()
@@ -437,6 +437,7 @@ impl PreferencesStore {
             default_text_font_family,
             compute_server_url,
             compute_server_urls,
+            project_server_urls,
             last_stt_model,
             last_tts_model,
             preview_padding_px,
@@ -883,18 +884,23 @@ pub fn set_compute_server_url(store: &SharedPreferences, url: &str) {
     notify_listeners(state);
 }
 
-pub fn set_compute_server_urls(store: &SharedPreferences, urls: &[String]) {
+fn unique_server_urls<'a>(urls: impl IntoIterator<Item = &'a str>) -> Vec<String> {
     let mut normalized = Vec::new();
     for url in urls
-        .iter()
-        .map(|url| url.trim())
+        .into_iter()
+        .map(str::trim)
         .filter(|url| !url.is_empty())
     {
         if !normalized.iter().any(|saved| saved == url) {
-            normalized.push(url.to_string());
+            normalized.push(url.to_owned());
         }
     }
-    let mut state = store.borrow_mut();
+    normalized
+}
+
+pub fn set_compute_server_urls(store: &SharedPreferences, urls: &[String]) {
+    let mut normalized = unique_server_urls(urls.iter().map(String::as_str));
+    let state = store.borrow_mut();
     if normalized.is_empty() {
         normalized.push(if state.compute_server_url.is_empty() {
             DEFAULT_COMPUTE_SERVER_URL.to_string()
@@ -902,23 +908,66 @@ pub fn set_compute_server_urls(store: &SharedPreferences, urls: &[String]) {
             state.compute_server_url.clone()
         });
     }
-    if state.compute_server_urls == normalized {
-        return;
-    }
-
-    let previous = std::mem::replace(&mut state.compute_server_urls, normalized);
-    if let Some(conn) = &state.conn
-        && let Err(error) = write_string(
-            conn,
-            KEY_COMPUTE_SERVER_URLS,
-            &state.compute_server_urls.join("\n"),
-        )
-    {
+    if let Err(error) = persist_server_urls(state, KEY_COMPUTE_SERVER_URLS, normalized) {
         tracing::warn!("Could not write compute server list preference: {error}");
-        state.compute_server_urls = previous;
-        return;
+    }
+}
+
+fn persist_server_urls(
+    mut state: std::cell::RefMut<'_, PreferencesStore>,
+    key: &str,
+    urls: Vec<String>,
+) -> Result<(), String> {
+    let current = match key {
+        KEY_COMPUTE_SERVER_URLS => &state.compute_server_urls,
+        KEY_PROJECT_SERVER_URLS => &state.project_server_urls,
+        _ => unreachable!("server preference key must identify a list"),
+    };
+    if current == &urls {
+        return Ok(());
+    }
+    if let Some(conn) = &state.conn {
+        write_string(conn, key, &urls.join("\n")).map_err(|error| error.to_string())?;
+    }
+    match key {
+        KEY_COMPUTE_SERVER_URLS => state.compute_server_urls = urls,
+        KEY_PROJECT_SERVER_URLS => state.project_server_urls = urls,
+        _ => unreachable!("server preference key must identify a list"),
     }
     notify_listeners(state);
+    Ok(())
+}
+
+pub fn update_project_server(
+    store: &SharedPreferences,
+    previous: Option<&str>,
+    value: Option<&str>,
+) -> Result<(), String> {
+    let state = store.borrow_mut();
+    let mut urls = state.project_server_urls.clone();
+    let mut index = urls.len();
+    if let Some(previous) = previous {
+        index = urls
+            .iter()
+            .position(|url| url == previous)
+            .ok_or("Project server selection is no longer available")?;
+        urls.remove(index);
+    }
+    if let Some(value) = value {
+        let url = normalize_project_server_url(value)?;
+        if !urls.contains(&url) {
+            urls.insert(index, url);
+        }
+    }
+    persist_server_urls(state, KEY_PROJECT_SERVER_URLS, urls)
+}
+
+pub fn normalize_project_server_url(value: &str) -> Result<String, &'static str> {
+    let url = normalize_server_url(value)?;
+    if url.contains(['@', '?', '#']) {
+        return Err("Enter a project server base URL without credentials, query, or fragment");
+    }
+    Ok(url)
 }
 
 pub fn normalize_server_url(value: &str) -> Result<String, &'static str> {
@@ -1042,6 +1091,7 @@ fn snapshot_from_state(state: &PreferencesStore) -> PreferencesSnapshot {
         default_text_font_family: state.default_text_font_family.clone(),
         compute_server_url: state.compute_server_url.clone(),
         compute_server_urls: state.compute_server_urls.clone(),
+        project_server_urls: state.project_server_urls.clone(),
         last_stt_model: state.last_stt_model.clone(),
         last_tts_model: state.last_tts_model.clone(),
         preview_padding_px: state.preview_padding_px,

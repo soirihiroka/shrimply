@@ -243,6 +243,7 @@ pub(super) fn draw(scene: &mut Scene, painter: &TimelinePainter, size: Vec2, fra
         project,
         playback_performance: &playback_performance,
         current_time,
+        collaborators: &player_state::collaborators(player_state),
         waveforms: &runtime.waveforms,
         beats: &runtime.beats,
         beat_grid_enabled: runtime.beat_grid_enabled,

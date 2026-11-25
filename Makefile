@@ -532,9 +532,22 @@ cli-install-check:
 	"$(CARGO_TARGET_DIR)/cli-install-check/tests"
 endif
 
+.PHONY: project-server project-server-release project-server-check
+project-server:
+	$(CARGO) build -p shrimply-project-server
+
+PROJECT_SERVER_LOCK ?= --locked
+project-server-release:
+	$(CARGO) build $(PROJECT_SERVER_LOCK) --release -p shrimply-project-server
+
+project-server-check:
+	$(CARGO) clippy --locked -p shrimply-project-server --all-targets -- -D warnings
+
+check: project-server-check
+
 .PHONY: editing-api-check editing-api-fmt
 editing-api-fmt:
-	$(BUILD_ENV) $(CARGO) fmt -p shrimply-editing-api -p shrimply-editing-runtime -p shrimply-cli -p shrimply-project-document
+	$(BUILD_ENV) $(CARGO) fmt -p shrimply-editing-api -p shrimply-editing-runtime -p shrimply-cli -p shrimply-project-document -p shrimply-project-service
 
 editing-api-check: native-deps cuda-artifacts editing-api-fmt
 	$(DEV_BUILD_ENV) $(CARGO) test -p shrimply-editing-api -p shrimply-editing-runtime -p shrimply-cli --lib

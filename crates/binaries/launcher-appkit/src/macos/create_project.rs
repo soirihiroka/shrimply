@@ -22,6 +22,7 @@ pub struct Request {
     pub name: String,
     pub canvas_size: CanvasSize,
     pub fps: Fraction,
+    pub server: Option<String>,
 }
 
 struct DialogIvars {
@@ -180,8 +181,27 @@ pub fn show(parent: &NSWindow, mtm: MainThreadMarker) -> Option<Request> {
     let dialog = Dialog::new(mtm);
     let form = NSView::initWithFrame(
         NSView::alloc(mtm),
-        NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(440.0, 250.0)),
+        NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(440.0, 292.0)),
     );
+
+    let servers = shrimply_cross_ui_core::launcher::project_servers();
+    let location_label = NSTextField::labelWithString(ns_string!("Location"), mtm);
+    location_label.setFont(Some(&NSFont::boldSystemFontOfSize(13.0)));
+    location_label.setFrame(NSRect::new(
+        NSPoint::new(0.0, 260.0),
+        NSSize::new(120.0, 22.0),
+    ));
+    form.addSubview(&location_label);
+    let location = shrimply_components_appkit::menu::popup(
+        NSRect::new(NSPoint::new(120.0, 254.0), NSSize::new(320.0, 32.0)),
+        false,
+        mtm,
+    );
+    location.addItemWithTitle(ns_string!("Local"));
+    for server in &servers {
+        location.addItemWithTitle(&NSString::from_str(server));
+    }
+    form.addSubview(&location);
 
     let name_label = NSTextField::labelWithString(ns_string!("Project Name"), mtm);
     name_label.setFont(Some(&NSFont::boldSystemFontOfSize(13.0)));
@@ -347,7 +367,7 @@ pub fn show(parent: &NSWindow, mtm: MainThreadMarker) -> Option<Request> {
     let sheet = unsafe {
         NSWindow::initWithContentRect_styleMask_backing_defer(
             NSWindow::alloc(mtm),
-            NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(500.0, 350.0)),
+            NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(500.0, 392.0)),
             NSWindowStyleMask::Titled,
             NSBackingStoreType::Buffered,
             false,
@@ -358,7 +378,7 @@ pub fn show(parent: &NSWindow, mtm: MainThreadMarker) -> Option<Request> {
 
     let content = NSView::initWithFrame(
         NSView::alloc(mtm),
-        NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(500.0, 350.0)),
+        NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(500.0, 392.0)),
     );
     form.setFrameOrigin(NSPoint::new(30.0, 82.0));
     content.addSubview(&form);
@@ -460,6 +480,11 @@ pub fn show(parent: &NSWindow, mtm: MainThreadMarker) -> Option<Request> {
             name: project_name,
             canvas_size: CanvasSize { width, height },
             fps: frame_rate.value,
+            server: usize::try_from(location.indexOfSelectedItem())
+                .ok()
+                .and_then(|index| index.checked_sub(1))
+                .and_then(|index| servers.get(index))
+                .cloned(),
         });
     }
 }

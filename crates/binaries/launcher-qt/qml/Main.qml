@@ -85,6 +85,18 @@ ApplicationWindow {
                     onClicked: backend.chooseProject()
                 }
 
+                Button {
+                    Layout.fillWidth: true
+                    text: backend.text("Open Shared Project")
+                    onClicked: openSharedDialog.open()
+                }
+
+                Button {
+                    Layout.fillWidth: true
+                    text: backend.text("Project Servers")
+                    onClicked: projectServersDialog.open()
+                }
+
                 Item {
                     Layout.fillHeight: true
                 }
@@ -145,6 +157,12 @@ ApplicationWindow {
                         text: index >= 0 && index < backend.recentCount
                             ? backend.recentName(index) + "\n" + backend.recentLastEdited(index)
                             : ""
+                        icon.name: backend.recentIsRemote(index) ? "folder-remote" : "folder"
+                        icon.source: backend.recentIsRemote(index)
+                            ? "qrc:/shrimply/icons/folder-remote-symbolic.svg"
+                            : "qrc:/shrimply/icons/folder-open-symbolic.svg"
+                        icon.width: 16
+                        icon.height: 16
                         onClicked: backend.openRecent(index)
 
                         ToolButton {
@@ -278,6 +296,101 @@ ApplicationWindow {
                     onClicked: backend.showRecent(infoDialog.recentIndex)
                 }
             }
+            TextField {
+                Layout.fillWidth: true
+                text: backend.recentProjectLink(infoDialog.recentIndex)
+                visible: text.length > 0
+                readOnly: true
+                selectByMouse: true
+                Accessible.name: backend.text("Project Link")
+            }
+        }
+    }
+
+    Dialog {
+        id: openSharedDialog
+        anchors.centerIn: parent
+        width: Math.min(500, window.width - 48)
+        title: backend.text("Open Shared Project")
+        modal: true
+        standardButtons: Dialog.Open | Dialog.Cancel
+        onAccepted: backend.openSharedProject(projectLink.text)
+        onOpened: projectLink.forceActiveFocus()
+
+        TextField {
+            id: projectLink
+            width: parent.width
+            placeholderText: backend.text("Project Link")
+        }
+    }
+
+    Dialog {
+        id: projectServersDialog
+        anchors.centerIn: parent
+        width: Math.min(500, window.width - 48)
+        title: backend.text("Project Servers")
+        modal: true
+        standardButtons: Dialog.Close
+        onOpened: projectServerRows.model = backend.projectServers(false)
+
+        ColumnLayout {
+            width: parent.width
+
+            ListView {
+                id: projectServerRows
+                Layout.fillWidth: true
+                Layout.preferredHeight: Math.min(contentHeight, 220)
+                clip: true
+                delegate: RowLayout {
+                    required property string modelData
+                    width: projectServerRows.width
+
+                    TextField {
+                        id: savedUrl
+                        Layout.fillWidth: true
+                        text: modelData
+                        onAccepted: {
+                            if (text.trim().length > 0 && backend.updateProjectServer(modelData, text)) {
+                                projectServerRows.model = backend.projectServers(false)
+                            }
+                        }
+                    }
+
+                    ToolButton {
+                        icon.source: "qrc:/shrimply/icons/user-trash-symbolic.svg"
+                        text: backend.text("Remove Server")
+                        display: AbstractButton.IconOnly
+                        ToolTip.visible: hovered
+                        ToolTip.text: text
+                        onClicked: {
+                            if (backend.updateProjectServer(modelData, "")) {
+                                projectServerRows.model = backend.projectServers(false)
+                            }
+                        }
+                    }
+                }
+            }
+
+            RowLayout {
+                TextField {
+                    id: newProjectServer
+                    Layout.fillWidth: true
+                    placeholderText: backend.text("Server URL")
+                    onAccepted: addProjectServer.clicked()
+                }
+
+                Button {
+                    id: addProjectServer
+                    text: backend.text("Add Server")
+                    enabled: newProjectServer.text.trim().length > 0
+                    onClicked: {
+                        if (backend.updateProjectServer("", newProjectServer.text)) {
+                            newProjectServer.clear()
+                            projectServerRows.model = backend.projectServers(false)
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -287,6 +400,10 @@ ApplicationWindow {
         width: Math.min(500, window.width - 48)
         modal: true
         title: backend.text("Create Project")
+        onOpened: {
+            projectDestination.model = backend.projectServers(true)
+            projectDestination.currentIndex = 0
+        }
 
         contentItem: ColumnLayout {
             spacing: 12
@@ -301,6 +418,18 @@ ApplicationWindow {
                 Layout.fillWidth: true
                 text: backend.text("Untitled Project")
                 selectByMouse: true
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                Label {
+                    text: backend.text("Location")
+                    Layout.fillWidth: true
+                }
+                ComboBox {
+                    id: projectDestination
+                    Layout.fillWidth: true
+                }
             }
 
             Label {
@@ -392,6 +521,12 @@ ApplicationWindow {
                 enabled: projectName.text.trim().length > 0
                 onClicked: {
                     createDialog.close()
+                    if (projectDestination.currentIndex > 0) {
+                        backend.createSharedProject(
+                            projectDestination.currentText, projectName.text.trim(),
+                            widthInput.value, heightInput.value, frameRate.currentIndex)
+                        return
+                    }
                     const selectedFile = backend.chooseProjectDestination(
                         projectName.text.trim())
                     if (selectedFile.toString().length > 0) {

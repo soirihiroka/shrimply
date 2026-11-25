@@ -1386,19 +1386,14 @@ pub(crate) fn target_value(project: &Project, target: &InspectorTarget) -> Optio
     match target {
         InspectorTarget::Project => Some(("Project".to_string(), serialize(project))),
         InspectorTarget::Item(address) => {
-            let title = match project.item(address)? {
+            let item = project.item(address)?;
+            let title = match &item {
                 ItemRef::Comment(_) => "Comment",
                 ItemRef::Caption(_) => "Caption",
                 ItemRef::Video(item) => video_title(item),
                 ItemRef::Audio(item) => audio_title(item),
             };
-            let value = match project.item(address)? {
-                ItemRef::Comment(item) => serialize(item),
-                ItemRef::Caption(item) => serialize(item),
-                ItemRef::Video(item) => serialize(item),
-                ItemRef::Audio(item) => serialize(item),
-            };
-            Some((title.to_string(), value))
+            Some((title.to_string(), serialize(&item)))
         }
         InspectorTarget::Transition { item, side } => {
             let (title, value) = match project.item(item)? {
@@ -1462,17 +1457,11 @@ pub(crate) fn replace_target(
 ) -> Result<(), String> {
     match target {
         InspectorTarget::Project => *project = deserialize(value)?,
-        InspectorTarget::Item(address) => {
-            match project
-                .item_mut(address)
-                .ok_or_else(|| "inspector item is no longer available".to_string())?
-            {
-                ItemMut::Comment(item) => *item = deserialize(value)?,
-                ItemMut::Caption(item) => *item = deserialize(value)?,
-                ItemMut::Video(item) => *item = deserialize(value)?,
-                ItemMut::Audio(item) => *item = deserialize(value)?,
-            }
-        }
+        InspectorTarget::Item(address) => project
+            .item_mut(address)
+            .ok_or_else(|| "inspector item is no longer available".to_string())?
+            .replace_from_json(value)
+            .map_err(|error| format!("invalid inspector value: {error}"))?,
         InspectorTarget::Transition { item, side } => match project
             .item_mut(item)
             .ok_or_else(|| "inspector transition is no longer available".to_string())?

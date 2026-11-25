@@ -15,4 +15,5 @@ shrimply-cross-ui-core = { workspace = true }
 shrimply-process-reporting = { workspace = true }
 shrimply-project-document = { workspace = true, default-features = true }
 shrimply-components-gtk = { workspace = true }
+shrimply-preferences-gtk.workspace = true
 tracing.workspace = true

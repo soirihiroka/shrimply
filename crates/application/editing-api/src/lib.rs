@@ -1,6 +1,7 @@
 pub mod bridge;
 pub mod edit;
 mod expression;
+#[cfg(feature = "local")]
 pub mod imports;
 mod property;
 pub mod protocol;

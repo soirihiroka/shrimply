@@ -2447,6 +2447,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6dbf3de79e51f3d586ab4cb9d5c3e2c14aa28ed23d180cf89b4df0454a69cc87"
 
 [[package]]
+name = "httpdate"
+version = "1.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "df3b46402a9d5adb4c86a0cf463f42e19994e3ee891101b1841f30a545cb49a9"
+
+[[package]]
 name = "hybrid-array"
 version = "0.4.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2469,6 +2475,7 @@ dependencies = [
  "http",
  "http-body",
  "httparse",
+ "httpdate",
  "itoa",
  "pin-project-lite",
  "smallvec",
@@ -5152,6 +5159,7 @@ dependencies = [
  "rustls-pki-types",
  "rustls-platform-verifier",
  "serde",
+ "serde_json",
  "serde_urlencoded",
  "sync_wrapper",
  "tokio",
@@ -5664,6 +5672,7 @@ dependencies = [
  "schemars_derive",
  "serde",
  "serde_json",
+ "uuid",
 ]
 
 [[package]]
@@ -6109,7 +6118,9 @@ dependencies = [
  "shrimply-preferences-core",
  "shrimply-process-reporting",
  "shrimply-project-document",
+ "shrimply-project-service",
  "shrimply-trust-core",
+ "uuid",
 ]
 
 [[package]]
@@ -6325,6 +6336,7 @@ dependencies = [
  "shrimply-otio-parser",
  "shrimply-playback-performance",
  "shrimply-project-document",
+ "shrimply-project-service",
  "shrimply-project-types",
  "shrimply-property-transfer",
  "shrimply-recent-projects",
@@ -6332,6 +6344,7 @@ dependencies = [
  "shrimply-timeline-edit",
  "shrimply-trust-core",
  "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -6408,6 +6421,7 @@ dependencies = [
 name = "shrimply-editing-api"
 version = "0.1.0"
 dependencies = [
+ "glam 0.34.1",
  "regex",
  "schemars",
  "serde",
@@ -6424,6 +6438,7 @@ dependencies = [
  "shrimply-timeline-edit",
  "shrimply-tts",
  "shrimply-visual-modifiers",
+ "strum 0.28.0",
  "uuid",
  "windows",
 ]
@@ -6449,6 +6464,8 @@ dependencies = [
  "shrimply-math-core",
  "shrimply-preview-render-metal",
  "shrimply-project-document",
+ "shrimply-project-service",
+ "shrimply-resource-pipeline",
  "shrimply-timeline-edit",
  "shrimply-transcription",
  "shrimply-tts",
@@ -6456,6 +6473,7 @@ dependencies = [
  "shrimply-visual-cuda",
  "shrimply-visual-modifiers",
  "skia-safe",
+ "tempfile",
  "tracing",
  "uuid",
 ]
@@ -7110,6 +7128,7 @@ dependencies = [
  "shrimply-cli",
  "shrimply-components-gtk",
  "shrimply-cross-ui-core",
+ "shrimply-preferences-gtk",
  "shrimply-process-reporting",
  "shrimply-project-document",
  "tracing",
@@ -7360,6 +7379,7 @@ dependencies = [
  "lofty",
  "schemars",
  "serde",
+ "shrimply-asset",
 ]
 
 [[package]]
@@ -7901,6 +7921,52 @@ dependencies = [
 ]
 
 [[package]]
+name = "shrimply-project-protocol"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "shrimply-resource-pipeline",
+ "uuid",
+]
+
+[[package]]
+name = "shrimply-project-server"
+version = "0.1.0"
+dependencies = [
+ "base64 0.23.1",
+ "futures-util",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "shrimply-project-protocol",
+ "shrimply-resource-pipeline",
+ "tokio",
+ "tokio-util",
+ "uuid",
+]
+
+[[package]]
+name = "shrimply-project-service"
+version = "0.1.0"
+dependencies = [
+ "base64 0.23.1",
+ "reqwest",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "shrimply-editing-api",
+ "shrimply-path-core",
+ "shrimply-project-document",
+ "shrimply-project-protocol",
+ "shrimply-resource-pipeline",
+ "tempfile",
+ "uuid",
+]
+
+[[package]]
 name = "shrimply-project-types"
 version = "0.1.0"
 dependencies = [
@@ -8175,6 +8241,8 @@ dependencies = [
 name = "shrimply-timeline-edit"
 version = "0.1.0"
 dependencies = [
+ "schemars",
+ "serde",
  "serde_json",
  "shrimply-i18n",
  "shrimply-math-core",

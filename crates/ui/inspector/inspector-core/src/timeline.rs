@@ -845,7 +845,11 @@ impl InspectorController {
     ) -> Result<(), String> {
         let time = self.canonical_video_keyframe_time(target, time)?;
         let (mut value, _) = self.color_timeline(target, path, timeline_id)?;
-        if !crate::timeline_color::add_keyframe(&mut value, time) {
+        if !shrimply_property_model::timeline_value::add_curve_keyframe(
+            &mut value,
+            time,
+            std::convert::identity,
+        ) {
             return Ok(());
         }
         self.replace_value_with_commit(
@@ -1502,7 +1506,9 @@ impl InspectorController {
     ) -> Result<(), String> {
         let time = self.canonical_scalar_keyframe_time(target, time)?;
         let mut value = self.scalar_timeline(target, path)?;
-        if !crate::timeline_value::scalar::add_keyframe(&mut value, time, constraint.into()) {
+        if !shrimply_property_model::timeline_value::add_curve_keyframe(&mut value, time, |next| {
+            constraint.clamp_f32(next)
+        }) {
             return Ok(());
         }
         self.replace_value_with_commit(

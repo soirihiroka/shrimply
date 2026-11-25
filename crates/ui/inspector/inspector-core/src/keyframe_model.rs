@@ -425,21 +425,16 @@ pub fn delete_keyframes<T: TimelineValueType>(
     evaluation_time: Time,
     frame_step: Time,
 ) -> bool {
-    let current = value.value_at(evaluation_time);
-    let TimelineBase::Keyframes(keyframes) = &mut value.base else {
-        return false;
-    };
-    let previous_len = keyframes.len();
-    keyframes.retain(|keyframe| {
-        !times
-            .iter()
-            .any(|time| same_frame(keyframe.time(), *time, frame_step))
-    });
-    let changed = keyframes.len() != previous_len;
-    if changed && keyframes.is_empty() {
-        value.base = TimelineBase::Const(current);
-    }
-    changed
+    let fallback = value.value_at(evaluation_time);
+    shrimply_property_model::timeline_value::remove_keyframes(
+        value,
+        |keyframe| {
+            times
+                .iter()
+                .any(|time| same_frame(keyframe.time(), *time, frame_step))
+        },
+        fallback,
+    )
 }
 
 pub fn delete_discrete_keyframe<T: TimelineValueType>(
@@ -840,24 +835,6 @@ pub fn sort_json_keyframes(keyframes: &mut [serde_json::Value]) -> Result<(), St
         json_keyframe_time(keyframe).expect("validated discrete keyframe time must remain valid")
     });
     Ok(())
-}
-
-pub fn add_scalar_keyframe(value: &mut TimelineValue<f32>, time: Time) -> bool {
-    let current = value.value_at(time);
-    if !matches!(value.base, TimelineBase::Keyframes(_)) {
-        return false;
-    }
-    edit_curve_value(
-        value,
-        time,
-        current,
-        |_, _| false,
-        CurveEditPolicy {
-            unchanged_keyframe_is_noop: false,
-            insert: CurveKeyframeInsert::InheritPreviousInterpolation,
-        },
-    );
-    true
 }
 
 pub fn set_scalar_value(value: &mut TimelineValue<f32>, time: Time, next: f32) -> bool {

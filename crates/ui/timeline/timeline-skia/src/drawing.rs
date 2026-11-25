@@ -23,6 +23,7 @@ pub struct TimelineInput<'a, 'b> {
     pub project: &'a Project,
     pub playback_performance: &'a playback_performance::Snapshot,
     pub current_time: Time,
+    pub collaborators: &'a [shrimply_player_core::Collaborator],
     pub waveforms: &'a WaveformMap,
     pub beats: &'a BeatMap,
     pub beat_grid_enabled: bool,
@@ -63,6 +64,7 @@ pub fn draw_timeline(input: TimelineInput<'_, '_>) {
         project,
         playback_performance,
         current_time,
+        collaborators,
         waveforms,
         beats,
         beat_grid_enabled,
@@ -268,6 +270,13 @@ pub fn draw_timeline(input: TimelineInput<'_, '_>) {
     let playhead_clip = rect(timeline_x, 0.0, timeline_width, content_height);
     {
         let playhead_painter = painter.with_clip_rect(playhead_clip);
+        draw_collaborators(
+            &playhead_painter,
+            project,
+            collaborators,
+            view,
+            playhead_clip,
+        );
         draw_playhead(
             &playhead_painter,
             playhead_x,
@@ -454,6 +463,82 @@ fn draw_timeline_slider(
 ) {
     let Some(scrollbar) = scrollbar else { return };
     shrimply_components_skia::slider::draw(painter.canvas(), scrollbar);
+}
+
+fn draw_collaborators(
+    painter: &TimelinePainter,
+    project: &Project,
+    collaborators: &[shrimply_player_core::Collaborator],
+    view: TimelineViewState,
+    bounds: Rect,
+) {
+    const COLORS: [Color; 6] = [
+        Color::new(0.23, 0.75, 0.80, 1.0),
+        Color::new(0.98, 0.68, 0.28, 1.0),
+        Color::new(0.85, 0.54, 0.89, 1.0),
+        Color::new(0.47, 0.84, 0.52, 1.0),
+        Color::new(0.96, 0.51, 0.58, 1.0),
+        Color::new(0.55, 0.69, 1.0, 1.0),
+    ];
+    let origin = f64::from(bounds.min.x);
+    let right = f64::from(bounds.max.x);
+    let track_clip = rect(
+        origin,
+        RULER_HEIGHT,
+        right - origin,
+        f64::from(bounds.height()) - RULER_HEIGHT,
+    );
+    for peer in collaborators {
+        let color = COLORS[(peer.id % COLORS.len() as u128) as usize];
+        let tracks = painter.with_clip_rect(track_clip);
+        for selected in &peer.selected_tracks {
+            if let Some(row) = items::row_for_address(project, selected) {
+                let track = rect(
+                    origin,
+                    row_screen_y(row, view),
+                    right - origin,
+                    TRACK_HEIGHT - 1.0,
+                );
+                tracks.rect_stroke(track, 0, Stroke::new(2.0, color), StrokeKind::Inside);
+            }
+        }
+        for selected in &peer.selected {
+            let track = selected.track();
+            let Some(item) = project.item(selected) else {
+                continue;
+            };
+            let Some(row) = items::row_for_address(project, &track) else {
+                continue;
+            };
+            let (start, end) = item.times();
+            let (Some(start), Some(end)) = (
+                project.sequence_time_to_timeline(&track, start),
+                project.sequence_time_to_timeline(&track, end),
+            ) else {
+                continue;
+            };
+            let (left, width) = item_rect(start, end, origin, view);
+            let clip = rect(left, row_screen_y(row, view), width, TRACK_HEIGHT - 1.0);
+            tracks.rect_stroke(clip, 0, Stroke::new(2.0, color), StrokeKind::Inside);
+        }
+        drop(tracks);
+        let x = time_to_x(peer.position.as_secs_f64(), origin, view);
+        if x < origin || x > right {
+            continue;
+        }
+        painter.rect_filled(rect(x, 0.0, 1.0, f64::from(bounds.height())), 0, color);
+        let label_width = 110.0_f64.min(right - origin);
+        let label = rect(x.min(right - label_width), 2.0, label_width, 17.0);
+        painter.rect_filled(label, 2, color);
+        let playing;
+        let name = if peer.playing {
+            playing = format!("▶ {}", peer.name);
+            &playing
+        } else {
+            &peer.name
+        };
+        shrimply_timeline_paint_skia::draw_clip_label(painter, label, name, Color::BLACK);
+    }
 }
 
 fn draw_playhead(

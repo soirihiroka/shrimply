@@ -1,6 +1,6 @@
 //! Content identity shared by headless resources and native media caches.
 use sha2::{Digest, Sha256};
-use std::io;
+use std::io::{self, Read, Write};
 pub const HEX_DIGEST_BYTES: usize = 64;
 
 /// Stream content into the shared hash without retaining a serialized copy.
@@ -25,6 +25,21 @@ pub fn digest_bytes(bytes: &[u8]) -> [u8; 32] {
 }
 pub fn digest(bytes: &[u8]) -> String {
     hex(&digest_bytes(bytes))
+}
+
+pub fn copy(mut source: impl Read, mut destination: impl Write) -> io::Result<(u64, String)> {
+    let mut digest = Writer::default();
+    let mut bytes = vec![0; 128 * 1024];
+    let mut length = 0;
+    loop {
+        let read = source.read(&mut bytes)?;
+        if read == 0 {
+            return Ok((length, digest.finish()));
+        }
+        digest.write_all(&bytes[..read])?;
+        destination.write_all(&bytes[..read])?;
+        length += read as u64;
+    }
 }
 fn hex(bytes: &[u8]) -> String {
     use std::fmt::Write;

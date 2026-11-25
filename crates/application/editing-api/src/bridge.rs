@@ -88,10 +88,33 @@ impl Bridge {
         })
     }
 
+    /// Connect to the active owner, or start the local editing service.
+    pub fn connect_or_launch(path: &Path) -> Result<Self, BridgeError> {
+        let owner = shrimply_project_document::project::project_lock_owner;
+        let deadline = Instant::now() + START_TIMEOUT;
+        loop {
+            if owner(path).map_err(BridgeError::Transport)?.is_none() {
+                return Self::launch(path);
+            }
+            match Self::connect(path) {
+                Ok(bridge) => return Ok(bridge),
+                Err(error) if Instant::now() >= deadline => return Err(error),
+                Err(_) => std::thread::sleep(START_POLL_INTERVAL),
+            }
+        }
+    }
+
     /// Start the same binary as a detached project owner; concurrent callers reuse the winner.
-    pub fn launch(path: &Path) -> Result<Self, BridgeError> {
-        let executable =
+    fn launch(path: &Path) -> Result<Self, BridgeError> {
+        let mut executable =
             std::env::current_exe().map_err(|error| BridgeError::Transport(error.to_string()))?;
+        if executable
+            .file_stem()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.starts_with("shrimply-editor"))
+        {
+            executable.set_file_name(format!("shrimply{}", std::env::consts::EXE_SUFFIX));
+        }
         let mut command = Command::new(executable);
         command
             .args(["project", "serve", "--project"])

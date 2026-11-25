@@ -154,10 +154,9 @@ impl InspectorController {
         let Some(expression) = &mut value.expression else {
             return Err("background integer expression is not enabled".to_string());
         };
-        if expression.source == source {
+        if !expression.update(Some(source), None) {
             return Ok(());
         }
-        expression.source = source;
         let (_, _, expression_commit) = integer_commits(path)?;
         self.replace_background_integer(
             target,

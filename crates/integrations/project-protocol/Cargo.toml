@@ -1,0 +1,9 @@
+[package]
+name = "shrimply-project-protocol"
+version.workspace = true
+edition = "2024"
+
+[dependencies]
+serde = { workspace = true, features = ["derive", "rc"] }
+shrimply-resource-pipeline.workspace = true
+uuid = { workspace = true, features = ["serde"] }

@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 
 use shrimply_math_core::{Fraction, frame_index, time_from_frame, time_from_signed_frame};
 use shrimply_project_document::project::{
-    Project, Time, default_playback_speed, scaled_time_delta,
+    ItemAddress, Project, Time, TrackAddress, default_playback_speed, scaled_time_delta,
 };
 
 pub type SharedPlayerState = Rc<RefCell<PlayerState>>;
@@ -56,6 +56,17 @@ pub struct StateChange {
 pub enum PlayerEvent {
     State(StateChange),
     Project(ProjectChange),
+    Presence,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Collaborator {
+    pub id: u128,
+    pub name: String,
+    pub position: Time,
+    pub playing: bool,
+    pub selected: Vec<ItemAddress>,
+    pub selected_tracks: Vec<TrackAddress>,
 }
 
 pub struct PlayerState {
@@ -68,6 +79,7 @@ pub struct PlayerState {
     clock: Option<PlaybackAnchor>,
     revision: u64,
     listeners: Vec<ListenerEntry>,
+    collaborators: Rc<[Collaborator]>,
 }
 
 #[derive(Clone, Copy)]
@@ -97,6 +109,7 @@ pub fn new(duration: Time, frame_rate: Fraction) -> SharedPlayerState {
         clock: None,
         revision: 0,
         listeners: Vec::new(),
+        collaborators: Rc::from([]),
     }))
 }
 
@@ -128,6 +141,20 @@ pub fn connect_while_alive_named(
 
 pub fn snapshot(state: &SharedPlayerState) -> Snapshot {
     snapshot_inner(&state.borrow())
+}
+
+pub fn collaborators(state: &SharedPlayerState) -> Rc<[Collaborator]> {
+    state.borrow().collaborators.clone()
+}
+
+pub fn set_collaborators(state: &SharedPlayerState, collaborators: Vec<Collaborator>) {
+    update(state, |state| {
+        if state.collaborators.as_ref() == collaborators.as_slice() {
+            return None;
+        }
+        state.collaborators = collaborators.into();
+        Some(PlayerEvent::Presence)
+    });
 }
 
 /// The authoritative rational project time.

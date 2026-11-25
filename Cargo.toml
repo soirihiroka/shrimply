@@ -5,6 +5,9 @@ members = [
     "crates/application/cli",
     "crates/application/player-core",
     "crates/application/local-ipc",
+    "crates/integrations/project-service",
+    "crates/integrations/project-protocol",
+    "crates/integrations/project-server",
     "crates/gpu/vulkan/gpu-vulkan",
     "crates/gpu/denoise/denoise-metal",
     "crates/gpu/metal/gpu-metal",
@@ -158,8 +161,16 @@ members = [
 default-members = ["crates/binaries/editor-gtk", "crates/binaries/launcher-gtk"]
 exclude = ["external/vtracer", "sanim"]
 
+[workspace.package]
+version = "0.1.0"
+
 [workspace.dependencies]
 bytemuck = "1"
+futures-util = "0.3"
+http-body-util = "0.1"
+hyper = "1"
+hyper-util = "0.1"
+tokio-util = "0.7"
 jxl-oxide = { version = "0.12.6", features = ["moxcms"] }
 imgalifier-heif = { version = "0.1.0", default-features = false, features = ["hevc"] }
 imgalifier-avif = "0.1.0"
@@ -244,7 +255,7 @@ shrimply-math-core = { path = "crates/math/core" }
 shrimply-math-geometry = { path = "crates/math/geometry" }
 shrimply-math-interpolation = { path = "crates/math/interpolation" }
 shrimply-math-media = { path = "crates/math/media" }
-shrimply-editing-api = { path = "crates/application/editing-api" }
+shrimply-editing-api = { path = "crates/application/editing-api", default-features = false }
 shrimply-media-info = { path = "crates/media/media-info" }
 shrimply-mesh-flow-stabilization = { path = "crates/media/visual/stabilization/mesh-flow-stabilization" }
 shrimply-nvidia-optical-flow = { path = "crates/media/visual/stabilization/nvidia-optical-flow" }
@@ -274,6 +285,8 @@ shrimply-preview-runtime-cuda = { path = "crates/render/preview/preview-runtime-
 shrimply-process-reporting = { path = "crates/diagnostics/process-reporting" }
 shrimply-recent-projects = { path = "crates/project/recent-projects" }
 shrimply-profiling = { path = "crates/diagnostics/profiling" }
+shrimply-project-service = { path = "crates/integrations/project-service" }
+shrimply-project-protocol = { path = "crates/integrations/project-protocol" }
 shrimply-project-document = { path = "crates/project/project-document", default-features = false }
 shrimply-project-evaluation = { path = "crates/project/project-evaluation" }
 shrimply-project-types = { path = "crates/project/project-types" }

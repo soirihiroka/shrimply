@@ -135,6 +135,7 @@ modules:
     sources:
       - type: archive
         url: https://codeload.github.com/Multicorewareinc/x265/tar.gz/refs/tags/4.3
+        archive-type: tar-gzip
         sha256: fb157f809b74dabbef5002af99489fcaebb4d0073724beffdaaf2be15cbaf7ac
 
   - name: ffmpeg

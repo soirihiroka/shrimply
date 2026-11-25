@@ -1,3 +1,5 @@
+use std::sync::Mutex;
+
 use super::*;
 
 pub(super) async fn list_stt_models(
@@ -62,6 +64,7 @@ pub(super) async fn transcribe_audio(
     player: &SharedPlayerState,
     selection: &SharedSelectionState,
     preferences: &SharedPreferences,
+    remote: Option<&Rc<RefCell<remote::Session>>>,
     request: TranscribeAudioRequest,
     canceled: Arc<AtomicBool>,
 ) -> Result<Value, String> {
@@ -197,10 +200,16 @@ pub(super) async fn transcribe_audio(
         return Err("editing API client canceled transcription before commit".to_string());
     }
     let editor_selection = EditorSelection::capture(selection, &live.borrow());
-    shrimply_project_document::project::commit_edit_saved(&project, "editing API transcribe audio")
-        .map_err(|error| {
-            format!("editing API transcription edit could not be committed: {error}")
-        })?;
+    let (project, _) = commit_candidate(
+        live,
+        remote,
+        project,
+        &original,
+        "editing API transcribe audio",
+        None,
+        &canceled,
+    )
+    .await?;
     *live.borrow_mut() = project;
     editor_selection.restore(selection, &live.borrow());
     preferences::set_last_stt_model(preferences, &transcription.model);
@@ -338,9 +347,8 @@ pub(super) fn transcription_source(
             );
         }
         (Some(track), true) => {
-            let address = shrimply_editing_api::query::model_track_address(track)?;
             let TrackRef::Audio(source) = project
-                .track(&address)
+                .track(track)
                 .ok_or_else(|| "transcription track was not found".to_string())?
             else {
                 return Err("transcription requires an audio track".to_string());
@@ -348,18 +356,17 @@ pub(super) fn transcription_source(
             source
                 .items
                 .iter()
-                .map(|item| address.item(item.id))
+                .map(|item| track.item(item.id))
                 .collect::<Vec<_>>()
         }
         (None, false) => request
             .clips
             .iter()
             .map(|clip| {
-                let address = shrimply_editing_api::query::model_item_address(clip)?;
                 project
-                    .audio_item(&address)
-                    .ok_or_else(|| format!("audio clip {} was not found", clip.item_id))?;
-                Ok(address)
+                    .audio_item(clip)
+                    .ok_or_else(|| format!("audio clip {} was not found", clip.item_id()))?;
+                Ok(clip.clone())
             })
             .collect::<Result<Vec<_>, String>>()?,
     };
@@ -578,6 +585,7 @@ pub(super) async fn generate_tts(
     player: &SharedPlayerState,
     selection: &SharedSelectionState,
     preferences: &SharedPreferences,
+    remote: Option<&Rc<RefCell<remote::Session>>>,
     request: GenerateTtsRequest,
     canceled: Arc<AtomicBool>,
 ) -> Result<Value, String> {
@@ -682,15 +690,23 @@ pub(super) async fn generate_tts(
         generated.speech.rollback();
         return Err("editing API client canceled TTS generation before commit".to_string());
     }
-    if let Err(error) =
-        shrimply_project_document::project::commit_edit_saved(&project, "editing API generate TTS")
-    {
-        generated.speech.rollback();
-        return Err(format!(
-            "editing API TTS edit could not be committed: {error}"
-        ));
-    }
-    *live.borrow_mut() = project;
+    let candidate = commit_candidate(
+        live,
+        remote,
+        project,
+        &original,
+        "editing API generate TTS",
+        None,
+        &canceled,
+    )
+    .await;
+    *live.borrow_mut() = match candidate {
+        Ok((candidate, _)) => candidate,
+        Err(error) => {
+            generated.speech.rollback();
+            return Err(error);
+        }
+    };
     editor_selection.restore(selection, &live.borrow());
     player_state::refresh_project(
         player,

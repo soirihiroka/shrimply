@@ -1,9 +1,8 @@
 Agent Editing CLI
 =================
 
-The Shrimply binary creates, inspects, edits, and renders projects directly.
-It supports native GTK, Qt, and AppKit editors and headless project sessions.
-There is no separate agent server executable or client registration step.
+The Shrimply binary creates, inspects, edits, and renders projects using the
+local editing service shared by the CLI and desktop editors.
 Use the installed ``shrimply`` binary (``shrimply.exe`` on Windows),
 ``target/debug/shrimply``, or ``target/qt/debug/shrimply`` for Qt on Linux.
 
@@ -76,8 +75,9 @@ or ``@-`` for stdin. It cannot be mixed with individual operation flags.
    $ shrimply clips move --project movie.shrimp --address @address.json --start-frame 120
    $ shrimply edit apply --project movie.shrimp --body @edits.json
 
-Clip addresses contain ``kind``, ``sequence_path``, ``track_id``, and
-``item_id``. Track addresses omit ``item_id``. Item IDs are a shortcut only
+Clip addresses contain ``kind``, ``track_id``, and ``item_id``. Video and
+audio addresses use ``sequence_path`` for folded sequences. Track addresses
+omit ``item_id``. Item IDs are a shortcut only
 when they resolve to a single presentation. Shared folded sequences can
 have several presentations; ambiguous IDs return candidate addresses.
 Scopes default to root consistently. Use an explicit ``scope`` object to
@@ -175,50 +175,65 @@ a successful no-op. Results include per-item changes and replacement counts.
 Sessions, history, and media
 ----------------------------
 
-An open editor owns its live project state. Commands attach to that session
-and update its timeline, inspector, preview, and undo history. When no owner
-exists, a mutating command starts a managed headless instance of the same
-binary. Read-only commands can inspect the saved file without a session.
-An unreachable owner is an error; the CLI never edits a second copy behind it.
+The desktop editor and editing CLI start or connect to the local editing
+service for each project. Multiple editor windows and CLI processes can use
+the same project at once. The service keeps the working document and undo
+history in memory. The project file is a portable checkpoint. Ordinary
+local projects work without a project server.
 
-There is no persistent agent connection or connect/disconnect step. Each CLI
-invocation uses short-lived connections and exits after its response. The
-project owner remains open. ``project open`` reuses an existing owner, even
-with ``--headless``; it does not switch an open GUI into headless mode.
-Responses identify their state with ``execution_mode``: ``live`` for a GUI,
-``headless`` for a managed owner, or ``saved`` for a file read without an owner.
-
-Multiple CLI processes can target the same project. The owner serializes
-requests, so concurrent edits do not overwrite independent changes. Reads
-observe a complete state before or after each edit. For decisions based on a
-previous read, pass its ``content_revision`` as ``--if-revision``; an intervening
-content edit causes a revision conflict. Without that guard, commands execute
-against the state when they reach the owner, in arrival order.
-
-The GTK title icon indicates current or recent editing API activity, including
-reads. It remains visible for three seconds after the final client disconnects.
-GTK and AppKit poll the editing API independently of display callbacks, so
-requests continue processing while their windows are minimized or off-display.
+The desktop timeline shows other editors' named playheads, playback state,
+and selection. Each window keeps its own playhead and timeline view.
+For CLI edits based on a previous read, pass its ``content_revision`` as
+``--if-revision`` to detect an intervening edit.
 
 .. code-block:: console
 
-   $ shrimply project open --project movie.shrimp --headless
+   $ shrimply project open --project movie.shrimp
    $ shrimply history undo --project movie.shrimp
    $ shrimply history redo --project movie.shrimp
    $ shrimply project save --project movie.shrimp
    $ shrimply project close --project movie.shrimp
 
-Headless sessions preserve undo/redo and playhead state until explicitly
-closed. ``project serve`` runs one in the foreground. Close a headless owner
-before opening the project in a GUI. ``project close`` never closes GUI
-windows. API edits are persisted before success is reported. Undo keeps
-imported media so redo remains valid. Undo history does not survive a
-session restart.
+``project serve`` runs the local service in the foreground. ``project close``
+flushes and stops it. Open editor windows stay open and reconnect automatically.
+Undo history is scoped to the running session.
 
-``project close`` succeeds only after the headless owner releases the project,
-so the next command can safely open it again. Requests queued after close has
-been accepted fail rather than editing a shutting-down session. Inspect state
-before retrying a failed edit; transport failures do not prove it was rolled back.
+Sharing a project
+~~~~~~~~~~~~~~~~~
+
+Build the optional Rust project server with ``make project-server``. Set
+``SHRIMPLY_PROJECT_SERVER_TOKEN`` on the server and in the environment from
+which collaborators launch Shrimply. Run the server with a listen address
+and SQLite database path.
+
+.. code-block:: console
+
+   $ target/debug/shrimply-project-server 127.0.0.1:8080 projects.sqlite
+
+Use an HTTPS reverse proxy to reach the server over a network. The token
+grants access to the server's projects. Use a separate server instance if
+different groups should have different access.
+
+In the launcher, add the endpoint under :guilabel:`Project Servers`, then
+choose it under :guilabel:`Location` when creating the project. The project
+link is in its recent entry's :guilabel:`Info` menu. Collaborators add the
+same endpoint and paste the link into :guilabel:`Open Shared Project`.
+
+The CLI accepts a server URL when creating or joining a project. The
+creation result contains the shared project ID.
+
+.. code-block:: console
+
+   $ shrimply project create --project alice.shrimp --name Movie --server https://projects.example.com
+   $ shrimply project open --project bob.shrimp --server https://projects.example.com --remote-project-id PROJECT_UUID
+
+Shared workspaces keep a durable local draft and upload queue. Edits made
+while disconnected sync on reconnect. Independent edits merge, while
+competing changes are preserved in a recovery checkpoint and synchronization
+continues. Imports upload automatically. Remote video and audio are read
+by range and cached as needed. Use Save As to create a local project
+checkpoint with its media. Export Blender, Manim, or Sanim projects to
+media before importing them into a shared project.
 
 For stored speech scripts, use ``clips list --source-kind tts --all --recursive``
 and ``clips get --item-id UUID``. The script is at
@@ -264,8 +279,8 @@ All former tools and resource queries are available through named commands:
      - clips transform / clips set-transitions
    * - upsert_keyframes / delete_keyframes
      - keyframes upsert / keyframes delete
-   * - query_expressions / set_expression
-     - expressions list / expressions set
+   * - query_expressions
+     - expressions list
    * - upsert_property_expression / delete_property_expression
      - property-expressions upsert / property-expressions delete
    * - set_track_enabled / set_caption_track_language

@@ -27,7 +27,8 @@ pub fn from_json_file_with_frame_grid_repair(
     let path = path.as_ref();
     let contents = fs::read_to_string(path)
         .map_err(|error| format!("could not read {}: {error}", path.display()))?;
-    let project = conversion::from_json(&contents)
+    let project = ProjectEncoding::Json
+        .decode(contents.as_bytes())
         .map_err(|error| format!("could not load {}: {error}", path.display()))?;
     let outcome = validate_with_frame_grid_repair(project)
         .map_err(|error| format!("could not load {}: {error}", path.display()))?;
@@ -674,6 +675,22 @@ impl Project {
             }
         });
         assets
+    }
+
+    pub(super) fn inherit_asset_readers(&mut self, source: &Project) {
+        let readers = source
+            .assets()
+            .into_iter()
+            .filter(|asset| asset.has_bound_reader())
+            .map(|asset| (asset.path().to_path_buf(), asset))
+            .collect::<std::collections::HashMap<_, _>>();
+        if !readers.is_empty() {
+            self.visit_assets_mut(|asset| {
+                if let Some(source) = readers.get(asset.path()) {
+                    *asset = (*source).clone();
+                }
+            });
+        }
     }
 
     pub fn watch_assets(&self) -> Result<(), String> {

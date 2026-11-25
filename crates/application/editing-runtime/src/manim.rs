@@ -5,11 +5,11 @@ pub(super) async fn get_manim_clip(
     request: GetManimClipRequest,
     canceled: Arc<AtomicBool>,
 ) -> Result<Value, String> {
-    let address = shrimply_editing_api::query::model_item_address(&request.address)?;
+    let address = &request.address;
     let (source, source_revision, scene, input_parameters, parameters, error) = {
         let project = live.borrow();
         let item = project
-            .video_item(&address)
+            .video_item(address)
             .ok_or_else(|| "get_manim_clip requires a video clip address".to_string())?;
         let VideoItemContent::Manim(manim) = &item.content else {
             return Err("addressed clip is not a Manim clip".to_string());
@@ -41,7 +41,7 @@ pub(super) async fn get_manim_clip(
     {
         let project = live.borrow();
         let item = project
-            .video_item(&address)
+            .video_item(address)
             .ok_or_else(|| "Manim clip changed while it was being inspected".to_string())?;
         let VideoItemContent::Manim(manim) = &item.content else {
             return Err("clip stopped being a Manim clip while it was being inspected".to_string());
@@ -82,11 +82,11 @@ pub(super) async fn set_manim_clip(
     if request.scene.is_none() && request.parameters.is_empty() {
         return Err("set_manim_clip requires a scene or parameter change".to_string());
     }
-    let address = shrimply_editing_api::query::model_item_address(&request.address)?;
+    let address = &request.address;
     let (original, source, source_revision, current_scene, definitions) = {
         let project = live.borrow();
         let item = project
-            .video_item(&address)
+            .video_item(address)
             .ok_or_else(|| "set_manim_clip requires a video clip address".to_string())?;
         let VideoItemContent::Manim(manim) = &item.content else {
             return Err("addressed clip is not a Manim clip".to_string());
@@ -150,7 +150,7 @@ pub(super) async fn set_manim_clip(
         return Err("project changed while the Manim edit was being prepared; retry".to_string());
     }
     let item = project
-        .video_item_mut(&address)
+        .video_item_mut(address)
         .expect("validated Manim clip must still exist in an unchanged project");
     if item.file.snapshot()?.revision() != source_revision {
         return Err("Manim source changed while the edit was being prepared; retry".to_string());
@@ -224,11 +224,11 @@ pub(super) fn reload_manim_source(
     live: &Rc<RefCell<Project>>,
     request: ReloadManimSourceRequest,
 ) -> Result<Value, String> {
-    let address = shrimply_editing_api::query::model_item_address(&request.address)?;
+    let address = &request.address;
     let source = {
         let project = live.borrow();
         let item = project
-            .video_item(&address)
+            .video_item(address)
             .ok_or_else(|| "reload_manim_source requires a video clip address".to_string())?;
         if !matches!(item.content, VideoItemContent::Manim(_)) {
             return Err("addressed clip is not a Manim clip".to_string());

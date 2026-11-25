@@ -168,6 +168,15 @@ pub fn create_project_from_values(
     height: i32,
     frame_rate_index: i32,
 ) -> Result<PathBuf, String> {
+    let (canvas, fps) = project_settings_from_values(width, height, frame_rate_index)?;
+    create_project(path, name, canvas, fps, &[])
+}
+
+pub fn project_settings_from_values(
+    width: i32,
+    height: i32,
+    frame_rate_index: i32,
+) -> Result<(CanvasSize, Fraction), String> {
     let width = u32::try_from(width).map_err(|_| "Invalid canvas width.".to_string())?;
     let height = u32::try_from(height).map_err(|_| "Invalid canvas height.".to_string())?;
     let frame_rate_index =
@@ -176,7 +185,63 @@ pub fn create_project_from_values(
         .get(frame_rate_index)
         .ok_or_else(|| "Invalid frame rate.".to_string())?
         .value;
-    create_project(path, name, CanvasSize { width, height }, fps, &[])
+    Ok((CanvasSize { width, height }, fps))
+}
+
+pub fn project_servers() -> Vec<String> {
+    let store = shrimply_editor_state::preferences::open_with_defaults();
+    shrimply_editor_state::preferences::snapshot(&store).project_server_urls
+}
+
+pub fn update_project_servers(previous: Option<&str>, value: Option<&str>) -> Result<(), String> {
+    let store = shrimply_editor_state::preferences::open_with_defaults();
+    shrimply_editor_state::preferences::update_project_server(&store, previous, value)
+}
+
+pub fn create_shared_project(
+    server: &str,
+    name: &str,
+    canvas_size: CanvasSize,
+    fps: Fraction,
+    tags: &[String],
+) -> Result<PathBuf, String> {
+    let project =
+        project::creation::NewProject::from_settings(name, canvas_size, fps, tags)?.into_document();
+    let path =
+        shrimply_project_service::SharedWorkspace::managed_path(&default_project_filename(name))?;
+    shrimply_project_service::SharedWorkspace::create(&path, server, &project)?;
+    Ok(path)
+}
+
+pub fn shared_project_link(path: &Path) -> Result<Option<String>, String> {
+    Ok(
+        shrimply_project_service::SharedWorkspace::open(path)?.map(|workspace| {
+            let link = workspace.link();
+            format!(
+                "{}/v1/projects/{}",
+                link.server.trim_end_matches('/'),
+                link.project_id
+            )
+        }),
+    )
+}
+
+pub fn open_shared_project(link: &str) -> Result<PathBuf, String> {
+    let (server, id) = link
+        .trim()
+        .rsplit_once("/v1/projects/")
+        .ok_or("Enter a Shrimply project link")?;
+    let server = shrimply_editor_state::preferences::normalize_project_server_url(server)?;
+    if !project_servers().contains(&server) {
+        return Err(format!(
+            "Add {server} in Project Servers before opening its project link"
+        ));
+    }
+    let id = uuid::Uuid::parse_str(id).map_err(|_| "The project link has an invalid ID")?;
+    let path = shrimply_project_service::SharedWorkspace::managed_path(&format!("{id}.shrimp"))?;
+    let (_, document) = shrimply_project_service::SharedWorkspace::join(&path, &server, id)?;
+    recent_projects::touch(&path, &document.name, &document.tags)?;
+    Ok(path)
 }
 
 pub fn default_project_filename(name: &str) -> String {
@@ -198,6 +263,10 @@ pub fn last_edited(path: &Path) -> Option<String> {
 
 pub fn recent_last_edited(recent: &RecentProject) -> Option<String> {
     recent.modified_at.and_then(format_modified)
+}
+
+pub fn is_shared_project(path: &Path) -> bool {
+    shrimply_project_service::SharedWorkspace::database(path).is_file()
 }
 
 fn format_modified(seconds: i64) -> Option<String> {

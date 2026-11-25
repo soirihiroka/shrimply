@@ -173,12 +173,10 @@ pub fn ripple_trim_item_addresses(
             }
             ItemMut::Video(item) => {
                 item.trim_start(local_cut);
-                fit_visual_transitions(item);
                 video = true;
             }
             ItemMut::Audio(item) => {
                 item.trim_start(local_cut);
-                fit_audio_transitions(item);
                 audio = true;
             }
         }

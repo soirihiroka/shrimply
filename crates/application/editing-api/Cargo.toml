@@ -3,24 +3,30 @@ name = "shrimply-editing-api"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+default = ["local"]
+local = ["dep:shrimply-media-import"]
+
 [dependencies]
+glam.workspace = true
 schemars.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 shrimply-property-model = { workspace = true }
 shrimply-math-core = { workspace = true }
 shrimply-media-info = { workspace = true }
-shrimply-media-import.workspace = true
+shrimply-media-import = { workspace = true, optional = true }
 shrimply-asset.workspace = true
 shrimply-tts.workspace = true
-shrimply-project-document = { workspace = true, default-features = true }
+shrimply-project-document = { workspace = true, features = ["editor"] }
 shrimply-timeline-edit = { workspace = true }
-shrimply-visual-modifiers = { workspace = true, default-features = true }
+shrimply-visual-modifiers.workspace = true
 uuid = { workspace = true, features = ["serde"] }
 shrimply-local-ipc.workspace = true
 shrimply-path-core.workspace = true
 sha2.workspace = true
 regex.workspace = true
+strum = { workspace = true, features = ["derive"] }
 
 [target.'cfg(windows)'.dependencies]
 windows = { workspace = true, features = ["Win32_System_Threading"] }

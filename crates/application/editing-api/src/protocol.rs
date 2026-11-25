@@ -3,8 +3,13 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use shrimply_math_core::Time;
 use shrimply_project_document::project::{
-    Interpolation, Project, TransitionSide, VisualTransitionKind,
+    Interpolation, Project, ProjectChanges, RepeatStrategy, TransitionSide, VisualTransitionKind,
 };
+pub use shrimply_project_document::project::{
+    ItemAddress as ClipAddress, ItemKind as ClipKind, TrackAddress,
+};
+pub use shrimply_timeline_edit::edit::CollisionBehavior;
+use uuid::Uuid;
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct ExactFraction {
@@ -28,33 +33,7 @@ pub struct FrameRange {
 pub struct ScopeRef {
     /// Concrete folded-sequence presenter item IDs. Empty means the root scope.
     #[serde(default)]
-    pub sequence_path: Vec<String>,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum ClipKind {
-    Comment,
-    Caption,
-    Video,
-    Audio,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Hash, Serialize, Deserialize, JsonSchema)]
-pub struct TrackAddress {
-    pub kind: ClipKind,
-    #[serde(default)]
-    pub sequence_path: Vec<String>,
-    pub track_id: String,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Hash, Serialize, Deserialize, JsonSchema)]
-pub struct ClipAddress {
-    pub kind: ClipKind,
-    #[serde(default)]
-    pub sequence_path: Vec<String>,
-    pub track_id: String,
-    pub item_id: String,
+    pub sequence_path: Vec<Uuid>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -138,7 +117,7 @@ pub struct ReorderTrackRequest {
 #[serde(deny_unknown_fields)]
 pub struct TextReplaceRequest {
     pub addresses: Option<Vec<ClipAddress>>,
-    pub track_id: Option<String>,
+    pub track_id: Option<Uuid>,
     pub range: Option<FrameRange>,
     pub scope: Option<ScopeRef>,
     #[serde(default)]
@@ -156,6 +135,48 @@ pub struct TextReplaceRequest {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Presence {
+    pub id: uuid::Uuid,
+    pub name: String,
+    pub position: Time,
+    pub playing: bool,
+    pub scope: ScopeRef,
+    pub clips: Vec<ClipAddress>,
+    pub tracks: Vec<TrackAddress>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ApplyChanges {
+    pub id: uuid::Uuid,
+    pub label: String,
+    pub changes: ProjectChanges,
+    #[serde(default)]
+    pub replay: bool,
+}
+
+pub type MediaRewrites = std::collections::BTreeMap<std::path::PathBuf, std::path::PathBuf>;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct SessionVersion {
+    pub epoch: uuid::Uuid,
+    pub revision: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SessionUpdates {
+    pub version: Option<SessionVersion>,
+    pub presence: Presence,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SessionState {
+    pub version: SessionVersion,
+    pub project: Option<Project>,
+    pub participants: Vec<Presence>,
+    pub sync_error: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BridgeRequest {
     pub project_path: String,
@@ -169,6 +190,8 @@ pub enum BridgeCommand {
     Version,
     Snapshot,
     Execute(ApiCall),
+    ApplyChanges(ApplyChanges),
+    SessionUpdates(SessionUpdates),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -192,15 +215,21 @@ pub enum RangeMatch {
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ConnectProjectRequest {
-    /// Existing native .shrimp project. Reuses its owner when already open.
+    /// Existing project path or local workspace destination when joining a shared project.
     pub project_path: String,
+    /// Project server URL when joining a shared project.
+    pub server: Option<String>,
+    /// Shared project UUID when joining a project server.
+    pub remote_project_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CreateProjectRequest {
-    /// Absolute path for the new native .shrimp video project.
+    /// Absolute path for the new project or shared project's local workspace.
     pub project_path: String,
+    /// Optional project server URL. Projects created without this use local storage.
+    pub server: Option<String>,
     /// Defaults to "Untitled Project".
     pub name: Option<String>,
     /// Defaults to 1920.
@@ -261,8 +290,8 @@ pub struct QueryClipsRequest {
     pub kind: Option<ClipKind>,
     /// Filter the source type, for example tts, media, caption, or text.
     pub source_kind: Option<String>,
-    pub track_id: Option<String>,
-    pub item_id: Option<String>,
+    pub track_id: Option<Uuid>,
+    pub item_id: Option<Uuid>,
     pub enabled: Option<bool>,
     pub caption_text: Option<String>,
     pub source_filename: Option<String>,
@@ -278,14 +307,14 @@ pub struct QueryClipsRequest {
 #[serde(deny_unknown_fields)]
 pub struct GetClipRequest {
     pub address: Option<ClipAddress>,
-    pub item_id: Option<String>,
+    pub item_id: Option<Uuid>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct GetClipInfoRequest {
     pub address: Option<ClipAddress>,
-    pub item_id: Option<String>,
+    pub item_id: Option<Uuid>,
     /// Include embedded artwork metadata, without image bytes.
     #[serde(default)]
     pub include_artwork: bool,
@@ -432,22 +461,13 @@ pub struct AnalyzeTransparentFillResponse {
     pub revision: u64,
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum CollisionBehavior {
-    #[default]
-    Reject,
-    NewTrack,
-    Overwrite,
-}
-
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct InitialClipProperties {
     pub text: Option<String>,
     pub enabled: Option<bool>,
     pub gain_db: Option<f32>,
     pub playback_speed: Option<ExactFraction>,
-    pub repeat_strategy: Option<String>,
+    pub repeat_strategy: Option<RepeatStrategy>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -541,16 +561,6 @@ pub struct InsertTextRequest {
     pub duration_frames: u64,
     /// Defaults to the edit-script scope or root sequence.
     pub scope: Option<ScopeRef>,
-    #[serde(default)]
-    pub collision: CollisionBehavior,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct InsertTextOperation {
-    pub text: String,
-    pub track: Option<TrackAddress>,
-    pub duration_frames: u64,
     #[serde(default)]
     pub collision: CollisionBehavior,
 }
@@ -659,7 +669,7 @@ pub struct SetClipPropertiesRequest {
     pub enabled: Option<bool>,
     pub gain_db: Option<f32>,
     pub playback_speed: Option<ExactFraction>,
-    pub repeat_strategy: Option<String>,
+    pub repeat_strategy: Option<RepeatStrategy>,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema)]
@@ -748,7 +758,7 @@ pub struct UpsertPropertyExpressionRequest {
     pub address: ClipAddress,
     /// JSON Pointer to a scalar or vec2 TimelineValue in get_clip metadata.
     pub property_path: String,
-    pub source: String,
+    pub source: Option<String>,
     /// Defaults to true for a newly created expression.
     pub enabled: Option<bool>,
 }
@@ -785,15 +795,6 @@ pub struct SetClipTransitionsRequest {
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct SetExpressionRequest {
-    pub address: ClipAddress,
-    pub expression_id: String,
-    pub source: Option<String>,
-    pub enabled: Option<bool>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
 pub struct SetTrackEnabledRequest {
     pub address: TrackAddress,
     pub enabled: bool,
@@ -821,15 +822,12 @@ pub struct CreateTrackRequest {
     pub enabled: Option<bool>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CreateTrackOperation {
-    pub kind: ClipKind,
-    pub enabled: Option<bool>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[derive(
+    Clone, Debug, Serialize, Deserialize, JsonSchema, strum::EnumDiscriminants, strum::IntoStaticStr,
+)]
 #[serde(rename_all = "snake_case", tag = "type", content = "args")]
+#[strum(serialize_all = "snake_case")]
+#[strum_discriminants(derive(strum::EnumString), strum(serialize_all = "snake_case"))]
 pub enum EditOperation {
     SetProjectSettings(ProjectSettingsRequest),
     SplitClip(SplitClipRequest),
@@ -840,8 +838,8 @@ pub enum EditOperation {
     ReplaceClipSource(ReplaceClipSourceRequest),
     InsertCaptions(InsertCaptionsRequest),
     InsertTts(InsertTtsRequest),
-    InsertText(InsertTextOperation),
-    CreateTrack(CreateTrackOperation),
+    InsertText(InsertTextRequest),
+    CreateTrack(CreateTrackRequest),
     MoveClip(MoveClipRequest),
     TrimClip(TrimClipRequest),
     DeleteClips(DeleteClipsRequest),
@@ -852,7 +850,6 @@ pub enum EditOperation {
     UpsertPropertyExpression(UpsertPropertyExpressionRequest),
     DeletePropertyExpression(DeletePropertyExpressionRequest),
     SetClipTransitions(SetClipTransitionsRequest),
-    SetExpression(SetExpressionRequest),
     SetTrackEnabled(SetTrackEnabledRequest),
     SetCaptionTrackLanguage(SetCaptionTrackLanguageRequest),
     DeleteTrack(DeleteTrackRequest),
@@ -991,7 +988,7 @@ pub struct QueryClipsResponse {
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct ExpressionSummary {
     pub address: ClipAddress,
-    pub expression_id: String,
+    pub expression_id: Uuid,
     /// JSON Pointer into the clip metadata returned by get_clip.
     pub property_path: String,
     pub enabled: bool,

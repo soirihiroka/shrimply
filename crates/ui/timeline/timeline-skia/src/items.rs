@@ -12,8 +12,8 @@ use crate::project::{
 use crate::timeline_search::{self, TimeSlice};
 use shrimply_timeline_edit::TrackKey;
 pub use shrimply_timeline_edit::edit::{
-    advanced_media_source_offset, fit_audio_transitions, fit_visual_transitions,
-    fitted_transition_durations, shifted_media_source_offset,
+    fit_audio_transitions, fit_visual_transitions, fitted_transition_durations,
+    shifted_media_source_offset,
 };
 pub use shrimply_timeline_edit::{ItemKey, TrackKind};
 pub use shrimply_timeline_edit::{insert_sorted, next_group_id};

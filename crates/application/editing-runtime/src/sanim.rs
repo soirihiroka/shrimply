@@ -8,12 +8,11 @@ async fn inspect_sanim(
     address: &shrimply_editing_api::protocol::ClipAddress,
     canceled: Arc<AtomicBool>,
     inspection: reflection::Inspection,
-) -> Result<(ItemAddress, VideoItemSnapshot, reflection::Snapshot), String> {
-    let address = shrimply_editing_api::query::model_item_address(address)?;
+) -> Result<(VideoItemSnapshot, reflection::Snapshot), String> {
     let (item, viewport) = {
         let project = live.borrow();
         let item = project
-            .video_item(&address)
+            .video_item(address)
             .ok_or("Sanim clip is no longer available")?
             .clone();
         if !matches!(item.content, VideoItemContent::Sanim(_)) {
@@ -42,7 +41,7 @@ async fn inspect_sanim(
     {
         let project = live.borrow();
         let current = project
-            .video_item(&address)
+            .video_item(address)
             .ok_or("Sanim clip changed during inspection; retry")?;
         let (VideoItemContent::Sanim(a), VideoItemContent::Sanim(b)) =
             (&expected.content, &current.content)
@@ -57,7 +56,6 @@ async fn inspect_sanim(
         }
     }
     Ok((
-        address,
         VideoItemSnapshot {
             item: expected,
             source_revision,
@@ -75,7 +73,7 @@ pub(super) async fn get_sanim_clip(
     request: GetSanimClipRequest,
     canceled: Arc<AtomicBool>,
 ) -> Result<Value, String> {
-    let (_, snapshot, state) = inspect_sanim(
+    let (snapshot, state) = inspect_sanim(
         live,
         &request.address,
         canceled,
@@ -135,9 +133,10 @@ pub(super) async fn set_sanim_clip(
         return Err("sanim set requires parameter values or reset_keys".into());
     }
     let original = content_revision(&live.borrow())?;
-    let (address, snapshot, state) = inspect_sanim(
+    let address = &request.address;
+    let (snapshot, state) = inspect_sanim(
         live,
-        &request.address,
+        address,
         canceled.clone(),
         reflection::Inspection::Schema,
     )
@@ -155,7 +154,7 @@ pub(super) async fn set_sanim_clip(
         return Err("project changed while the Sanim edit was being prepared; retry".into());
     }
     let item = project
-        .video_item_mut(&address)
+        .video_item_mut(address)
         .ok_or("Sanim clip is no longer available")?;
     if item.file.snapshot()?.revision() != snapshot.source_revision {
         return Err("Sanim source changed while editing; retry".into());

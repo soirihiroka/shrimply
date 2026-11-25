@@ -2,7 +2,7 @@ use shrimply_project_document::project::Time;
 use shrimply_property_model::Color;
 use shrimply_property_model::timeline_value::{
     CurveEditPolicy, CurveKeyframeInsert, Interpolation, TimelineBase, TimelineValue,
-    TimelineValueType, edit_curve_value, insert_curve_keyframe,
+    edit_curve_value,
 };
 use uuid::Uuid;
 
@@ -92,63 +92,15 @@ pub fn set_expression_enabled(value: &mut ColorTimeline, enabled: bool) -> bool 
     )
 }
 
-pub fn set_expression_source(value: &mut ColorTimeline, source: String) -> bool {
-    let Some(expression) = value.expression.as_mut() else {
-        return false;
-    };
-    if expression.source == source {
-        return false;
-    }
-    expression.source = source;
-    true
-}
-
-pub fn add_keyframe(value: &mut ColorTimeline, time: Time) -> bool {
-    let current = value_at(value, time);
-    let TimelineBase::Keyframes(keyframes) = &mut value.base else {
-        return false;
-    };
-    if let Some(keyframe) = keyframes
-        .iter_mut()
-        .find(|keyframe| keyframe.time.approx_eq(time))
-    {
-        if keyframe.time == time {
-            return false;
-        }
-        keyframe.time = time;
-        keyframes.sort_by_key(|keyframe| keyframe.time);
-    } else {
-        insert_curve_keyframe(
-            keyframes,
-            Color::<u8>::keyframe(time, current),
-            CurveKeyframeInsert::InheritPreviousInterpolation,
-        );
-    }
-    true
-}
+pub use shrimply_property_model::timeline_value::set_expression_source;
 
 pub fn delete_keyframe(value: &mut ColorTimeline, time: Time) -> bool {
     crate::keyframe_model::delete_discrete_keyframe(value, time, Time::ZERO)
 }
 
-pub fn move_keyframes(value: &mut ColorTimeline, moves: &[(Time, Time)]) -> bool {
-    crate::keyframe_model::move_discrete_keyframes(value, moves)
-}
-
-pub fn copy_keyframes(
-    value: &ColorTimeline,
-    selected: &[Time],
-) -> Option<crate::keyframe_model::KeyframeClipboard> {
-    crate::keyframe_model::copy_keyframes(value, selected)
-}
-
-pub fn paste_keyframes(
-    value: &mut ColorTimeline,
-    clipboard: &crate::keyframe_model::KeyframeClipboard,
-    times: &[Time],
-) -> Option<Vec<Time>> {
-    crate::keyframe_model::paste_keyframes(value, clipboard, times)
-}
+pub use crate::keyframe_model::{
+    copy_keyframes, move_discrete_keyframes as move_keyframes, paste_keyframes,
+};
 
 pub fn set_interpolation(
     value: &mut ColorTimeline,

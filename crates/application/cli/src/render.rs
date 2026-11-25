@@ -168,11 +168,11 @@ fn settings(
     }
 }
 
-/// Validate saved inputs and output paths without initializing an execution backend.
+/// Validate the session snapshot and output paths without initializing the exporter.
 pub fn dry_run(options: &Options) -> Result<serde_json::Value, String> {
     let (path, project) = load(options)?;
     Ok(
-        serde_json::json!({"success":true,"dry_run":true,"validation":"partial","execution_mode":"saved","project":path,"output":options.output,"codec":format!("{:?}",VideoEncoder::request_codec(&options.format).expect("validated format")),"container":format!("{:?}",options.container),"base_revision":shrimply_editing_api::preview::revision(&project)?,"deferred":["GPU setup, source execution, media decoding, encoding, and output creation were not performed"]}),
+        serde_json::json!({"success":true,"dry_run":true,"validation":"partial","execution_mode":"headless","project":path,"output":options.output,"codec":format!("{:?}",VideoEncoder::request_codec(&options.format).expect("validated format")),"container":format!("{:?}",options.container),"base_revision":shrimply_editing_api::preview::revision(&project)?,"deferred":["GPU setup, source execution, media decoding, encoding, and output creation were not performed"]}),
     )
 }
 
@@ -192,7 +192,7 @@ fn load(options: &Options) -> Result<(PathBuf, project::Project), String> {
             options.output.display()
         ));
     }
-    let project = project::load_project_snapshot(&path)?;
+    let project = shrimply_editing_runtime::attached::load(&path)?;
     // The exporter also writes a benchmark sidecar; neither path may replace a source.
     let mut benchmark_path = options.output.as_os_str().to_os_string();
     benchmark_path.push(".benchmark.json");
@@ -212,7 +212,7 @@ fn load(options: &Options) -> Result<(PathBuf, project::Project), String> {
     if let Some(expected) = &options.if_revision
         && shrimply_editing_api::preview::revision(&project)? != *expected
     {
-        return Err("revision conflict: saved project changed; inspect it and retry".into());
+        return Err("revision conflict: project changed; inspect it and retry".into());
     }
     Ok((path, project))
 }

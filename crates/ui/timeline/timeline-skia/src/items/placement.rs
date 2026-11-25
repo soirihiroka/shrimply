@@ -584,6 +584,4 @@ pub fn target_existing_track_index(
     placement.target_track_index.checked_sub(inserted_before)
 }
 
-pub fn time_ranges_collide(start: Time, end: Time, other_start: Time, other_end: Time) -> bool {
-    start < other_end && end > other_start
-}
+pub use shrimply_timeline_edit::edit::time_ranges_collide;

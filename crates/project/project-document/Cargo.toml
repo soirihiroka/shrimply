@@ -20,7 +20,7 @@ pest_derive.workspace = true
 rmp-serde.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
-schemars.workspace = true
+schemars = { workspace = true, features = ["uuid1"] }
 serde-value.workspace = true
 strum = { workspace = true, features = ["derive"] }
 shrimply-math-interpolation = { workspace = true }

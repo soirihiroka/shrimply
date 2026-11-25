@@ -7,7 +7,7 @@ pub(super) struct Context<'a> {
     pub player: &'a SharedPlayerState,
     pub selection: &'a SharedSelectionState,
     pub preferences: &'a SharedPreferences,
-    pub headless: bool,
+    pub remote: Option<&'a Rc<RefCell<remote::Session>>>,
 }
 
 pub(super) async fn call(
@@ -20,7 +20,7 @@ pub(super) async fn call(
         player,
         selection,
         preferences,
-        headless,
+        remote,
     } = context;
     let definition = commands::get(&call.name)?;
     call.arguments = (definition.validate)(call.arguments)?;
@@ -60,10 +60,27 @@ pub(super) async fn call(
             player,
             selection,
             preferences::snapshot(preferences).default_visual_duration,
+            remote,
             request,
             canceled,
         )
         .await;
+    }
+    if remote.is_some()
+        && !definition.read_only
+        && !matches!(
+            call.name.as_str(),
+            "seek_playhead"
+                | "view_frame"
+                | "project_save"
+                | "project_close"
+                | "transcribe_audio"
+                | "generate_tts"
+                | "history_undo"
+                | "history_redo"
+        )
+    {
+        return Err("this operation requires a shared document edit".into());
     }
     macro_rules! decode {
         ($type:ty) => {
@@ -95,6 +112,7 @@ pub(super) async fn call(
                 player,
                 selection,
                 preferences,
+                remote,
                 decode!(TranscribeAudioRequest),
                 canceled,
             )
@@ -106,6 +124,7 @@ pub(super) async fn call(
                 player,
                 selection,
                 preferences,
+                remote,
                 decode!(GenerateTtsRequest),
                 canceled,
             )
@@ -141,9 +160,6 @@ pub(super) async fn call(
             Ok(json!({"saved":true}))
         }
         "project_close" => {
-            if !headless {
-                return Err("close the GUI window to release this project; project close only stops managed headless sessions".into());
-            }
             shrimply_project_document::project::save()?;
             Ok(json!({"saved":true,"closing":true}))
         }
@@ -151,14 +167,34 @@ pub(super) async fn call(
             if canceled.load(Ordering::Acquire) {
                 return Err("request was canceled before history commit".into());
             }
-            let changed = shrimply_project_document::project::change_history_saved(
-                &mut project.borrow_mut(),
-                call.name == "history_redo",
-            )?;
+            use shrimply_project_document::project as document;
+
+            let redo = call.name == "history_redo";
+            let (changed, captured) = {
+                let mut project = project.borrow_mut();
+                let captured = EditorSelection::capture(selection, &project);
+                let changed = if let Some(remote) = remote {
+                    if let Some(mut candidate) = document::history_destination(redo) {
+                        candidate.copy_view_state_from(&project);
+                        remote.borrow().bind_media(&mut candidate)?;
+                        remote.borrow().queue(&project, &candidate, &[], None)?;
+                        let changed =
+                            if redo { document::redo } else { document::undo }(&mut project);
+                        if changed {
+                            *project = candidate;
+                        }
+                        changed
+                    } else {
+                        false
+                    }
+                } else {
+                    document::change_history_saved(&mut project, redo)?
+                };
+                (changed, captured)
+            };
             if changed {
                 let project = project.borrow();
-                let captured = EditorSelection::capture(selection, &project).reconcile(&project);
-                captured.restore(selection, &project);
+                captured.reconcile(&project).restore(selection, &project);
                 player_state::refresh_project(
                     player,
                     ProjectChange {

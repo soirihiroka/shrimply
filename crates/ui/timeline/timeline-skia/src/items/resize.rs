@@ -1,4 +1,5 @@
 use super::*;
+use shrimply_timeline_edit::edit::{ResizeMode, resize_audio, resize_video};
 use shrimply_timeline_snap::SnapRepo;
 
 pub fn resize_drag_for_hit(
@@ -244,32 +245,20 @@ pub fn resize_video_items(
             .items
             .get(placement.key.item_index)?
             .clone();
-        let source_offset = item_source_offset(project, placement.key);
-        resized.push((placement, item, source_offset));
+        resized.push((placement, item));
     }
 
     remove_video_items(project, placements)?;
     if overwrite {
         overwrite_video_items(project, placements, &[])?;
     }
-    for (placement, mut item, source_offset) in resized {
-        let animation_delta = placement.start.signed_sub(item.start);
-        if let Some(source_offset) = source_offset {
-            item.time_offset = shifted_media_source_offset(
-                source_offset,
-                item.start,
-                placement.start,
-                item.playback_speed,
-                item.repeat_strategy,
-                item.source_duration,
-            );
-        }
-        item.animation_time_offset = Time {
-            seconds: item.animation_time_offset.seconds + animation_delta.seconds,
-        };
-        item.start = placement.start;
-        item.end = placement.end;
-        fit_visual_transitions(&mut item);
+    for (placement, mut item) in resized {
+        resize_video(
+            &mut item,
+            placement.start,
+            placement.end,
+            ResizeMode::PreserveTransitions,
+        );
         let target_items = &mut project
             .video_tracks
             .get_mut(placement.target_track_index)?
@@ -305,28 +294,20 @@ pub fn resize_audio_items(
             .items
             .get(placement.key.item_index)?
             .clone();
-        let source_offset = item_source_offset(project, placement.key);
-        resized.push((placement, item, source_offset));
+        resized.push((placement, item));
     }
 
     remove_audio_items(project, placements)?;
     if overwrite {
         overwrite_audio_items(project, placements, &[])?;
     }
-    for (placement, mut item, source_offset) in resized {
-        if let Some(source_offset) = source_offset {
-            item.time_offset = shifted_media_source_offset(
-                source_offset,
-                item.start,
-                placement.start,
-                item.playback_speed,
-                item.repeat_strategy,
-                item.source_duration,
-            );
-        }
-        item.start = placement.start;
-        item.end = placement.end;
-        fit_audio_transitions(&mut item);
+    for (placement, mut item) in resized {
+        resize_audio(
+            &mut item,
+            placement.start,
+            placement.end,
+            ResizeMode::PreserveTransitions,
+        );
         let target_items = &mut project
             .audio_tracks
             .get_mut(placement.target_track_index)?
@@ -391,23 +372,6 @@ pub fn item_times(project: &Project, key: ItemKey) -> Option<(Time, Time)> {
             .items
             .get(key.item_index)
             .map(|item| (item.start, item.end)),
-    }
-}
-
-pub fn item_source_offset(project: &Project, key: ItemKey) -> Option<Time> {
-    match key.kind {
-        TrackKind::Comment => None,
-        TrackKind::Caption => None,
-        TrackKind::Video => project
-            .video_tracks
-            .get(key.track_index)
-            .and_then(|track| track.items.get(key.item_index))
-            .map(|item| item.time_offset),
-        TrackKind::Audio => project
-            .audio_tracks
-            .get(key.track_index)
-            .and_then(|track| track.items.get(key.item_index))
-            .map(|item| item.time_offset),
     }
 }
 
