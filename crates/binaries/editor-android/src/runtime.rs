@@ -327,10 +327,14 @@ impl Runtime {
             "timeline_service_action" | "timeline_service_file" => {
                 self.timeline_service_request(request, source)
             }
-            "preview_image_dismiss" => {
+            "preview_image_dismiss" | "preview_image_save" => {
                 #[cfg(target_os = "android")]
                 {
-                    self.dismiss_preview_image(request)
+                    if operation == "preview_image_save" {
+                        self.save_preview_image(request)
+                    } else {
+                        self.dismiss_preview_image(request)
+                    }
                 }
                 #[cfg(not(target_os = "android"))]
                 {
@@ -344,13 +348,11 @@ impl Runtime {
                 shrimply_inspector_document::remote::performance_request(operation),
             ),
             "export_schema"
-            | "export_validate"
-            | "export_video"
+            | "export_destination"
+            | "export_start"
             | "caption_export_schema"
-            | "export_captions"
             | "export_cancel"
-            | "export_dismiss"
-            | "export_saved" => {
+            | "export_dismiss" => {
                 #[cfg(target_os = "android")]
                 {
                     self.export_request(request)
@@ -1116,7 +1118,11 @@ mod tests {
         runtime.request(&json!({"op":"play"})).unwrap();
         assert_eq!(player::current_time(&runtime.player), Time::ZERO);
         runtime.request(&json!({"op":"pause"})).unwrap();
-        assert!(runtime.request(&json!({"op":"export_video"})).is_err());
+        assert!(
+            runtime
+                .request(&json!({"op":"export_start","kind":"video"}))
+                .is_err()
+        );
         runtime.request(&json!({"op":"close"})).unwrap();
         assert!(runtime.backend.project().is_none());
         runtime.request(&json!({"op":"open","path":path})).unwrap();

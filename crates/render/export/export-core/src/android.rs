@@ -3,14 +3,24 @@ use crate::video::{
     self as core, ExportSettings, ExportVideoCodec, FrameTiming, RenderedFrame, VideoBackend,
 };
 use core::settings::VideoEncoder;
-use ffmpeg_next::{self as ffmpeg, format::Pixel, sys};
+use ffmpeg_next::{
+    self as ffmpeg,
+    format::{Pixel, context::StreamIo},
+    sys,
+};
 use ndk::native_window::NativeWindow;
 use shrimply_preview_render_vulkan::{Compositor, Rendered};
 use shrimply_project_document::project::{Project, Time};
 use shrimply_render_vulkan::surface::Renderer;
 use std::{
+    fs::File,
+    io::{self, Seek, Write},
+    os::fd::AsRawFd,
     ptr,
-    sync::{Arc, OnceLock, atomic::AtomicBool},
+    sync::{
+        Arc, OnceLock,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 pub struct Backend {
@@ -392,17 +402,94 @@ pub fn export_project<F>(
     project: Project,
     settings: ExportSettings,
     maximum_temporal_decoders: usize,
+    open: &mut dyn FnMut() -> Result<File, String>,
     cancelled: Arc<AtomicBool>,
     progress: F,
 ) -> Result<(), String>
 where
     F: FnMut(core::ExportProgress),
 {
-    core::export_project(
+    let stream_cancelled = cancelled.clone();
+    core::export_project_to(
         project,
         settings,
         Backend::new(maximum_temporal_decoders),
+        Some(&mut || open_document_stream(open()?, stream_cancelled.clone())),
         cancelled,
         progress,
     )
+}
+
+pub fn open_document_stream(file: File, cancelled: Arc<AtomicBool>) -> Result<StreamIo, String> {
+    let (writer, seekable) =
+        document_writer(file, cancelled).map_err(|error| format!("Open export stream: {error}"))?;
+    if seekable {
+        StreamIo::from_write_seek(writer)
+    } else {
+        StreamIo::from_write(writer)
+    }
+    .map_err(|error| format!("Open export stream: {error}"))
+}
+
+pub fn write_document(file: File, bytes: &[u8], cancelled: Arc<AtomicBool>) -> io::Result<()> {
+    document_writer(file, cancelled)?.0.write_all(bytes)
+}
+
+fn document_writer(
+    mut file: File,
+    cancelled: Arc<AtomicBool>,
+) -> io::Result<(DocumentWriter, bool)> {
+    let seekable = match file.stream_position() {
+        Ok(_) => true,
+        Err(error) if error.raw_os_error() == Some(libc::ESPIPE) => {
+            let fd = file.as_raw_fd();
+            let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+            if flags < 0 || unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0
+            {
+                return Err(io::Error::last_os_error());
+            }
+            false
+        }
+        Err(error) => return Err(error),
+    };
+    Ok((DocumentWriter { file, cancelled }, seekable))
+}
+
+struct DocumentWriter {
+    file: File,
+    cancelled: Arc<AtomicBool>,
+}
+
+impl Write for DocumentWriter {
+    fn write(&mut self, data: &[u8]) -> io::Result<usize> {
+        const PROVIDER_POLL_MS: libc::c_int = 100;
+        loop {
+            if self.cancelled.load(Ordering::Acquire) {
+                return Err(io::Error::from_raw_os_error(libc::ECANCELED));
+            }
+            match self.file.write(data) {
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                    let mut descriptor = libc::pollfd {
+                        fd: self.file.as_raw_fd(),
+                        events: libc::POLLOUT,
+                        revents: 0,
+                    };
+                    if unsafe { libc::poll(&mut descriptor, 1, PROVIDER_POLL_MS) } < 0 {
+                        return Err(io::Error::last_os_error());
+                    }
+                }
+                result => return result,
+            }
+        }
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.file.flush()
+    }
+}
+
+impl Seek for DocumentWriter {
+    fn seek(&mut self, position: io::SeekFrom) -> io::Result<u64> {
+        self.file.seek(position)
+    }
 }

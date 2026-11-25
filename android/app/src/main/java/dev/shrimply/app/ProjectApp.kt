@@ -69,7 +69,7 @@ internal fun ProjectApp(timeline: TimelineSession, files: ProjectFiles, caption:
     val operations = remember { Mutex() }
     var progress by remember { mutableStateOf("") }
     var exportSettings by rememberSaveable { mutableStateOf<String?>(null) }
-    var exportDestination by rememberSaveable { mutableStateOf<String?>(null) }
+    var pendingExport by rememberSaveable { mutableStateOf<String?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var preferences by rememberSaveable { mutableStateOf(false) }
     var create by rememberSaveable { mutableStateOf(false) }
@@ -137,20 +137,28 @@ internal fun ProjectApp(timeline: TimelineSession, files: ProjectFiles, caption:
             files.exportTree(project.getString("path"), uri) { file -> scope.launch { progress = file } }
         }
     }
-    fun saveCompletedExport(uri: android.net.Uri?) {
-        val pending = exportDestination
-        exportDestination = null
+    val saveExport = rememberExportPicker { uri ->
+        val pending = pendingExport
+        pendingExport = null
         if (uri != null && pending != null) action {
-            val export = JSONObject(pending)
-            if (export.getBoolean("separate")) files.exportCompletedFolder(export.getString("directory"), uri, export.getString("mime")) { file -> scope.launch { progress = file } }
-            else files.exportCompletedFile(export.getString("path"), uri)
-            timeline.request("export_saved", "id" to export.getString("id"))
+            timeline.request(JSONObject(pending).put("destination", uri.toString()))
+            exportSettings = null
         }
     }
-    val saveExport = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-        saveCompletedExport(result.data?.data?.takeIf { result.resultCode == android.app.Activity.RESULT_OK })
+
+    fun pickExport(kind: String, projectPath: String, values: Array<out Pair<String, Any>>) = action {
+        if (pendingExport != null) return@action
+        val command = JSONObject().put("op", "export_destination").put("kind", kind).put("project_path", projectPath)
+        values.forEach { (key, value) -> command.put(key, value) }
+        val destination = timeline.request(command)
+        pendingExport = command.put("op", "export_start").toString()
+        try {
+            saveExport(destination)
+        } catch (failure: Exception) {
+            pendingExport = null
+            throw failure
+        }
     }
-    val saveExportFolder = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri -> saveCompletedExport(uri) }
     fun importPicked(uri: android.net.Uri, destination: String, confirmedName: String? = null) = action {
         val target = targetArguments(destination)
         var confirmation: String? = null
@@ -237,7 +245,7 @@ internal fun ProjectApp(timeline: TimelineSession, files: ProjectFiles, caption:
     BackHandler(project != null && !busy) { closeProject() }
 
     MenuInputScope(menuInputSource) {
-    PreviewImageAction(timeline, files)
+    PreviewImageAction(timeline)
     TimelineService(timeline, files)
     ScreenRecordingAction(timeline) { error = it }
     if (project != null) event.optJSONObject("timeline")?.optJSONObject("context")?.let { menu ->
@@ -367,25 +375,17 @@ internal fun ProjectApp(timeline: TimelineSession, files: ProjectFiles, caption:
     error?.let { message -> AlertDialog(onDismissRequest = { error = null }, title = { Text(tr("Operation failed")) },
         text = { Text(message) }, confirmButton = { TextButton(onClick = { error = null }) { Text(tr("Close")) } }) }
     if (project != null) exportSettings?.let { kind ->
-        val submit: (Array<out Pair<String, Any>>) -> Unit = { values ->
-            exportSettings = null
-            action { timeline.request(if (kind == "captions") "export_captions" else "export_video", "project_path" to project.getString("path"), *values) }
-        }
+        val projectPath = project.getString("path")
+        val submit: (Array<out Pair<String, Any>>) -> Unit = { values -> pickExport(kind, projectPath, values) }
+        val enabled = !busy && pendingExport == null
         when (kind) {
-            "video" -> VideoExportSettings(timeline, project.getString("path"), { exportSettings = null }, submit)
-            "captions" -> CaptionExportSettings(timeline, project.getString("path"), { exportSettings = null }, submit)
+            "video" -> VideoExportSettings(timeline, projectPath, enabled, { exportSettings = null }, submit)
+            "captions" -> CaptionExportSettings(timeline, projectPath, enabled, { exportSettings = null }, submit)
             else -> error("Unknown export settings: $kind")
         }
     }
     event.optJSONObject("export")?.let { export ->
-        ExportProgress(export, !busy,
-            command = { operation -> action { timeline.request(operation, "id" to export.getString("id")) } },
-            save = {
-                exportDestination = export.toString()
-                if (export.getBoolean("separate")) saveExportFolder.launch(null)
-                else saveExport.launch(Intent(Intent.ACTION_CREATE_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE)
-                    .setType(export.getString("mime")).putExtra(Intent.EXTRA_TITLE, export.getString("filename")))
-            })
+        ExportProgress(export, !busy) { operation -> action { timeline.request(operation, "id" to export.getString("id")) } }
     }
     }
 }

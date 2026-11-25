@@ -4,6 +4,7 @@ use shrimply_components_gtk::tr;
 use shrimply_components_gtk::ui::I18nAlertDialogExt;
 use shrimply_components_gtk::ui::I18nFileFilterExt;
 use shrimply_timeline_skia::{ContextMenuControl, ContextMenuRequest, VideoFrameSelection};
+use std::sync::atomic::Ordering;
 
 pub(crate) fn show_timeline_item_context_menu(
     area: &gtk::GLArea,
@@ -462,133 +463,40 @@ fn show_export_audio_dialog(
                     {
                         path.set_extension(format.extension());
                     }
-                    enum AudioExportEvent {
-                        Progress(export::audio::ExportProgress),
-                        Finished(Result<(), String>),
-                    }
-
-                    let progress_dialog = adw::Dialog::builder()
-                        .title(tr!("Exporting Audio").as_ref())
-                        .content_width(460)
-                        .build();
-                    let content = gtk::Box::new(gtk::Orientation::Vertical, 16);
-                    content.set_margin_top(24);
-                    content.set_margin_bottom(24);
-                    content.set_margin_start(24);
-                    content.set_margin_end(24);
-                    let progress_bar = gtk::ProgressBar::new();
-                    progress_bar.set_show_text(true);
-                    progress_bar.set_text(Some(tr!("Preparing audio").as_ref()));
-                    progress_bar.pulse();
-                    let state_label = gtk::Label::new(Some(tr!("Preparing audio").as_ref()));
-                    state_label.set_halign(gtk::Align::Center);
-                    state_label.set_wrap(true);
-                    content.append(&progress_bar);
-                    content.append(&state_label);
-                    let toolbar = adw::ToolbarView::new();
-                    toolbar.add_top_bar(&adw::HeaderBar::new());
-                    toolbar.set_content(Some(&content));
-                    progress_dialog.set_child(Some(&toolbar));
-                    progress_dialog.present(Some(area.upcast_ref::<gtk::Widget>()));
-
-                    let cancelled = Arc::new(AtomicBool::new(false));
-                    progress_dialog.connect_closed({
-                        let cancelled = cancelled.clone();
-                        move |_| cancelled.store(true, Ordering::Relaxed)
-                    });
-                    let (tx, rx) = mpsc::channel();
+                    use shrimply_export_core::job::{Job, Outcome};
                     let exported_path = path.clone();
-                    let worker_cancelled = cancelled.clone();
-                    thread::spawn(move || {
-                        let progress_tx = tx.clone();
-                        let result = export::audio::export_with_progress(
-                            &export_project,
-                            &path,
-                            format,
-                            move |progress| {
-                                let _ = progress_tx.send(AudioExportEvent::Progress(progress));
-                                !worker_cancelled.load(Ordering::Relaxed)
-                            },
-                        );
-                        let _ = tx.send(AudioExportEvent::Finished(result));
-                    });
-                    let area_for_result = area.clone();
-                    glib::timeout_add_local(Duration::from_millis(100), move || {
-                        let mut finished = None;
-                        loop {
-                            match rx.try_recv() {
-                                Ok(AudioExportEvent::Progress(progress)) => {
-                                    let (label, completed_frames, total_frames) = match progress {
-                                        export::audio::ExportProgress::Mixing {
-                                            completed_frames,
-                                            total_frames,
-                                        } => ("Preparing audio", completed_frames, total_frames),
-                                        export::audio::ExportProgress::Encoding {
-                                            completed_frames,
-                                            total_frames,
-                                        } => ("Encoding audio", completed_frames, total_frames),
-                                    };
-                                    let fraction = if total_frames == 0 {
-                                        1.0
-                                    } else {
-                                        completed_frames as f64 / total_frames as f64
-                                    }
-                                    .clamp(0.0, 1.0);
-                                    state_label.set_label(tr!(label).as_ref());
-                                    progress_bar.set_fraction(fraction);
-                                    let progress_text = match progress {
-                                        export::audio::ExportProgress::Mixing { .. } => {
-                                            "Preparing audio (%{percent}%)"
-                                        }
-                                        export::audio::ExportProgress::Encoding { .. } => {
-                                            "Encoding audio (%{percent}%)"
-                                        }
-                                    };
-                                    progress_bar.set_text(Some(
-                                        &shrimply_components_gtk::i18n::text_args(
-                                            progress_text,
-                                            &[("percent", format!("{:.0}", fraction * 100.0))],
-                                        ),
-                                    ));
-                                }
-                                Ok(AudioExportEvent::Finished(result)) => {
-                                    finished = Some(result);
-                                    break;
-                                }
-                                Err(TryRecvError::Empty) => break,
-                                Err(TryRecvError::Disconnected) => {
-                                    finished = Some(Err(
-                                        "The export worker stopped unexpectedly.".to_string()
-                                    ));
-                                    break;
-                                }
+                    let job = Job::spawn(
+                        move |cancelled, progress| {
+                            export::audio::export_with_progress(
+                                &export_project,
+                                &path,
+                                format,
+                                |update| {
+                                    progress(update.into());
+                                    !cancelled.load(Ordering::Acquire)
+                                },
+                            )
+                        },
+                        || {},
+                    );
+                    let dialog_parent = area.clone();
+                    export::present_export_job(
+                        &area,
+                        "Exporting Audio",
+                        "Preparing audio",
+                        job,
+                        move |outcome| match outcome {
+                            Outcome::Complete(()) => export::show_export_finished_for_widget(
+                                &dialog_parent,
+                                "Audio exported",
+                                &exported_path,
+                            ),
+                            Outcome::Failed(error) => {
+                                show_error_dialog(&dialog_parent, "Could not export audio", &error)
                             }
-                        }
-                        match finished {
-                            Some(Ok(())) => {
-                                progress_dialog.close();
-                                export::show_export_finished_for_widget(
-                                    &area_for_result,
-                                    "Audio exported",
-                                    &exported_path,
-                                );
-                                glib::ControlFlow::Break
-                            }
-                            Some(Err(error)) => {
-                                let was_cancelled = cancelled.load(Ordering::Relaxed);
-                                progress_dialog.close();
-                                if !was_cancelled {
-                                    show_error_dialog(
-                                        &area_for_result,
-                                        "Could not export audio",
-                                        &error,
-                                    );
-                                }
-                                glib::ControlFlow::Break
-                            }
-                            None => glib::ControlFlow::Continue,
-                        }
-                    });
+                            Outcome::Cancelled => {}
+                        },
+                    );
                 },
             );
         },

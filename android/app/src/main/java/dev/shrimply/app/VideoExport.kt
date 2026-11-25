@@ -5,19 +5,16 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.launch
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import org.json.JSONArray
 import org.json.JSONObject
 
 @Composable
-internal fun VideoExportSettings(timeline: TimelineSession, projectPath: String, dismiss: () -> Unit, export: (Array<out Pair<String, Any>>) -> Unit) {
+internal fun VideoExportSettings(timeline: TimelineSession, projectPath: String, enabled: Boolean, dismiss: () -> Unit, export: (Array<out Pair<String, Any>>) -> Unit) {
     var schema by remember { mutableStateOf<JSONObject?>(null) }
     var values by rememberSaveable(projectPath) { mutableStateOf<String?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
-    var busy by remember { mutableStateOf(false) }
-    val scope = rememberCoroutineScope()
     val input = LocalMenuInputSource.current
     val bottomSheet = remember { NativeLayout.menuUsesBottomSheet(input.value) }
     LaunchedEffect(projectPath, values) {
@@ -42,22 +39,22 @@ internal fun VideoExportSettings(timeline: TimelineSession, projectPath: String,
                     Text(group.getString("label"), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
                     description.getJSONArray("fields").objects().filter { it.getString("group") == group.getString("label") && it.getBoolean("visible") }.forEach { field -> key(field.getString("id")) {
                         val id = field.getString("id")
-                        val enabled = !busy && field.getBoolean("enabled")
+                        val fieldEnabled = enabled && field.getBoolean("enabled")
                         val label = field.getString("label")
                         when (field.getString("widget")) {
                             "choice" -> {
                                 val choices = field.getJSONArray("choices").objects()
                                 val selected = choices.firstOrNull { it.getString("value") == fields.get(id).toString() }
                                     ?: choices.first { it.getString("value") == field.get("value").toString() }
-                                ChoiceInput(label, selected.getString("label"), choices.map { it.getString("label") }, enabled) { set(id, choices[it].getString("value")) }
+                                ChoiceInput(label, selected.getString("label"), choices.map { it.getString("label") }, fieldEnabled) { set(id, choices[it].getString("value")) }
                             }
                             "number" -> {
                                 val range = field.getJSONArray("range")
-                                NumberInput(label, fields.getInt(id), range.getInt(0), range.getInt(1), range.getInt(2), enabled) { set(id, it) }
+                                NumberInput(label, fields.getInt(id), range.getInt(0), range.getInt(1), range.getInt(2), fieldEnabled) { set(id, it) }
                             }
                             "toggle" -> Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                 Text(label)
-                                Switch(checked = fields.getBoolean(id), enabled = enabled, onCheckedChange = { set(id, it) })
+                                Switch(checked = fields.getBoolean(id), enabled = fieldEnabled, onCheckedChange = { set(id, it) })
                             }
                             else -> error("Unknown export widget")
                         }
@@ -68,30 +65,23 @@ internal fun VideoExportSettings(timeline: TimelineSession, projectPath: String,
             if (schema == null && error == null) LinearProgressIndicator(Modifier.fillMaxWidth())
             error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             schema?.let { description -> Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                TextButton(enabled = !busy, onClick = dismiss) { Text(description.getString("cancel_label")) }
-                Button(enabled = !busy && fields != null, onClick = { scope.launch {
-                    busy = true
-                    try {
-                        val fields = checkNotNull(fields)
-                        timeline.request("export_validate", "project_path" to projectPath, "values" to fields)
-                        export(arrayOf("values" to fields))
-                    } catch (failure: Exception) { error = failure.message }
-                    finally { busy = false }
-                } }) { Text(description.getString("submit_label")) }
+                TextButton(enabled = enabled, onClick = dismiss) { Text(description.getString("cancel_label")) }
+                Button(enabled = enabled && fields != null,
+                    onClick = { export(arrayOf("values" to checkNotNull(fields))) }) { Text(description.getString("submit_label")) }
             } }
         }
     }
 }
 
 @Composable
-internal fun ExportChoice(label: String, value: String, choices: JSONArray, select: (String) -> Unit) {
-    val options = (0 until choices.length()).map { choices.getJSONObject(it) }
+internal fun ExportChoice(label: String, value: String, choices: JSONArray, enabled: Boolean, select: (String) -> Unit) {
+    val options = choices.objects()
     val selected = options.firstOrNull { it.getString("value") == value } ?: error("Unknown export choice: $value")
-    ChoiceInput(tr(label), tr(selected.getString("label")), options.map { tr(it.getString("label")) }) { select(options[it].getString("value")) }
+    ChoiceInput(tr(label), tr(selected.getString("label")), options.map { tr(it.getString("label")) }, enabled) { select(options[it].getString("value")) }
 }
 
 @Composable
-internal fun ExportProgress(export: JSONObject, enabled: Boolean, command: (String) -> Unit, save: () -> Unit) {
+internal fun ExportProgress(export: JSONObject, enabled: Boolean, command: (String) -> Unit) {
     val model = export.getJSONObject("presentation")
     val progress = export.optJSONObject("progress")
     val confirm = model.getJSONObject("confirm")
@@ -105,15 +95,12 @@ internal fun ExportProgress(export: JSONObject, enabled: Boolean, command: (Stri
                 if (progress != null) Text(progress.getString("message"))
             } else if (model.getBoolean("failed")) Text(export.getString("error"), color = MaterialTheme.colorScheme.error)
             else if (model.getBoolean("complete")) {
-                Text(export.getJSONArray("files").objects().joinToString("\n") { it.getString("filename") })
+                val files = export.getJSONArray("files")
+                Text((0 until files.length()).joinToString("\n", transform = files::getString))
             }
         }
     }, confirmButton = {
-        TextButton(onClick = { if (confirm.getString("action") == "save") save() else command(confirm.getString("action")) },
+        TextButton(onClick = { command(confirm.getString("action")) },
             enabled = enabled && confirm.getBoolean("enabled")) { Text(confirm.getString("label")) }
-    }, dismissButton = {
-        model.optJSONObject("secondary")?.let { secondary ->
-            TextButton(onClick = { command(secondary.getString("action")) }, enabled = enabled) { Text(secondary.getString("label")) }
-        }
     })
 }

@@ -22,6 +22,7 @@ mod context_captions;
 mod context_frame;
 mod context_menu;
 mod context_video;
+mod export_progress;
 pub(super) mod preview;
 mod screen_recording;
 mod touch;
@@ -47,8 +48,8 @@ pub struct CanvasState {
     secondary_preview_active: Cell<bool>,
     relative_pan_active: Cell<bool>,
     pointer_active: Cell<bool>,
-    audio_export: RefCell<Option<context_audio::AudioExport>>,
-    video_export: RefCell<Option<context_video::VideoExport>>,
+    audio_export: RefCell<Option<export_progress::MediaExport>>,
+    video_export: RefCell<Option<export_progress::MediaExport>>,
     caption_speech_probe: RefCell<Option<context_menu::CaptionSpeechProbe>>,
     caption_speech_alert: RefCell<Option<Retained<objc2_app_kit::NSAlert>>>,
     transcription_probe: RefCell<Option<context_menu::TranscriptionProbe>>,

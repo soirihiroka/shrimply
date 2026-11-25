@@ -1,7 +1,10 @@
 package dev.shrimply.app
 
+import android.content.Context
+import android.net.Uri
 import android.os.Handler
 import android.os.Looper
+import android.provider.DocumentsContract
 import android.view.Surface
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.unit.DpOffset
@@ -37,6 +40,16 @@ internal object NativeTimeline {
     external fun active(handle: Long, active: Boolean)
     external fun input(handle: Long, role: Int, batch: FloatArray): Boolean
     external fun destroy(handle: Long)
+
+    fun exportDocument(context: Context, destination: String, mime: String, filename: String): ExportDocument {
+        val resolver = context.contentResolver
+        val uri = Uri.parse(destination)
+        val document = if (filename.isEmpty()) uri else {
+            val folder = DocumentsContract.buildDocumentUriUsingTree(uri, DocumentsContract.getTreeDocumentId(uri))
+            checkNotNull(DocumentsContract.createDocument(resolver, folder, mime, filename)) { "Could not create '$filename'." }
+        }
+        return ExportDocument(resolver, document, filename.isNotEmpty())
+    }
 }
 
 /** Project I/O runs on one executor. Rendering and exact playback belong to Rust.

@@ -1,7 +1,5 @@
 package dev.shrimply.app
 
-import android.app.Activity
-import android.content.Intent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
@@ -46,13 +44,12 @@ internal fun TimelineService(timeline: TimelineSession, files: ProjectFiles) {
             finally { busy = false }
         }
     }
-    val save = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+    val save = rememberExportPicker { uri ->
         val pending = pendingOutput?.let(::JSONObject)
         pendingOutput = null
-        val uri = result.data?.data?.takeIf { result.resultCode == Activity.RESULT_OK }
         if (pending != null && uri != null) scope.launch {
             busy = true
-            try { files.exportCompletedFile(pending.getString("path"), uri); send(pending.getJSONObject("command")) }
+            try { timeline.request(pending.put("destination", uri.toString())); failure = null }
             catch (error: Exception) { failure = error.message }
             finally { busy = false }
         }
@@ -73,14 +70,15 @@ internal fun TimelineService(timeline: TimelineSession, files: ProjectFiles) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                 TextButton(enabled = !busy && close.getBoolean("enabled"), onClick = { send(close.getJSONObject("command")) }) { Text(close.getString("label")) }
                 service.optJSONObject("submit")?.let { submit ->
-                    Button(enabled = !busy && submit.getBoolean("enabled"), onClick = { send(submit.getJSONObject("command")) }) { Text(submit.getString("label")) }
-                }
-                service.optJSONObject("output")?.let { output ->
-                    Button(enabled = !busy, onClick = {
-                        pendingOutput = JSONObject(output.toString()).put("command", service.getJSONObject("saved_command")).toString()
-                        save.launch(Intent(Intent.ACTION_CREATE_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE)
-                            .setType(output.getString("mime")).putExtra(Intent.EXTRA_TITLE, output.getString("filename")))
-                    }) { Text(service.getString("save_label")) }
+                    Button(enabled = !busy && pendingOutput == null && submit.getBoolean("enabled"), onClick = {
+                        val command = submit.getJSONObject("command")
+                        val destination = submit.optJSONObject("destination")
+                        if (destination == null) send(command) else {
+                            pendingOutput = JSONObject(command.toString()).put("project_path", project.getString("path")).toString()
+                            try { save(destination) }
+                            catch (error: Exception) { pendingOutput = null; failure = error.message }
+                        }
+                    }) { Text(submit.getString("label")) }
                 }
             }
         }

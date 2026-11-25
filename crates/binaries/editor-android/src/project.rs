@@ -213,6 +213,7 @@ impl ProjectBackend {
                             .ok_or("track does not exist")?;
                     let enabled = project.track(&address).expect("resolved track").enabled();
                     shrimply_timeline_edit::edit::set_track_enabled(project, &address, !enabled)
+                        .ok_or_else(|| "track does not exist".into())
                 })?;
             }
             "track_add" => {

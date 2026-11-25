@@ -146,9 +146,15 @@ pub(super) fn snapshot(session: &Session) -> Value {
         Operation::Transcribe { models, .. } => !models.is_empty(),
         _ => true,
     };
-    json!({"id":session.id,"title":text(title),"stage":session.stage,"controls":controls,"output":session.output,
-        "submit":configuring.then(||json!({"label":text(submit),"enabled":catalog_ready&&!session.catalog_loading,"command":session.command("submit")})),
+    let submit = configuring.then(|| {
+        let mut button = json!({"label":text(submit),"enabled":catalog_ready&&!session.catalog_loading,"command":session.command("submit")});
+        if let Operation::Audio { format, .. } = &session.operation {
+            button["destination"] = json!({"filename":format!("selected-audio.{}",format.extension()),"mime":format.mime_type()});
+            button["command"] = json!({"op":"export_start","kind":"audio","session":session.id,"format":format.extension()});
+        }
+        button
+    });
+    json!({"id":session.id,"title":text(title),"stage":session.stage,"controls":controls,"submit":submit,
         "close":{"label":text(if session.running.is_some(){"Cancel"}else{"Close"}),"enabled":!session.cancelling||session.running.is_none(),"command":session.command(if session.running.is_some(){"cancel"}else{"close"})},
-        "visible":!session.close_pending,"dismiss_command":session.command("dismiss"),
-        "save_label":text("Save"),"saved_command":session.command("saved")})
+        "visible":!session.close_pending,"dismiss_command":session.command("dismiss")})
 }

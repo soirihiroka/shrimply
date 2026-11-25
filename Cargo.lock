@@ -6787,7 +6787,6 @@ dependencies = [
  "shrimply-export-core",
  "shrimply-export-cuda",
  "shrimply-i18n-qt",
- "shrimply-math-media",
 ]
 
 [[package]]
@@ -8269,6 +8268,7 @@ dependencies = [
  "shrimply-cross-ui-theme",
  "shrimply-editor-state",
  "shrimply-export-core",
+ "shrimply-export-gtk",
  "shrimply-inspector-core",
  "shrimply-math-color",
  "shrimply-math-core",

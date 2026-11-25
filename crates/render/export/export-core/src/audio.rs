@@ -31,6 +31,27 @@ pub enum ExportProgress {
     },
 }
 
+impl From<ExportProgress> for crate::video::ExportProgress {
+    fn from(progress: ExportProgress) -> Self {
+        match progress {
+            ExportProgress::Mixing {
+                completed_frames,
+                total_frames,
+            } => Self::MixingAudio {
+                current_frame: completed_frames,
+                total_frames,
+            },
+            ExportProgress::Encoding {
+                completed_frames,
+                total_frames,
+            } => Self::EncodingAudio {
+                current_frame: completed_frames,
+                total_frames,
+            },
+        }
+    }
+}
+
 impl Format {
     pub const ALL: [Self; 5] = [Self::Wav, Self::Flac, Self::Mp3, Self::Ogg, Self::Opus];
 
@@ -89,10 +110,14 @@ pub fn export_with_progress(
     let mut output_opened = false;
     let result = export_inner(
         project,
-        path,
         format,
         &assets,
-        &mut output_opened,
+        || {
+            let output = ffmpeg::format::output(path)
+                .map_err(|error| format!("Could not create the {format:?} output file: {error}"))?;
+            output_opened = true;
+            Ok(output)
+        },
         &mut progress,
     );
     if result.is_err() && output_opened {
@@ -101,12 +126,34 @@ pub fn export_with_progress(
     result
 }
 
+pub fn export_to_stream(
+    project: &Project,
+    format: Format,
+    open: impl FnOnce() -> Result<ffmpeg::format::context::StreamIo, String>,
+    mut progress: impl FnMut(ExportProgress) -> bool,
+) -> Result<(), String> {
+    let container = match format {
+        Format::Ogg | Format::Opus => "ogg",
+        _ => format.extension(),
+    };
+    let assets = crate::snapshot_assets(project)?;
+    export_inner(
+        project,
+        format,
+        &assets,
+        || {
+            ffmpeg::format::output_to_stream(open()?, None, Some(container))
+                .map_err(|error| format!("Could not create the {format:?} output file: {error}"))
+        },
+        &mut progress,
+    )
+}
+
 fn export_inner(
     project: &Project,
-    path: &Path,
     format: Format,
     assets: &[shrimply_project_document::project::AssetSnapshot],
-    output_opened: &mut bool,
+    open: impl FnOnce() -> Result<ffmpeg::format::context::Output, String>,
     progress: &mut impl FnMut(ExportProgress) -> bool,
 ) -> Result<(), String> {
     ffmpeg::init().map_err(|error| format!("Could not initialize FFmpeg: {error}"))?;
@@ -174,9 +221,7 @@ fn export_inner(
         encoder.set_bit_rate(192_000);
     }
 
-    let mut output = ffmpeg::format::output(path)
-        .map_err(|error| format!("Could not create the {format:?} output file: {error}"))?;
-    *output_opened = true;
+    let mut output = open()?;
     if output
         .format()
         .flags()

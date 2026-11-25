@@ -1,3 +1,4 @@
+pub(crate) mod export;
 mod recording;
 
 use crate::runtime::{Runtime, SharedLifecycle};
@@ -31,6 +32,8 @@ const MAX_IDLE_GRAPH_SURFACES: usize = 2;
 const FRAME_BUDGET_NS: u128 = 1_000_000_000 / 60;
 const SYNC_RESIZE_TIMEOUT: Duration = Duration::from_millis(32);
 static FONT_RESOURCES: std::sync::OnceLock<(Vec<std::path::PathBuf>, std::path::PathBuf)> =
+    std::sync::OnceLock::new();
+static APPLICATION: std::sync::OnceLock<jni::refs::Global<JObject<'static>>> =
     std::sync::OnceLock::new();
 
 fn initialize_fonts() {
@@ -287,6 +290,7 @@ fn run_project(
                                 | "performance"
                                 | "performance_copy"
                                 | "export_schema"
+                                | "export_destination"
                                 | "caption_export_schema"
                         )
                     );
@@ -1241,7 +1245,7 @@ unsafe fn session<'a>(handle: jlong) -> &'a Session {
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_dev_shrimply_app_NativeTimeline_initialize<'caller>(
     mut unowned: EnvUnowned<'caller>,
-    _this: JObject<'caller>,
+    this: JObject<'caller>,
     application: JObject<'caller>,
     config: JString<'caller>,
     cache: JString<'caller>,
@@ -1252,12 +1256,11 @@ pub extern "system" fn Java_dev_shrimply_app_NativeTimeline_initialize<'caller>(
         .with_env(|env| -> jni::errors::Result<()> {
             let certificate_context = env.new_local_ref(&application)?;
             rustls_platform_verifier::android::init_with_env(env, certificate_context)?;
-            static APPLICATION: std::sync::OnceLock<jni::refs::Global<JObject<'static>>> =
-                std::sync::OnceLock::new();
             let application = env.new_global_ref(application)?;
             let application = APPLICATION.get_or_init(|| application);
             let vm = env.get_java_vm()?.get_raw().cast();
             crate::localization::initialize_vm(env.get_java_vm()?);
+            export::initialize(env.get_java_vm()?, env.new_global_ref(this)?);
             shrimply_export_core::android::set_encoder_names(
                 serde_json::from_str(&video_encoder_names.try_to_string(env)?)
                     .expect("Android video encoder names"),

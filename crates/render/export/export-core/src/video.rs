@@ -212,7 +212,7 @@ struct ExportFrameBenchmark {
 pub fn export_project<B, F>(
     project: Project,
     settings: ExportSettings,
-    mut backend: B,
+    backend: B,
     cancelled: Arc<AtomicBool>,
     progress: F,
 ) -> Result<(), String>
@@ -220,7 +220,31 @@ where
     B: VideoBackend,
     F: FnMut(ExportProgress),
 {
-    let result = export_project_inner(&project, &settings, &mut backend, &cancelled, progress);
+    export_project_to(project, settings, backend, None, cancelled, progress)
+}
+
+type OpenStream<'a> = &'a mut dyn FnMut() -> Result<ffmpeg::format::context::StreamIo, String>;
+
+pub(crate) fn export_project_to<B, F>(
+    project: Project,
+    settings: ExportSettings,
+    mut backend: B,
+    stream: Option<OpenStream<'_>>,
+    cancelled: Arc<AtomicBool>,
+    progress: F,
+) -> Result<(), String>
+where
+    B: VideoBackend,
+    F: FnMut(ExportProgress),
+{
+    let result = export_project_inner(
+        &project,
+        &settings,
+        &mut backend,
+        stream,
+        &cancelled,
+        progress,
+    );
     backend.shutdown();
     if result.is_ok() && cancelled.load(Ordering::Relaxed) {
         Err("Export cancelled".to_string())
@@ -233,6 +257,7 @@ fn export_project_inner<B, F>(
     project: &Project,
     settings: &ExportSettings,
     backend: &mut B,
+    stream: Option<OpenStream<'_>>,
     cancelled: &AtomicBool,
     mut progress: F,
 ) -> Result<(), String>
@@ -254,7 +279,9 @@ where
     if !software {
         backend.validate(project, settings)?;
     }
-    crate::ensure_output_is_not_an_asset(project, &settings.path)?;
+    if stream.is_none() {
+        crate::ensure_output_is_not_an_asset(project, &settings.path)?;
+    }
     let assets = crate::snapshot_assets(project)?;
 
     progress(ExportProgress::SettingUp("Stabilizing source video"));
@@ -289,28 +316,50 @@ where
     crate::ensure_assets_current(&assets)?;
     let audio_mix_ns = audio_mix_started.elapsed().as_nanos();
 
-    let parent = settings
-        .path
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .unwrap_or_else(|| Path::new("."));
-    let suffix = format!(".{}", extension_for_container(settings.container));
-    let temporary = tempfile::Builder::new()
-        .prefix(".shrimply-video-")
-        .suffix(&suffix)
-        .tempfile_in(parent)
-        .map_err(|error| format!("Could not prepare video export: {error}"))?
-        .into_temp_path();
-
     let setup_started = Instant::now();
-    progress(ExportProgress::SettingUp("Opening output file"));
-    let mut output = ffmpeg::format::output_as(&temporary, container_name(settings.container))
-        .map_err(|error| error.to_string())?;
-    let global_header = output_needs_global_header(&output);
     progress(ExportProgress::SettingUp("Preparing video renderer"));
     backend.prepare(project, settings, cancelled)?;
     check_cancelled(cancelled)?;
-
+    progress(ExportProgress::SettingUp("Opening output file"));
+    let format = container_name(settings.container);
+    let (temporary, mut output) = if let Some(open) = stream {
+        let mut stream = open()?;
+        let seekable = unsafe { (*stream.as_mut_ptr()).seekable } != 0;
+        let mut output = ffmpeg::format::output_to_stream(stream, None, Some(format))
+            .map_err(|error| error.to_string())?;
+        if !seekable && settings.container == ExportContainer::Mp4 {
+            // A nonseekable destination needs a fragmented MP4.
+            ffmpeg_check(
+                unsafe {
+                    sys::av_opt_set(
+                        (*output.as_mut_ptr()).priv_data,
+                        c"movflags".as_ptr(),
+                        c"empty_moov+frag_keyframe+default_base_moof".as_ptr(),
+                        0,
+                    )
+                },
+                "Configure streaming MP4",
+            )?;
+        }
+        (None, output)
+    } else {
+        let parent = settings
+            .path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        let suffix = format!(".{}", extension_for_container(settings.container));
+        let temporary = tempfile::Builder::new()
+            .prefix(".shrimply-video-")
+            .suffix(&suffix)
+            .tempfile_in(parent)
+            .map_err(|error| format!("Could not prepare video export: {error}"))?
+            .into_temp_path();
+        let output =
+            ffmpeg::format::output_as(&temporary, format).map_err(|error| error.to_string())?;
+        (Some(temporary), output)
+    };
+    let global_header = output_needs_global_header(&output);
     progress(ExportProgress::SettingUp("Opening video encoder"));
     let mut video_encoder = if settings.video_encoder == VideoEncoder::Gif {
         open_gif_encoder(project, settings, global_header)?
@@ -437,38 +486,40 @@ where
     output.finish()?;
     drop(output);
     check_cancelled(cancelled)?;
-    if settings.overwrite {
-        temporary.persist(&settings.path)
-    } else {
-        temporary.persist_noclobber(&settings.path)
-    }
-    .map_err(|error| format!("Could not save video export: {error}"))?;
-    let finalize_ns = finalize_started.elapsed().as_nanos();
+    if let Some(temporary) = temporary {
+        if settings.overwrite {
+            temporary.persist(&settings.path)
+        } else {
+            temporary.persist_noclobber(&settings.path)
+        }
+        .map_err(|error| format!("Could not save video export: {error}"))?;
+        let finalize_ns = finalize_started.elapsed().as_nanos();
 
-    let benchmark = ExportBenchmark {
-        version: 3,
-        output: settings.path.clone(),
-        backend: backend.name().to_string(),
-        encoder: encoder_label,
-        canvas_width: project.canvas_size.width,
-        canvas_height: project.canvas_size.height,
-        project_duration: export_duration(project),
-        fps_numerator: project::fraction_numerator(settings.fps),
-        fps_denominator: project::fraction_denominator(settings.fps),
-        video_codec: format!("{:?}", settings.video_encoder.codec()),
-        decoder_sessions: backend.decoder_session_count(),
-        frame_count: frames.len() as u64,
-        total_elapsed_ns: export_started.elapsed().as_nanos(),
-        stages: ExportStageBenchmark {
-            audio_mix_ns,
-            setup_ns,
-            audio_encode_ns,
-            video_encode_ns,
-            finalize_ns,
-        },
-        frames,
-    };
-    write_benchmark(settings, &benchmark);
+        let benchmark = ExportBenchmark {
+            version: 3,
+            output: settings.path.clone(),
+            backend: backend.name().to_string(),
+            encoder: encoder_label,
+            canvas_width: project.canvas_size.width,
+            canvas_height: project.canvas_size.height,
+            project_duration: export_duration(project),
+            fps_numerator: project::fraction_numerator(settings.fps),
+            fps_denominator: project::fraction_denominator(settings.fps),
+            video_codec: format!("{:?}", settings.video_encoder.codec()),
+            decoder_sessions: backend.decoder_session_count(),
+            frame_count: frames.len() as u64,
+            total_elapsed_ns: export_started.elapsed().as_nanos(),
+            stages: ExportStageBenchmark {
+                audio_mix_ns,
+                setup_ns,
+                audio_encode_ns,
+                video_encode_ns,
+                finalize_ns,
+            },
+            frames,
+        };
+        write_benchmark(settings, &benchmark);
+    }
     tracing::info!("video export finished");
     Ok(())
 }

@@ -4,16 +4,15 @@ use cxx_qt_lib::{QString, QUrl};
 use serde_json::Value;
 use shrimply_cross_ui_core::editor::EditorSession;
 use shrimply_editor_state::preferences::{self, SharedPreferences};
-use shrimply_export_core::video::settings;
 use shrimply_export_core::{caption::ytt, json, output, project, time_format};
+use shrimply_export_core::{
+    job::{Event, Job, Outcome},
+    video::{progress, settings},
+};
 use shrimply_export_cuda as video;
 use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{Receiver, TryRecvError};
-use std::thread;
 use std::time::{Duration, Instant};
 
 #[derive(Clone)]
@@ -44,20 +43,10 @@ fn context() -> Context {
     })
 }
 
-enum JobEvent {
-    VideoProgress(video::ExportProgress),
-    Finished(Result<Completion, String>),
-}
-
 enum Completion {
     Video { path: PathBuf, elapsed: Duration },
     Captions(Vec<PathBuf>),
     Json(PathBuf),
-}
-
-struct ExportJob {
-    receiver: Receiver<JobEvent>,
-    cancelled: Arc<AtomicBool>,
 }
 
 #[cxx_qt::bridge]
@@ -127,7 +116,7 @@ pub struct ExportBackendRust {
     progress_determinate: bool,
     video_form: QString,
     video_values: Value,
-    job: Option<ExportJob>,
+    job: Option<Job<Completion>>,
     last_output: Option<PathBuf>,
 }
 
@@ -211,24 +200,22 @@ impl qobject::ExportBackend {
             return false;
         };
         settings.path = output::ensure_extension(path, extension);
-        let (sender, receiver) = std::sync::mpsc::channel();
-        let cancelled = Arc::new(AtomicBool::new(false));
-        let worker_cancelled = cancelled.clone();
-        thread::spawn(move || {
-            let started = Instant::now();
-            let path = settings.path.clone();
-            let progress_sender = sender.clone();
-            let result = video::export_project(project, settings, worker_cancelled, move |event| {
-                let _ = progress_sender.send(JobEvent::VideoProgress(event));
-            })
-            .map(|()| Completion::Video {
-                path,
-                elapsed: started.elapsed(),
-            });
-            let _ = sender.send(JobEvent::Finished(result));
-        });
-        self.as_mut().begin_job(receiver, cancelled, "Preparing");
-        true
+        self.as_mut().begin_job(
+            Job::spawn(
+                move |cancelled, progress| {
+                    let started = Instant::now();
+                    let path = settings.path.clone();
+                    video::export_project(project, settings, cancelled, progress).map(|()| {
+                        Completion::Video {
+                            path,
+                            elapsed: started.elapsed(),
+                        }
+                    })
+                },
+                || {},
+            ),
+            "Preparing",
+        )
     }
 
     pub fn start_captions(mut self: Pin<&mut Self>, separate: bool) -> bool {
@@ -251,15 +238,13 @@ impl qobject::ExportBackend {
         } else {
             ytt::ExportMode::Merge
         };
-        let (sender, receiver) = std::sync::mpsc::channel();
-        let cancelled = Arc::new(AtomicBool::new(false));
-        thread::spawn(move || {
-            let result = ytt::export(&project, &path, mode).map(Completion::Captions);
-            let _ = sender.send(JobEvent::Finished(result));
-        });
-        self.as_mut()
-            .begin_job(receiver, cancelled, "Exporting Captions");
-        true
+        self.as_mut().begin_job(
+            Job::spawn(
+                move |_, _| ytt::export(&project, &path, mode).map(Completion::Captions),
+                || {},
+            ),
+            "Exporting Captions",
+        )
     }
 
     pub fn start_json(mut self: Pin<&mut Self>) -> bool {
@@ -277,56 +262,36 @@ impl qobject::ExportBackend {
             return false;
         };
         let path = output::ensure_extension(path, "json");
-        let (sender, receiver) = std::sync::mpsc::channel();
-        let cancelled = Arc::new(AtomicBool::new(false));
-        thread::spawn(move || {
-            let result = json::export(&project, &path).map(|()| Completion::Json(path));
-            let _ = sender.send(JobEvent::Finished(result));
-        });
-        self.as_mut()
-            .begin_job(receiver, cancelled, "Exporting JSON");
-        true
+        self.as_mut().begin_job(
+            Job::spawn(
+                move |_, _| json::export(&project, &path).map(|()| Completion::Json(path)),
+                || {},
+            ),
+            "Exporting JSON",
+        )
     }
 
-    pub fn cancel(mut self: Pin<&mut Self>) {
+    pub fn cancel(self: Pin<&mut Self>) {
         if let Some(job) = self.as_ref().rust().job.as_ref() {
-            job.cancelled.store(true, Ordering::Relaxed);
-            self.as_mut()
-                .set_status(shrimply_i18n_qt::text("Canceling"));
+            job.cancel();
         }
     }
 
     pub fn poll(mut self: Pin<&mut Self>) {
-        let mut latest_progress = None;
-        let mut finished = None;
-        loop {
-            let event = {
-                let this = self.as_ref();
-                let Some(job) = this.rust().job.as_ref() else {
-                    return;
-                };
-                job.receiver.try_recv()
-            };
+        let (events, cancelling) = match self.as_mut().rust_mut().get_mut().job.as_mut() {
+            Some(job) => (job.poll(), job.is_cancelling()),
+            None => return,
+        };
+        for event in events {
             match event {
-                Ok(JobEvent::VideoProgress(event)) => latest_progress = Some(event),
-                Ok(JobEvent::Finished(result)) => {
-                    finished = Some(result);
-                    break;
-                }
-                Err(TryRecvError::Empty) => break,
-                Err(TryRecvError::Disconnected) => {
-                    finished = Some(Err(
-                        "The export worker stopped before reporting a result.".to_string()
-                    ));
-                    break;
-                }
+                Event::Started => {}
+                Event::Progress(progress) if !cancelling => self.as_mut().show_progress(progress),
+                Event::Progress(_) => {}
+                Event::Cancelling => self
+                    .as_mut()
+                    .set_status(shrimply_i18n_qt::text("Canceling")),
+                Event::Finished(outcome) => self.as_mut().finish(outcome),
             }
-        }
-        if let Some(event) = latest_progress {
-            self.as_mut().show_progress(event);
-        }
-        if let Some(result) = finished {
-            self.as_mut().finish(result);
         }
     }
 
@@ -354,129 +319,56 @@ impl qobject::ExportBackend {
 
     fn begin_job(
         mut self: Pin<&mut Self>,
-        receiver: Receiver<JobEvent>,
-        cancelled: Arc<AtomicBool>,
-        status: &'static str,
-    ) {
-        self.as_mut().rust_mut().get_mut().job = Some(ExportJob {
-            receiver,
-            cancelled,
-        });
+        job: Result<Job<Completion>, String>,
+        status: &str,
+    ) -> bool {
+        let job = match job {
+            Ok(job) => job,
+            Err(error) => {
+                self.as_mut().failed(
+                    shrimply_i18n_qt::text("Could not export"),
+                    QString::from(error),
+                );
+                return false;
+            }
+        };
+        self.as_mut().rust_mut().get_mut().job = Some(job);
         self.as_mut().set_progress(0.0);
         self.as_mut().set_progress_determinate(false);
         self.as_mut().set_status(shrimply_i18n_qt::text(status));
         self.as_mut()
             .set_progress_text(shrimply_i18n_qt::text(status));
         self.as_mut().set_busy(true);
+        true
     }
 
     fn show_progress(mut self: Pin<&mut Self>, event: video::ExportProgress) {
-        match event {
-            video::ExportProgress::MixingAudio {
-                current_frame,
-                total_frames,
-            } => self.as_mut().set_count_progress(
-                "Preparing audio",
-                "Preparing audio (%{percent}%)",
-                current_frame,
-                total_frames,
-            ),
-            video::ExportProgress::SettingUp(message) => {
-                self.as_mut().set_status(shrimply_i18n_qt::text(message));
-                self.as_mut()
-                    .set_progress_text(shrimply_i18n_qt::text(message));
-                self.as_mut().set_progress_determinate(false);
-            }
-            video::ExportProgress::EncodingAudio {
-                current_frame,
-                total_frames,
-            } => self.as_mut().set_count_progress(
-                "Encoding audio",
-                "Encoding audio (%{percent}%)",
-                current_frame,
-                total_frames,
-            ),
-            video::ExportProgress::EncodingVideo {
-                current_frame,
-                total_frames,
-                fps_milli,
-            } => {
-                let fraction = progress_fraction(current_frame, total_frames);
-                let mut arguments = vec![
-                    ("current", current_frame.to_string()),
-                    ("total", total_frames.to_string()),
-                    ("percent", format!("{:.0}", fraction * 100.0)),
-                ];
-                let key = if fps_milli > 0 {
-                    arguments.push((
-                        "fps",
-                        format!("{}.{}", fps_milli / 1_000, fps_milli % 1_000 / 100),
-                    ));
-                    arguments.push((
-                        "eta",
-                        time_format::human_duration(
-                            shrimply_math_media::duration_for_frames_at_millifps(
-                                total_frames.saturating_sub(current_frame),
-                                fps_milli,
-                            ),
-                        ),
-                    ));
-                    "%{current} of %{total} frames (%{percent}%) - %{fps} fps - %{eta} left"
-                } else {
-                    "%{current} of %{total} frames (%{percent}%)"
-                };
-                self.as_mut()
-                    .set_status(shrimply_i18n_qt::text("Rendering frames"));
-                self.as_mut()
-                    .set_progress_text(shrimply_i18n_qt::text_args(key, &arguments));
-                self.as_mut().set_progress(fraction);
-                self.as_mut().set_progress_determinate(true);
-            }
-            video::ExportProgress::Finalizing => {
-                self.as_mut()
-                    .set_status(shrimply_i18n_qt::text("Finishing file"));
-                self.as_mut()
-                    .set_progress_text(shrimply_i18n_qt::text("Finishing"));
-                self.as_mut().set_progress_determinate(false);
-            }
+        let event = progress::presentation(event);
+        self.as_mut()
+            .set_status(shrimply_i18n_qt::text(event.label));
+        self.as_mut().set_progress_text(shrimply_i18n_qt::text_args(
+            event.message,
+            &event.arguments.into_iter().collect::<Vec<_>>(),
+        ));
+        let fraction = event.fraction;
+        self.as_mut().set_progress_determinate(fraction.is_some());
+        if let Some(fraction) = fraction {
+            self.as_mut().set_progress(fraction);
         }
     }
 
-    fn set_count_progress(
-        mut self: Pin<&mut Self>,
-        status: &'static str,
-        text: &'static str,
-        current: u64,
-        total: u64,
-    ) {
-        let fraction = progress_fraction(current, total);
-        self.as_mut().set_status(shrimply_i18n_qt::text(status));
-        self.as_mut().set_progress_text(shrimply_i18n_qt::text_args(
-            text,
-            &[("percent", format!("{:.0}", fraction * 100.0))],
-        ));
-        self.as_mut().set_progress(fraction);
-        self.as_mut().set_progress_determinate(true);
-    }
-
-    fn finish(mut self: Pin<&mut Self>, result: Result<Completion, String>) {
-        let was_cancelled = self
-            .as_ref()
-            .rust()
-            .job
-            .as_ref()
-            .is_some_and(|job| job.cancelled.load(Ordering::Relaxed));
+    fn finish(mut self: Pin<&mut Self>, result: Outcome<Completion>) {
         self.as_mut().rust_mut().get_mut().job = None;
         self.as_mut().set_busy(false);
         match result {
-            Ok(Completion::Video { path, elapsed }) if !was_cancelled => {
+            Outcome::Complete(Completion::Video { path, elapsed }) => {
                 self.as_mut().rust_mut().get_mut().last_output = Some(path);
                 self.as_mut().succeeded(shrimply_i18n_qt::text_args(
                     "Video exported in %{duration}",
                     &[("duration", time_format::human_duration(elapsed))],
                 ));
             }
-            Ok(Completion::Captions(paths)) if !was_cancelled => {
+            Outcome::Complete(Completion::Captions(paths)) => {
                 let Some(path) = paths.first().cloned() else {
                     self.as_mut().failed(
                         shrimply_i18n_qt::text("Could not export captions"),
@@ -495,14 +387,13 @@ impl qobject::ExportBackend {
                 self.as_mut().rust_mut().get_mut().last_output = Some(path);
                 self.as_mut().succeeded(title);
             }
-            Ok(Completion::Json(path)) if !was_cancelled => {
+            Outcome::Complete(Completion::Json(path)) => {
                 self.as_mut().rust_mut().get_mut().last_output = Some(path);
                 self.as_mut()
                     .succeeded(shrimply_i18n_qt::text("JSON exported"));
             }
-            Ok(_) => self.as_mut().canceled(),
-            Err(_) if was_cancelled => self.as_mut().canceled(),
-            Err(error) => self.as_mut().failed(
+            Outcome::Cancelled => self.as_mut().canceled(),
+            Outcome::Failed(error) => self.as_mut().failed(
                 shrimply_i18n_qt::text("Could not export"),
                 QString::from(error),
             ),
@@ -528,13 +419,4 @@ fn video_filter(extension: &str) -> &'static str {
         "gif" => "GIF image (*.gif)",
         _ => unreachable!("unsupported video extension"),
     }
-}
-
-fn progress_fraction(current: u64, total: u64) -> f64 {
-    if total == 0 {
-        1.0
-    } else {
-        current as f64 / total as f64
-    }
-    .clamp(0.0, 1.0)
 }

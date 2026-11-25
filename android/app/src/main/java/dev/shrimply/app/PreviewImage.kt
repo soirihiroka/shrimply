@@ -2,8 +2,6 @@ package dev.shrimply.app
 
 import android.content.ClipData
 import android.content.ClipboardManager
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -15,7 +13,7 @@ import java.io.File
 
 /** Deliver Rust's completed PNG through Android's clipboard and document provider. */
 @Composable
-internal fun PreviewImageAction(timeline: TimelineSession, files: ProjectFiles) {
+internal fun PreviewImageAction(timeline: TimelineSession) {
     val snapshot by timeline.snapshot
     val image = snapshot.optJSONObject("preview_image")
     val context = LocalContext.current
@@ -24,19 +22,19 @@ internal fun PreviewImageAction(timeline: TimelineSession, files: ProjectFiles) 
     var pending by rememberSaveable { mutableStateOf<String?>(null) }
     var failure by remember { mutableStateOf<String?>(null) }
     suspend fun dismiss(value: JSONObject) { timeline.request("preview_image_dismiss", "id" to value.getString("id")) }
-    val save = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("image/png")) { uri ->
+    val save = rememberExportPicker { uri ->
         val target = pending?.let(::JSONObject)
         pending = null
         if (target != null) scope.launch {
             try {
-                if (uri != null) files.exportCompletedFile(target.getString("path"), uri)
-                dismiss(target)
+                if (uri == null) dismiss(target)
+                else timeline.request("preview_image_save", "id" to target.getString("id"), "destination" to uri.toString())
             } catch (error: Exception) { failure = error.message }
         }
     }
     LaunchedEffect(image?.optString("id"), image?.optString("status")) {
         val value = image ?: return@LaunchedEffect
-        if (value.getString("status") != "ready" || delivered == value.getString("id")) return@LaunchedEffect
+        if (value.getString("status") !in listOf("ready", "choose") || delivered == value.getString("id")) return@LaunchedEffect
         delivered = value.getString("id")
         try {
             when (value.getString("action")) {
@@ -46,15 +44,17 @@ internal fun PreviewImageAction(timeline: TimelineSession, files: ProjectFiles) 
                         ClipData.newUri(context.contentResolver, value.getString("label"), uri))
                     dismiss(value)
                 }
-                "save" -> { pending = value.toString(); save.launch(value.getString("filename")) }
+                "save" -> { pending = value.toString(); save(value) }
                 else -> error("Unknown native image delivery action")
             }
         } catch (error: Exception) { failure = error.message }
     }
-    if (image != null && (image.optString("status") == "failed" || failure != null)) {
-        AlertDialog(onDismissRequest = { failure = null; scope.launch { dismiss(image) } },
-            title = { Text(image.getString("error_title")) },
-            text = { Text(failure ?: image.getString("error")) },
-            confirmButton = { TextButton(onClick = { failure = null; scope.launch { dismiss(image) } }) { Text(image.getString("close_label")) } })
+    if (image != null && (image.optString("status") in listOf("complete", "failed") || failure != null)) {
+        val failed = failure != null || image.getString("status") == "failed"
+        val close: () -> Unit = { failure = null; scope.launch { dismiss(image) } }
+        AlertDialog(onDismissRequest = close,
+            title = { Text(image.getString(if (failed) "error_title" else "saved_title")) },
+            text = if (failed) ({ Text(failure ?: image.getString("error")) }) else null,
+            confirmButton = { TextButton(onClick = close) { Text(image.getString("close_label")) } })
     }
 }

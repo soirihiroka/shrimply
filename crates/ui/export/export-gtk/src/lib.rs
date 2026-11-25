@@ -1,6 +1,7 @@
 use shrimply_components_gtk::tr;
 use shrimply_components_gtk::ui::I18nMenuExt;
 pub use shrimply_export_core::audio;
+use shrimply_export_core::job::{Event, Job, Outcome};
 use shrimply_export_core::output;
 pub use shrimply_export_cuda as video;
 
@@ -290,66 +291,86 @@ fn start_video_export(
     settings: video::ExportSettings,
 ) {
     let path = settings.path.clone();
-    let (progress_dialog, state_label, progress_bar) = video_export_progress_dialog(parent);
-    let job = match shrimply_export_core::job::Job::spawn(
+    let job = Job::spawn(
         move |cancelled, progress| video::export_project(project, settings, cancelled, progress),
         || {},
-    ) {
-        Ok(job) => Rc::new(RefCell::new(job)),
-        Err(error) => {
-            progress_dialog.close();
-            show_export_error(parent, "Could not export video", &error);
-            return;
-        }
-    };
-    progress_dialog.connect_closed({
-        let job = job.clone();
-        move |_| job.borrow().cancel()
-    });
+    );
     let started = Instant::now();
-    let parent = parent.clone();
+    let dialog_parent = parent.clone();
     let toasts = toasts.clone();
-    glib::timeout_add_local(Duration::from_millis(100), move || {
-        let update = job.borrow_mut().poll();
-        if let Some(progress) = update.progress {
-            update_video_export_progress(&state_label, &progress_bar, progress);
-        }
-        let finished = update.finished;
-        match finished {
-            Some(Ok(())) => {
-                progress_dialog.close();
+    present_export_job(
+        parent,
+        "Exporting Video",
+        "Preparing",
+        job,
+        move |outcome| match outcome {
+            Outcome::Complete(()) => {
                 let title = shrimply_components_gtk::i18n::text_args(
                     "Video exported in %{duration}",
                     &[("duration", time_format::human_duration(started.elapsed()))],
                 );
                 shrimply_components_gtk::export_feedback::show_export_finished_text(
-                    &toasts, &parent, &title, &path,
+                    &toasts,
+                    &dialog_parent,
+                    &title,
+                    &path,
                 );
-                glib::ControlFlow::Break
             }
-            Some(Err(error)) => {
-                let was_cancelled = job.borrow().cancelled();
-                progress_dialog.close();
-                if !was_cancelled {
-                    show_export_error(&parent, "Could not export video", &error);
-                }
-                glib::ControlFlow::Break
+            Outcome::Failed(error) => {
+                show_export_error(&dialog_parent, "Could not export video", &error)
             }
-            None => {
-                if progress_bar.fraction() <= 0.0 {
-                    progress_bar.pulse();
-                }
-                glib::ControlFlow::Continue
-            }
+            Outcome::Cancelled => {}
+        },
+    );
+}
+
+pub fn present_export_job(
+    parent: &impl IsA<gtk::Widget>,
+    title: &str,
+    label: &str,
+    job: Result<Job, String>,
+    on_outcome: impl Fn(Outcome<()>) + 'static,
+) {
+    let job = match job {
+        Ok(job) => Rc::new(RefCell::new(job)),
+        Err(error) => {
+            on_outcome(Outcome::Failed(error));
+            return;
         }
+    };
+    let (dialog, state, bar) = export_progress_dialog(parent, title, label);
+    dialog.connect_closed({
+        let job = job.clone();
+        move |_| job.borrow().cancel()
+    });
+    glib::timeout_add_local(Duration::from_millis(100), move || {
+        let outcome = job.borrow_mut().poll().find_map(|event| match event {
+            Event::Progress(progress) => {
+                update_export_progress(&state, &bar, progress);
+                None
+            }
+            Event::Finished(outcome) => Some(outcome),
+            Event::Started | Event::Cancelling => None,
+        });
+        if let Some(outcome) = outcome {
+            dialog.close();
+            on_outcome(outcome);
+            return glib::ControlFlow::Break;
+        }
+        if bar.fraction() <= 0.0 {
+            bar.pulse();
+        }
+        glib::ControlFlow::Continue
     });
 }
 
-fn video_export_progress_dialog(
-    parent: &adw::ApplicationWindow,
+fn export_progress_dialog(
+    parent: &impl IsA<gtk::Widget>,
+    title: &str,
+    label: &str,
 ) -> (adw::Dialog, gtk::Label, gtk::ProgressBar) {
     let dialog = adw::Dialog::builder()
-        .title(tr!("Exporting Video").as_ref())
+        .title(tr!(title).as_ref())
         .content_width(460)
         .build();
 
@@ -359,7 +380,7 @@ fn video_export_progress_dialog(
     content.set_margin_start(24);
     content.set_margin_end(24);
 
-    let state = gtk::Label::new(Some(tr!("Preparing").as_ref()));
+    let state = gtk::Label::new(Some(tr!(label).as_ref()));
     state.set_halign(gtk::Align::Center);
     state.set_wrap(true);
 
@@ -367,7 +388,7 @@ fn video_export_progress_dialog(
 
     let progress = gtk::ProgressBar::new();
     progress.set_show_text(true);
-    progress.set_text(Some(tr!("Preparing").as_ref()));
+    progress.set_text(Some(tr!(label).as_ref()));
     progress.pulse();
     progress_box.append(&progress);
 
@@ -378,11 +399,11 @@ fn video_export_progress_dialog(
     toolbar.add_top_bar(&adw::HeaderBar::new());
     toolbar.set_content(Some(&content));
     dialog.set_child(Some(&toolbar));
-    dialog.present(Some(parent.upcast_ref::<gtk::Widget>()));
+    dialog.present(Some(parent));
     (dialog, state, progress)
 }
 
-fn update_video_export_progress(
+fn update_export_progress(
     state: &gtk::Label,
     progress: &gtk::ProgressBar,
     event: video::ExportProgress,

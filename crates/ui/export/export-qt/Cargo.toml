@@ -12,7 +12,6 @@ shrimply-cross-ui-core = { workspace = true }
 shrimply-export-core = { workspace = true, default-features = true }
 shrimply-export-cuda = { workspace = true }
 shrimply-i18n-qt = { workspace = true }
-shrimply-math-media = { workspace = true }
 shrimply-components-qt = { workspace = true }
 shrimply-application-qt = { workspace = true }
 shrimply-editor-state = { workspace = true }

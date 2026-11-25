@@ -1,17 +1,14 @@
 //! Shared configuration, jobs and native-control descriptions for timeline services.
 mod presentation;
 use serde_json::{Value, json};
-use shrimply_export_core::{audio, job::Job};
+use shrimply_export_core::audio;
 use shrimply_inspector_core::tts;
 use shrimply_preferences_core::{self as preferences, SharedPreferences};
 use shrimply_timeline_skia::{
     ContextMenuRequest, caption_speech, scene::Scene, silence, transcription,
 };
 use shrimply_tts::{TtsModel, TtsSettings};
-use std::{
-    path::PathBuf,
-    sync::{Arc, atomic::Ordering},
-};
+use std::sync::Arc;
 
 enum Operation {
     Speech {
@@ -38,7 +35,6 @@ enum Catalog {
 enum Running {
     Speech(caption_speech::Handle),
     Transcribe(transcription::Handle),
-    Audio(Job<PathBuf>),
 }
 pub struct Session {
     id: String,
@@ -51,8 +47,6 @@ pub struct Session {
     stage: &'static str,
     message: String,
     error: Option<String>,
-    directory: Option<PathBuf>,
-    output: Option<Value>,
     cancelling: bool,
     close_pending: bool,
     references: Vec<shrimply_asset::AssetSnapshot>,
@@ -103,8 +97,6 @@ impl Session {
             stage: "configure",
             message: String::new(),
             error: None,
-            directory: None,
-            output: None,
             cancelling: false,
             close_pending: false,
             references: Vec::new(),
@@ -157,6 +149,21 @@ impl Session {
         Ok(())
     }
 
+    pub fn audio_export(
+        &self,
+        revision: u64,
+        request: &Value,
+    ) -> Result<(shrimply_project_document::Project, audio::Format), String> {
+        self.accepts(request)?;
+        let Operation::Audio { project, format } = &self.operation else {
+            return Err("This timeline service does not export audio".into());
+        };
+        if revision != self.revision || request["format"] != format.extension() {
+            return Err("The audio export settings changed while choosing a destination".into());
+        }
+        Ok((project.clone(), *format))
+    }
+
     pub fn validate_file(&self, request: &Value) -> Result<(), String> {
         self.accepts(request)?;
         if self.stage != "configure" {
@@ -195,7 +202,7 @@ impl Session {
         let action = request["action"]
             .as_str()
             .ok_or("Timeline service action is required")?;
-        if matches!(action, "dismiss" | "close" | "saved") {
+        if matches!(action, "dismiss" | "close") {
             if self.running.is_some() {
                 self.close_pending = true;
                 self.cancel();
@@ -343,42 +350,7 @@ impl Session {
                 };
                 None
             }
-            Operation::Audio { project, format } => {
-                let directory = shrimply_path_core::cache_directory()?
-                    .join("exports")
-                    .join(&self.id);
-                std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
-                let path = directory.join(format!("selected-audio.{}", format.extension()));
-                self.directory = Some(directory);
-                let project = project.clone();
-                let format = *format;
-                let wake = self.wake.clone();
-                Some(Running::Audio(Job::spawn(
-                    move |cancelled, progress| {
-                        audio::export_with_progress(&project, &path, format, |update| {
-                            progress(match update {
-                                audio::ExportProgress::Mixing {
-                                    completed_frames,
-                                    total_frames,
-                                } => shrimply_export_core::video::ExportProgress::MixingAudio {
-                                    current_frame: completed_frames,
-                                    total_frames,
-                                },
-                                audio::ExportProgress::Encoding {
-                                    completed_frames,
-                                    total_frames,
-                                } => shrimply_export_core::video::ExportProgress::EncodingAudio {
-                                    current_frame: completed_frames,
-                                    total_frames,
-                                },
-                            });
-                            !cancelled.load(Ordering::Acquire)
-                        })?;
-                        Ok(path)
-                    },
-                    move || wake(),
-                )?))
-            }
+            Operation::Audio { .. } => return Err("Choose an export destination first".into()),
         };
         self.stage = if self.running.is_some() {
             "running"
@@ -394,7 +366,6 @@ impl Session {
             match running {
                 Running::Speech(handle) => handle.cancel(),
                 Running::Transcribe(handle) => handle.cancel(),
-                Running::Audio(job) => job.cancel(),
             }
         }
     }
@@ -481,24 +452,6 @@ impl Session {
                     }
                 }
             }
-            Some(Running::Audio(job)) => {
-                let update = job.poll();
-                changed |= update.progress.is_some() || update.finished.is_some();
-                if let Some(progress) = update.progress {
-                    let presentation =
-                        shrimply_export_core::video::progress::presentation(progress);
-                    self.message = shrimply_i18n::text_args(
-                        presentation.message,
-                        &presentation.arguments.into_iter().collect::<Vec<_>>(),
-                    );
-                }
-                if let Some(result) = update.finished {
-                    finished = Some(result.map(|path| {
-                    self.output = Some(json!({"path":path,"filename":path.file_name().and_then(|name| name.to_str()).expect("audio export filename"),"mime":match &self.operation { Operation::Audio { format, .. } => format.mime_type(), _ => unreachable!("audio export operation") }}));
-                    "Audio exported".into()
-                }));
-                }
-            }
             None => {}
         }
         if let Some(result) = finished {
@@ -568,11 +521,7 @@ impl Session {
         self.cancel();
         self.running = None;
         self.catalog_loading = false;
-        self.cleanup_references(scene, false)?;
-        if let Some(directory) = self.directory.take() {
-            std::fs::remove_dir_all(directory).map_err(|error| error.to_string())?;
-        }
-        Ok(())
+        self.cleanup_references(scene, false)
     }
 }
 impl Drop for Session {

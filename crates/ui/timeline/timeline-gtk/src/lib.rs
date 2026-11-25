@@ -18,6 +18,7 @@ pub mod preferences {
 pub mod export {
     pub use shrimply_components_gtk::export_feedback::show_export_finished_for_widget;
     pub use shrimply_export_core::audio;
+    pub use shrimply_export_gtk::present_export_job;
 }
 
 use shrimply_playback_performance as playback_performance;

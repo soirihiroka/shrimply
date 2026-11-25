@@ -156,20 +156,27 @@ fn finish_export(
     toasts: &adw::ToastOverlay,
     outputs: Vec<CaptionOutput>,
 ) {
-    match write_export(outputs) {
-        Ok(paths) => {
-            let title = if paths.len() == 1 {
-                tr!("Captions exported").into_owned()
-            } else {
-                shrimply_components_gtk::i18n::text_args(
-                    "%{count} caption files exported",
-                    &[("count", paths.len().to_string())],
-                )
-            };
-            shrimply_components_gtk::export_feedback::show_export_finished_text(
-                toasts, parent, &title, &paths[0],
-            );
-        }
-        Err(error) => show_export_error(parent, "Could not export captions", &error),
-    }
+    shrimply_export_core::job::run(
+        Default::default(),
+        |_, _| write_export(outputs),
+        |event| match event {
+            Event::Finished(Outcome::Complete(paths)) => {
+                let title = if paths.len() == 1 {
+                    tr!("Captions exported").into_owned()
+                } else {
+                    shrimply_components_gtk::i18n::text_args(
+                        "%{count} caption files exported",
+                        &[("count", paths.len().to_string())],
+                    )
+                };
+                shrimply_components_gtk::export_feedback::show_export_finished_text(
+                    toasts, parent, &title, &paths[0],
+                );
+            }
+            Event::Finished(Outcome::Failed(error)) => {
+                show_export_error(parent, "Could not export captions", &error)
+            }
+            _ => {}
+        },
+    );
 }

@@ -1,5 +1,8 @@
 use crate::render_options::Options;
-use shrimply_export_core::video::{ExportProgress, ExportVideoCodec, settings::VideoEncoder};
+use shrimply_export_core::{
+    job::{self, Event, Outcome},
+    video::{ExportProgress, ExportVideoCodec, settings::VideoEncoder},
+};
 #[cfg(not(target_os = "macos"))]
 use shrimply_export_cuda::settings_backend;
 #[cfg(target_os = "macos")]
@@ -8,7 +11,6 @@ use shrimply_preferences_core as preferences;
 use shrimply_project_document::project;
 use std::{
     path::PathBuf,
-    sync::{Arc, atomic::AtomicBool},
     time::{Duration, Instant},
 };
 
@@ -40,11 +42,26 @@ pub fn run(options: Options) -> Result<(), String> {
     use shrimply_export_cuda::export_project;
     #[cfg(target_os = "macos")]
     use shrimply_export_metal::export_project;
-    export_project(
-        project,
-        settings,
-        Arc::new(AtomicBool::new(false)),
-        |progress| {
+    let mut result = Ok(());
+    job::run(
+        Default::default(),
+        move |cancelled, progress| export_project(project, settings, cancelled, progress),
+        |event| {
+            let progress = match event {
+                Event::Progress(progress) => progress,
+                Event::Finished(outcome) => {
+                    result = match outcome {
+                        Outcome::Complete(()) => {
+                            eprintln!("Rendered {}", options.output.display());
+                            Ok(())
+                        }
+                        Outcome::Cancelled => Err("Export cancelled".into()),
+                        Outcome::Failed(error) => Err(error),
+                    };
+                    return;
+                }
+                Event::Started | Event::Cancelling => return,
+            };
             let immediate = matches!(
                 progress,
                 ExportProgress::SettingUp(_) | ExportProgress::Finalizing
@@ -77,9 +94,8 @@ pub fn run(options: Options) -> Result<(), String> {
                 ExportProgress::Finalizing => eprintln!("Finalizing"),
             }
         },
-    )?;
-    eprintln!("Rendered {}", options.output.display());
-    Ok(())
+    );
+    result
 }
 
 #[cfg(not(target_os = "macos"))]

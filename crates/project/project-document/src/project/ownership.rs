@@ -3,6 +3,8 @@ use serde::{Deserialize, Serialize};
 use std::ffi::OsStr;
 use std::fs::{self, OpenOptions};
 use std::io::ErrorKind;
+#[cfg(unix)]
+use std::os::fd::AsRawFd;
 #[cfg(windows)]
 use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
 use std::path::{Path, PathBuf};
@@ -121,7 +123,7 @@ pub fn acquire_project_lock(path: &Path) -> Result<(), ProjectLockError> {
         .write(true)
         .open(directory.join("project-ownership.lock"))
         .map_err(|error| ProjectLockError::CouldNotCreate(error.to_string()))?;
-    gate.lock()
+    lock_project_gate(&gate)
         .map_err(|error| ProjectLockError::CouldNotCreate(error.to_string()))?;
 
     let owner = current_project_lock_owner().map_err(ProjectLockError::CouldNotCreate)?;
@@ -150,6 +152,24 @@ pub fn acquire_project_lock(path: &Path) -> Result<(), ProjectLockError> {
         "could not create lock for {}",
         canonical_path.display()
     )))
+}
+
+#[cfg(unix)]
+fn lock_project_gate(gate: &fs::File) -> std::io::Result<()> {
+    loop {
+        if unsafe { libc::flock(gate.as_raw_fd(), libc::LOCK_EX) } == 0 {
+            return Ok(());
+        }
+        let error = std::io::Error::last_os_error();
+        if error.kind() != ErrorKind::Interrupted {
+            return Err(error);
+        }
+    }
+}
+
+#[cfg(not(unix))]
+fn lock_project_gate(gate: &fs::File) -> std::io::Result<()> {
+    gate.lock()
 }
 
 pub fn release_project_lock(path: &Path) {

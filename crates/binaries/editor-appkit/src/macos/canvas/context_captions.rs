@@ -6,6 +6,7 @@ use objc2_app_kit::{
 use objc2_foundation::ns_string;
 use objc2_uniform_type_identifiers::{UTType, UTTypeText};
 use shrimply_caption_export_core::{prepare_export, write_export};
+use shrimply_export_core::job::{self, Event, Outcome};
 
 impl CanvasView {
     pub(in crate::macos) fn export_captions(&self) -> Result<(), String> {
@@ -57,30 +58,44 @@ impl CanvasView {
                 return Ok(());
             }
         }
-        let paths = write_export(outputs)?;
-        let alert = NSAlert::new(self.mtm());
-        alert.setMessageText(ns_string!("Captions exported"));
-        alert.setInformativeText(&NSString::from_str(&format!(
-            "{} caption file(s) exported.\n{}",
-            paths.len(),
-            paths
-                .iter()
-                .map(|path| path.display().to_string())
-                .collect::<Vec<_>>()
-                .join("\n"),
-        )));
-        alert.addButtonWithTitle(ns_string!("Show in Finder"));
-        alert.addButtonWithTitle(ns_string!("Close"));
-        if alert.runModal() == NSAlertFirstButtonReturn {
-            let urls = paths
-                .iter()
-                .map(|path| {
-                    NSURL::from_file_path(path).expect("exported paths are valid file URLs")
-                })
-                .collect::<Vec<_>>();
-            NSWorkspace::sharedWorkspace()
-                .activateFileViewerSelectingURLs(&NSArray::from_retained_slice(&urls));
-        }
-        Ok(())
+        let mut result = Ok(());
+        job::run(
+            Default::default(),
+            |_, _| write_export(outputs),
+            |event| {
+                let paths = match event {
+                    Event::Finished(Outcome::Complete(paths)) => paths,
+                    Event::Finished(Outcome::Failed(error)) => {
+                        result = Err(error);
+                        return;
+                    }
+                    _ => return,
+                };
+                let alert = NSAlert::new(self.mtm());
+                alert.setMessageText(ns_string!("Captions exported"));
+                alert.setInformativeText(&NSString::from_str(&format!(
+                    "{} caption file(s) exported.\n{}",
+                    paths.len(),
+                    paths
+                        .iter()
+                        .map(|path| path.display().to_string())
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                )));
+                alert.addButtonWithTitle(ns_string!("Show in Finder"));
+                alert.addButtonWithTitle(ns_string!("Close"));
+                if alert.runModal() == NSAlertFirstButtonReturn {
+                    let urls = paths
+                        .iter()
+                        .map(|path| {
+                            NSURL::from_file_path(path).expect("exported paths are valid file URLs")
+                        })
+                        .collect::<Vec<_>>();
+                    NSWorkspace::sharedWorkspace()
+                        .activateFileViewerSelectingURLs(&NSArray::from_retained_slice(&urls));
+                }
+            },
+        );
+        result
     }
 }

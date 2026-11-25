@@ -9,7 +9,7 @@ import androidx.compose.ui.unit.dp
 import org.json.JSONObject
 
 @Composable
-internal fun CaptionExportSettings(timeline: TimelineSession, projectPath: String, dismiss: () -> Unit, export: (Array<out Pair<String, Any>>) -> Unit) {
+internal fun CaptionExportSettings(timeline: TimelineSession, projectPath: String, enabled: Boolean, dismiss: () -> Unit, export: (Array<out Pair<String, Any>>) -> Unit) {
     var schema by remember { mutableStateOf<JSONObject?>(null) }
     var format by rememberSaveable(projectPath) { mutableStateOf("ytt") }
     var mode by rememberSaveable(projectPath) { mutableStateOf("merge") }
@@ -22,11 +22,11 @@ internal fun CaptionExportSettings(timeline: TimelineSession, projectPath: Strin
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             if (schema == null && error == null) LinearProgressIndicator(Modifier.fillMaxWidth())
             schema?.let {
-                ExportChoice("Format", format, it.getJSONArray("formats")) { format = it }
-                ExportChoice("Tracks", mode, it.getJSONArray("modes")) { mode = it }
+                ExportChoice("Format", format, it.getJSONArray("formats"), enabled) { format = it }
+                ExportChoice("Tracks", mode, it.getJSONArray("modes"), enabled) { mode = it }
             }
             error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         }
-    }, confirmButton = { TextButton(enabled = schema != null, onClick = { export(arrayOf("format" to format, "mode" to mode)) }) { Text(tr("Export")) } },
-        dismissButton = { TextButton(onClick = dismiss) { Text(tr("Cancel")) } })
+    }, confirmButton = { TextButton(enabled = enabled && schema != null, onClick = { export(arrayOf("format" to format, "mode" to mode)) }) { Text(tr("Export")) } },
+        dismissButton = { TextButton(enabled = enabled, onClick = dismiss) { Text(tr("Cancel")) } })
 }

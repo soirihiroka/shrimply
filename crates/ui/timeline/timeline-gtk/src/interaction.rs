@@ -1,8 +1,6 @@
 use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, mpsc::TryRecvError};
 use std::thread;
 use std::time::Duration;

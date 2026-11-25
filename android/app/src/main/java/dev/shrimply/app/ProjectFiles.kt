@@ -128,30 +128,6 @@ internal class ProjectFiles(context: Context) : AutoCloseable {
         }
     }
 
-    suspend fun exportCompletedFile(path: String, destination: Uri) = withContext(Dispatchers.IO) {
-        mutex.withLock {
-            check(!closing) { "Project session closed" }
-            val source = File(path).canonicalFile
-            check(source.toPath().startsWith(File(context.cacheDir, "exports").canonicalFile.toPath()) && source.isFile) { "The completed export is unavailable." }
-            source.inputStream().use { input ->
-                checkNotNull(resolver.openOutputStream(destination, "wt")) { "Could not open the export destination." }.use { output ->
-                    check(input.copyTo(output) == source.length()) { "The export changed while it was being saved." }
-                    output.flush()
-                }
-            }
-        }
-    }
-
-    suspend fun exportCompletedFolder(path: String, destination: Uri, mime: String, progress: (String) -> Unit) = withContext(Dispatchers.IO) {
-        mutex.withLock {
-            check(!closing) { "Project session closed" }
-            val folder = File(path).canonicalFile
-            check(folder.toPath().startsWith(File(context.cacheDir, "exports").canonicalFile.toPath()) && folder.isDirectory) { "The completed export is unavailable." }
-            recoverUploads(destination)
-            copyTo(folder, destination, DocumentsContract.getTreeDocumentId(destination), mime, progress)
-        }
-    }
-
     suspend fun importFile(source: Uri, consume: suspend (String, String, java.io.FileDescriptor) -> Unit) = withContext(Dispatchers.IO) {
         // Directory CREATE events can trigger recursive mirror scans. Keep those
         // scans behind the complete native import, including validation/rollback.

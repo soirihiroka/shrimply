@@ -10,51 +10,6 @@ pub fn localized(event: ExportProgress) -> serde_json::Value {
         "message":shrimply_i18n::text_args(value.message,&arguments),"fraction":value.fraction})
 }
 
-/// Native hosts render this job state without inventing labels or cancel policy.
-pub fn job_view(state: &serde_json::Value) -> serde_json::Value {
-    use serde_json::json;
-    use shrimply_i18n::text;
-    let captions = state["kind"] == "captions";
-    let running = state["status"] == "running";
-    let complete = state["status"] == "complete";
-    let cancelling = state["cancelling"] == true;
-    let title = match state["status"].as_str().expect("export status") {
-        "running" => {
-            if captions {
-                "Export Captions"
-            } else {
-                "Export Video"
-            }
-        }
-        "complete" => {
-            if captions {
-                "Captions exported"
-            } else {
-                "Video exported"
-            }
-        }
-        "cancelled" => "Export cancelled",
-        "failed" => {
-            if captions {
-                "Could not export captions"
-            } else {
-                "Could not export video"
-            }
-        }
-        _ => unreachable!("export job status"),
-    };
-    let dismiss = if running {
-        "export_cancel"
-    } else {
-        "export_dismiss"
-    };
-    json!({"title":text(title),"running":running,"complete":complete,"failed":state["status"] == "failed",
-        "dismiss":dismiss,"cancelling":if cancelling {Some(text("Cancelling…"))} else {None},
-        "confirm":{"label":text(if complete {"Save"} else if running {"Cancel"} else {"Close"}),
-            "action":if complete {"save"} else {dismiss},"enabled":!running || !cancelling},
-        "secondary":if complete {Some(json!({"label":text("Close"),"action":"export_dismiss"}))} else {None}})
-}
-
 #[derive(Serialize)]
 pub struct Presentation {
     pub label: &'static str,

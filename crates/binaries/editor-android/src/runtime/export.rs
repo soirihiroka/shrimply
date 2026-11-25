@@ -1,8 +1,11 @@
 use super::Runtime;
+use crate::bridge::export::write_document;
 use serde_json::{Value, json};
 use shrimply_caption_export_core::{self as captions, CaptionFormat, ExportMode};
 use shrimply_export_core::{
-    job::Job,
+    audio,
+    job::{Event, Job, Outcome},
+    output::default_filename,
     video::{self, settings},
 };
 use shrimply_project_document::Project;
@@ -13,85 +16,178 @@ use std::{
         atomic::{AtomicBool, Ordering},
     },
 };
-use tempfile::TempDir;
 
 pub(super) struct Export {
-    job: Job<(TempDir, Vec<PathBuf>)>,
+    job: Job<Vec<String>>,
     pub state: Value,
-    completed_directory: Option<TempDir>,
 }
 
 enum Operation {
-    Video(video::ExportSettings, usize),
-    Captions(captions::ExportSettings, PathBuf),
+    Video(video::ExportSettings),
+    Captions(captions::ExportSettings),
+    Audio(audio::Format),
 }
 
 impl Operation {
+    fn from_request(project: &Project, request: &Value) -> Result<Self, String> {
+        match request["kind"].as_str() {
+            Some("video") => Ok(Self::Video(
+                settings::parse_configuration(
+                    project,
+                    PathBuf::new(),
+                    request,
+                    shrimply_export_core::android::settings_backend(),
+                )?
+                .common,
+            )),
+            Some("captions") => {
+                let format = CaptionFormat::ALL
+                    .into_iter()
+                    .find(|format| request["format"] == format.extension())
+                    .ok_or("Unknown caption export format")?;
+                let mode = match request["mode"].as_str() {
+                    Some("merge") => ExportMode::Merge,
+                    Some("separate") => ExportMode::Separate,
+                    _ => return Err("Unknown caption export track mode".into()),
+                };
+                Ok(Self::Captions(captions::ExportSettings { format, mode }))
+            }
+            _ => Err("Unknown export kind".into()),
+        }
+    }
+
+    fn document_type(&self) -> (&'static str, &'static str, bool) {
+        match self {
+            Self::Video(settings) => (
+                video::extension_for_container(settings.container),
+                video::mime_type(settings.container),
+                false,
+            ),
+            Self::Captions(settings) => (
+                settings.format.extension(),
+                settings.format.mime_type(),
+                settings.mode == ExportMode::Separate,
+            ),
+            Self::Audio(format) => (format.extension(), format.mime_type(), false),
+        }
+    }
+
+    fn filename(&self, project: &Project) -> Result<String, String> {
+        let suggested = default_filename(project, self.document_type().0);
+        Path::new(&suggested)
+            .file_name()
+            .map(|filename| filename.to_string_lossy().into_owned())
+            .ok_or_else(|| "Invalid export filename".to_string())
+    }
+
     fn run(
         self,
         project: Project,
+        uri: &str,
+        limit: usize,
         cancelled: Arc<AtomicBool>,
         progress: &mut dyn FnMut(video::ExportProgress),
-    ) -> Result<Vec<PathBuf>, String> {
+    ) -> Result<Vec<String>, String> {
+        let (_, mime, folder) = self.document_type();
+        let filename = self.filename(&project)?;
         match self {
-            Self::Video(settings, limit) => {
-                let path = settings.path.clone();
-                shrimply_export_core::android::export_project(
-                    project, settings, limit, cancelled, progress,
-                )?;
-                Ok(vec![path])
+            Self::Video(mut settings) => {
+                settings.path = filename.into();
+                let name = write_document(uri, mime, None, |open| {
+                    shrimply_export_core::android::export_project(
+                        project, settings, limit, open, cancelled, progress,
+                    )
+                })?;
+                Ok(vec![name])
             }
-            Self::Captions(settings, path) => {
+            Self::Captions(settings) => {
                 progress(video::ExportProgress::SettingUp("Exporting Captions"));
-                let outputs = captions::prepare_export(&project, &path, settings)?;
-                if cancelled.load(Ordering::Acquire) {
-                    return Err("Export cancelled".into());
+                let outputs = captions::prepare_export(&project, Path::new(&filename), settings)?;
+                let mut names = Vec::with_capacity(outputs.len());
+                for output in outputs {
+                    check_cancelled(&cancelled)?;
+                    let name = output
+                        .path
+                        .file_name()
+                        .expect("caption filename")
+                        .to_string_lossy();
+                    match write_document(uri, mime, folder.then_some(name.as_ref()), |open| {
+                        check_cancelled(&cancelled)?;
+                        shrimply_export_core::android::write_document(
+                            open()?,
+                            output.content.as_bytes(),
+                            cancelled.clone(),
+                        )
+                        .map_err(|error| format!("Write captions: {error}"))?;
+                        check_cancelled(&cancelled)
+                    }) {
+                        Ok(name) => names.push(name),
+                        Err(error) if names.is_empty() => return Err(error),
+                        Err(error) => {
+                            return Err(format!(
+                                "{error}\nFiles already exported: {}",
+                                names.join("\n")
+                            ));
+                        }
+                    }
                 }
-                captions::write_export(outputs)
+                Ok(names)
+            }
+            Self::Audio(format) => {
+                let name = write_document(uri, mime, None, |open| {
+                    audio::export_to_stream(
+                        &project,
+                        format,
+                        || {
+                            shrimply_export_core::android::open_document_stream(
+                                open()?,
+                                cancelled.clone(),
+                            )
+                        },
+                        |event| {
+                            progress(event.into());
+                            !cancelled.load(Ordering::Acquire)
+                        },
+                    )
+                })?;
+                Ok(vec![name])
             }
         }
     }
 }
 
+fn check_cancelled(cancelled: &AtomicBool) -> Result<(), String> {
+    if cancelled.load(Ordering::Acquire) {
+        Err("Export cancelled".into())
+    } else {
+        Ok(())
+    }
+}
+
 impl Export {
     pub fn poll(&mut self) -> bool {
-        let update = self.job.poll();
-        let changed = update.progress.is_some() || update.finished.is_some();
-        if let Some(progress) = update.progress {
-            self.state["progress"] = video::progress::localized(progress);
-        }
-        if let Some(result) = update.finished {
-            match result {
-                Ok((directory, paths)) => {
-                    self.completed_directory = Some(directory);
-                    let files: Vec<_> = paths
-                        .into_iter()
-                        .map(|path| {
-                            let filename = path
-                                .file_name()
-                                .expect("export filename")
-                                .to_string_lossy()
-                                .into_owned();
-                            json!({"path":path,"filename":filename})
-                        })
-                        .collect();
-                    if !self.state["separate"].as_bool().expect("export mode") {
-                        assert_eq!(files.len(), 1, "merged export has exactly one output");
-                        self.state["path"] = files[0]["path"].clone();
-                        self.state["filename"] = files[0]["filename"].clone();
-                    }
-                    self.state["files"] = json!(files);
+        let mut changed = false;
+        for event in self.job.poll() {
+            changed = true;
+            match event {
+                Event::Started => {}
+                Event::Progress(progress) => {
+                    self.state["progress"] = video::progress::localized(progress)
+                }
+                Event::Cancelling => self.state["cancelling"] = json!(true),
+                Event::Finished(Outcome::Complete(names)) => {
+                    self.state["files"] = json!(names);
                     self.state["status"] = json!("complete");
                 }
-                Err(_) if self.job.cancelled() => self.state["status"] = json!("cancelled"),
-                Err(error) => {
+                Event::Finished(Outcome::Cancelled) => self.state["status"] = json!("cancelled"),
+                Event::Finished(Outcome::Failed(error)) => {
                     self.state["status"] = json!("failed");
                     self.state["error"] = json!(error);
                 }
             }
         }
         if changed {
-            self.state["presentation"] = video::progress::job_view(&self.state);
+            self.state["presentation"] = job_view(&self.state);
         }
         changed
     }
@@ -113,46 +209,31 @@ impl Runtime {
                     request.get("values"),
                 ))
             }
-            "export_validate" => {
+            "export_destination" => {
                 let project = self.backend.project().ok_or("Open a project first")?;
-                settings::parse_configuration(
-                    &project,
-                    PathBuf::new(),
-                    request,
-                    shrimply_export_core::android::settings_backend(),
-                )?;
-                Ok(json!({}))
+                let operation = Operation::from_request(&project, request)?;
+                let (_, mime, folder) = operation.document_type();
+                Ok(json!({"filename":operation.filename(&project)?,"mime":mime,"folder":folder}))
             }
             "caption_export_schema" => Ok(json!({
                 "formats":CaptionFormat::ALL.map(|format| json!({"value":format.extension(),"label":format.label()})),
                 "modes":[{"value":"merge","label":"Merge into one file"},{"value":"separate","label":"Export each track separately"}]
             })),
-            "export_video" | "export_captions" => self.start_export(request),
-            "export_cancel" | "export_dismiss" | "export_saved" => {
+            "export_start" => self.start_export(request),
+            "export_cancel" | "export_dismiss" => {
                 let export = self.export.as_mut().ok_or("No export is active")?;
                 if request["id"] != export.state["id"] {
                     return Err("The export changed while this action was open".into());
                 }
+                export.poll();
                 if operation == "export_cancel" {
-                    export.job.cancel();
-                    export.state["cancelling"] = json!(true);
-                    export.state["presentation"] = video::progress::job_view(&export.state);
+                    if export.state["status"] == "running" {
+                        export.job.cancel();
+                        export.poll();
+                    }
                 } else {
-                    export.poll();
                     if export.state["status"] == "running" {
                         return Err("Wait for the export to stop before dismissing it".into());
-                    }
-                    if operation == "export_saved" && export.state["status"] != "complete" {
-                        return Err("Only a completed export can be saved".into());
-                    }
-                    if let Some(directory) = &export.completed_directory {
-                        // Keep ownership if removal fails so Close can be retried.
-                        match std::fs::remove_dir_all(directory.path()) {
-                            Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
-                                return Err(error.to_string());
-                            }
-                            _ => {}
-                        }
                     }
                     self.export = None;
                 }
@@ -170,74 +251,86 @@ impl Runtime {
         {
             return Err("An export is already running".into());
         }
-        self.backend.save()?;
-        let project = self
-            .backend
-            .project()
-            .ok_or("open a project first")?
-            .clone();
-        let id = uuid::Uuid::new_v4().to_string();
-        let exports = shrimply_path_core::cache_directory()?.join("exports");
-        std::fs::create_dir_all(&exports).map_err(|error| error.to_string())?;
-        let staging = TempDir::new_in(exports).map_err(|error| error.to_string())?;
-        let directory = staging.path().to_path_buf();
-        // Project names are presentation text. Confine actual output to this job.
-        let output_path = |extension: &str| -> Result<PathBuf, String> {
-            let suggested = shrimply_export_core::output::default_filename(&project, extension);
-            let filename = Path::new(&suggested)
-                .file_name()
-                .ok_or("Invalid export filename")?;
-            Ok(directory.join(filename))
-        };
-        let is_video = request["op"] == "export_video";
-        let (operation, mime, separate) = if is_video {
-            let mut settings = settings::parse_configuration(
-                &project,
-                directory.join("video"),
-                request,
-                shrimply_export_core::android::settings_backend(),
-            )?
-            .common;
-            let mime = video::mime_type(settings.container);
-            settings.path = output_path(video::extension_for_container(settings.container))?;
-            let limit = shrimply_preferences_core::snapshot(&self.backend.preferences)
-                .temporal_decoder_pool_size as usize;
-            (Operation::Video(settings, limit), mime, false)
+        let uri = destination(request)?;
+        let kind = request["kind"].as_str().ok_or("Missing export kind")?;
+        let (project, operation) = if kind == "audio" {
+            let (project, format) = self
+                .timeline_service
+                .as_ref()
+                .ok_or("The timeline service is closed")?
+                .audio_export(
+                    shrimply_player_core::snapshot(&self.player).revision,
+                    request,
+                )?;
+            (project, Operation::Audio(format))
         } else {
-            let format = CaptionFormat::ALL
-                .into_iter()
-                .find(|format| request["format"] == format.extension())
-                .ok_or("Unknown caption export format")?;
-            let mode = match request["mode"].as_str() {
-                Some("merge") => ExportMode::Merge,
-                Some("separate") => ExportMode::Separate,
-                _ => return Err("Unknown caption export track mode".into()),
-            };
-            (
-                Operation::Captions(
-                    captions::ExportSettings { format, mode },
-                    output_path(format.extension())?,
-                ),
-                format.mime_type(),
-                mode == ExportMode::Separate,
-            )
+            self.backend.save()?;
+            let project = self
+                .backend
+                .project()
+                .ok_or("Open a project first")?
+                .clone();
+            let operation = Operation::from_request(&project, request)?;
+            (project, operation)
         };
+        let limit = shrimply_preferences_core::snapshot(&self.backend.preferences)
+            .temporal_decoder_pool_size as usize;
         let wake = self.backend.wake.clone();
         let job = Job::spawn(
-            move |cancelled, progress| {
-                let paths = operation.run(project, cancelled, progress)?;
-                Ok((staging, paths))
-            },
+            move |cancelled, progress| operation.run(project, &uri, limit, cancelled, progress),
             move || wake(),
         )?;
-        let mut state = json!({"id":id,"status":"running","directory":directory,"separate":separate,"files":[],"mime":mime,
-            "kind":if is_video {"video"} else {"captions"},"progress":null,"error":null,"cancelling":false});
-        state["presentation"] = video::progress::job_view(&state);
-        self.export = Some(Export {
-            job,
-            completed_directory: None,
-            state,
-        });
-        self.backend.snapshot()
+        let id = uuid::Uuid::new_v4().to_string();
+        let mut state = json!({"id":id,"status":"running","files":[],
+            "kind":kind,"progress":null,"error":null,"cancelling":false});
+        state["presentation"] = job_view(&state);
+        self.export = Some(Export { job, state });
+        if kind == "audio" {
+            self.timeline_service = None;
+        }
+        Ok(json!({}))
     }
+}
+
+fn job_view(state: &Value) -> Value {
+    use shrimply_i18n::text;
+    let running = state["status"] == "running";
+    let complete = state["status"] == "complete";
+    let cancelling = state["cancelling"] == true;
+    let title = match state["status"].as_str().expect("export status") {
+        "running" => match state["kind"].as_str() {
+            Some("captions") => "Export Captions",
+            Some("audio") => "Export Selected Audio",
+            _ => "Export Video",
+        },
+        "complete" => match state["kind"].as_str() {
+            Some("captions") => "Captions exported",
+            Some("audio") => "Audio exported",
+            _ => "Video exported",
+        },
+        "cancelled" => "Export cancelled",
+        "failed" => match state["kind"].as_str() {
+            Some("captions") => "Could not export captions",
+            Some("audio") => "Could not export audio",
+            _ => "Could not export video",
+        },
+        _ => unreachable!("export job status"),
+    };
+    let dismiss = if running {
+        "export_cancel"
+    } else {
+        "export_dismiss"
+    };
+    json!({"title":text(title),"running":running,"complete":complete,"failed":state["status"] == "failed",
+        "dismiss":dismiss,"cancelling":if cancelling {Some(text("Cancelling…"))} else {None},
+        "confirm":{"label":text(if running {"Cancel"} else {"Close"}),
+            "action":dismiss,"enabled":!running || !cancelling}})
+}
+
+pub(super) fn destination(request: &Value) -> Result<String, String> {
+    request["destination"]
+        .as_str()
+        .filter(|uri| uri.starts_with("content://"))
+        .map(str::to_owned)
+        .ok_or_else(|| "Choose an export destination first".into())
 }
