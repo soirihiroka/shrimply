@@ -28,6 +28,7 @@
   llvmPackages,
   makeShellWrapper,
   ninja,
+  nv-codec-headers-12,
   openssl,
   pipewire,
   pkg-config,
@@ -128,6 +129,7 @@ rustPlatform.buildRustPackage {
     libpng
     libwebp
     libx11
+    nv-codec-headers-12
     openssl
     pipewire
     poppler_gi

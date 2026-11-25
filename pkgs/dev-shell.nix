@@ -19,6 +19,7 @@
   llvmPackages,
   mkShell,
   ninja,
+  nv-codec-headers-12,
   openssl,
   pkg-config,
   pipewire,
@@ -66,6 +67,7 @@ mkShell {
     libglvnd
     lld
     ninja
+    nv-codec-headers-12
     openssl
     pkg-config
     pipewire

@@ -95,10 +95,7 @@ pub fn apply(
                 }
             };
 
-            match project
-                .item_mut(&model)
-                .ok_or("text target was not found")?
-            {
+            match project.item_mut(model).ok_or("text target was not found")? {
                 ItemMut::Comment(item) => apply_text(&mut item.text, &address, "/text".into()),
                 ItemMut::Caption(item) => apply_text(&mut item.text, &address, "/text".into()),
                 ItemMut::Video(item) => {

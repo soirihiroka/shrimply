@@ -6572,6 +6572,7 @@ dependencies = [
  "shrimply-visual-core",
  "skia-safe",
  "tempfile",
+ "tracing",
  "uuid",
 ]
 
