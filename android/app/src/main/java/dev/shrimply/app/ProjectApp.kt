@@ -625,13 +625,16 @@ private fun Editor(timeline: TimelineSession, files: ProjectFiles, project: JSON
                             Icon(iconVector(menu.getString("icon")), menu.getString("label"), Modifier.size(16.dp))
                         }) { dismiss ->
                             ProjectMenuItems(menu, dismiss, activateProjectMenu)
-                            if (!project.isNull("shared_link")) DropdownMenuItem(
-                                text = { Text(tr("Copy Project Link")) },
-                                leadingIcon = { Icon(iconVector("edit-copy-symbolic"), null, Modifier.size(16.dp)) },
-                                onClick = {
-                                    dismiss()
-                                    clipboard.setPrimaryClip(ClipData.newPlainText(tr("Project link"), project.getString("shared_link")))
-                                })
+                            if (!project.isNull("shared_link")) {
+                                val linkLabel = tr("Project link")
+                                DropdownMenuItem(
+                                    text = { Text(tr("Copy Project Link")) },
+                                    leadingIcon = { Icon(iconVector("edit-copy-symbolic"), null, Modifier.size(16.dp)) },
+                                    onClick = {
+                                        dismiss()
+                                        clipboard.setPrimaryClip(ClipData.newPlainText(linkLabel, project.getString("shared_link")))
+                                    })
+                            }
                             if (!syncError.isNullOrEmpty()) {
                                 HorizontalDivider()
                                 Text(syncError, Modifier.padding(12.dp), color = MaterialTheme.colorScheme.error,
