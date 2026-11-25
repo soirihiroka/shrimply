@@ -1,7 +1,7 @@
 use core::pin::Pin;
 use cxx_qt::{CxxQtType, Threading};
-use cxx_qt_lib::{QString, QUrl};
-use shrimply_cross_ui_core::launcher::Launcher;
+use cxx_qt_lib::{QString, QStringList, QUrl};
+use shrimply_cross_ui_core::launcher::{self, Launcher};
 use std::path::{Path, PathBuf};
 use std::process::Child;
 
@@ -14,6 +14,8 @@ pub mod qobject {
 
         include!("cxx-qt-lib/qstring.h");
         type QString = cxx_qt_lib::QString;
+        include!("cxx-qt-lib/qstringlist.h");
+        type QStringList = cxx_qt_lib::QStringList;
         include!("cxx-qt-lib/qurl.h");
         type QUrl = cxx_qt_lib::QUrl;
     }
@@ -40,6 +42,41 @@ pub mod qobject {
         #[qinvokable]
         #[cxx_name = "recentLastEdited"]
         fn recent_last_edited(self: &LauncherBackend, index: i32) -> QString;
+
+        #[qinvokable]
+        #[cxx_name = "recentProjectLink"]
+        fn recent_project_link(self: &LauncherBackend, index: i32) -> QString;
+
+        #[qinvokable]
+        #[cxx_name = "recentIsRemote"]
+        fn recent_is_remote(self: &LauncherBackend, index: i32) -> bool;
+
+        #[qinvokable]
+        #[cxx_name = "projectServers"]
+        fn project_servers(self: &LauncherBackend, include_local: bool) -> QStringList;
+
+        #[qinvokable]
+        #[cxx_name = "updateProjectServer"]
+        fn update_project_server(
+            self: Pin<&mut LauncherBackend>,
+            previous: &QString,
+            url: &QString,
+        ) -> bool;
+
+        #[qinvokable]
+        #[cxx_name = "openSharedProject"]
+        fn open_shared_project(self: Pin<&mut LauncherBackend>, link: &QString);
+
+        #[qinvokable]
+        #[cxx_name = "createSharedProject"]
+        fn create_shared_project(
+            self: Pin<&mut LauncherBackend>,
+            server: &QString,
+            name: &QString,
+            width: i32,
+            height: i32,
+            frame_rate_index: i32,
+        );
 
         #[qinvokable]
         #[cxx_name = "presetLabel"]
@@ -194,6 +231,82 @@ impl qobject::LauncherBackend {
             .and_then(|index| self.core.recent_last_edited(index))
             .map(|date| shrimply_i18n_qt::text_args("Last edited %{date}", &[("date", date)]))
             .unwrap_or_else(|| shrimply_i18n_qt::text("Last edited time unavailable"))
+    }
+
+    pub fn recent_project_link(&self, index: i32) -> QString {
+        index_of(index)
+            .and_then(|index| self.core.recent_path(index))
+            .and_then(|path| launcher::shared_project_link(path).ok().flatten())
+            .map(QString::from)
+            .unwrap_or_default()
+    }
+
+    pub fn recent_is_remote(&self, index: i32) -> bool {
+        index_of(index)
+            .and_then(|index| self.core.recent_path(index))
+            .is_some_and(launcher::is_shared_project)
+    }
+
+    pub fn project_servers(&self, include_local: bool) -> QStringList {
+        include_local
+            .then(|| shrimply_i18n_qt::text("Local"))
+            .into_iter()
+            .chain(launcher::project_servers().into_iter().map(QString::from))
+            .collect()
+    }
+
+    pub fn update_project_server(self: Pin<&mut Self>, previous: &QString, url: &QString) -> bool {
+        let previous = previous.to_string();
+        let url = url.to_string();
+        match launcher::update_project_servers(
+            (!previous.is_empty()).then_some(previous.as_str()),
+            (!url.is_empty()).then_some(url.as_str()),
+        ) {
+            Ok(()) => true,
+            Err(error) => {
+                self.emit_error("Could not update project server", &error);
+                false
+            }
+        }
+    }
+
+    pub fn open_shared_project(self: Pin<&mut Self>, link: &QString) {
+        let link = link.to_string();
+        self.open_remote("Could not open project", move || {
+            launcher::open_shared_project(&link)
+        });
+    }
+
+    pub fn create_shared_project(
+        self: Pin<&mut Self>,
+        server: &QString,
+        name: &QString,
+        width: i32,
+        height: i32,
+        frame_rate_index: i32,
+    ) {
+        let server = server.to_string();
+        let name = name.to_string();
+        self.open_remote("Could not create project", move || {
+            let (canvas, fps) =
+                launcher::project_settings_from_values(width, height, frame_rate_index)?;
+            launcher::create_shared_project(&server, &name, canvas, fps, &[])
+        });
+    }
+
+    fn open_remote(
+        self: Pin<&mut Self>,
+        heading: &'static str,
+        operation: impl FnOnce() -> Result<PathBuf, String> + Send + 'static,
+    ) {
+        let qt_thread = self.qt_thread();
+        std::thread::spawn(move || {
+            let result = operation();
+            let _ = qt_thread.queue(move |backend| match result {
+                Ok(path) => backend.start_editor(launcher::launch_qt_editor(&path)),
+                Err(error) => backend.emit_error(heading, &error),
+            });
+        });
     }
 
     pub fn preset_label(&self, index: i32) -> QString {

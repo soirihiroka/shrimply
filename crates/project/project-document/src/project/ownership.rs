@@ -2,7 +2,7 @@ use hashbrown::HashSet;
 use serde::{Deserialize, Serialize};
 use std::ffi::OsStr;
 use std::fs::{self, OpenOptions};
-use std::io::{ErrorKind, Write};
+use std::io::ErrorKind;
 #[cfg(windows)]
 use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
 use std::path::{Path, PathBuf};
@@ -14,6 +14,8 @@ use std::sync::{Mutex, OnceLock};
 use std::thread;
 #[cfg(any(unix, windows))]
 use std::time::Duration;
+
+use super::{ProjectEncoding, atomic_file};
 
 const LOCK_ACQUIRE_ATTEMPTS: usize = 8;
 const PROCESS_STOP_WAIT_ATTEMPTS: usize = 20;
@@ -55,18 +57,17 @@ fn locked_project_files() -> &'static Mutex<HashSet<PathBuf>> {
     LOCKED_PROJECT_FILES.get_or_init(|| Mutex::new(HashSet::new()))
 }
 
-fn is_project_file(path: &Path) -> bool {
-    path.extension()
-        .and_then(OsStr::to_str)
-        .is_some_and(|extension| {
-            extension.eq_ignore_ascii_case("shrimp")
-                || extension.eq_ignore_ascii_case("sjson")
-                || extension.eq_ignore_ascii_case("json")
-        })
-}
-
 pub fn normalized_project_path(path: &Path) -> PathBuf {
-    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+    if let Ok(path) = path.canonicalize() {
+        return path;
+    }
+    let absolute = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
+    if let Some((parent, name)) = absolute.parent().zip(absolute.file_name())
+        && let Ok(parent) = parent.canonicalize()
+    {
+        return parent.join(name);
+    }
+    absolute
 }
 
 fn project_lock_path(path: &Path) -> PathBuf {
@@ -90,18 +91,11 @@ pub fn project_lock_owner(path: &Path) -> Result<Option<ProjectLockOwner>, Strin
             lock_path.display()
         )
     })?;
-    if !project_lock_owner_is_running(&owner)? {
-        return Err(format!(
-            "project lock {} is stale (PID {} is not running)",
-            lock_path.display(),
-            owner.pid()
-        ));
-    }
-    Ok(Some(owner))
+    Ok(project_lock_owner_is_running(&owner)?.then_some(owner))
 }
 
 pub fn acquire_project_lock(path: &Path) -> Result<(), ProjectLockError> {
-    if !is_project_file(path) {
+    if ProjectEncoding::from_path(path).is_none() {
         return Ok(());
     }
 
@@ -114,6 +108,21 @@ pub fn acquire_project_lock(path: &Path) -> Result<(), ProjectLockError> {
     if locks.contains(&canonical_path) {
         return Err(ProjectLockError::AlreadyLockedByThisInstance);
     }
+
+    // Serialize inspection and removal of stale owner records across processes.
+    // Keep the gate in app data so it is outside project folders and mirrors.
+    let directory = shrimply_path_core::config_directory();
+    fs::create_dir_all(&directory)
+        .map_err(|error| ProjectLockError::CouldNotCreate(error.to_string()))?;
+    let gate = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(directory.join("project-ownership.lock"))
+        .map_err(|error| ProjectLockError::CouldNotCreate(error.to_string()))?;
+    gate.lock()
+        .map_err(|error| ProjectLockError::CouldNotCreate(error.to_string()))?;
 
     let owner = current_project_lock_owner().map_err(ProjectLockError::CouldNotCreate)?;
     let contents = serde_json::to_vec(&owner)
@@ -128,16 +137,8 @@ pub fn acquire_project_lock(path: &Path) -> Result<(), ProjectLockError> {
         } else if lock_path.exists() {
             let _ = fs::remove_file(&lock_path);
         }
-        match OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .open(&lock_path)
-        {
-            Ok(mut file) => {
-                if let Err(error) = file.write_all(&contents) {
-                    let _ = fs::remove_file(&lock_path);
-                    return Err(ProjectLockError::CouldNotCreate(error.to_string()));
-                }
+        match atomic_file::create(&lock_path, &contents) {
+            Ok(()) => {
                 locks.insert(canonical_path);
                 return Ok(());
             }

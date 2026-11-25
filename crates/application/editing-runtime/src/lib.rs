@@ -1,6 +1,6 @@
 use shrimply_local_ipc::{Listener as UnixListener, Stream as UnixStream};
 use std::cell::RefCell;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 #[cfg(unix)]
@@ -8,7 +8,7 @@ use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, mpsc};
+use std::sync::{Arc, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -20,9 +20,9 @@ use shrimply_editing_api::protocol::{
     BridgeCommand, BridgeRequest, BridgeResponse, CaptionCueInput, CollisionBehavior,
     EditOperationResult, EditRequest, EditResponse, GenerateTtsRequest, GetManimClipRequest,
     InsertCaptionsRequest, ListSttModelsResponse, ListTtsModelsResponse, LiveSnapshot,
-    ManimClipResponse, ManimParameterValue as ProtocolManimParameterValue, PlayerSnapshot,
-    ReloadManimSourceRequest, ReloadManimSourceResponse, ScopeRef, SetManimClipRequest,
-    TranscribeAudioRequest, TtsInputValue, ViewFrameResponse,
+    ManimClipResponse, ManimParameterValue as ProtocolManimParameterValue, MediaRewrites,
+    PlayerSnapshot, ReloadManimSourceRequest, ReloadManimSourceResponse, ScopeRef, SessionState,
+    SessionVersion, SetManimClipRequest, TranscribeAudioRequest, TtsInputValue, ViewFrameResponse,
 };
 use shrimply_editor_state::{
     player_state::{self, ProjectChange, SharedPlayerState},
@@ -45,8 +45,11 @@ use shrimply_visual_cuda::transparent_fill_analysis;
 use shrimply_visual_modifiers::{ModifierEffect, RasterModifierEffect};
 use uuid::Uuid;
 
+pub mod attached;
 mod execute;
 mod frames;
+mod peers;
+mod remote;
 use shrimply_editing_api::imports;
 mod manim;
 mod sanim;
@@ -61,8 +64,8 @@ const SOCKET_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 const EDIT_EXECUTION_TIMEOUT: Duration = Duration::from_secs(29 * 60);
 const CANCELLATION_POLL_INTERVAL: Duration = Duration::from_millis(100);
 const WORK_QUEUE_CAPACITY: usize = 32;
+const ATTACHED_RECEIPT_LIMIT: usize = 1024;
 const HEADLESS_POLL_INTERVAL: Duration = Duration::from_millis(5);
-const CONNECTION_INDICATOR_HOLD: Duration = Duration::from_secs(3);
 const MANIM_ANTI_ALIASING_SAMPLES: [i64; 5] = [0, 2, 4, 8, 16];
 
 struct Work {
@@ -132,24 +135,21 @@ impl EditorSelection {
     }
 }
 
-#[derive(Default)]
-struct ConnectionActivity {
-    active: usize,
-    last_finished: Option<Instant>,
-}
-
-pub struct Server {
+struct Server {
     socket_path: PathBuf,
     stop: Arc<AtomicBool>,
     context: glib::MainContext,
-    task: glib::JoinHandle<()>,
-    connections: Arc<Mutex<ConnectionActivity>>,
+    tasks: [glib::JoinHandle<()>; 2],
+    remote: Option<Rc<RefCell<remote::Session>>>,
+    peers: Rc<RefCell<peers::Peers>>,
 }
 
 impl Drop for Server {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Release);
-        self.task.abort();
+        for task in &self.tasks {
+            task.abort();
+        }
         let _ = UnixStream::connect(&self.socket_path);
         let _ = fs::remove_file(&self.socket_path);
     }
@@ -171,23 +171,19 @@ impl Drop for BoundSocket {
     }
 }
 
-pub fn start(
-    project: Rc<RefCell<Project>>,
-    player_state: SharedPlayerState,
-    selection_state: SharedSelectionState,
-    preferences: SharedPreferences,
-) -> Result<Server, String> {
-    start_session(project, player_state, selection_state, preferences, false)
-}
-
 fn start_session(
     project: Rc<RefCell<Project>>,
     player_state: SharedPlayerState,
     selection_state: SharedSelectionState,
     preferences: SharedPreferences,
-    headless: bool,
 ) -> Result<Server, String> {
     let context = glib::MainContext::new();
+    let remote = remote::Session::open(
+        &shrimply_project_document::project::active_project_path(),
+        project.clone(),
+        player_state.clone(),
+        selection_state.clone(),
+    )?;
     runtime_directory()?;
     let owner = shrimply_project_document::project::current_project_lock_owner()?;
     let socket_path = shrimply_editing_api::bridge::socket_path(&owner)?;
@@ -251,92 +247,154 @@ fn start_session(
         .set_nonblocking(true)
         .map_err(|error| format!("could not configure editing API socket: {error}"))?;
 
+    let project_path = shrimply_project_document::project::normalized_project_path(
+        &shrimply_project_document::project::active_project_path(),
+    );
+    let project_path = project_path
+        .to_str()
+        .ok_or("active project path is not valid UTF-8")?
+        .to_owned();
+    let (presence_sender, presence_receiver) = async_channel::bounded::<Work>(WORK_QUEUE_CAPACITY);
     let (sender, receiver) = async_channel::bounded::<Work>(WORK_QUEUE_CAPACITY);
     let stop = Arc::new(AtomicBool::new(false));
     let worker_stop = stop.clone();
-    let connections = Arc::new(Mutex::new(ConnectionActivity::default()));
-    let worker_connections = connections.clone();
     drop(
         thread::Builder::new()
             .name("shrimply-editing-bridge".to_string())
-            .spawn(move || accept_loop(listener, sender, worker_stop, worker_connections))
+            .spawn(move || accept_loop(listener, sender, presence_sender, worker_stop))
             .map_err(|error| format!("could not start editing API bridge: {error}"))?,
     );
 
     let executor_stop = stop.clone();
+    let remote_actor = remote.clone();
+    let peers = Rc::new(RefCell::new(peers::Peers::default()));
+    let actor_peers = peers.clone();
+    let presence_project = project.clone();
+    let presence_remote = remote.clone();
+    let presence_path = project_path.clone();
+    let presence_task = context.spawn_local(async move {
+        let epoch = Uuid::new_v4();
+        while let Ok(work) = presence_receiver.recv().await {
+            let BridgeCommand::SessionUpdates(request) = work.request.command else {
+                unreachable!("the presence queue only accepts session updates");
+            };
+            let result = if work.request.project_path != presence_path {
+                Err(format!("editing service is open for {presence_path}"))
+            } else if work.canceled.load(Ordering::Acquire) {
+                Err("editing API client canceled the request".into())
+            } else {
+                let caller = request.presence.id;
+                let mut peers = actor_peers.borrow_mut();
+                peers.update(request.presence);
+                let mut participants = peers.active();
+                let remote = presence_remote.as_ref().map(|remote| remote.borrow());
+                if let Some(remote) = &remote {
+                    participants.extend_from_slice(remote.participants());
+                }
+                participants.retain(|participant| participant.id != caller);
+                participants.sort_by_key(|participant| participant.id);
+                participants.dedup_by_key(|participant| participant.id);
+                let version = SessionVersion {
+                    epoch,
+                    revision: shrimply_project_document::project::history_revision(),
+                };
+                serde_json::to_value(SessionState {
+                    version,
+                    project: (request.version != Some(version))
+                        .then(|| presence_project.borrow().clone()),
+                    participants,
+                    sync_error: remote.and_then(|remote| remote.sync_error()),
+                })
+                .map_err(|error| error.to_string())
+            };
+            let _ = work.response.send(bridge_response(&presence_path, result));
+        }
+    });
     let task = context.spawn_local(async move {
+        let mut receipts = HashMap::<_, Value>::new();
+        let mut receipt_order = VecDeque::new();
         while let Ok(work) = receiver.recv().await {
-            let project_path = shrimply_project_document::project::normalized_project_path(
-                &shrimply_project_document::project::active_project_path(),
-            );
-            let project_path_text = project_path
-                .to_str()
-                .ok_or_else(|| "active project path is not valid UTF-8".to_string());
             let annotate = matches!(
                 &work.request.command,
                 BridgeCommand::Execute(_) | BridgeCommand::Snapshot
             );
             let result = if work.canceled.load(Ordering::Acquire) {
                 Err("editing API client canceled the request".to_string())
-            } else {
-                match project_path_text.as_deref() {
-                    Ok(path) if path == work.request.project_path => match work.request.command {
-                        BridgeCommand::Execute(call) => {
-                            execute::call(
-                                execute::Context {
-                                    project: &project,
-                                    player: &player_state,
-                                    selection: &selection_state,
-                                    preferences: &preferences,
-                                    headless,
-                                },
-                                call,
-                                work.canceled.clone(),
-                            )
-                            .await
-                        }
-                        BridgeCommand::Handshake => {
-                            Ok(json!({"ready":true,"mode":if headless {"headless"} else {"live"}}))
-                        }
-                        BridgeCommand::Version => serde_json::to_value(
-                            shrimply_editing_api::protocol::BuildVersion::current(env!(
-                                "CARGO_PKG_VERSION"
-                            )),
+            } else if project_path == work.request.project_path {
+                match work.request.command {
+                    BridgeCommand::Execute(call) => {
+                        execute::call(
+                            execute::Context {
+                                project: &project,
+                                player: &player_state,
+                                selection: &selection_state,
+                                preferences: &preferences,
+                                remote: remote_actor.as_ref(),
+                            },
+                            call,
+                            work.canceled.clone(),
                         )
-                        .map_err(|error| error.to_string()),
-                        BridgeCommand::Snapshot => {
-                            snapshot(&project, &player_state, &selection_state).and_then(
-                                |snapshot| {
-                                    serde_json::to_value(snapshot)
-                                        .map_err(|error| error.to_string())
-                                },
+                        .await
+                    }
+                    BridgeCommand::ApplyChanges(request) => {
+                        let id = request.id;
+                        if let Some(receipt) = receipts.get(&id) {
+                            Ok(receipt.clone())
+                        } else {
+                            let result = apply_attached_changes(
+                                &project,
+                                &player_state,
+                                &selection_state,
+                                remote_actor.as_ref(),
+                                request,
+                                &work.canceled,
                             )
+                            .await;
+                            if let Ok(receipt) = &result {
+                                receipts.insert(id, receipt.clone());
+                                receipt_order.push_back(id);
+                                if receipt_order.len() > ATTACHED_RECEIPT_LIMIT
+                                    && let Some(expired) = receipt_order.pop_front()
+                                {
+                                    receipts.remove(&expired);
+                                }
+                            }
+                            result
                         }
-                    },
-                    Ok(_) => Err(format!(
-                        "editing API request named {}, but this editor owns {}",
-                        work.request.project_path,
-                        project_path.display()
-                    )),
-                    Err(error) => Err(error.clone()),
+                    }
+                    BridgeCommand::SessionUpdates(_) => {
+                        unreachable!("presence requests have their own queue")
+                    }
+                    BridgeCommand::Handshake => Ok(json!({"ready":true,"mode":"headless"})),
+                    BridgeCommand::Version => {
+                        serde_json::to_value(shrimply_editing_api::protocol::BuildVersion::current(
+                            env!("CARGO_PKG_VERSION"),
+                        ))
+                        .map_err(|error| error.to_string())
+                    }
+                    BridgeCommand::Snapshot => snapshot(&project, &player_state, &selection_state)
+                        .and_then(|snapshot| {
+                            serde_json::to_value(snapshot).map_err(|error| error.to_string())
+                        }),
                 }
+            } else {
+                Err(format!("editing service is open for {project_path}"))
             };
             let result = if annotate {
                 result.and_then(|value| {
-                    shrimply_editing_api::preview::with_state(
-                        value,
-                        &project.borrow(),
-                        if headless { "headless" } else { "live" },
-                    )
+                    shrimply_editing_api::preview::with_state(value, &project.borrow(), "headless")
                 })
             } else {
                 result
             };
-            let response = BridgeResponse {
-                project_path: project_path_text.unwrap_or_default().to_string(),
-                result: result.as_ref().ok().cloned(),
-                error: result.err(),
-            };
+            let mut result = result;
+            if annotate
+                && let Some(remote) = &remote_actor
+                && let Ok(value) = &mut result
+            {
+                remote.borrow().annotate(value);
+            }
+            let response = bridge_response(&project_path, result);
             let closing = response
                 .result
                 .as_ref()
@@ -358,9 +416,22 @@ fn start_session(
         socket_path,
         stop,
         context,
-        task,
-        connections,
+        tasks: [task, presence_task],
+        remote,
+        peers,
     })
+}
+
+fn bridge_response(path: &str, result: Result<Value, String>) -> BridgeResponse {
+    let (result, error) = match result {
+        Ok(value) => (Some(value), None),
+        Err(error) => (None, Some(error)),
+    };
+    BridgeResponse {
+        project_path: path.to_owned(),
+        result,
+        error,
+    }
 }
 
 fn runtime_directory() -> Result<PathBuf, String> {
@@ -389,8 +460,10 @@ fn effective_uid() -> u32 {
 }
 
 impl Server {
-    /// Process requests and report active or recently completed client connections.
-    pub fn poll(&self) -> bool {
+    fn poll(&self) {
+        if let Some(remote) = &self.remote {
+            remote.borrow_mut().poll(self.peers.borrow_mut().active());
+        }
         self.context
             .with_thread_default(|| {
                 while self.context.pending() {
@@ -398,34 +471,23 @@ impl Server {
                 }
             })
             .expect("editing context must remain on its owning thread");
-        let connections = self.connections.lock().unwrap();
-        connections.active > 0
-            || connections
-                .last_finished
-                .is_some_and(|time| time.elapsed() < CONNECTION_INDICATOR_HOLD)
     }
 }
 
 fn accept_loop(
     listener: UnixListener,
     sender: async_channel::Sender<Work>,
+    presence_sender: async_channel::Sender<Work>,
     stop: Arc<AtomicBool>,
-    connections: Arc<Mutex<ConnectionActivity>>,
 ) {
     while !stop.load(Ordering::Acquire) {
         match listener.accept() {
             Ok(_) if stop.load(Ordering::Acquire) => break,
             Ok((stream, _)) => {
                 let sender = sender.clone();
+                let presence_sender = presence_sender.clone();
                 let stop = stop.clone();
-                let connections = connections.clone();
-                connections.lock().unwrap().active += 1;
-                thread::spawn(move || {
-                    serve_connection(stream, &sender, &stop);
-                    let mut connections = connections.lock().unwrap();
-                    connections.active -= 1;
-                    connections.last_finished = Some(Instant::now());
-                });
+                thread::spawn(move || serve_connection(stream, &sender, &presence_sender, &stop));
             }
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                 thread::sleep(Duration::from_millis(10));
@@ -438,6 +500,7 @@ fn accept_loop(
 fn serve_connection(
     mut stream: UnixStream,
     sender: &async_channel::Sender<Work>,
+    presence_sender: &async_channel::Sender<Work>,
     stop: &AtomicBool,
 ) {
     stream
@@ -454,6 +517,11 @@ fn serve_connection(
             .map_err(|error| format!("could not read editing API bridge request: {error}"))?;
         let request: BridgeRequest = serde_json::from_str(&line)
             .map_err(|error| format!("malformed editing API bridge request: {error}"))?;
+        let sender = if matches!(request.command, BridgeCommand::SessionUpdates(_)) {
+            presence_sender
+        } else {
+            sender
+        };
         let (response, receiver) = mpsc::channel();
         let canceled = Arc::new(AtomicBool::new(false));
         sender
@@ -607,6 +675,7 @@ async fn apply_edit(
     player: &SharedPlayerState,
     selection: &SharedSelectionState,
     default_visual_duration: Time,
+    remote: Option<&Rc<RefCell<remote::Session>>>,
     request: EditRequest,
     canceled: Arc<AtomicBool>,
 ) -> Result<Value, String> {
@@ -668,12 +737,9 @@ async fn apply_edit(
                     .to_string(),
             );
         }
-        prepared.project.cursor_position = current.cursor_position;
-        prepared.project.timeline_zoom = current.timeline_zoom;
-        prepared.project.expanded_sequence_paths = current.expanded_sequence_paths.clone();
+        prepared.project.copy_view_state_from(&current);
     }
     let duration = prepared.project.duration();
-    let frame_rate = prepared.project.fps;
     let duration_frame =
         shrimply_editing_api::query::frame_time_from_time(duration, prepared.project.fps, true);
     let results = prepared.results()?;
@@ -689,22 +755,148 @@ async fn apply_edit(
     if canceled.load(Ordering::Acquire) {
         return Err("editing API client canceled the edit before commit".to_string());
     }
-    let editor_selection =
-        EditorSelection::capture(selection, &live.borrow()).reconcile(&prepared.project);
     prepared.promote()?;
     if canceled.load(Ordering::Acquire) {
         prepared.discard_promoted();
         return Err("editing API client canceled the edit before commit".to_string());
     }
-    if let Err(error) =
-        shrimply_project_document::project::commit_edit_saved(&prepared.project, &history_label)
-    {
-        prepared.discard_promoted();
-        return Err(format!(
-            "editing API edit could not be committed to project history: {error}"
-        ));
+    let result = commit_candidate(
+        live,
+        remote,
+        prepared.project.clone(),
+        &original,
+        &history_label,
+        None,
+        &canceled,
+    )
+    .await;
+    match result {
+        Ok((candidate, _)) => prepared.project = candidate,
+        Err(error) => {
+            prepared.discard_promoted();
+            return Err(error);
+        }
     }
-    *live.borrow_mut() = prepared.project;
+    replace_live_project(live, player, selection, prepared.project);
+    serde_json::to_value(EditResponse {
+        operations: results,
+        duration: duration_frame,
+        revision: player_state::snapshot(player).revision,
+    })
+    .map_err(|error| format!("could not serialize editing API edit result: {error}"))
+}
+
+async fn apply_attached_changes(
+    live: &Rc<RefCell<Project>>,
+    player: &SharedPlayerState,
+    selection: &SharedSelectionState,
+    remote: Option<&Rc<RefCell<remote::Session>>>,
+    request: shrimply_editing_api::protocol::ApplyChanges,
+    canceled: &AtomicBool,
+) -> Result<Value, String> {
+    let before = live.borrow().clone();
+    if let Some(remote) = remote
+        && let Some(rewrites) = remote.borrow().attached_receipt(request.id)?
+    {
+        return serde_json::to_value(rewrites).map_err(|error| error.to_string());
+    }
+    let candidate = if request.replay {
+        request.changes.confirm(&before)
+    } else {
+        request.changes.apply(&before)
+    }
+    .map_err(|error| format!("revision conflict: {error}"))?;
+    if canceled.load(Ordering::Acquire) {
+        return Err("project edit was canceled".into());
+    }
+    let original = content_revision(&before)?;
+    if original == content_revision(&candidate)? {
+        return Ok(json!({}));
+    }
+    let (candidate, rewrites) = commit_candidate(
+        live,
+        remote,
+        candidate,
+        &original,
+        &request.label,
+        Some(request.id),
+        canceled,
+    )
+    .await?;
+    replace_live_project(live, player, selection, candidate);
+    serde_json::to_value(rewrites).map_err(|error| error.to_string())
+}
+
+async fn commit_candidate(
+    live: &Rc<RefCell<Project>>,
+    remote: Option<&Rc<RefCell<remote::Session>>>,
+    mut candidate: Project,
+    original: &str,
+    label: &str,
+    operation_id: Option<Uuid>,
+    canceled: &AtomicBool,
+) -> Result<(Project, MediaRewrites), String> {
+    let (media, rewrites) = if let Some(remote) = remote
+        && candidate
+            .assets()
+            .iter()
+            .any(|asset| shrimply_project_service::blob_digest(asset.path()).is_none())
+    {
+        let upload_directory = remote.borrow().upload_directory();
+        let (sender, receiver) = async_channel::bounded(1);
+        thread::spawn(move || {
+            let result =
+                shrimply_project_service::prepare_uploads(&upload_directory, &mut candidate)
+                    .map(|media| (candidate, media));
+            let _ = sender.send_blocking(result);
+        });
+        let (next, media) = receiver.recv().await.map_err(|error| error.to_string())??;
+        candidate = next;
+        media
+    } else {
+        (Vec::new(), MediaRewrites::new())
+    };
+    if canceled.load(Ordering::Acquire) {
+        return Err("project edit was canceled before commit".into());
+    }
+    if content_revision(&live.borrow())? != original {
+        return Err("revision conflict: project changed while preparing the edit".into());
+    }
+
+    if let Some(remote) = remote {
+        let remote = remote.borrow();
+        remote.queue(
+            &live.borrow(),
+            &candidate,
+            &media,
+            operation_id.map(|id| (id, &rewrites)),
+        )?;
+        if let Err(error) = remote.bind_media(&mut candidate) {
+            tracing::warn!(%error, "Shared edit is queued, but media could not be opened");
+        }
+        if let Err(error) =
+            shrimply_project_document::project::commit_edit_checked(&candidate, label)
+        {
+            tracing::warn!(%error, "Shared edit remains in the local recovery queue");
+        }
+    } else if operation_id.is_some() {
+        shrimply_project_document::project::commit_edit_checked(&candidate, label)?;
+    } else {
+        shrimply_project_document::project::commit_edit_saved(&candidate, label)?;
+    }
+    Ok((candidate, rewrites))
+}
+
+fn replace_live_project(
+    live: &Rc<RefCell<Project>>,
+    player: &SharedPlayerState,
+    selection: &SharedSelectionState,
+    project: Project,
+) {
+    let editor_selection = EditorSelection::capture(selection, &live.borrow()).reconcile(&project);
+    let duration = project.duration();
+    let frame_rate = project.fps;
+    *live.borrow_mut() = project;
     editor_selection.restore(selection, &live.borrow());
     player_state::refresh_project(
         player,
@@ -720,18 +912,14 @@ async fn apply_edit(
             inspector: true,
         },
     );
-    serde_json::to_value(EditResponse {
-        operations: results,
-        duration: duration_frame,
-        revision: player_state::snapshot(player).revision,
-    })
-    .map_err(|error| format!("could not serialize editing API edit result: {error}"))
 }
 
 /// Run a project owner without a display server or audio playback device.
 pub fn serve(path: &std::path::Path) -> Result<(), String> {
     #[cfg(target_os = "linux")]
-    shrimply_visual_cuda::gpu::configure_gtk_backend()?;
+    if let Err(error) = shrimply_visual_cuda::gpu::configure_gtk_backend() {
+        tracing::warn!(%error, "The editing service could not configure its render backend");
+    }
     ffmpeg_next::init().map_err(|error| error.to_string())?;
     let prepared = shrimply_project_document::project::prepare_project(path)
         .map_err(|error| format!("could not acquire project: {error:?}"))?;
@@ -750,7 +938,6 @@ pub fn serve(path: &std::path::Path) -> Result<(), String> {
             player,
             selection_state::new(),
             preferences,
-            true,
         )?;
         while !server.stop.load(Ordering::Acquire) {
             server.poll();
@@ -762,40 +949,4 @@ pub fn serve(path: &std::path::Path) -> Result<(), String> {
     let saved = shrimply_project_document::project::shutdown_history();
     shrimply_project_document::project::clear_project_file_locks();
     result.and(saved)
-}
-
-/// Execute queries requiring services or source discovery without owning the project.
-pub fn query_saved(
-    path: &std::path::Path,
-    call: shrimply_editing_api::protocol::ApiCall,
-) -> Result<Value, String> {
-    if !shrimply_editing_api::commands::get(&call.name)?.read_only {
-        return Err("saved-state queries require a read-only operation".into());
-    }
-    let project = shrimply_project_document::project::load_project_snapshot(path)?;
-    shrimply_project_document::project::set_active_project_path(path);
-    let player = player_state::new(project.duration(), project.fps);
-    if let Some(position) = project.cursor_position {
-        player_state::seek_time(&player, position);
-    }
-    let project = Rc::new(RefCell::new(project));
-    let selection = selection_state::new();
-    let preferences = preferences::open_with_defaults();
-    let context = glib::MainContext::new();
-    let result = context
-        .with_thread_default(|| {
-            context.block_on(execute::call(
-                execute::Context {
-                    project: &project,
-                    player: &player,
-                    selection: &selection,
-                    preferences: &preferences,
-                    headless: false,
-                },
-                call,
-                Arc::new(AtomicBool::new(false)),
-            ))
-        })
-        .map_err(|error| error.to_string())??;
-    shrimply_editing_api::preview::with_state(result, &project.borrow(), "saved")
 }

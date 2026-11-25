@@ -39,6 +39,10 @@ impl NewProject {
         Self(project)
     }
 
+    pub fn into_document(self) -> Project {
+        self.0
+    }
+
     pub fn write(self, mut path: PathBuf, replace: bool) -> Result<PathBuf, String> {
         if !path
             .extension()

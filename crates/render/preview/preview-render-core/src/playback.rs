@@ -343,7 +343,9 @@ impl<F: 'static> PreviewMedia<F> {
                 };
                 let project_change = match event {
                     player_state::PlayerEvent::Project(change) => Some(change),
-                    player_state::PlayerEvent::State(_) => None,
+                    player_state::PlayerEvent::State(_) | player_state::PlayerEvent::Presence => {
+                        None
+                    }
                 };
                 let natural_playback = matches!(
                     event,

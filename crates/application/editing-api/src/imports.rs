@@ -1,3 +1,4 @@
+use crate::edit::{ResolvedScope, resolve_scope};
 mod replace_source;
 
 use std::collections::HashSet;
@@ -7,7 +8,7 @@ use std::path::{Path, PathBuf};
 use crate::edit::MutationResult;
 use crate::protocol::{
     ClipKind, CollisionBehavior, EditOperation, EditOperationResult, EditRequest,
-    GenerateTtsRequest, ImportEntry, InitialClipProperties, InsertTtsRequest, ScopeRef,
+    GenerateTtsRequest, ImportEntry, InitialClipProperties, InsertTtsRequest,
     SetClipPropertiesRequest,
 };
 use shrimply_asset::{Asset, AssetSnapshot};
@@ -28,12 +29,6 @@ pub struct PreparedEdit {
     operations: Vec<&'static str>,
     staged: Vec<StagedDirectory>,
     linked_sources: Vec<AssetSnapshot>,
-}
-
-#[derive(Clone)]
-struct ResolvedScope {
-    logical: SequenceScopeId,
-    concrete_path: Option<Vec<Uuid>>,
 }
 
 #[derive(Clone, Copy)]
@@ -1126,33 +1121,6 @@ fn import_start(
         .map(|time| time.snapped(project.frame_step()))
         .map(Some)
         .ok_or_else(|| format!("{kind:?} import scope cannot map the projected anchor frame"))
-}
-
-fn resolve_scope(project: &Project, scope: &ScopeRef) -> Result<ResolvedScope, String> {
-    let path = crate::query::parse_path(&scope.sequence_path)?;
-    if path.is_empty() {
-        return Ok(ResolvedScope {
-            logical: SequenceScopeId::root(),
-            concrete_path: Some(path),
-        });
-    }
-    let video = project.sequence_scope_for_path(ItemKind::Video, &path);
-    let audio = project.sequence_scope_for_path(ItemKind::Audio, &path);
-    let logical = match (video, audio) {
-        (Some(video), Some(audio)) if video != audio => {
-            return Err(
-                "scope path ambiguously names different video and audio sequences".to_string(),
-            );
-        }
-        (Some(scope), _) | (_, Some(scope)) => scope,
-        (None, None) => {
-            return Err("scope does not resolve to a folded-sequence presentation".to_string());
-        }
-    };
-    Ok(ResolvedScope {
-        logical,
-        concrete_path: Some(path),
-    })
 }
 
 fn with_scope_tracks<T>(

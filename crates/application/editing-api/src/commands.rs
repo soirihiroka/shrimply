@@ -60,14 +60,14 @@ pub static COMMANDS: &[Command] = &[
     command!(
         "connect_project",
         "project open",
-        "Reuse an existing project owner, or open the native editor (use --headless to start a managed headless owner). Does not keep this CLI connected",
+        "Connect to the local project session, starting the editing service if needed",
         ConnectProjectRequest,
         false
     ),
     command!(
         "get_editor_state",
         "editor get",
-        "Return project, playhead, selection, active scope, and track state from the active owner, or saved state when closed. Check execution_mode",
+        "Return project, playhead, selection, active scope, and track state from the editing service",
         GetEditorStateRequest,
         true
     ),
@@ -88,14 +88,14 @@ pub static COMMANDS: &[Command] = &[
     command!(
         "query_clips",
         "clips list",
-        "List clip summaries from the active owner or saved project. Filter TTS with --source-kind tts; use clips get for scripts. Frame range is independent from editor selection",
+        "List clip summaries from the editing service. Filter TTS with --source-kind tts; use clips get for scripts. Frame range is independent from editor selection",
         QueryClipsRequest,
         true
     ),
     command!(
         "get_clip",
         "clips get",
-        "Get full clip metadata from the active owner or saved project, including stored TTS text at metadata.source.inputs.text.value and source time_offset. Scripts describe the full source, including trimmed-out speech",
+        "Get full clip metadata from the editing service, including stored TTS text at metadata.source.inputs.text.value and source time_offset. Scripts describe the full source, including trimmed-out speech",
         GetClipRequest,
         true
     ),
@@ -137,7 +137,7 @@ pub static COMMANDS: &[Command] = &[
     command!(
         "query_expressions",
         "expressions list",
-        "Query expression IDs, property paths, enabled state, and source across clip metadata from the active owner or saved project",
+        "Query expression IDs, property paths, enabled state, and source across clip metadata from the editing service",
         QueryExpressionsRequest,
         true
     ),

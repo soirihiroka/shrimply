@@ -12,20 +12,23 @@ glib.workspace = true
 libc.workspace = true
 serde_json.workspace = true
 skia-safe.workspace = true
-shrimply-editing-api.workspace = true
+shrimply-editing-api = { workspace = true, features = ["local"] }
 shrimply-local-ipc.workspace = true
 shrimply-audio-engine.workspace = true
 shrimply-blender-core.workspace = true
 shrimply-asset.workspace = true
 shrimply-math-core.workspace = true
 shrimply-manim-bridge.workspace = true
+shrimply-project-service.workspace = true
 shrimply-project-document.workspace = true
+shrimply-resource-pipeline.workspace = true
 shrimply-compute-client.workspace = true
 shrimply-editor-state.workspace = true
 shrimply-timeline-edit.workspace = true
 shrimply-transcription.workspace = true
 shrimply-tts.workspace = true
 shrimply-visual-modifiers.workspace = true
+tempfile.workspace = true
 tracing.workspace = true
 uuid.workspace = true
 

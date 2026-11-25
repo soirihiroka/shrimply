@@ -4,18 +4,19 @@ mod recents;
 use block2::StackBlock;
 use objc2::rc::Retained;
 use objc2::runtime::ProtocolObject;
-use objc2::{DefinedClass, MainThreadOnly, define_class, msg_send, sel};
+use objc2::{DefinedClass, MainThreadOnly, Message, define_class, msg_send, sel};
 use objc2_app_kit::{
-    NSAlert, NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate,
-    NSAutoresizingMaskOptions, NSBackingStoreType, NSBezelStyle, NSButton, NSColor, NSControlSize,
-    NSFont, NSImage, NSMenu, NSMenuItem, NSModalResponseOK, NSOpenPanel, NSOpenSavePanelDelegate,
-    NSSavePanel, NSSearchField, NSTextField, NSTitlebarSeparatorStyle, NSToolbar, NSView, NSWindow,
-    NSWindowDelegate, NSWindowStyleMask, NSWindowTitleVisibility, NSWindowToolbarStyle,
-    NSWorkspace,
+    NSAlert, NSAlertFirstButtonReturn, NSAlertSecondButtonReturn, NSAlertThirdButtonReturn,
+    NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate, NSAutoresizingMaskOptions,
+    NSBackingStoreType, NSBezelStyle, NSButton, NSColor, NSControlSize, NSFont, NSImage, NSMenu,
+    NSMenuItem, NSModalResponseOK, NSOpenPanel, NSOpenSavePanelDelegate, NSPasteboard,
+    NSPasteboardTypeString, NSSavePanel, NSSearchField, NSTextField, NSTitlebarSeparatorStyle,
+    NSToolbar, NSView, NSWindow, NSWindowDelegate, NSWindowStyleMask, NSWindowTitleVisibility,
+    NSWindowToolbarStyle, NSWorkspace,
 };
 use objc2_foundation::{
     MainThreadMarker, NSArray, NSNotification, NSObject, NSObjectProtocol, NSPoint, NSProcessInfo,
-    NSRect, NSSize, NSString, NSURL, ns_string,
+    NSRect, NSSize, NSString, NSTimer, NSURL, ns_string,
 };
 use shrimply_components_appkit::{EffectRole, EffectView};
 use shrimply_cross_ui_core::launcher;
@@ -147,49 +148,33 @@ define_class!(
             sidebar_content.setAutoresizingMask(NSAutoresizingMaskOptions::ViewHeightSizable);
             sidebar_effect.set_content_view(Some(&sidebar_content));
 
-            let create = unsafe {
-                NSButton::buttonWithTitle_target_action(
-                    ns_string!("Create Project"),
-                    Some(self),
-                    Some(sel!(createProject:)),
-                    mtm,
-                )
-            };
-            create.setFrame(NSRect::new(
-                NSPoint::new(
-                    (SIDEBAR_WIDTH - SIDEBAR_BUTTON_WIDTH) / 2.0,
-                    WINDOW_SIZE.height - TITLEBAR_HEIGHT - CONTENT_MARGIN - SIDEBAR_BUTTON_HEIGHT,
-                ),
-                NSSize::new(SIDEBAR_BUTTON_WIDTH, SIDEBAR_BUTTON_HEIGHT),
-            ));
-            create.setAutoresizingMask(NSAutoresizingMaskOptions::ViewMinYMargin);
-            create.setControlSize(NSControlSize::Regular);
-            create.setBezelStyle(NSBezelStyle::Push);
-            create.setKeyEquivalent(ns_string!("\r"));
-            sidebar_content.addSubview(&create);
-
-            let open = unsafe {
-                NSButton::buttonWithTitle_target_action(
-                    ns_string!("Open Project"),
-                    Some(self),
-                    Some(sel!(openProject:)),
-                    mtm,
-                )
-            };
-            open.setFrame(NSRect::new(
-                NSPoint::new(
-                    (SIDEBAR_WIDTH - SIDEBAR_BUTTON_WIDTH) / 2.0,
-                    WINDOW_SIZE.height
-                        - TITLEBAR_HEIGHT
-                        - CONTENT_MARGIN * 2.0
-                        - SIDEBAR_BUTTON_HEIGHT * 2.0,
-                ),
-                NSSize::new(SIDEBAR_BUTTON_WIDTH, SIDEBAR_BUTTON_HEIGHT),
-            ));
-            open.setAutoresizingMask(NSAutoresizingMaskOptions::ViewMinYMargin);
-            open.setControlSize(NSControlSize::Regular);
-            open.setBezelStyle(NSBezelStyle::Push);
-            sidebar_content.addSubview(&open);
+            for (index, (label, action)) in [
+                ("Create Project", sel!(createProject:)),
+                ("Open Project", sel!(openProject:)),
+                ("Open Shared Project", sel!(openSharedProject:)),
+                ("Project Servers", sel!(projectServers:)),
+            ].into_iter().enumerate() {
+                let button = unsafe {
+                    NSButton::buttonWithTitle_target_action(
+                        &NSString::from_str(label), Some(self), Some(action), mtm,
+                    )
+                };
+                button.setFrame(NSRect::new(
+                    NSPoint::new(
+                        (SIDEBAR_WIDTH - SIDEBAR_BUTTON_WIDTH) / 2.0,
+                        WINDOW_SIZE.height - TITLEBAR_HEIGHT
+                            - (index + 1) as f64 * (CONTENT_MARGIN + SIDEBAR_BUTTON_HEIGHT),
+                    ),
+                    NSSize::new(SIDEBAR_BUTTON_WIDTH, SIDEBAR_BUTTON_HEIGHT),
+                ));
+                button.setAutoresizingMask(NSAutoresizingMaskOptions::ViewMinYMargin);
+                button.setControlSize(NSControlSize::Regular);
+                button.setBezelStyle(NSBezelStyle::Push);
+                if index == 0 {
+                    button.setKeyEquivalent(ns_string!("\r"));
+                }
+                sidebar_content.addSubview(&button);
+            }
             content.addSubview(sidebar);
 
             let right_origin = SIDEBAR_WIDTH + CONTENT_MARGIN;
@@ -347,6 +332,10 @@ define_class!(
                 project.path.display()
             )));
             alert.addButtonWithTitle(ns_string!("OK"));
+            let link = launcher::shared_project_link(&project.path).ok().flatten();
+            if link.is_some() {
+                alert.addButtonWithTitle(ns_string!("Copy Project Link"));
+            }
             let completion = StackBlock::new({
                 let mtm = self.mtm();
                 move |response| NSApplication::sharedApplication(mtm).stopModalWithCode(response)
@@ -355,7 +344,13 @@ define_class!(
                 self.ivars().window.get().expect("launcher window must exist"),
                 Some(&completion),
             );
-            alert.runModal();
+            if alert.runModal() == NSAlertSecondButtonReturn
+                && let Some(link) = link
+            {
+                let clipboard = NSPasteboard::generalPasteboard();
+                clipboard.clearContents();
+                clipboard.setString_forType(&NSString::from_str(&link), unsafe { NSPasteboardTypeString });
+            }
         }
 
         #[unsafe(method(showRecentInFinder:))]
@@ -380,6 +375,14 @@ define_class!(
             let Some(request) = create_project::show(window, self.mtm()) else {
                 return;
             };
+            if let Some(server) = request.server {
+                self.open_remote("Could not create project", move || {
+                    launcher::create_shared_project(
+                        &server, &request.name, request.canvas_size, request.fps, &[],
+                    )
+                });
+                return;
+            }
             let panel = NSSavePanel::savePanel(self.mtm());
             panel.setTitle(Some(ns_string!("Create Project")));
             panel.setPrompt(Some(ns_string!("Create")));
@@ -413,6 +416,54 @@ define_class!(
                 .unwrap_or_else(|error| panic!("could not update recent projects: {error}"));
             self.refresh_current_search();
             self.open_in_editor(&path);
+        }
+
+        #[unsafe(method(openSharedProject:))]
+        fn open_shared_project(&self, _sender: &NSButton) {
+            if let Some(link) = self.prompt_remote("Open Shared Project", "Project Link", "") {
+                self.open_remote("Could not open project", move || launcher::open_shared_project(&link));
+            }
+        }
+
+        #[unsafe(method(projectServers:))]
+        fn project_servers(&self, _sender: &NSButton) {
+            let mtm = self.mtm();
+            loop {
+                let servers = launcher::project_servers();
+                let alert = NSAlert::new(mtm);
+                alert.setMessageText(ns_string!("Project Servers"));
+                alert.addButtonWithTitle(ns_string!("Add"));
+                let edit = alert.addButtonWithTitle(ns_string!("Edit"));
+                let remove = alert.addButtonWithTitle(ns_string!("Remove"));
+                alert.addButtonWithTitle(ns_string!("Done"));
+                edit.setEnabled(!servers.is_empty());
+                remove.setEnabled(!servers.is_empty());
+                let selection = shrimply_components_appkit::menu::popup(
+                    NSRect::new(NSPoint::ZERO, NSSize::new(360.0, 30.0)), false, mtm,
+                );
+                for server in &servers {
+                    selection.addItemWithTitle(&NSString::from_str(server));
+                }
+                if !servers.is_empty() {
+                    alert.setAccessoryView(Some(&selection));
+                }
+                let response = alert.runModal();
+                let selected = usize::try_from(selection.indexOfSelectedItem()).ok()
+                    .and_then(|index| servers.get(index)).map(String::as_str);
+                let result = match response {
+                    NSAlertFirstButtonReturn => self.prompt_remote("Add Project Server", "Server URL", "")
+                        .map(|url| launcher::update_project_servers(None, Some(&url))),
+                    NSAlertSecondButtonReturn => selected.and_then(|current| {
+                        self.prompt_remote("Edit Project Server", "Server URL", current)
+                            .map(|url| launcher::update_project_servers(Some(current), Some(&url)))
+                    }),
+                    NSAlertThirdButtonReturn => selected.map(|current| launcher::update_project_servers(Some(current), None)),
+                    _ => return,
+                };
+                if let Some(Err(error)) = result {
+                    self.show_error("Could not update project server", &error);
+                }
+            }
         }
 
         #[unsafe(method(openProject:))]
@@ -506,6 +557,49 @@ impl Delegate {
                 objc2_foundation::NSOperationQueue::mainQueue().addOperationWithBlock(&completed)
             };
         });
+    }
+
+    fn prompt_remote(&self, heading: &str, placeholder: &str, value: &str) -> Option<String> {
+        let mtm = self.mtm();
+        let alert = NSAlert::new(mtm);
+        alert.setMessageText(&NSString::from_str(heading));
+        alert.addButtonWithTitle(ns_string!("Continue"));
+        alert.addButtonWithTitle(ns_string!("Cancel"));
+        let field = NSTextField::initWithFrame(
+            NSTextField::alloc(mtm),
+            NSRect::new(NSPoint::ZERO, NSSize::new(360.0, 28.0)),
+        );
+        field.setPlaceholderString(Some(&NSString::from_str(placeholder)));
+        field.setStringValue(&NSString::from_str(value));
+        alert.setAccessoryView(Some(&field));
+        (alert.runModal() == NSAlertFirstButtonReturn).then(|| field.stringValue().to_string())
+    }
+
+    fn open_remote(
+        &self,
+        heading: &'static str,
+        operation: impl FnOnce() -> Result<PathBuf, String> + Send + 'static,
+    ) {
+        let (send, receive) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = send.send(operation());
+        });
+        let delegate = self.retain();
+        let poll = block2::RcBlock::new(move |timer: std::ptr::NonNull<NSTimer>| {
+            let result = match receive.try_recv() {
+                Ok(result) => result,
+                Err(std::sync::mpsc::TryRecvError::Empty) => return,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    Err("The project worker stopped unexpectedly.".into())
+                }
+            };
+            unsafe { timer.as_ref() }.invalidate();
+            match result {
+                Ok(path) => delegate.open_in_editor(&path),
+                Err(error) => delegate.show_error(heading, &error),
+            }
+        });
+        let _ = unsafe { NSTimer::scheduledTimerWithTimeInterval_repeats_block(0.1, true, &poll) };
     }
 
     fn show_error(&self, heading: &str, body: &str) {

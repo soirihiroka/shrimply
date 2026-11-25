@@ -22,9 +22,7 @@ pub fn cli() -> Command {
                 .long("dry-run")
                 .global(true)
                 .action(clap::ArgAction::SetTrue)
-                .help(
-                    "Validate and preview without changing persistent state or invoking services",
-                ),
+                .help("Preview without committing edits or running compute jobs"),
         )
         .arg(
             Arg::new("if-revision")
@@ -158,9 +156,7 @@ fn leaf(name: &str, definition: &Definition) -> Command {
             Arg::new("headless")
                 .long("headless")
                 .action(clap::ArgAction::SetTrue)
-                .help(
-                    "Start a headless owner if closed; an existing GUI or headless owner is reused",
-                ),
+                .hide(true),
         );
     }
     if definition.name == "view_frame" {

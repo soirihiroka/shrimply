@@ -98,10 +98,6 @@ ApplicationWindow {
             warningDialog.text = body
             warningDialog.open()
         }
-        function onRequestLock(pid) {
-            lockDialog.pid = pid
-            lockDialog.open()
-        }
         function onShowError(heading, body) {
             errorDialog.title = heading
             errorDialog.text = body
@@ -1138,37 +1134,6 @@ ApplicationWindow {
         title: backend.translate("OTIO imported with limitations")
         buttons: MessageDialog.Ok
         onAccepted: backend.acknowledgeWarnings()
-    }
-
-    Dialog {
-        id: lockDialog
-        property int pid: 0
-        title: backend.translate("Project is in use")
-        modal: true
-        anchors.centerIn: parent
-
-        contentItem: Label {
-            text: backend.translate("The project lock is held by another editor process (PID %1).").arg(lockDialog.pid)
-            wrapMode: Text.Wrap
-        }
-        footer: DialogButtonBox {
-            Button {
-                text: backend.translate("Close")
-                DialogButtonBox.buttonRole: DialogButtonBox.RejectRole
-            }
-            Button {
-                text: backend.translate("Stop Other Editor")
-                DialogButtonBox.buttonRole: DialogButtonBox.DestructiveRole
-            }
-            Button {
-                text: backend.translate("Retry")
-                highlighted: true
-                DialogButtonBox.buttonRole: DialogButtonBox.AcceptRole
-            }
-            onRejected: { lockDialog.close(); backend.resolveLock(0) }
-            onDiscarded: { lockDialog.close(); backend.resolveLock(2) }
-            onAccepted: { lockDialog.close(); backend.resolveLock(1) }
-        }
     }
 
     MessageDialog {

@@ -16,8 +16,8 @@ use uuid::Uuid;
 
 use crate::protocol::{
     ClipAddress, ClipSummary, ClipTransitionInput, CollisionBehavior, CropEdges, CropMode,
-    EditOperation, ExactFraction, InsertCaptionsRequest, InsertTextOperation,
-    ReplaceClipSourceRequest, SetClipPropertiesRequest, SetClipTransitionsRequest,
+    EditOperation, EditRequest, ExactFraction, InsertCaptionsRequest, InsertTextOperation,
+    ReplaceClipSourceRequest, ScopeRef, SetClipPropertiesRequest, SetClipTransitionsRequest,
     SetVideoTransformRequest, TrackAddress, VideoFitMode,
 };
 use crate::query::{model_item_address, model_kind, model_track_address};
@@ -49,6 +49,66 @@ pub fn source_replacement_target(
         return Err(format!("source file does not exist: {}", request.source));
     }
     Ok(address)
+}
+
+#[derive(Clone)]
+pub(crate) struct ResolvedScope {
+    pub(crate) logical: SequenceScopeId,
+    #[cfg(feature = "local")]
+    pub(crate) concrete_path: Option<Vec<Uuid>>,
+}
+
+pub(crate) fn resolve_scope(project: &Project, scope: &ScopeRef) -> Result<ResolvedScope, String> {
+    let path = crate::query::parse_path(&scope.sequence_path)?;
+    if path.is_empty() {
+        return Ok(ResolvedScope {
+            logical: SequenceScopeId::root(),
+            #[cfg(feature = "local")]
+            concrete_path: Some(path),
+        });
+    }
+    let video = project.sequence_scope_for_path(ItemKind::Video, &path);
+    let audio = project.sequence_scope_for_path(ItemKind::Audio, &path);
+    let logical = match (video, audio) {
+        (Some(video), Some(audio)) if video != audio => {
+            return Err(
+                "scope path ambiguously names different video and audio sequences".to_string(),
+            );
+        }
+        (Some(scope), _) | (_, Some(scope)) => scope,
+        (None, None) => {
+            return Err("scope does not resolve to a folded-sequence presentation".to_string());
+        }
+    };
+    Ok(ResolvedScope {
+        logical,
+        #[cfg(feature = "local")]
+        concrete_path: Some(path),
+    })
+}
+
+/// Apply one shared command batch to a private candidate. Media attachment
+/// takes place through a verified asset transaction before publication.
+pub fn apply_shared_edit(project: &Project, request: &EditRequest) -> Result<Project, String> {
+    if request.operations.is_empty() {
+        return Err("edit request requires at least one operation".into());
+    }
+    let mut candidate = project.clone();
+    let scope = request
+        .scope
+        .as_ref()
+        .map(|scope| resolve_scope(project, scope).map(|scope| scope.logical))
+        .transpose()?
+        .unwrap_or_else(SequenceScopeId::root);
+    let frame = request
+        .frame
+        .ok_or("shared edit requires an explicit frame")?;
+    for (index, operation) in request.operations.iter().enumerate() {
+        apply_non_import(&mut candidate, operation, frame, &scope)
+            .map_err(|error| format!("operation {index} failed: {error}"))?;
+    }
+    candidate.validate()?;
+    Ok(candidate)
 }
 
 pub fn apply_non_import(

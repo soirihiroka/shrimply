@@ -1,7 +1,11 @@
 use crate::project_save::ProjectFormat;
+use shrimply_editing_runtime::attached;
+pub use shrimply_editing_runtime::attached::{
+    activate as activate_project_session, load as load_project_session,
+};
 use shrimply_editor_state::{player_state, preferences, preview_focus};
 use shrimply_math_core::Fraction;
-use shrimply_project_document::project::{self, CanvasSize, Project, ProjectPreparation};
+use shrimply_project_document::project::{self, CanvasSize, Project, ProjectValidationOutcome};
 use shrimply_resource_pipeline::CancelToken;
 pub use shrimply_timeline_edit::project_menu;
 use shrimply_timeline_edit::selection_state;
@@ -35,7 +39,6 @@ pub enum LoadEvent {
         suggested_name: String,
     },
     ImportWarnings(Vec<String>),
-    LockedByOtherInstance(project::ProjectLockOwner),
     Ready {
         path: PathBuf,
         project: Box<Project>,
@@ -57,11 +60,11 @@ pub struct EditorTitle {
 pub struct SessionUpdate {
     pub audio_playback_stopped: Option<String>,
     pub title: Option<EditorTitle>,
-    pub editing_api_active: bool,
+    pub has_collaborators: bool,
 }
 
 pub struct EditorSession {
-    editing: shrimply_editing_runtime::Server,
+    editing: RefCell<attached::Editor>,
     pub project: Rc<RefCell<Project>>,
     pub player_state: player_state::SharedPlayerState,
     pub playback_performance: shrimply_playback_performance::SharedCollector,
@@ -76,6 +79,7 @@ pub struct EditorSession {
     commit_status: Rc<RefCell<project::CommitStatus>>,
     project_metadata: RefCell<(String, Vec<String>)>,
     title_dirty: Rc<Cell<bool>>,
+    sync_error: RefCell<Option<String>>,
 }
 
 impl EditorSession {
@@ -170,12 +174,12 @@ impl EditorSession {
             RefCell::new((project.name.clone(), project.tags.clone()))
         };
         let selection_state = selection_state::new();
-        let editing = shrimply_editing_runtime::start(
+        let editing = RefCell::new(attached::Editor::new(
+            &project::active_project_path(),
             project.clone(),
             player_state.clone(),
             selection_state.clone(),
-            preferences.clone(),
-        )?;
+        )?);
         Ok(Self {
             editing,
             project,
@@ -192,11 +196,21 @@ impl EditorSession {
             commit_status,
             project_metadata,
             title_dirty,
+            sync_error: RefCell::new(None),
         })
     }
 
     pub fn poll(&self) -> SessionUpdate {
-        let editing_api_active = self.editing.poll();
+        {
+            let editing = self.editing.borrow();
+            editing.poll();
+            let error = editing.sync_error();
+            let mut current_error = self.sync_error.borrow_mut();
+            if *current_error != error {
+                *current_error = error;
+                self.title_dirty.set(true);
+            }
+        }
         project::poll_commit_status();
         player_state::tick(&self.player_state);
         let audio_playback_stopped = self.audio_player.take_failure();
@@ -259,12 +273,22 @@ impl EditorSession {
         SessionUpdate {
             audio_playback_stopped,
             title: self.title_dirty.replace(false).then(|| self.title()),
-            editing_api_active,
+            has_collaborators: !player_state::collaborators(&self.player_state).is_empty(),
         }
     }
 
     pub fn title(&self) -> EditorTitle {
-        editor_title(&self.project.borrow().name, &self.commit_status.borrow())
+        let project = self.project.borrow();
+        let status = self.commit_status.borrow();
+        if !matches!(*status, project::CommitStatus::SaveFailed(_))
+            && let Some(error) = self.sync_error.borrow().as_ref()
+        {
+            return editor_title(
+                &project.name,
+                &project::CommitStatus::SaveFailed(error.clone()),
+            );
+        }
+        editor_title(&project.name, &status)
     }
 
     pub fn save(&self) -> Result<(), String> {
@@ -273,7 +297,27 @@ impl EditorSession {
 
     pub fn save_as(&self, path: PathBuf) -> Result<PathBuf, String> {
         let path = ProjectFormat::from_path(&path).normalize_path(path);
-        project::save_as(&path)?;
+        let current = project::active_project_path();
+        if project::normalized_project_path(&path) == project::normalized_project_path(&current) {
+            self.save()?;
+            return Ok(current);
+        }
+        project::flush_history()?;
+        let source = self.project.borrow().clone();
+        attached::save_copy(&path, &source)?;
+        let mut candidate = load_project_session(&path)?;
+        candidate.copy_view_state_from(&source);
+        let editing = attached::Editor::new(
+            &path,
+            self.project.clone(),
+            self.player_state.clone(),
+            self.selection_state.clone(),
+        )?;
+        project::shutdown_history()?;
+        activate_project_session(&path, &candidate);
+        *self.project.borrow_mut() = candidate;
+        self.editing.replace(editing);
+        player_state::set_collaborators(&self.player_state, Vec::new());
         let project = self.project.borrow();
         if let Err(error) = shrimply_recent_projects::touch(&path, &project.name, &project.tags) {
             tracing::warn!(%error, "could not update recent projects");
@@ -347,7 +391,7 @@ enum SaveKind {
 }
 
 enum Pending {
-    Load(Result<ProjectPreparation, project::ProjectLoadError>),
+    Load(Result<ProjectValidationOutcome, String>),
     Import {
         kind: ImportKind,
         source: PathBuf,
@@ -363,7 +407,7 @@ enum Pending {
 enum State {
     Idle,
     WaitingForTrust {
-        prepared: project::PreparedProject,
+        project: Project,
         review: shrimply_trust_core::Review,
     },
     WaitingForKdenlive,
@@ -383,7 +427,6 @@ enum State {
     WaitingForWarnings {
         path: PathBuf,
     },
-    WaitingForLock,
     Finished,
 }
 
@@ -426,7 +469,7 @@ impl ProjectLoader {
     }
 
     pub fn confirm_trust(&mut self, kind: Option<shrimply_trust_core::Kind>) -> LoadEvent {
-        let State::WaitingForTrust { prepared, review } =
+        let State::WaitingForTrust { project, review } =
             std::mem::replace(&mut self.state, State::Finished)
         else {
             panic!("trust response without a pending confirmation");
@@ -440,7 +483,7 @@ impl ProjectLoader {
                 body,
             };
         }
-        self.finish_native_load(Ok(ProjectPreparation::Ready(prepared)))
+        self.finish_native_load(Ok(ProjectValidationOutcome::Valid(project)))
     }
 
     pub fn confirm_kdenlive(&mut self, convert: bool) -> LoadEvent {
@@ -574,31 +617,6 @@ impl ProjectLoader {
         LoadEvent::Progress(PROJECT_READING)
     }
 
-    pub fn retry_locked_project(
-        &mut self,
-        stop_other: bool,
-        owner: project::ProjectLockOwner,
-    ) -> LoadEvent {
-        assert!(
-            matches!(self.state, State::WaitingForLock),
-            "lock response without a pending lock"
-        );
-        if stop_other && !project::terminate_project_process(&owner) {
-            return LoadEvent::Error {
-                heading: "Could not stop other editor",
-                body: "Shrimply could not signal the other process.".to_string(),
-            };
-        }
-        self.start_native_load();
-        LoadEvent::Progress(PROJECT_READING)
-    }
-
-    pub fn cancel(&mut self) -> LoadEvent {
-        self.cancellation.cancel();
-        self.state = State::Finished;
-        LoadEvent::Canceled
-    }
-
     pub fn poll(&mut self) -> Option<LoadEvent> {
         let result = match &self.state {
             State::Working(receiver) => match receiver.try_recv() {
@@ -632,7 +650,14 @@ impl ProjectLoader {
     fn start_native_load(&mut self) {
         let path = self.path.clone();
         self.start_worker(move || {
-            Pending::Load(project::prepare_project_with_frame_grid_repair(&path))
+            let result = match load_project_session(&path) {
+                Ok(project) => Ok(ProjectValidationOutcome::Valid(project)),
+                Err(error) => match project::read_project_for_editor(&path) {
+                    Ok(outcome @ ProjectValidationOutcome::FrameGridRepair(_)) => Ok(outcome),
+                    _ => Err(error),
+                },
+            };
+            Pending::Load(result)
         });
     }
 
@@ -646,11 +671,11 @@ impl ProjectLoader {
 
     fn finish_native_load(
         &mut self,
-        result: Result<ProjectPreparation, project::ProjectLoadError>,
+        result: Result<ProjectValidationOutcome, String>,
     ) -> LoadEvent {
         match result {
-            Ok(ProjectPreparation::Ready(prepared)) => {
-                let review = match prepared.trust_review() {
+            Ok(ProjectValidationOutcome::Valid(project)) => {
+                let review = match shrimply_trust_core::Review::new(project.executable_sources()) {
                     Ok(review) => review,
                     Err(body) => {
                         self.state = State::Finished;
@@ -662,20 +687,20 @@ impl ProjectLoader {
                 };
                 if !review.files.is_empty() {
                     self.state = State::WaitingForTrust {
-                        prepared,
+                        project,
                         review: review.clone(),
                     };
                     return LoadEvent::ConfirmTrust(review);
                 }
                 let path = self.path.clone();
-                let project = project::activate_project(prepared);
+                activate_project_session(&path, &project);
                 self.state = State::Finished;
                 LoadEvent::Ready {
                     path,
                     project: Box::new(project),
                 }
             }
-            Ok(ProjectPreparation::FrameGridRepair(project)) => {
+            Ok(ProjectValidationOutcome::FrameGridRepair(project)) => {
                 self.state = State::WaitingForRepair {
                     source: self.path.clone(),
                     project,
@@ -684,11 +709,7 @@ impl ProjectLoader {
                 };
                 LoadEvent::ConfirmFrameGridRepair
             }
-            Err(project::ProjectLoadError::LockedByOtherInstance { owner }) => {
-                self.state = State::WaitingForLock;
-                LoadEvent::LockedByOtherInstance(owner)
-            }
-            Err(project::ProjectLoadError::Other(body)) => {
+            Err(body) => {
                 self.state = State::Finished;
                 LoadEvent::Error {
                     heading: "Could not open project",

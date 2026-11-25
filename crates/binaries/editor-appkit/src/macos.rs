@@ -104,6 +104,13 @@ define_class!(
     }
 
     unsafe impl NSApplicationDelegate for Editor {
+        #[unsafe(method(applicationWillTerminate:))]
+        fn will_terminate(&self, _notification: &NSNotification) {
+            if let Err(error) = shrimply_project_document::project::shutdown_history() {
+                tracing::error!(%error, "Could not save project during shutdown");
+            }
+        }
+
         #[unsafe(method(applicationDidFinishLaunching:))]
         fn did_finish_launching(&self, _notification: &NSNotification) {
             let mtm = self.mtm();

@@ -6,9 +6,7 @@ use std::collections::BTreeMap;
 
 pub fn revision(project: &Project) -> Result<String, String> {
     let mut project = project.clone();
-    project.cursor_position = None;
-    project.timeline_zoom = None;
-    project.expanded_sequence_paths.clear();
+    project.clear_view_state();
     let value = serde_json::to_value(project).map_err(|error| error.to_string())?;
     let bytes = serde_json::to_vec(&value).map_err(|error| error.to_string())?;
     Ok(Sha256::digest(bytes)
@@ -224,9 +222,7 @@ pub fn dry_run(call: &ApiCall, snapshot: &LiveSnapshot) -> Result<Value, String>
         if let Some(mut candidate) =
             shrimply_project_document::project::history_destination(call.name == "history_redo")
         {
-            candidate.cursor_position = snapshot.project.cursor_position;
-            candidate.timeline_zoom = snapshot.project.timeline_zoom;
-            candidate.expanded_sequence_paths = snapshot.project.expanded_sequence_paths.clone();
+            candidate.copy_view_state_from(&snapshot.project);
             diff(
                 "",
                 &serde_json::to_value(&snapshot.project).map_err(|error| error.to_string())?,
@@ -247,10 +243,7 @@ pub fn dry_run(call: &ApiCall, snapshot: &LiveSnapshot) -> Result<Value, String>
         return Err("edit request requires at least one operation".into());
     }
     let mut project = snapshot.project.clone();
-    let scope = query::parse_path(&request.scope.clone().unwrap_or_default().sequence_path)?;
-    let scope = project
-        .sequence_scope_for_path(shrimply_project_document::project::ItemKind::Video, &scope)
-        .ok_or("scope was not found")?;
+    let scope = edit::resolve_scope(&project, &request.scope.clone().unwrap_or_default())?.logical;
     let anchor = request
         .frame
         .unwrap_or(snapshot.player.position.as_frame(project.fps));

@@ -23,11 +23,16 @@ use shrimply_property_model::timeline_value::*;
 use shrimply_scene_3d::{AnimatedVec3, ObjScene};
 use shrimply_visual_modifiers::{ModifierEffect, ModifierModel};
 
+mod atomic_file;
 mod audio_generator;
+mod changes;
+mod codec;
 mod comment;
 mod conversion;
 #[cfg(feature = "editor")]
 pub mod creation;
+pub use changes::{ChangeError, ProjectChanges};
+pub use codec::ProjectEncoding;
 pub use comment::{CommentColor, CommentItem, CommentTrack};
 mod generated;
 #[cfg(feature = "editor")]
@@ -38,6 +43,7 @@ mod ownership;
 mod paint;
 #[cfg(feature = "preview")]
 mod preview;
+mod session;
 mod tags;
 mod timing;
 pub use crate::caption::{
@@ -58,14 +64,16 @@ pub use generated::{
 };
 #[cfg(feature = "editor")]
 pub use history::{
-    CommitStatus, PreparedProject, ProjectPreparation, activate_project, adopt_project_snapshot,
-    can_redo, can_undo, change_history_saved, commit_coalesced_edit, commit_edit,
-    commit_edit_checked, commit_edit_saved, connect_commit_status, create_new_project_file,
-    create_project_file, finish_coalesced_edit, flush_history, history_destination,
-    history_revision, load_project_snapshot, load_project_snapshot_with_fingerprint,
-    poll_commit_status, prepare_project, prepare_project_with_frame_grid_repair, redo, save,
-    save_as, save_view_state, saved_project_fingerprint, serialize_project_json, shutdown_history,
-    undo, with_provisional_edit,
+    CommitStatus, PreparedProject, ProjectPreparation, PublishError, activate_attached_project,
+    activate_project, adopt_attached_snapshot, adopt_project_snapshot, can_redo, can_undo,
+    change_history_saved, commit_coalesced_edit, commit_edit, commit_edit_checked,
+    commit_edit_saved, commit_peer_snapshot, committed_project, connect_commit_status,
+    create_new_project_file, create_project_file, finish_coalesced_edit, flush_history,
+    history_destination, history_revision, load_project_snapshot,
+    load_project_snapshot_with_fingerprint, poll_commit_status, prepare_project,
+    prepare_project_with_frame_grid_repair, read_project_for_editor, redo, restore_editor_view,
+    save, save_as, save_project_copy, save_view_state, saved_project_fingerprint,
+    serialize_project_json, session_is_attached, shutdown_history, undo, with_provisional_edit,
 };
 pub use item_address::{
     ItemAddress, ItemKind, ItemMut, ItemRef, ProjectItem, SequenceScopeId, TrackAddress, TrackMut,
@@ -84,6 +92,7 @@ pub use preview::{
     SHAPE_APPEARANCE_PREVIEW_FACET, SHAPE_CONTENT_PREVIEW_FACET, TEXT_APPEARANCE_PREVIEW_FACET,
     TRACKED_CAMERA_PREVIEW, TrackedCameraPreview,
 };
+pub use session::ProjectSession;
 pub use shrimply_background::{
     Background, BackgroundGenerator, BackgroundKind, CenteredLines, Checkerboard, ColorGradient,
     Curve, GradientMode, Grid, GridLineStyle, NoiseColorMode, NoiseDistribution, PerlinMode,

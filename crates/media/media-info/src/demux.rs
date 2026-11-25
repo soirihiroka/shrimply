@@ -1,5 +1,11 @@
 //! Open media without letting FFmpeg's stream probe decode video frames on the CPU.
-use ffmpeg_next::{self as ffmpeg, format::context::Input, media::Type, sys};
+use ffmpeg_next::{
+    self as ffmpeg,
+    format::context::{Input, StreamIo},
+    media::Type,
+    sys,
+};
+use shrimply_asset::AssetSnapshot;
 use std::{path::Path, ptr, sync::OnceLock};
 
 pub fn open(path: impl AsRef<Path>) -> Result<Input, ffmpeg::Error> {
@@ -11,6 +17,25 @@ pub fn open_with_interrupt(
     cancelled: impl FnMut() -> bool + Send + 'static,
 ) -> Result<Input, ffmpeg::Error> {
     open_input(path, cancelled, true)
+}
+
+pub fn open_asset_with_interrupt(
+    asset: &AssetSnapshot,
+    cancelled: impl FnMut() -> bool + Send + 'static,
+) -> Result<Input, String> {
+    let reader = asset.seekable_reader().map_err(|error| error.to_string())?;
+    let Some(reader) = reader else {
+        return open_with_interrupt(asset.path(), cancelled).map_err(|error| error.to_string());
+    };
+    let stream = StreamIo::from_read_seek(reader).map_err(|error| error.to_string())?;
+    let input = ffmpeg::format::input_from_stream_with_interrupt(
+        stream,
+        None,
+        Some(probe_options(true)),
+        cancelled,
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(finish_probe(input))
 }
 
 /// Open a file that will be copied into another container.
@@ -38,6 +63,15 @@ fn open_input(
         .to_str()
         .filter(|name| !name.as_bytes().contains(&0))
         .ok_or(ffmpeg::Error::InvalidData)?;
+    let input = ffmpeg::format::input_with_interrupt_and_dictionary(
+        path,
+        cancelled,
+        probe_options(restrict_video_probe),
+    )?;
+    Ok(finish_probe(input))
+}
+
+fn probe_options(restrict_video_probe: bool) -> ffmpeg::Dictionary<'static> {
     static PROBE_CODECS: OnceLock<String> = OnceLock::new();
     let codecs = PROBE_CODECS.get_or_init(|| {
         let mut names = Vec::new();
@@ -58,7 +92,10 @@ fn open_input(
     if restrict_video_probe {
         options.set("codec_whitelist", codecs);
     }
-    let input = ffmpeg::format::input_with_interrupt_and_dictionary(path, cancelled, options)?;
+    options
+}
+
+fn finish_probe(input: Input) -> Input {
     for stream in input.streams() {
         // Parsers can supply the source dimensions and pixel format without reconstructing
         // a frame. FFmpeg normally leaves the latter unset when its probe decoder is disabled.
@@ -78,7 +115,7 @@ fn open_input(
             }
         }
     }
-    Ok(input)
+    input
 }
 
 /// Stream order in the container, including cover pictures which some interchange formats

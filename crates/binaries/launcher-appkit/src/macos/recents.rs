@@ -1,9 +1,10 @@
 use objc2::runtime::AnyObject;
 use objc2::{AnyThread, MainThreadOnly, sel};
 use objc2_app_kit::{
-    NSAutoresizingMaskOptions, NSBezelStyle, NSButton, NSColor, NSFont, NSFontAttributeName,
-    NSForegroundColorAttributeName, NSImage, NSMenu, NSMenuItem, NSPopUpArrowPosition,
-    NSPopUpButtonCell, NSScrollElasticity, NSScrollView, NSTextAlignment, NSTextField, NSView,
+    NSAutoresizingMaskOptions, NSBezelStyle, NSButton, NSCellImagePosition, NSColor, NSFont,
+    NSFontAttributeName, NSForegroundColorAttributeName, NSImage, NSMenu, NSMenuItem,
+    NSPopUpArrowPosition, NSPopUpButtonCell, NSScrollElasticity, NSScrollView, NSTextAlignment,
+    NSTextField, NSView,
 };
 use objc2_foundation::{
     MainThreadMarker, NSMutableAttributedString, NSPoint, NSRect, NSSize, NSString, ns_string,
@@ -146,6 +147,17 @@ impl List {
                     mtm,
                 )
             };
+            let (symbol, location) = if launcher::is_shared_project(&project.path) {
+                ("externaldrive.connected.to.line.below", "Remote Project")
+            } else {
+                ("folder", "Local Project")
+            };
+            let image = NSImage::imageWithSystemSymbolName_accessibilityDescription(
+                &NSString::from_str(symbol),
+                Some(&NSString::from_str(location)),
+            );
+            open.setImage(image.as_deref());
+            open.setImagePosition(NSCellImagePosition::ImageLeading);
             open.setAttributedTitle(&attributed);
             open.setTag(index as isize);
             open.setAlignment(NSTextAlignment::Left);

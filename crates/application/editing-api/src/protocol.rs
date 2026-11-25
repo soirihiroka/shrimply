@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use shrimply_math_core::Time;
 use shrimply_project_document::project::{
-    Interpolation, Project, TransitionSide, VisualTransitionKind,
+    Interpolation, Project, ProjectChanges, TransitionSide, VisualTransitionKind,
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -156,6 +156,48 @@ pub struct TextReplaceRequest {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Presence {
+    pub id: uuid::Uuid,
+    pub name: String,
+    pub position: Time,
+    pub playing: bool,
+    pub scope: ScopeRef,
+    pub clips: Vec<ClipAddress>,
+    pub tracks: Vec<TrackAddress>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ApplyChanges {
+    pub id: uuid::Uuid,
+    pub label: String,
+    pub changes: ProjectChanges,
+    #[serde(default)]
+    pub replay: bool,
+}
+
+pub type MediaRewrites = std::collections::BTreeMap<std::path::PathBuf, std::path::PathBuf>;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct SessionVersion {
+    pub epoch: uuid::Uuid,
+    pub revision: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SessionUpdates {
+    pub version: Option<SessionVersion>,
+    pub presence: Presence,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SessionState {
+    pub version: SessionVersion,
+    pub project: Option<Project>,
+    pub participants: Vec<Presence>,
+    pub sync_error: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BridgeRequest {
     pub project_path: String,
@@ -169,6 +211,8 @@ pub enum BridgeCommand {
     Version,
     Snapshot,
     Execute(ApiCall),
+    ApplyChanges(ApplyChanges),
+    SessionUpdates(SessionUpdates),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -192,15 +236,21 @@ pub enum RangeMatch {
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ConnectProjectRequest {
-    /// Existing native .shrimp project. Reuses its owner when already open.
+    /// Existing project path or local workspace destination when joining a shared project.
     pub project_path: String,
+    /// Project server URL when joining a shared project.
+    pub server: Option<String>,
+    /// Shared project UUID when joining a project server.
+    pub remote_project_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CreateProjectRequest {
-    /// Absolute path for the new native .shrimp video project.
+    /// Absolute path for the new project or shared project's local workspace.
     pub project_path: String,
+    /// Optional project server URL. Projects created without this use local storage.
+    pub server: Option<String>,
     /// Defaults to "Untitled Project".
     pub name: Option<String>,
     /// Defaults to 1920.

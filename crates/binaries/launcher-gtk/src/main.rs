@@ -5,7 +5,7 @@ use shrimply_components_gtk::project_settings::ProjectSettingsSelector;
 use shrimply_components_gtk::tr;
 use shrimply_components_gtk::ui::{SingleLineTextInput, control_row};
 use std::cell::RefCell;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::mpsc;
 use std::thread;
@@ -99,6 +99,18 @@ fn build_ui(app: &adw::Application) {
         .css_classes(["pill"])
         .width_request(160)
         .build();
+    let shared_button = gtk::Button::builder()
+        .label(tr!("Open Shared Project").as_ref())
+        .css_classes(["pill"])
+        .halign(gtk::Align::Center)
+        .width_request(160)
+        .build();
+    let servers_button = gtk::Button::builder()
+        .label(tr!("Project Servers").as_ref())
+        .css_classes(["pill"])
+        .halign(gtk::Align::Center)
+        .width_request(160)
+        .build();
     let actions = gtk::Box::new(gtk::Orientation::Vertical, 12);
     actions.set_margin_top(12);
     actions.set_margin_start(12);
@@ -108,6 +120,8 @@ fn build_ui(app: &adw::Application) {
     open_button.set_halign(gtk::Align::Center);
     actions.append(&new_button);
     actions.append(&open_button);
+    actions.append(&shared_button);
+    actions.append(&servers_button);
     let sidebar_toolbar = adw::ToolbarView::new();
     sidebar_toolbar.add_top_bar(&left_header);
     sidebar_toolbar.set_content(Some(&actions));
@@ -200,6 +214,15 @@ fn build_ui(app: &adw::Application) {
         let app = app.clone();
         move |_| show_open_project(&window, &app)
     });
+    shared_button.connect_clicked({
+        let window = window.clone();
+        let app = app.clone();
+        move |_| show_open_shared_project(&window, &app)
+    });
+    servers_button.connect_clicked({
+        let window = window.clone();
+        move |_| shrimply_preferences_gtk::page::show_project_servers(&window)
+    });
     window.present();
 }
 
@@ -279,6 +302,20 @@ fn refresh_recents(
             .margin_start(12)
             .margin_end(12)
             .build();
+        let shared = shrimply_cross_ui_core::launcher::is_shared_project(&recent.path);
+        let location = gtk::Image::from_icon_name(if shared {
+            "folder-remote-symbolic"
+        } else {
+            "folder-symbolic"
+        });
+        let location_label = tr!(if shared {
+            "Remote Project"
+        } else {
+            "Local Project"
+        });
+        location.set_tooltip_text(Some(location_label.as_ref()));
+        location.set_valign(gtk::Align::Center);
+        content.append(&location);
         content.append(&details);
         let row = adw::PreferencesRow::builder()
             .title(&recent.name)
@@ -412,6 +449,22 @@ fn show_project_info(
         details.add(&row);
     }
 
+    if let Ok(Some(link)) = shrimply_cross_ui_core::launcher::shared_project_link(path) {
+        let row = adw::ActionRow::builder()
+            .title(tr!("Project Link").as_ref())
+            .subtitle(&link)
+            .build();
+        let copy = gtk::Button::builder()
+            .icon_name("edit-copy-symbolic")
+            .tooltip_text(tr!("Copy Project Link").as_ref())
+            .valign(gtk::Align::Center)
+            .build();
+        copy.connect_clicked(move |button| button.clipboard().set_text(&link));
+        row.add_suffix(&copy);
+        row.set_activatable_widget(Some(&copy));
+        details.add(&row);
+    }
+
     let page = adw::PreferencesPage::new();
     page.add(&details);
     let dialog = adw::PreferencesDialog::builder()
@@ -439,6 +492,64 @@ fn show_open_project(window: &adw::ApplicationWindow, app: &adw::Application) {
     });
 }
 
+fn show_open_shared_project(window: &adw::ApplicationWindow, app: &adw::Application) {
+    let link = gtk::Entry::builder()
+        .placeholder_text(tr!("Project Link").as_ref())
+        .hexpand(true)
+        .build();
+    let dialog = adw::AlertDialog::builder()
+        .heading(tr!("Open Shared Project").as_ref())
+        .extra_child(&link)
+        .build();
+    dialog.add_response("cancel", tr!("Cancel").as_ref());
+    dialog.add_response("open", tr!("Open Project").as_ref());
+    dialog.set_default_response(Some("open"));
+    dialog.set_close_response("cancel");
+    dialog.set_response_appearance("open", adw::ResponseAppearance::Suggested);
+    let window = window.clone();
+    let app = app.clone();
+    dialog.choose(
+        Some(window.upcast_ref::<gtk::Widget>()),
+        None::<&gio::Cancellable>,
+        {
+            let window = window.clone();
+            move |answer| {
+                if answer == "open" {
+                    let link = link.text().to_string();
+                    open_remote(&window, &app, "Could not open project", move || {
+                        shrimply_cross_ui_core::launcher::open_shared_project(&link)
+                    });
+                }
+            }
+        },
+    );
+}
+
+fn open_remote(
+    window: &adw::ApplicationWindow,
+    app: &adw::Application,
+    heading: &'static str,
+    operation: impl FnOnce() -> Result<PathBuf, String> + Send + 'static,
+) {
+    let (send, receive) = mpsc::channel();
+    thread::spawn(move || {
+        let _ = send.send(operation());
+    });
+    let window = window.clone();
+    let app = app.clone();
+    glib::timeout_add_local(Duration::from_millis(50), move || {
+        match receive.try_recv() {
+            Ok(Ok(path)) => open_in_editor(&window, &app, &path),
+            Ok(Err(error)) => show_error(&window, heading, &error),
+            Err(mpsc::TryRecvError::Empty) => return glib::ControlFlow::Continue,
+            Err(mpsc::TryRecvError::Disconnected) => {
+                show_error(&window, heading, "The project worker stopped unexpectedly.")
+            }
+        }
+        glib::ControlFlow::Break
+    });
+}
+
 fn show_create_project(window: &adw::ApplicationWindow, app: &adw::Application) {
     let selector = ProjectSettingsSelector::new();
     let name = SingleLineTextInput::builder(tr!("Untitled Project").as_ref()).build();
@@ -451,6 +562,17 @@ fn show_create_project(window: &adw::ApplicationWindow, app: &adw::Application) 
     }));
     let names = adw::PreferencesGroup::new();
     names.add(&content);
+    let servers = shrimply_cross_ui_core::launcher::project_servers();
+    let destinations = gtk::StringList::new(&[tr!("Local").as_ref()]);
+    for server in &servers {
+        destinations.append(server);
+    }
+    let destination = adw::ComboRow::builder()
+        .title(tr!("Location").as_ref())
+        .model(&destinations)
+        .build();
+    shrimply_components_gtk::ui::adaptive_choice(&destination);
+    names.add(&destination);
     let create = adw::ButtonRow::builder()
         .title(tr!("Create Project").as_ref())
         .build();
@@ -483,6 +605,24 @@ fn show_create_project(window: &adw::ApplicationWindow, app: &adw::Application) 
                 show_error(&window, "Could not create project", "Invalid frame rate.");
                 return;
             };
+            if let Some(server) = destination
+                .selected()
+                .checked_sub(1)
+                .and_then(|index| servers.get(index as usize))
+                .cloned()
+            {
+                dialog.close();
+                open_remote(&window, &app, "Could not create project", move || {
+                    shrimply_cross_ui_core::launcher::create_shared_project(
+                        &server,
+                        &project_name,
+                        canvas_size,
+                        fps,
+                        &project_tags,
+                    )
+                });
+                return;
+            }
             let filter = shrimply_components_gtk::project_open::project_file_filter();
             let filters = gio::ListStore::new::<gtk::FileFilter>();
             filters.append(&filter);

@@ -3,6 +3,7 @@ use clap::ArgMatches;
 use serde_json::{Value, json};
 use shrimply_editing_api::{bridge::Bridge, commands, preview, protocol::*};
 use shrimply_project_document::project;
+use shrimply_project_service::SharedWorkspace;
 use std::{
     io::{IsTerminal, Read},
     path::{Path, PathBuf},
@@ -179,7 +180,9 @@ fn execute(path: &str, leaf: &ArgMatches, root: &ArgMatches) -> Result<Value, St
         let mut editor = None;
         let mut editor_error = None;
         if let Some(path) = &project_path {
-            match Bridge::connect(path).and_then(|bridge| bridge.request(BridgeCommand::Version)) {
+            match Bridge::connect_or_launch(path)
+                .and_then(|bridge| bridge.request(BridgeCommand::Version))
+            {
                 Ok(value) => editor = Some(value),
                 Err(error) => editor_error = Some(error.to_string()),
             }
@@ -253,30 +256,51 @@ fn execute(path: &str, leaf: &ArgMatches, root: &ArgMatches) -> Result<Value, St
                 json!({"success":true,"command":path_string(definition),"project":path,"dry_run":true,"planned":{"create":project}}),
             );
         }
-        project::create_new_project_file(&path, &project)?;
+        let (project, location) = if let Some(server) = request.server {
+            let (workspace, document) = SharedWorkspace::create(&path, &server, &project)?;
+            let link = workspace.link();
+            let location = json!({"kind":"remote","server":link.server,"id":link.project_id});
+            (std::sync::Arc::unwrap_or_clone(document), location)
+        } else {
+            project::create_new_project_file(&path, &project)?;
+            (project, json!({"kind":"local"}))
+        };
         return Ok(
-            json!({"success":true,"command":path_string(definition),"project":path,"result":{"created":true,"content_revision":preview::revision(&project)?}}),
+            json!({"success":true,"command":path_string(definition),"project":path,"result":{"created":true,"location":location,"content_revision":preview::revision(&project)?}}),
         );
     }
     if definition.name == "connect_project" {
+        let request: ConnectProjectRequest =
+            serde_json::from_value(arguments).map_err(|error| error.to_string())?;
+        let remote = match (request.server, request.remote_project_id) {
+            (Some(server), Some(id)) => Some((
+                server,
+                id.parse::<uuid::Uuid>()
+                    .map_err(|error| error.to_string())?,
+            )),
+            (None, None) => None,
+            _ => {
+                return Err(
+                    "invalid arguments: --server and --remote-project-id must be used together"
+                        .into(),
+                );
+            }
+        };
+        if dry_run {
+            if remote.is_none() {
+                project::load_project_snapshot(&path)?;
+            }
+            return Ok(
+                json!({"success":true,"project":path,"dry_run":true,"planned":{"open":if remote.is_some() {"shared"} else {"headless"}}}),
+            );
+        }
+        if let Some((server, id)) = remote {
+            SharedWorkspace::join(&path, &server, id)?;
+        }
         if !path.is_file() {
             return Err("project does not exist".into());
         }
-        project::load_project_snapshot(&path)?;
-        let headless = leaf.get_flag("headless");
-        if dry_run {
-            return Ok(
-                json!({"success":true,"project":path,"dry_run":true,"planned":{"open":if headless {"headless"}else{"native_editor"}}}),
-            );
-        }
-        let reused = project::project_lock_owner(&path)?.is_some();
-        let bridge = if reused {
-            Bridge::connect(&path).map_err(|error| error.to_string())?
-        } else if headless {
-            Bridge::launch(&path).map_err(|error| error.to_string())?
-        } else {
-            launch_editor(&path)?
-        };
+        let bridge = Bridge::connect_or_launch(&path).map_err(|error| error.to_string())?;
         let mut result = bridge
             .request(BridgeCommand::Handshake)
             .map_err(|error| error.to_string())?;
@@ -285,8 +309,8 @@ fn execute(path: &str, leaf: &ArgMatches, root: &ArgMatches) -> Result<Value, St
         result["opened"] = json!(true);
         return Ok(json!({"success":true,"project":path,"result":result}));
     }
-    let mut owner = project::project_lock_owner(&path)?;
-    if definition.name == "project_close" && !dry_run && owner.is_none() {
+    let closing = definition.name == "project_close" && !dry_run;
+    if closing && project::project_lock_owner(&path)?.is_none() {
         return Ok(
             json!({"success":true,"project":path,"result":{"closed":true,"already_closed":true}}),
         );
@@ -297,32 +321,17 @@ fn execute(path: &str, leaf: &ArgMatches, root: &ArgMatches) -> Result<Value, St
         dry_run,
         if_revision,
     };
-    let mut result = if owner.is_some() {
-        let bridge = Bridge::connect(&path).map_err(|error| error.to_string())?;
-        owner = Some(bridge.owner.clone());
-        bridge
-            .request(BridgeCommand::Execute(call))
-            .map_err(|error| error.to_string())?
-    } else if dry_run || preview::is_snapshot_query(definition.name) {
-        let snapshot = preview::saved_snapshot(
-            project::load_project_snapshot(&path)?,
-            path.to_string_lossy().into_owned(),
-        );
-        let result = if dry_run {
-            preview::dry_run(&call, &snapshot)?
-        } else {
-            preview::query_call(definition.name, call.arguments, &snapshot)?
-        };
-        preview::with_state(result, &snapshot.project, "saved")?
-    } else if definition.read_only {
-        shrimply_editing_runtime::query_saved(&path, call)?
+    let bridge = if closing {
+        Bridge::connect(&path)
     } else {
-        let bridge = Bridge::launch(&path).map_err(|error| error.to_string())?;
-        bridge
-            .request(BridgeCommand::Execute(call))
-            .map_err(|error| error.to_string())?
-    };
-    if definition.name == "project_close" && !dry_run {
+        Bridge::connect_or_launch(&path)
+    }
+    .map_err(|error| error.to_string())?;
+    let owner = closing.then(|| bridge.owner.clone());
+    let mut result = bridge
+        .request(BridgeCommand::Execute(call))
+        .map_err(|error| error.to_string())?;
+    if closing {
         let deadline = Instant::now() + SESSION_WAIT_TIMEOUT;
         while project::project_lock_owner(&path)? == owner {
             if Instant::now() >= deadline {
@@ -584,46 +593,10 @@ fn resolve_addresses(
 }
 
 fn load_snapshot(path: &Path) -> Result<LiveSnapshot, String> {
-    if project::project_lock_owner(path)?.is_some() {
-        let value = Bridge::connect(path)
-            .and_then(|bridge| bridge.request(BridgeCommand::Snapshot))
-            .map_err(|error| error.to_string())?;
-        serde_json::from_value(value).map_err(|error| error.to_string())
-    } else {
-        Ok(preview::saved_snapshot(
-            project::load_project_snapshot(path)?,
-            path.to_string_lossy().into_owned(),
-        ))
-    }
-}
-
-fn launch_editor(path: &Path) -> Result<Bridge, String> {
-    let current = std::env::current_exe().map_err(|error| error.to_string())?;
-    #[cfg(not(target_os = "macos"))]
-    let editor = current.with_file_name("shrimply-editor");
-    #[cfg(target_os = "macos")]
-    let editor = current;
-    let mut child = std::process::Command::new(editor)
-        .arg(path)
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
+    let value = Bridge::connect_or_launch(path)
+        .and_then(|bridge| bridge.request(BridgeCommand::Snapshot))
         .map_err(|error| error.to_string())?;
-    let deadline = Instant::now() + SESSION_WAIT_TIMEOUT;
-    while Instant::now() < deadline {
-        if let Some(status) = child.try_wait().map_err(|error| error.to_string())? {
-            return Err(format!("editor exited before becoming ready: {status}"));
-        }
-        if let Ok(bridge) = Bridge::connect(path) {
-            std::thread::spawn(move || {
-                let _ = child.wait();
-            });
-            return Ok(bridge);
-        }
-        std::thread::sleep(SESSION_POLL_INTERVAL);
-    }
-    Err("editor has not exposed its editing API within 30 seconds; check the editor window".into())
+    serde_json::from_value(value).map_err(|error| error.to_string())
 }
 
 fn write_image(project: &Path, output: &Path, bytes: &[u8]) -> Result<(), String> {

@@ -181,10 +181,9 @@ impl VideoDecoderSession {
     ) -> Result<Self, String> {
         source.verify_current()?;
         ffmpeg::init().map_err(|error| error.to_string())?;
-        let mut input = shrimply_media_info::demux::open_with_interrupt(source.path(), move || {
+        let mut input = shrimply_media_info::demux::open_asset_with_interrupt(source, move || {
             cancellation.as_ref().is_some_and(DecodeControl::superseded)
-        })
-        .map_err(|error| error.to_string())?;
+        })?;
         let (stream_index, stream_time_base, stream_start_time, frame_rate, parameters) = {
             let stream = input
                 .streams()

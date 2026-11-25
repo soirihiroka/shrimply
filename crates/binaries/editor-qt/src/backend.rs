@@ -122,7 +122,6 @@ pub mod qobject {
         fn acknowledge_warnings(self: Pin<&mut EditorBackend>);
         #[qinvokable]
         #[cxx_name = "resolveLock"]
-        fn resolve_lock(self: Pin<&mut EditorBackend>, action: i32);
         #[qinvokable]
         #[cxx_name = "togglePlaying"]
         fn toggle_playing(self: Pin<&mut EditorBackend>);
@@ -306,7 +305,6 @@ pub mod qobject {
         fn request_warnings(self: Pin<&mut EditorBackend>, body: QString);
         #[qsignal]
         #[cxx_name = "requestLock"]
-        fn request_lock(self: Pin<&mut EditorBackend>, pid: i64);
         #[qsignal]
         #[cxx_name = "showError"]
         fn show_error(self: Pin<&mut EditorBackend>, heading: QString, body: QString);
@@ -358,7 +356,6 @@ pub struct EditorBackendRust {
     cuda_preflight: Option<(PathBuf, Receiver<Result<(), String>>)>,
     loader: Option<ProjectLoader>,
     session: Option<Pin<Box<EditorSession>>>,
-    pending_lock_owner: Option<project::ProjectLockOwner>,
     blender_probe: Option<Receiver<Result<PathBuf, String>>>,
     cli_request: Option<Receiver<Result<(bool, String), String>>>,
     server_request: Option<Receiver<Result<shrimply_preferences_qt::ServerStatus, String>>>,
@@ -400,7 +397,6 @@ impl Default for EditorBackendRust {
             cuda_preflight: None,
             loader: None,
             session: None,
-            pending_lock_owner: None,
             blender_probe: None,
             cli_request: None,
             server_request: None,
@@ -623,25 +619,6 @@ impl qobject::EditorBackend {
 
     pub fn acknowledge_warnings(mut self: Pin<&mut Self>) {
         let event = self.as_mut().loader_mut().acknowledge_warnings();
-        self.as_mut().handle_event(event);
-    }
-
-    pub fn resolve_lock(mut self: Pin<&mut Self>, action: i32) {
-        let owner = self
-            .as_mut()
-            .rust_mut()
-            .get_mut()
-            .pending_lock_owner
-            .take()
-            .expect("Qt lock response without a pending lock");
-        let event = match action {
-            1 => self
-                .as_mut()
-                .loader_mut()
-                .retry_locked_project(false, owner.clone()),
-            2 => self.as_mut().loader_mut().retry_locked_project(true, owner),
-            _ => self.as_mut().loader_mut().cancel(),
-        };
         self.as_mut().handle_event(event);
     }
 
@@ -1179,11 +1156,6 @@ impl qobject::EditorBackend {
             LoadEvent::ImportWarnings(warnings) => self
                 .as_mut()
                 .request_warnings(QString::from(warnings.join("\n"))),
-            LoadEvent::LockedByOtherInstance(owner) => {
-                let pid = owner.pid();
-                self.as_mut().rust_mut().get_mut().pending_lock_owner = Some(owner);
-                self.as_mut().request_lock(i64::from(pid));
-            }
             LoadEvent::Ready { path, project } => {
                 if let Err(error) =
                     shrimply_recent_projects::touch(&path, &project.name, &project.tags)

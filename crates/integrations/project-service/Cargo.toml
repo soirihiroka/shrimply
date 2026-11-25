@@ -1,0 +1,29 @@
+[package]
+name = "shrimply-project-service"
+version.workspace = true
+edition = "2024"
+
+[features]
+server = ["dep:futures-util", "dep:http-body-util", "dep:hyper", "dep:hyper-util", "dep:tokio", "dep:tokio-util"]
+
+[[bin]]
+name = "shrimply-project-server"
+required-features = ["server"]
+
+[dependencies]
+futures-util = { workspace = true, optional = true }
+http-body-util = { workspace = true, optional = true }
+hyper = { workspace = true, optional = true, features = ["http1", "server"] }
+hyper-util = { workspace = true, optional = true, features = ["tokio"] }
+reqwest = { workspace = true, features = ["default", "blocking", "json"] }
+rusqlite.workspace = true
+serde = { workspace = true, features = ["derive", "rc"] }
+serde_json.workspace = true
+shrimply-editing-api.workspace = true
+shrimply-path-core.workspace = true
+shrimply-project-document.workspace = true
+shrimply-resource-pipeline.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true, optional = true, features = ["fs", "io-util", "net"] }
+tokio-util = { workspace = true, optional = true, features = ["io"] }
+uuid = { workspace = true, features = ["serde", "v4"] }

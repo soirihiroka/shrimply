@@ -273,7 +273,8 @@ struct CachedFrame {
 }
 
 pub(crate) enum DirectScrubOutcome {
-    Frame(DecodedVisual),
+    Hit(DecodedVisual),
+    Decoded(DecodedVisual),
     Fallback,
 }
 
@@ -783,11 +784,9 @@ impl ScrubState {
                 existing.last_used = tick;
                 TELEM_CACHE_HITS.fetch_add(1, Ordering::AcqRel);
                 shrimply_profiling::increment("Exact scrub / Frame cache hit");
-                return Ok(DirectScrubOutcome::Frame(existing.visual.clone()));
+                return Ok(DirectScrubOutcome::Hit(existing.visual.clone()));
             }
         }
-        self.record_miss();
-
         let gop = self.gops.get(&gop_key).expect("cached GOP present");
         let gop_id = gop.gop_id;
         let blob_ptr = gop.blob.as_ptr();
@@ -852,7 +851,7 @@ impl ScrubState {
         let frame = Arc::new(VideoFrame::new(decoded)?);
         let visual = (position, frame);
         self.insert_frame(frame_pts, end_pts, visual.clone());
-        Ok(DirectScrubOutcome::Frame(visual))
+        Ok(DirectScrubOutcome::Decoded(visual))
     }
 }
 

@@ -38,11 +38,55 @@ struct ServerSelection {
     revision: Rc<Cell<u64>>,
 }
 
+#[derive(Clone, Copy)]
+enum ServerPurpose {
+    Compute,
+    Project,
+}
+
+impl ServerRows {
+    fn new(group: &adw::PreferencesGroup, add: &adw::ButtonRow) -> Self {
+        Self {
+            group: group.downgrade(),
+            add: add.downgrade(),
+            rows: Rc::new(RefCell::new(Vec::new())),
+        }
+    }
+
+    fn rebuild(
+        &self,
+        build: impl FnOnce(&adw::PreferencesGroup, &mut Vec<glib::WeakRef<adw::ActionRow>>),
+    ) {
+        let (Some(group), Some(add)) = (self.group.upgrade(), self.add.upgrade()) else {
+            return;
+        };
+        group.remove(&add);
+        let mut rows = self.rows.borrow_mut();
+        for row in rows.drain(..).filter_map(|row| row.upgrade()) {
+            group.remove(&row);
+        }
+        build(&group, &mut rows);
+        group.add(&add);
+    }
+}
+
+fn add_server_row() -> adw::ButtonRow {
+    adw::ButtonRow::builder()
+        .title(tr!("Add Server").as_ref())
+        .start_icon_name("list-add-symbolic")
+        .build()
+}
+
 #[derive(Clone)]
-struct ServerList {
+struct ServerRows {
     group: glib::WeakRef<adw::PreferencesGroup>,
     add: glib::WeakRef<adw::ButtonRow>,
     rows: Rc<RefCell<Vec<glib::WeakRef<adw::ActionRow>>>>,
+}
+
+#[derive(Clone)]
+struct ServerList {
+    endpoints: ServerRows,
     generation: Rc<Cell<u64>>,
     selection: ServerSelection,
 }
@@ -183,10 +227,7 @@ pub fn page(
     let endpoint_group = adw::PreferencesGroup::builder()
         .title(tr!("Inference Servers").as_ref())
         .build();
-    let add_server = adw::ButtonRow::builder()
-        .title(tr!("Add Server").as_ref())
-        .start_icon_name("list-add-symbolic")
-        .build();
+    let add_server = add_server_row();
     endpoint_group.add(&add_server);
 
     let server_group = adw::PreferencesGroup::new();
@@ -215,6 +256,7 @@ pub fn page(
     let cli_group = adw::PreferencesGroup::new();
     cli_group.add(&crate::cli::row());
     page.add(&cli_group);
+    page.add(&project_server_group(preferences.clone()));
     for name in store::PreferencePage::External.groups() {
         page.add(match *name {
             "Blender" => blender_group,
@@ -228,9 +270,7 @@ pub fn page(
 
     let revision = Rc::new(Cell::new(0_u64));
     let server_list = ServerList {
-        group: endpoint_group.downgrade(),
-        add: add_server.downgrade(),
-        rows: Rc::new(RefCell::new(Vec::new())),
+        endpoints: ServerRows::new(&endpoint_group, &add_server),
         generation: Rc::new(Cell::new(0)),
         selection: ServerSelection {
             preferences: preferences.clone(),
@@ -240,7 +280,7 @@ pub fn page(
     };
     let add_list = server_list.clone();
     add_server.connect_activated(move |button| {
-        show_server_editor(button, "Add Server", "Add Server", "", {
+        show_server_editor(button, ServerPurpose::Compute, None, {
             let servers = add_list.clone();
             move |url| add_server_url(&servers, url)
         });
@@ -293,73 +333,150 @@ pub fn page(
     page
 }
 
+pub(crate) fn project_server_group(preferences: store::SharedPreferences) -> adw::PreferencesGroup {
+    let group = adw::PreferencesGroup::builder()
+        .title(tr!("Project Servers").as_ref())
+        .build();
+    let add = add_server_row();
+    group.add(&add);
+    let rows = ServerRows::new(&group, &add);
+    rebuild_project_servers(&preferences, &rows);
+    add.connect_activated(move |button| {
+        let rows = rows.clone();
+        let preferences = preferences.clone();
+        show_server_editor(button, ServerPurpose::Project, None, move |url| {
+            update_project_server(&preferences, &rows, None, Some(&url));
+        });
+    });
+    group
+}
+
+fn rebuild_project_servers(preferences: &store::SharedPreferences, endpoints: &ServerRows) {
+    endpoints.rebuild(|group, rows| {
+        for url in store::snapshot(preferences).project_server_urls {
+            let row = adw::ActionRow::builder()
+                .title(&url)
+                .use_markup(false)
+                .build();
+            let icon = gtk::Image::from_icon_name("network-server-symbolic");
+            row.add_prefix(&icon);
+            let edit_parent = row.downgrade();
+            let edit_url = url.clone();
+            let edit_preferences = preferences.clone();
+            let edit_rows = endpoints.clone();
+            let delete_preferences = preferences.clone();
+            let delete_rows = endpoints.clone();
+            row.add_suffix(&create_server_menu_button(
+                true,
+                move || {
+                    let Some(parent) = edit_parent.upgrade() else {
+                        return;
+                    };
+                    let previous = edit_url.clone();
+                    let preferences = edit_preferences.clone();
+                    let rows = edit_rows.clone();
+                    show_server_editor(
+                        &parent,
+                        ServerPurpose::Project,
+                        Some(&edit_url),
+                        move |url| {
+                            update_project_server(&preferences, &rows, Some(&previous), Some(&url));
+                        },
+                    );
+                },
+                move || update_project_server(&delete_preferences, &delete_rows, Some(&url), None),
+            ));
+            group.add(&row);
+            rows.push(row.downgrade());
+        }
+    });
+}
+
+fn update_project_server(
+    preferences: &store::SharedPreferences,
+    rows: &ServerRows,
+    previous: Option<&str>,
+    url: Option<&str>,
+) {
+    match store::update_project_server(preferences, previous, url) {
+        Ok(()) => rebuild_project_servers(preferences, rows),
+        Err(error) => {
+            if let Some(group) = rows.group.upgrade() {
+                let dialog = adw::AlertDialog::new(
+                    Some(tr!("Could not save server").as_ref()),
+                    Some(&error),
+                );
+                dialog.add_responses_i18n(&[("close", "Close")]);
+                dialog.set_close_response("close");
+                dialog.present(Some(&group));
+            }
+        }
+    }
+}
+
 fn rebuild_server_rows(servers: &ServerList) {
-    let (Some(group), Some(add)) = (servers.group.upgrade(), servers.add.upgrade()) else {
-        return;
-    };
     servers
         .generation
         .set(servers.generation.get().wrapping_add(1));
-    group.remove(&add);
-    for row in servers.rows.borrow_mut().drain(..) {
-        if let Some(row) = row.upgrade() {
-            group.remove(&row);
+    servers.endpoints.rebuild(|group, rows| {
+        let (urls, selected) = store::compute_servers(&servers.selection.preferences);
+        select_server(&servers.selection, &urls[selected]);
+        let radio_group = gtk::CheckButton::new();
+        let can_delete = urls.len() > 1;
+        for url in urls {
+            let widgets = create_server_row(&url);
+            widgets.radio.set_group(Some(&radio_group));
+            widgets
+                .radio
+                .set_active(servers.selection.rows.selected_url.borrow().as_str() == url);
+
+            let selected_radio = widgets.radio.clone();
+            let activation_group = radio_group.clone();
+            widgets.row.connect_activated(move |_| {
+                let _ = &activation_group;
+                selected_radio.set_active(true);
+            });
+            let selection = servers.selection.clone();
+            let selected_url = url.clone();
+            let toggle_group = radio_group.clone();
+            widgets.radio.connect_toggled(move |radio| {
+                let _ = &toggle_group;
+                if radio.is_active() {
+                    select_server(&selection, &selected_url);
+                }
+            });
+
+            let edit_parent = widgets.row.downgrade();
+            let edit_servers = servers.clone();
+            let old_url = url.clone();
+            let delete_servers = servers.clone();
+            let deleted_url = url.clone();
+            let menu = create_server_menu_button(
+                can_delete,
+                move || {
+                    let Some(edit_parent) = edit_parent.upgrade() else {
+                        return;
+                    };
+                    let servers = edit_servers.clone();
+                    let old_url = old_url.clone();
+                    let edited_url = old_url.clone();
+                    show_server_editor(
+                        &edit_parent,
+                        ServerPurpose::Compute,
+                        Some(&old_url),
+                        move |url| {
+                            edit_server_url(&servers, &edited_url, url);
+                        },
+                    );
+                },
+                move || delete_server_url(&delete_servers, &deleted_url),
+            );
+            widgets.row.add_suffix(&menu);
+            group.add(&widgets.row);
+            rows.push(widgets.row.downgrade());
+            check_server_summary(servers, url, widgets);
         }
-    }
-
-    let (urls, selected) = store::compute_servers(&servers.selection.preferences);
-    select_server(&servers.selection, &urls[selected]);
-    let radio_group = gtk::CheckButton::new();
-    let can_delete = urls.len() > 1;
-    for url in urls {
-        let widgets = create_server_row(&url);
-        widgets.radio.set_group(Some(&radio_group));
-        widgets
-            .radio
-            .set_active(servers.selection.rows.selected_url.borrow().as_str() == url);
-
-        let selected_radio = widgets.radio.clone();
-        let activation_group = radio_group.clone();
-        widgets.row.connect_activated(move |_| {
-            let _ = &activation_group;
-            selected_radio.set_active(true);
-        });
-        let selection = servers.selection.clone();
-        let selected_url = url.clone();
-        let toggle_group = radio_group.clone();
-        widgets.radio.connect_toggled(move |radio| {
-            let _ = &toggle_group;
-            if radio.is_active() {
-                select_server(&selection, &selected_url);
-            }
-        });
-
-        let edit_parent = widgets.row.downgrade();
-        let edit_servers = servers.clone();
-        let old_url = url.clone();
-        let delete_servers = servers.clone();
-        let deleted_url = url.clone();
-        let menu = create_server_menu_button(
-            can_delete,
-            move || {
-                let Some(edit_parent) = edit_parent.upgrade() else {
-                    return;
-                };
-                let servers = edit_servers.clone();
-                let old_url = old_url.clone();
-                let edited_url = old_url.clone();
-                show_server_editor(&edit_parent, "Edit Server", "Save", &old_url, move |url| {
-                    edit_server_url(&servers, &edited_url, url);
-                });
-            },
-            move || delete_server_url(&delete_servers, &deleted_url),
-        );
-        widgets.row.add_suffix(&menu);
-        group.add(&widgets.row);
-        servers.rows.borrow_mut().push(widgets.row.downgrade());
-        check_server_summary(servers, url, widgets);
-    }
-    group.add(&add);
+    });
 }
 
 fn create_server_row(url: &str) -> ServerRow {
@@ -434,14 +551,18 @@ fn create_server_menu_button(
 
 fn show_server_editor(
     parent: &impl IsA<gtk::Widget>,
-    title: &str,
-    confirm_label: &str,
-    initial_url: &str,
+    purpose: ServerPurpose,
+    initial_url: Option<&str>,
     on_confirm: impl Fn(String) + 'static,
 ) {
+    let (title, confirm_label) = if initial_url.is_some() {
+        ("Edit Server", "Save")
+    } else {
+        ("Add Server", "Add Server")
+    };
     let url = adw::EntryRow::builder()
         .title(tr!("Server URL").as_ref())
-        .text(initial_url)
+        .text(initial_url.unwrap_or_default())
         .input_purpose(gtk::InputPurpose::Url)
         .activates_default(true)
         .build();
@@ -467,7 +588,7 @@ fn show_server_editor(
     group.add(&status);
 
     let dialog = adw::AlertDialog::builder()
-        .heading(title)
+        .heading(tr!(title).as_ref())
         .extra_child(&group)
         .build();
     dialog.add_responses_i18n(&[("cancel", "Cancel"), ("save", confirm_label)]);
@@ -502,7 +623,11 @@ fn show_server_editor(
                 status.set_text(tr!("").as_ref());
                 return;
             }
-            let normalized = match store::normalize_server_url(&value) {
+            let normalize = match purpose {
+                ServerPurpose::Compute => store::normalize_server_url,
+                ServerPurpose::Project => store::normalize_project_server_url,
+            };
+            let normalized = match normalize(&value) {
                 Ok(url) => url,
                 Err(error) => {
                     status.set_text(error);
@@ -516,6 +641,10 @@ fn show_server_editor(
             };
             selected_url.replace(Some(normalized.clone()));
             dialog.set_response_enabled("save", true);
+            if matches!(purpose, ServerPurpose::Project) {
+                status.set_text("");
+                return;
+            }
             status.set_text(tr!("Checking…").as_ref());
             spinner.set_visible(true);
             spinner.start();

@@ -3,7 +3,7 @@ pub mod remote;
 use std::fmt;
 use std::fs;
 use std::hash::{Hash, Hasher};
-use std::io::{Read, Write};
+use std::io::{self, Read, Seek, Write};
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -22,6 +22,16 @@ const WATCH_FALLBACK_POLL_INTERVAL: Duration = Duration::from_secs(2);
 pub struct Asset {
     path: PathBuf,
     entry: Arc<OnceLock<Arc<Entry>>>,
+    reader: Option<Arc<ReaderSource>>,
+}
+
+/// A random-access asset input, independent of the local filesystem.
+pub trait ReadSeek: Read + Seek + Send {}
+impl<T: Read + Seek + Send> ReadSeek for T {}
+
+struct ReaderSource {
+    length: u64,
+    open: Box<dyn Fn() -> io::Result<Box<dyn ReadSeek>> + Send + Sync>,
 }
 
 #[derive(Clone)]
@@ -39,6 +49,9 @@ struct Version {
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 enum Fingerprint {
     Missing,
+    Immutable {
+        len: u64,
+    },
     Present {
         len: u64,
         modified_ns: i128,
@@ -100,15 +113,33 @@ impl Asset {
         Self {
             path: path.into(),
             entry: Arc::new(OnceLock::new()),
+            reader: None,
         }
+    }
+
+    /// Keep a portable asset reference while binding it to a local/remote resolver.
+    /// The resolver must reopen the same immutable content for every reader.
+    pub fn bind_reader(
+        &mut self,
+        length: u64,
+        open: impl Fn() -> io::Result<Box<dyn ReadSeek>> + Send + Sync + 'static,
+    ) {
+        self.reader = Some(Arc::new(ReaderSource {
+            length,
+            open: Box::new(open),
+        }));
     }
 
     pub fn path(&self) -> &Path {
         &self.path
     }
 
+    pub fn has_bound_reader(&self) -> bool {
+        self.reader.is_some()
+    }
+
     pub fn resolve_against(&self, directory: &Path) -> Self {
-        if self.path.is_relative() {
+        if self.reader.is_none() && self.path.is_relative() {
             Self::new(directory.join(&self.path))
         } else {
             self.clone()
@@ -116,11 +147,22 @@ impl Asset {
     }
 
     pub fn watch(&self) -> Result<(), String> {
-        self.entry()?;
+        if self.reader.is_none() {
+            self.entry()?;
+        }
         Ok(())
     }
 
     pub fn snapshot(&self) -> Result<AssetSnapshot, String> {
+        if let Some(reader) = &self.reader {
+            return Ok(AssetSnapshot {
+                asset: self.clone(),
+                version: Version {
+                    revision: 0,
+                    fingerprint: Fingerprint::Immutable { len: reader.length },
+                },
+            });
+        }
         let entry = self.entry()?;
         let version = entry
             .version
@@ -145,6 +187,9 @@ impl Asset {
     }
 
     pub fn write(&self, bytes: &[u8]) -> Result<(), String> {
+        if self.reader.is_some() {
+            return Err("an immutable shared asset must be replaced by a new version".into());
+        }
         let entry = self.entry()?;
         let directory = self.path.parent().unwrap_or_else(|| Path::new("."));
         let suffix = NEXT_WRITE.fetch_add(1, Ordering::Relaxed).wrapping_add(1);
@@ -170,7 +215,9 @@ impl Asset {
     }
 
     pub fn mark_dirty(&self) -> Result<(), String> {
-        self.entry()?.refresh_from_disk(true)?;
+        if self.reader.is_none() {
+            self.entry()?.refresh_from_disk(true)?;
+        }
         Ok(())
     }
 
@@ -199,7 +246,7 @@ impl AssetSnapshot {
 
     pub fn len(&self) -> u64 {
         match self.version.fingerprint {
-            Fingerprint::Present { len, .. } => len,
+            Fingerprint::Present { len, .. } | Fingerprint::Immutable { len } => len,
             Fingerprint::Missing => 0,
         }
     }
@@ -211,11 +258,23 @@ impl AssetSnapshot {
     pub fn modified_ns(&self) -> i128 {
         match self.version.fingerprint {
             Fingerprint::Present { modified_ns, .. } => modified_ns,
-            Fingerprint::Missing => 0,
+            Fingerprint::Missing | Fingerprint::Immutable { .. } => 0,
         }
     }
 
+    pub fn seekable_reader(&self) -> io::Result<Option<Box<dyn ReadSeek>>> {
+        self.asset
+            .reader
+            .as_ref()
+            .map(|reader| (reader.open)())
+            .transpose()
+    }
+
     pub fn read(&self) -> Result<Vec<u8>, String> {
+        if self.asset.reader.is_some() {
+            let length = usize::try_from(self.len()).map_err(|error| error.to_string())?;
+            return self.read_bounded(length);
+        }
         let bytes = fs::read(self.path())
             .map_err(|error| format!("could not read {}: {error}", self.path().display()))?;
         self.verify_current()?;
@@ -229,10 +288,15 @@ impl AssetSnapshot {
             .filter(|len| *len <= max_bytes)
             .ok_or_else(|| format!("{} exceeds its byte budget", self.path().display()))?;
         let mut bytes = Vec::with_capacity(len);
-        fs::File::open(self.path())
-            .and_then(|file| {
-                file.take((max_bytes as u64).saturating_add(1))
-                    .read_to_end(&mut bytes)
+        let mut read = |source: &mut dyn Read| {
+            source
+                .take((max_bytes as u64).saturating_add(1))
+                .read_to_end(&mut bytes)
+        };
+        self.seekable_reader()
+            .and_then(|reader| match reader {
+                Some(mut reader) => read(&mut reader),
+                None => fs::File::open(self.path()).and_then(|mut file| read(&mut file)),
             })
             .map_err(|error| format!("could not read {}: {error}", self.path().display()))?;
         if bytes.len() > max_bytes {
@@ -243,6 +307,9 @@ impl AssetSnapshot {
     }
 
     pub fn read_to_string(&self) -> Result<String, String> {
+        if self.asset.reader.is_some() {
+            return String::from_utf8(self.read()?).map_err(|error| error.to_string());
+        }
         let contents = fs::read_to_string(self.path())
             .map_err(|error| format!("could not read {}: {error}", self.path().display()))?;
         self.verify_current()?;
@@ -256,6 +323,9 @@ impl AssetSnapshot {
     }
 
     pub fn is_current(&self) -> bool {
+        if self.asset.reader.is_some() {
+            return true;
+        }
         let Ok(entry) = self.asset.entry() else {
             return false;
         };
@@ -277,7 +347,9 @@ impl AssetSnapshot {
     }
 
     pub fn verify_current(&self) -> Result<(), String> {
-        self.asset.entry()?.refresh_from_disk(false)?;
+        if self.asset.reader.is_none() {
+            self.asset.entry()?.refresh_from_disk(false)?;
+        }
         self.ensure_current()
     }
 }

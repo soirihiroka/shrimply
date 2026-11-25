@@ -783,9 +783,12 @@ impl AudioDecoderSession {
         ffmpeg::init().map_err(|error| error.to_string())?;
         let source = item.file.snapshot()?;
         let pneuma_source = super::pneuma::source(item, &source)?;
-        let input_path = pneuma_source.as_deref().unwrap_or_else(|| source.path());
-        let input =
-            shrimply_media_info::demux::open(input_path).map_err(|error| error.to_string())?;
+        let input = match &pneuma_source {
+            Some(path) => {
+                shrimply_media_info::demux::open(path).map_err(|error| error.to_string())?
+            }
+            None => shrimply_media_info::demux::open_asset_with_interrupt(&source, || false)?,
+        };
         let track_id = if pneuma_source.is_some() {
             0
         } else {
