@@ -328,8 +328,6 @@ pub trait TimelineOperationContext {
                     incoming.start,
                     cut,
                     incoming.playback_speed,
-                    incoming.repeat_strategy,
-                    incoming.source_duration,
                 );
                 incoming.animation_time_offset = animation_time_offset;
                 outgoing.end = cut;
@@ -364,8 +362,6 @@ pub trait TimelineOperationContext {
                     incoming.start,
                     cut,
                     incoming.playback_speed,
-                    incoming.repeat_strategy,
-                    incoming.source_duration,
                 );
                 outgoing.end = cut;
                 incoming.start = cut;

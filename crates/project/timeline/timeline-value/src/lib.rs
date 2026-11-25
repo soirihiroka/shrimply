@@ -17,8 +17,9 @@ mod edit;
 mod math;
 
 pub use edit::{
-    CurveEditPolicy, CurveKeyframeInsert, DiscreteEditPolicy, edit_curve_value,
-    edit_discrete_value, insert_curve_keyframe, set_expression_enabled, set_keyframes_enabled,
+    CurveEditPolicy, CurveKeyframeInsert, DiscreteEditPolicy, add_curve_keyframe, edit_curve_value,
+    edit_discrete_value, insert_curve_keyframe, remove_keyframes, set_expression_enabled,
+    set_expression_source, set_keyframes_enabled,
 };
 use math::{scalar_value_at, text_value_at};
 pub use math::{text_edit_count, vector_value_at};
@@ -62,6 +63,21 @@ pub struct TimelineExpression {
     pub id: Uuid,
     pub enabled: bool,
     pub source: String,
+}
+
+impl TimelineExpression {
+    pub fn update(&mut self, source: Option<String>, enabled: Option<bool>) -> bool {
+        let mut changed = false;
+        if let Some(source) = source.filter(|source| *source != self.source) {
+            self.source = source;
+            changed = true;
+        }
+        if let Some(enabled) = enabled.filter(|enabled| *enabled != self.enabled) {
+            self.enabled = enabled;
+            changed = true;
+        }
+        changed
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

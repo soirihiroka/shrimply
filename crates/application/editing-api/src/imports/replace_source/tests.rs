@@ -66,11 +66,10 @@ impl Fixture {
         let mut opacity = serde_json::to_value(&item.compositing.opacity).unwrap();
         opacity["base"]["const"] = serde_json::json!(0.65);
         item.compositing.opacity = serde_json::from_value(opacity).unwrap();
-        let address = ClipAddress {
-            kind: ClipKind::Video,
+        let address = ClipAddress::Video {
             sequence_path: Vec::new(),
-            track_id: project.video_tracks[0].id.to_string(),
-            item_id: project.video_tracks[0].items[0].id.to_string(),
+            track_id: project.video_tracks[0].id,
+            item_id: project.video_tracks[0].items[0].id,
         };
         Self {
             root,
@@ -148,8 +147,8 @@ fn replace_clip_source_preserves_every_placement_and_effect_field() {
     assert_eq!(before, after);
     let results = prepared.results().unwrap();
     assert_eq!(
-        results[0].changed_addresses[0].item_id,
-        fixture.address.item_id
+        results[0].changed_addresses[0].item_id(),
+        fixture.address.item_id()
     );
     assert!(results[0].deleted_addresses.is_empty());
 }
@@ -319,13 +318,11 @@ fn replace_clip_source_rejects_audio_only_sources_without_changing_the_clip() {
 fn replace_clip_source_preview_defers_addresses_changed_by_earlier_operations() {
     let mut fixture = Fixture::new();
     fixture.project.video_tracks.push(VisualTrack::default());
-    let destination = TrackAddress {
-        kind: ClipKind::Video,
+    let destination = TrackAddress::Video {
         sequence_path: Vec::new(),
-        track_id: fixture.project.video_tracks[1].id.to_string(),
+        track_id: fixture.project.video_tracks[1].id,
     };
-    let mut moved = fixture.address.clone();
-    moved.track_id = destination.track_id.clone();
+    let moved = destination.item(fixture.address.item_id());
     let mut second = fixture.replacement(true);
     second.address = moved;
     let operations = vec![

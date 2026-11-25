@@ -299,18 +299,8 @@ impl Editor {
                 name: peer.name,
                 position: peer.position,
                 playing: peer.playing,
-                selected: peer
-                    .clips
-                    .iter()
-                    .filter_map(|clip| shrimply_editing_api::query::model_item_address(clip).ok())
-                    .collect(),
-                selected_tracks: peer
-                    .tracks
-                    .iter()
-                    .filter_map(|track| {
-                        shrimply_editing_api::query::model_track_address(track).ok()
-                    })
-                    .collect(),
+                selected: peer.clips,
+                selected_tracks: peer.tracks,
             })
             .collect();
         player_state::set_collaborators(&self.player, collaborators);

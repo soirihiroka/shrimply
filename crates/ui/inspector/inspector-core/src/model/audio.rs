@@ -978,10 +978,10 @@ impl InspectorController {
         let mut project = self.project.borrow_mut();
         let time = audio_modifier_keyframe_time(&project, target, time)?;
         let value = audio_modifier_number_mut(&mut project, target, modifier_id, value_id)?;
-        if !crate::timeline_value::scalar::add_keyframe(
+        if !shrimply_property_model::timeline_value::add_curve_keyframe(
             value,
             time,
-            crate::NumberConstraint::default().into(),
+            std::convert::identity,
         ) {
             return Ok(());
         }

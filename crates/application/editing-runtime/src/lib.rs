@@ -638,7 +638,7 @@ pub fn snapshot(
                 )
                 .into_iter()
                 .map(|path| ScopeRef {
-                    sequence_path: path.iter().map(Uuid::to_string).collect(),
+                    sequence_path: path,
                 })
                 .collect(),
             audio_paths: project
@@ -648,24 +648,14 @@ pub fn snapshot(
                 )
                 .into_iter()
                 .map(|path| ScopeRef {
-                    sequence_path: path.iter().map(Uuid::to_string).collect(),
+                    sequence_path: path,
                 })
                 .collect(),
         },
-        focused_item: selection_state::focused_item_address(selection, &project)
-            .as_ref()
-            .map(shrimply_editing_api::query::protocol_item_address),
-        selected_items: selection_state::selected_item_addresses(selection, &project)
-            .iter()
-            .map(shrimply_editing_api::query::protocol_item_address)
-            .collect(),
-        focused_track: selection_state::focused_track_address(selection, &project)
-            .as_ref()
-            .map(shrimply_editing_api::query::protocol_track_address),
-        selected_tracks: selection_state::selected_track_addresses(selection, &project)
-            .iter()
-            .map(shrimply_editing_api::query::protocol_track_address)
-            .collect(),
+        focused_item: selection_state::focused_item_address(selection, &project),
+        selected_items: selection_state::selected_item_addresses(selection, &project),
+        focused_track: selection_state::focused_track_address(selection, &project),
+        selected_tracks: selection_state::selected_track_addresses(selection, &project),
         asset_revisions,
     })
 }

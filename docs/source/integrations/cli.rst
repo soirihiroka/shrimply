@@ -75,8 +75,9 @@ or ``@-`` for stdin. It cannot be mixed with individual operation flags.
    $ shrimply clips move --project movie.shrimp --address @address.json --start-frame 120
    $ shrimply edit apply --project movie.shrimp --body @edits.json
 
-Clip addresses contain ``kind``, ``sequence_path``, ``track_id``, and
-``item_id``. Track addresses omit ``item_id``. Item IDs are a shortcut only
+Clip addresses contain ``kind``, ``track_id``, and ``item_id``. Video and
+audio addresses use ``sequence_path`` for folded sequences. Track addresses
+omit ``item_id``. Item IDs are a shortcut only
 when they resolve to a single presentation. Shared folded sequences can
 have several presentations; ambiguous IDs return candidate addresses.
 Scopes default to root consistently. Use an explicit ``scope`` object to
@@ -278,8 +279,8 @@ All former tools and resource queries are available through named commands:
      - clips transform / clips set-transitions
    * - upsert_keyframes / delete_keyframes
      - keyframes upsert / keyframes delete
-   * - query_expressions / set_expression
-     - expressions list / expressions set
+   * - query_expressions
+     - expressions list
    * - upsert_property_expression / delete_property_expression
      - property-expressions upsert / property-expressions delete
    * - set_track_enabled / set_caption_track_language

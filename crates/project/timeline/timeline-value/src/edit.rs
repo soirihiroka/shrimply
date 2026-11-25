@@ -54,13 +54,7 @@ where
     T: TimelineValueType,
 {
     match &mut value.expression {
-        Some(expression) => {
-            if expression.enabled == enabled {
-                return false;
-            }
-            expression.enabled = enabled;
-            true
-        }
+        Some(expression) => expression.update(None, Some(enabled)),
         None if !enabled => false,
         None => {
             value.expression = Some(TimelineExpression {
@@ -71,6 +65,33 @@ where
             true
         }
     }
+}
+
+pub fn set_expression_source<T: TimelineValueType>(
+    value: &mut TimelineValue<T>,
+    source: String,
+) -> bool {
+    value
+        .expression
+        .as_mut()
+        .is_some_and(|expression| expression.update(Some(source), None))
+}
+
+pub fn remove_keyframes<T: TimelineValueType>(
+    value: &mut TimelineValue<T>,
+    mut remove: impl FnMut(&T::Keyframe) -> bool,
+    fallback: T,
+) -> bool {
+    let TimelineBase::Keyframes(keyframes) = &mut value.base else {
+        return false;
+    };
+    let previous_len = keyframes.len();
+    keyframes.retain(|keyframe| !remove(keyframe));
+    let changed = keyframes.len() != previous_len;
+    if changed && keyframes.is_empty() {
+        value.base = TimelineBase::Const(fallback);
+    }
+    changed
 }
 
 pub fn edit_curve_value<T>(
@@ -114,6 +135,33 @@ where
             true
         }
     }
+}
+
+pub fn add_curve_keyframe<T>(
+    value: &mut TimelineValue<T>,
+    time: Time,
+    normalize: impl FnOnce(T) -> T,
+) -> bool
+where
+    T: TimelineValueType<Keyframe = TimelineCurveKeyframe<T>>,
+{
+    let TimelineBase::Keyframes(keyframes) = &value.base else {
+        return false;
+    };
+    let current = keyframes
+        .iter()
+        .find(|keyframe| keyframe.time.approx_eq(time))
+        .map_or_else(|| value.value_at(time), |keyframe| keyframe.value.clone());
+    edit_curve_value(
+        value,
+        time,
+        normalize(current),
+        PartialEq::eq,
+        CurveEditPolicy {
+            unchanged_keyframe_is_noop: true,
+            insert: CurveKeyframeInsert::InheritPreviousInterpolation,
+        },
+    )
 }
 
 pub fn insert_curve_keyframe<T>(

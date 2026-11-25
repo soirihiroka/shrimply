@@ -54,16 +54,7 @@ pub fn set_expression_enabled(value: &mut TextTimeline, enabled: bool) -> bool {
     )
 }
 
-pub fn set_expression_source(value: &mut TextTimeline, source: String) -> bool {
-    let Some(expression) = value.expression.as_mut() else {
-        return false;
-    };
-    if expression.source == source {
-        return false;
-    }
-    expression.source = source;
-    true
-}
+pub use shrimply_property_model::timeline_value::set_expression_source;
 
 pub fn add_keyframe(value: &mut TextTimeline, time: Time, frame_step: Time) -> bool {
     let current = value_at(value, time);

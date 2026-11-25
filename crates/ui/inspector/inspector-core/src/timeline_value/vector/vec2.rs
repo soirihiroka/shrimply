@@ -1,12 +1,10 @@
 use glam::Vec2;
 use shrimply_project_document::project::Time;
 use shrimply_property_model::timeline_value::{
-    CurveEditPolicy, CurveKeyframeInsert, Interpolation, TimelineBase, TimelineValue,
-    TimelineValueType, edit_curve_value, insert_curve_keyframe,
+    CurveEditPolicy, CurveKeyframeInsert, TimelineValue, edit_curve_value,
 };
-use uuid::Uuid;
 
-use crate::keyframe_model::{self, KeyframeClipboard};
+use crate::keyframe_model;
 
 const VALUE_EPSILON_SQUARED: f32 = 0.000_001;
 
@@ -66,68 +64,13 @@ pub fn set_expression_enabled(value: &mut Vec2Timeline, enabled: bool) -> bool {
     )
 }
 
-pub fn set_expression_source(value: &mut Vec2Timeline, source: String) -> bool {
-    let Some(expression) = value.expression.as_mut() else {
-        return false;
-    };
-    if expression.source == source {
-        return false;
-    }
-    expression.source = source;
-    true
-}
+pub use shrimply_property_model::timeline_value::set_expression_source;
 
-pub fn add_keyframe(value: &mut Vec2Timeline, time: Time) -> bool {
-    let current = value_at(value, time);
-    let TimelineBase::Keyframes(keyframes) = &mut value.base else {
-        return false;
-    };
-    if let Some(keyframe) = keyframes
-        .iter_mut()
-        .find(|keyframe| keyframe.time.approx_eq(time))
-    {
-        if keyframe.time == time {
-            return false;
-        }
-        keyframe.time = time;
-        keyframes.sort_by_key(|keyframe| keyframe.time);
-    } else {
-        insert_curve_keyframe(
-            keyframes,
-            Vec2::keyframe(time, current),
-            CurveKeyframeInsert::InheritPreviousInterpolation,
-        );
-    }
-    true
-}
+pub use crate::keyframe_model::{
+    copy_keyframes, move_discrete_keyframes as move_keyframes, paste_keyframes,
+};
 
-pub fn delete_keyframe(value: &mut Vec2Timeline, time: Time) -> bool {
-    keyframe_model::delete_discrete_keyframe(value, time, Time::ZERO)
-}
-
-pub fn move_keyframes(value: &mut Vec2Timeline, moves: &[(Time, Time)]) -> bool {
-    keyframe_model::move_discrete_keyframes(value, moves)
-}
-
-pub fn copy_keyframes(value: &Vec2Timeline, selected: &[Time]) -> Option<KeyframeClipboard> {
-    keyframe_model::copy_keyframes(value, selected)
-}
-
-pub fn paste_keyframes(
-    value: &mut Vec2Timeline,
-    clipboard: &KeyframeClipboard,
-    times: &[Time],
-) -> Option<Vec<Time>> {
-    keyframe_model::paste_keyframes(value, clipboard, times)
-}
-
-pub fn set_interpolation(
-    value: &mut Vec2Timeline,
-    owner_id: Uuid,
-    interpolation: Interpolation,
-) -> bool {
-    keyframe_model::set_interpolation(value, owner_id, interpolation)
-}
+pub use crate::keyframe_model::set_interpolation;
 
 pub fn format_value(
     value: Vec2,

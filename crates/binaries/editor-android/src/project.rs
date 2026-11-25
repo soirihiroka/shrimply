@@ -714,9 +714,7 @@ impl ProjectBackend {
                     let address =
                         shrimply_timeline_edit::selection_state::track_address(project, key)
                             .ok_or("the destination track no longer exists")?;
-                    targets.push(shrimply_editing_api::query::protocol_track_address(
-                        &address,
-                    ));
+                    targets.push(address);
                 }
                 let collision = if targets.is_empty() { "new_track" } else { "reject" };
                 let frame = start.as_frame(project.fps);

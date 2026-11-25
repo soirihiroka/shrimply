@@ -1,13 +1,22 @@
 use shrimply_math_core::fit_nonnegative_fraction_pair;
 use shrimply_project_document::project::{
-    AudioItem, AudioTrack, CaptionTrack, CommentTrack, ItemAddress, ItemKind, ItemMut, ItemRef,
-    Project, ProjectItem, RepeatStrategy, SequenceScopeId, Time, TrackAddress, TrackMut, VideoItem,
-    VisualTrack, scaled_time_delta,
+    AudioItem, AudioTrack, CaptionTrack, CommentTrack, ItemAddress, ItemKind, Project, ProjectItem,
+    SequenceScopeId, Time, TrackAddress, TrackMut, VideoItem, VisualTrack, scaled_time_delta,
 };
-use shrimply_property_model::timeline_value::{TimelineBase, TimelineValue};
 use uuid::Uuid;
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    Eq,
+    PartialEq,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
 pub enum CollisionBehavior {
     #[default]
     Reject,
@@ -163,52 +172,10 @@ pub fn trim_item(
     let mut item = project
         .take_item(address)
         .ok_or_else(|| "clip was not found".to_string())?;
-    item.set_times(start, end);
     match &mut item {
-        ProjectItem::Comment(_) => {}
-        ProjectItem::Caption(_) => {}
-        ProjectItem::Video(item) => {
-            if start != old_start {
-                item.transitions.intro = None;
-                if !item.repeats_keyframes() {
-                    item.time_offset = shifted_media_source_offset(
-                        item.time_offset,
-                        old_start,
-                        start,
-                        item.playback_speed,
-                        item.repeat_strategy,
-                        item.source_duration,
-                    );
-                    item.animation_time_offset = Time {
-                        seconds: item.animation_time_offset.seconds
-                            + start.signed_sub(old_start).seconds,
-                    };
-                }
-            }
-            if end != old_end {
-                item.transitions.outro = None;
-                item.transitions.to_next = None;
-            }
-            fit_visual_transitions(item);
-        }
-        ProjectItem::Audio(item) => {
-            if start != old_start {
-                item.transitions.intro = None;
-                item.time_offset = shifted_media_source_offset(
-                    item.time_offset,
-                    old_start,
-                    start,
-                    item.playback_speed,
-                    item.repeat_strategy,
-                    item.source_duration,
-                );
-            }
-            if end != old_end {
-                item.transitions.outro = None;
-                item.transitions.to_next = None;
-            }
-            fit_audio_transitions(item);
-        }
+        ProjectItem::Video(item) => resize_video(item, start, end, ResizeMode::Trim),
+        ProjectItem::Audio(item) => resize_audio(item, start, end, ResizeMode::Trim),
+        ProjectItem::Comment(_) | ProjectItem::Caption(_) => item.set_times(start, end),
     }
     let inserted = insert_with_collision(project, &address.track(), item, collision)?;
     project.normalize_clip_transitions();
@@ -229,31 +196,31 @@ pub fn set_track_enabled(
     project: &mut Project,
     address: &TrackAddress,
     enabled: bool,
-) -> Result<(), String> {
-    match project
-        .track_mut(address)
-        .ok_or_else(|| "track was not found".to_string())?
-    {
-        TrackMut::Comment(track) => track.enabled = enabled,
-        TrackMut::Caption(track) => track.enabled = enabled,
-        TrackMut::Video(track) => track.enabled = enabled,
-        TrackMut::Audio(track) => track.enabled = enabled,
-    }
-    Ok(())
+) -> Option<bool> {
+    let current = project.track_mut(address)?.enabled_mut();
+    Some(std::mem::replace(current, enabled) != enabled)
 }
 
 pub fn set_caption_track_language(
     project: &mut Project,
     address: &TrackAddress,
-    language: Option<String>,
-) -> Result<(), String> {
+    language: Option<&str>,
+) -> Result<bool, String> {
+    if let Some(language) = language
+        && !shrimply_project_document::project::caption_languages().contains(language)
+    {
+        return Err(format!("unsupported caption language: {language}"));
+    }
     match project
         .track_mut(address)
         .ok_or_else(|| "track was not found".to_string())?
     {
         TrackMut::Caption(track) => {
-            track.language = language;
-            Ok(())
+            if track.language.as_deref() == language {
+                return Ok(false);
+            }
+            track.language = language.map(str::to_owned);
+            Ok(true)
         }
         TrackMut::Comment(_) | TrackMut::Video(_) | TrackMut::Audio(_) => {
             Err("language applies only to caption tracks".to_string())
@@ -268,29 +235,6 @@ pub fn delete_track(project: &mut Project, address: &TrackAddress) -> Result<(),
     project.prune_folded_sequences();
     project.normalize_clip_transitions();
     Ok(())
-}
-
-pub fn set_item_text(
-    project: &mut Project,
-    address: &ItemAddress,
-    text: String,
-) -> Result<(), String> {
-    match project
-        .item_mut(address)
-        .ok_or_else(|| "clip was not found".to_string())?
-    {
-        ItemMut::Comment(item) => {
-            item.text = text;
-            Ok(())
-        }
-        ItemMut::Caption(item) => {
-            item.text = text;
-            Ok(())
-        }
-        ItemMut::Video(_) | ItemMut::Audio(_) => {
-            Err("text applies only to caption and comment clips".to_string())
-        }
-    }
 }
 
 pub fn split_caption(
@@ -333,92 +277,6 @@ pub fn split_caption(
     Ok((left, right))
 }
 
-pub fn set_audio_enabled(
-    project: &mut Project,
-    address: &ItemAddress,
-    enabled: bool,
-) -> Result<(), String> {
-    match project
-        .item_mut(address)
-        .ok_or_else(|| "clip was not found".to_string())?
-    {
-        ItemMut::Audio(item) => {
-            item.enabled = enabled;
-            Ok(())
-        }
-        ItemMut::Comment(_) | ItemMut::Caption(_) | ItemMut::Video(_) => {
-            Err("enabled applies only to audio clips".to_string())
-        }
-    }
-}
-
-pub fn set_audio_gain(
-    project: &mut Project,
-    address: &ItemAddress,
-    gain_db: f32,
-) -> Result<(), String> {
-    if !gain_db.is_finite() {
-        return Err("gain_db must be finite".to_string());
-    }
-    match project
-        .item_mut(address)
-        .ok_or_else(|| "clip was not found".to_string())?
-    {
-        ItemMut::Audio(item) => {
-            if item
-                .gain
-                .decibels
-                .expression
-                .as_ref()
-                .is_some_and(|expression| expression.enabled)
-                || !matches!(item.gain.decibels.base, TimelineBase::Const(_))
-            {
-                return Err(
-                    "gain_db cannot replace keyframed or expression-driven gain".to_string()
-                );
-            }
-            item.gain.decibels = TimelineValue::new_const(gain_db);
-            Ok(())
-        }
-        ItemMut::Comment(_) | ItemMut::Caption(_) | ItemMut::Video(_) => {
-            Err("gain_db applies only to audio clips".to_string())
-        }
-    }
-}
-
-pub fn set_playback(
-    project: &mut Project,
-    address: &ItemAddress,
-    speed: Option<shrimply_math_core::Fraction>,
-    repeat: Option<RepeatStrategy>,
-) -> Result<(), String> {
-    match project
-        .item_mut(address)
-        .ok_or_else(|| "clip was not found".to_string())?
-    {
-        ItemMut::Comment(_) => Err("playback properties do not apply to comment clips".to_string()),
-        ItemMut::Caption(_) => Err("playback properties do not apply to caption clips".to_string()),
-        ItemMut::Video(item) => {
-            if let Some(speed) = speed {
-                item.playback_speed = speed;
-            }
-            if let Some(repeat) = repeat {
-                item.repeat_strategy = repeat;
-            }
-            Ok(())
-        }
-        ItemMut::Audio(item) => {
-            if let Some(speed) = speed {
-                item.playback_speed = speed;
-            }
-            if let Some(repeat) = repeat {
-                item.repeat_strategy = repeat;
-            }
-            Ok(())
-        }
-    }
-}
-
 fn insert_with_collision(
     project: &mut Project,
     track: &TrackAddress,
@@ -456,38 +314,21 @@ pub fn collision_addresses(
     start: Time,
     end: Time,
 ) -> Result<Vec<ItemAddress>, String> {
-    let items = match project
+    let destination = project
         .track(track)
-        .ok_or_else(|| "destination track was not found".to_string())?
-    {
-        shrimply_project_document::project::TrackRef::Comment(track) => track
-            .items
-            .iter()
-            .map(|item| (item.id, item.start, item.end))
-            .collect::<Vec<_>>(),
-        shrimply_project_document::project::TrackRef::Caption(track) => track
-            .items
-            .iter()
-            .map(|item| (item.id, item.start, item.end))
-            .collect::<Vec<_>>(),
-        shrimply_project_document::project::TrackRef::Video(track) => track
-            .items
-            .iter()
-            .map(|item| (item.id, item.start, item.end))
-            .collect::<Vec<_>>(),
-        shrimply_project_document::project::TrackRef::Audio(track) => track
-            .items
-            .iter()
-            .map(|item| (item.id, item.start, item.end))
-            .collect::<Vec<_>>(),
-    };
-    Ok(items
-        .into_iter()
-        .filter(|(_, candidate_start, candidate_end)| {
-            *candidate_start < end && *candidate_end > start
+        .ok_or("destination track was not found")?;
+    Ok(destination
+        .items()
+        .filter(|item| {
+            let (item_start, item_end) = item.times();
+            time_ranges_collide(start, end, item_start, item_end)
         })
-        .map(|(id, _, _)| track.item(id))
+        .map(|item| track.item(item.id()))
         .collect())
+}
+
+pub fn time_ranges_collide(start: Time, end: Time, other_start: Time, other_end: Time) -> bool {
+    start < other_end && end > other_start
 }
 
 pub fn track_collides(
@@ -514,27 +355,51 @@ pub fn overwrite_interval(
     Ok(())
 }
 
-pub fn validate_properties_target(
-    project: &Project,
-    address: &ItemAddress,
-    has_text: bool,
-    has_enabled: bool,
-    has_gain: bool,
-    has_playback: bool,
-) -> Result<(), String> {
-    match project
-        .item(address)
-        .ok_or_else(|| "clip was not found".to_string())?
-    {
-        ItemRef::Comment(_) | ItemRef::Caption(_) if has_enabled || has_gain || has_playback => {
-            Err("one or more properties do not apply to caption or comment clips".to_string())
+#[derive(Clone, Copy, Eq, PartialEq)]
+pub enum ResizeMode {
+    PreserveTransitions,
+    Trim,
+}
+
+pub fn resize_video(item: &mut VideoItem, start: Time, end: Time, mode: ResizeMode) {
+    if start != item.start {
+        if mode == ResizeMode::Trim {
+            item.transitions.intro = None;
         }
-        ItemRef::Video(_) if has_text || has_enabled || has_gain => {
-            Err("one or more properties do not apply to video clips".to_string())
+        if mode == ResizeMode::PreserveTransitions || !item.repeats_keyframes() {
+            item.time_offset = shifted_media_source_offset(
+                item.time_offset,
+                item.start,
+                start,
+                item.playback_speed,
+            );
+            item.animation_time_offset.seconds += start.signed_sub(item.start).seconds;
         }
-        ItemRef::Audio(_) if has_text => Err("text does not apply to audio clips".to_string()),
-        _ => Ok(()),
     }
+    if end != item.end && mode == ResizeMode::Trim {
+        item.transitions.outro = None;
+        item.transitions.to_next = None;
+    }
+    item.start = start;
+    item.end = end;
+    fit_visual_transitions(item);
+}
+
+pub fn resize_audio(item: &mut AudioItem, start: Time, end: Time, mode: ResizeMode) {
+    if start != item.start {
+        item.time_offset =
+            shifted_media_source_offset(item.time_offset, item.start, start, item.playback_speed);
+        if mode == ResizeMode::Trim {
+            item.transitions.intro = None;
+        }
+    }
+    if end != item.end && mode == ResizeMode::Trim {
+        item.transitions.outro = None;
+        item.transitions.to_next = None;
+    }
+    item.start = start;
+    item.end = end;
+    fit_audio_transitions(item);
 }
 
 pub fn shifted_media_source_offset(
@@ -542,22 +407,11 @@ pub fn shifted_media_source_offset(
     old_start: Time,
     new_start: Time,
     playback_speed: shrimply_math_core::Fraction,
-    _repeat_strategy: RepeatStrategy,
-    _source_duration: Time,
 ) -> Time {
     offset.saturating_add(scaled_time_delta(
         new_start.signed_sub(old_start),
         playback_speed,
     ))
-}
-
-pub fn advanced_media_source_offset(
-    offset: Time,
-    delta: Time,
-    _repeat_strategy: RepeatStrategy,
-    _source_duration: Time,
-) -> Time {
-    offset.saturating_add(delta)
 }
 
 pub fn fit_visual_transitions(item: &mut VideoItem) {
@@ -658,12 +512,8 @@ pub fn split_item_address(
             right.transitions.intro = None;
             right.id = uuid::Uuid::new_v4();
             Project::regenerate_video_property_ids(right);
-            right.time_offset = advanced_media_source_offset(
-                source_offset,
-                scaled_time_delta(cut.saturating_sub(source_start), right.playback_speed),
-                right.repeat_strategy,
-                right.source_duration,
-            );
+            right.time_offset =
+                shifted_media_source_offset(source_offset, source_start, cut, right.playback_speed);
             right.animation_time_offset = right
                 .animation_time_offset
                 .saturating_add(cut.saturating_sub(source_start));
@@ -680,12 +530,8 @@ pub fn split_item_address(
             right.transitions.intro = None;
             right.id = uuid::Uuid::new_v4();
             Project::regenerate_audio_property_ids(right);
-            right.time_offset = advanced_media_source_offset(
-                source_offset,
-                scaled_time_delta(cut.saturating_sub(source_start), right.playback_speed),
-                right.repeat_strategy,
-                right.source_duration,
-            );
+            right.time_offset =
+                shifted_media_source_offset(source_offset, source_start, cut, right.playback_speed);
             fit_audio_transitions(left);
             fit_audio_transitions(right);
         }

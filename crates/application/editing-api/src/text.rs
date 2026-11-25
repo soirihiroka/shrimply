@@ -37,13 +37,15 @@ pub fn apply(
             .into_iter()
             .filter(|clip| {
                 (if request.recursive {
-                    clip.address.sequence_path.starts_with(&scope.sequence_path)
+                    clip.address
+                        .sequence_path()
+                        .starts_with(&scope.sequence_path)
                 } else {
-                    clip.address.sequence_path == scope.sequence_path
+                    clip.address.sequence_path() == scope.sequence_path
                 }) && request
                     .track_id
                     .as_ref()
-                    .is_none_or(|id| &clip.address.track_id == id)
+                    .is_none_or(|id| clip.address.track_id() == *id)
                     && request.range.as_ref().is_none_or(|range| {
                         clip.projected.start.frame < range.end_frame
                             && clip.projected.end.frame > range.start_frame
@@ -58,7 +60,7 @@ pub fn apply(
     let mut replacements = 0;
     let mut matched_values = 0;
     for address in addresses {
-        let model = query::model_item_address(&address)?;
+        let model = &address;
         if !seen.insert((model.kind(), model.track_id(), model.item_id())) {
             continue;
         }

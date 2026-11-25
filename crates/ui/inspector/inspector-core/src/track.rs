@@ -1,8 +1,6 @@
 use shrimply_editor_state::player_state::{self, ProjectChange};
-use shrimply_project_document::project::{
-    ItemKind, Project, TrackAddress, TrackMut, TrackRef, caption_languages,
-    supported_caption_language,
-};
+use shrimply_project_document::project::{ItemKind, Project, TrackAddress};
+use shrimply_timeline_edit::edit;
 
 use crate::{InspectorController, InspectorDetail};
 
@@ -45,16 +43,9 @@ impl TrackPresentation {
 }
 
 pub fn presentation(project: &Project, address: TrackAddress) -> Option<TrackPresentation> {
-    let (enabled, language, item_count) = match project.track(&address)? {
-        TrackRef::Comment(track) => (track.enabled, None, track.items.len()),
-        TrackRef::Caption(track) => (
-            track.enabled,
-            supported_caption_language(&track.language),
-            track.items.len(),
-        ),
-        TrackRef::Video(track) => (track.enabled, None, track.items.len()),
-        TrackRef::Audio(track) => (track.enabled, None, track.items.len()),
-    };
+    let track = project.track(&address)?;
+    let (enabled, language) = (track.enabled(), track.caption_language());
+    let item_count = track.items().count();
     let ordinal = match &address {
         TrackAddress::Comment { track_id } => project
             .comment_tracks
@@ -93,19 +84,9 @@ impl InspectorController {
     pub fn set_track_enabled(&self, address: &TrackAddress, next: bool) -> Result<(), String> {
         let kind = address.kind();
         let mut project = self.project.borrow_mut();
-        let Some(track) = project.track_mut(address) else {
-            return Ok(());
-        };
-        let enabled = match track {
-            TrackMut::Comment(track) => &mut track.enabled,
-            TrackMut::Caption(track) => &mut track.enabled,
-            TrackMut::Video(track) => &mut track.enabled,
-            TrackMut::Audio(track) => &mut track.enabled,
-        };
-        if *enabled == next {
+        if edit::set_track_enabled(&mut project, address, next) != Some(true) {
             return Ok(());
         }
-        *enabled = next;
         shrimply_project_document::project::commit_edit(&project, "toggle-track-enabled");
         let duration = project.duration();
         drop(project);
@@ -130,22 +111,12 @@ impl InspectorController {
         address: &TrackAddress,
         language: Option<&str>,
     ) -> Result<(), String> {
-        if let Some(language) = language
-            && !caption_languages().contains(language)
-        {
-            return Err(format!("unsupported caption language: {language}"));
-        }
         let mut project = self.project.borrow_mut();
-        let Some(track) = project.track_mut(address) else {
-            return Ok(());
-        };
-        let TrackMut::Caption(track) = track else {
-            return Err("inspector track is not a caption track".to_string());
-        };
-        if track.language.as_deref() == language {
+        if project.track(address).is_none()
+            || !edit::set_caption_track_language(&mut project, address, language)?
+        {
             return Ok(());
         }
-        track.language = language.map(str::to_string);
         shrimply_project_document::project::commit_edit(&project, "set-caption-track-language");
         drop(project);
         player_state::refresh_project(

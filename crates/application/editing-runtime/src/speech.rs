@@ -347,9 +347,8 @@ pub(super) fn transcription_source(
             );
         }
         (Some(track), true) => {
-            let address = shrimply_editing_api::query::model_track_address(track)?;
             let TrackRef::Audio(source) = project
-                .track(&address)
+                .track(track)
                 .ok_or_else(|| "transcription track was not found".to_string())?
             else {
                 return Err("transcription requires an audio track".to_string());
@@ -357,18 +356,17 @@ pub(super) fn transcription_source(
             source
                 .items
                 .iter()
-                .map(|item| address.item(item.id))
+                .map(|item| track.item(item.id))
                 .collect::<Vec<_>>()
         }
         (None, false) => request
             .clips
             .iter()
             .map(|clip| {
-                let address = shrimply_editing_api::query::model_item_address(clip)?;
                 project
-                    .audio_item(&address)
-                    .ok_or_else(|| format!("audio clip {} was not found", clip.item_id))?;
-                Ok(address)
+                    .audio_item(clip)
+                    .ok_or_else(|| format!("audio clip {} was not found", clip.item_id()))?;
+                Ok(clip.clone())
             })
             .collect::<Result<Vec<_>, String>>()?,
     };

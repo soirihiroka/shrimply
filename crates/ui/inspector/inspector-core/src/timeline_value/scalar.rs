@@ -52,35 +52,7 @@ pub fn set_keyframes_enabled(
     crate::keyframe_model::set_keyframes_enabled(value, keyframe_time, current, enabled)
 }
 
-pub fn set_expression_source(value: &mut TimelineValue<f32>, source: String) -> bool {
-    let Some(expression) = &mut value.expression else {
-        return false;
-    };
-    if expression.source == source {
-        return false;
-    }
-    expression.source = source;
-    true
-}
-
-pub fn add_keyframe(
-    value: &mut TimelineValue<f32>,
-    time: Time,
-    constraint: ScalarConstraint,
-) -> bool {
-    if !crate::keyframe_model::add_scalar_keyframe(value, time) {
-        return false;
-    }
-    let TimelineBase::Keyframes(keyframes) = &mut value.base else {
-        unreachable!("adding a scalar keyframe must preserve keyframe mode");
-    };
-    let keyframe = keyframes
-        .iter_mut()
-        .find(|keyframe| keyframe.time.approx_eq(time))
-        .expect("new scalar keyframe must remain available");
-    keyframe.value = constraint.apply_structural(keyframe.value);
-    true
-}
+pub use shrimply_property_model::timeline_value::set_expression_source;
 
 pub fn move_displayed_keyframe(
     value: &mut TimelineValue<f32>,

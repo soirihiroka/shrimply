@@ -8,6 +8,7 @@ default = ["local"]
 local = ["dep:shrimply-media-import"]
 
 [dependencies]
+glam.workspace = true
 schemars.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
@@ -25,6 +26,7 @@ shrimply-local-ipc.workspace = true
 shrimply-path-core.workspace = true
 sha2.workspace = true
 regex.workspace = true
+strum = { workspace = true, features = ["derive"] }
 
 [target.'cfg(windows)'.dependencies]
 windows = { workspace = true, features = ["Win32_System_Threading"] }

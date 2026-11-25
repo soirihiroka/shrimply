@@ -379,6 +379,7 @@ pub enum SvgPaintKind {
     Deserialize,
     Eq,
     PartialEq,
+    schemars::JsonSchema,
     strum::Display,
     strum::EnumIter,
 )]

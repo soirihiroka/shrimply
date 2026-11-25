@@ -1,4 +1,5 @@
 use super::*;
+use shrimply_timeline_edit::edit::{ResizeMode, resize_audio, resize_video};
 
 /// Waveform inputs exclude placement and grouping; moving a clip preserves its cache.
 pub fn audio_waveform_cache_signature(project: &Project) -> Vec<(Uuid, String)> {
@@ -91,33 +92,11 @@ impl OverwriteItem for CaptionItem {
 
 impl OverwriteItem for VideoItem {
     fn trim_start(&mut self, start: Time) {
-        self.transitions.intro = None;
-        if self.repeats_keyframes() {
-            self.start = start;
-            fit_visual_transitions(self);
-            return;
-        }
-        let animation_delta = start.signed_sub(self.start);
-        self.time_offset = shifted_media_source_offset(
-            self.time_offset,
-            self.start,
-            start,
-            self.playback_speed,
-            self.repeat_strategy,
-            self.source_duration,
-        );
-        self.animation_time_offset = Time {
-            seconds: self.animation_time_offset.seconds + animation_delta.seconds,
-        };
-        self.start = start;
-        fit_visual_transitions(self);
+        resize_video(self, start, self.end, ResizeMode::Trim);
     }
 
     fn set_end(&mut self, end: Time) {
-        self.end = end;
-        self.transitions.outro = None;
-        self.transitions.to_next = None;
-        fit_visual_transitions(self);
+        resize_video(self, self.start, end, ResizeMode::Trim);
     }
 
     fn reset_id(&mut self) {
@@ -136,24 +115,11 @@ impl OverwriteItem for VideoItem {
 
 impl OverwriteItem for AudioItem {
     fn trim_start(&mut self, start: Time) {
-        self.transitions.intro = None;
-        self.time_offset = shifted_media_source_offset(
-            self.time_offset,
-            self.start,
-            start,
-            self.playback_speed,
-            self.repeat_strategy,
-            self.source_duration,
-        );
-        self.start = start;
-        fit_audio_transitions(self);
+        resize_audio(self, start, self.end, ResizeMode::Trim);
     }
 
     fn set_end(&mut self, end: Time) {
-        self.end = end;
-        self.transitions.outro = None;
-        self.transitions.to_next = None;
-        fit_audio_transitions(self);
+        resize_audio(self, self.start, end, ResizeMode::Trim);
     }
 
     fn reset_id(&mut self) {

@@ -284,7 +284,7 @@ pub static COMMANDS: &[Command] = &[
     command!(
         "upsert_property_expression",
         "property-expressions upsert",
-        "Create or update an expression directly on a scalar or vec2 TimelineValue addressed by its get_clip JSON property path",
+        "Create, update, or toggle an expression by its clip property path",
         UpsertPropertyExpressionRequest,
         false
     ),
@@ -314,13 +314,6 @@ pub static COMMANDS: &[Command] = &[
         "manim reload",
         "Invalidate a Manim clip's cached Python scene state and rebuild it from the current source file",
         ReloadManimSourceRequest,
-        false
-    ),
-    command!(
-        "set_expression",
-        "expressions set",
-        "Set an expression's source and/or enabled state by stable ID on its owning video or audio clip",
-        SetExpressionRequest,
         false
     ),
     command!(
@@ -359,7 +352,7 @@ pub static COMMANDS: &[Command] = &[
         true
     ),
     command!(
-        "project_set",
+        "set_project_settings",
         "project set",
         "Update project name, canvas size, or an empty timeline frame rate",
         ProjectSettingsRequest,

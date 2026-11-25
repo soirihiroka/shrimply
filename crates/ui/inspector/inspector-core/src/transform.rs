@@ -941,7 +941,11 @@ impl InspectorController {
     ) -> Result<(), String> {
         let time = self.canonical_vector_time(target, time)?;
         let (mut timeline, _) = self.vector2_timeline(target, path)?;
-        if !crate::timeline_value::vector::vec2::add_keyframe(&mut timeline, time) {
+        if !shrimply_property_model::timeline_value::add_curve_keyframe(
+            &mut timeline,
+            time,
+            std::convert::identity,
+        ) {
             return Ok(());
         }
         if let Some(field) = Vec2Field::from_path(path) {
@@ -1116,7 +1120,11 @@ impl InspectorController {
     ) -> Result<(), String> {
         let time = self.canonical_vector_time(target, time)?;
         let (mut timeline, _) = self.vector3_timeline(target, path)?;
-        if !crate::timeline_value::vector::vec3::add_keyframe(&mut timeline, time) {
+        if !shrimply_property_model::timeline_value::add_curve_keyframe(
+            &mut timeline,
+            time,
+            std::convert::identity,
+        ) {
             return Ok(());
         }
         self.replace_value_with_commit(

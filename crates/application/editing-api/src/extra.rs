@@ -44,10 +44,10 @@ pub fn settings(
 }
 
 pub fn split(project: &mut Project, request: &SplitClipRequest) -> Result<MutationResult, String> {
-    let address = query::model_item_address(&request.address)?;
+    let address = &request.address;
     let time = shrimply_math_core::time_from_frame(request.frame, project.fps)
         .ok_or("frame is out of range")?;
-    let (left, right) = edit::split_item_address(project, &address, time)
+    let (left, right) = edit::split_item_address(project, address, time)
         .ok_or("split frame must be inside the clip")?;
     Ok(MutationResult {
         changed_item_ids: vec![left.item_id(), right.item_id()],
@@ -59,8 +59,8 @@ pub fn duplicate(
     project: &mut Project,
     request: &DuplicateClipRequest,
 ) -> Result<MutationResult, String> {
-    let address = query::model_item_address(&request.address)?;
-    let mut item = match project.item(&address).ok_or("clip was not found")? {
+    let address = &request.address;
+    let mut item = match project.item(address).ok_or("clip was not found")? {
         ItemRef::Comment(item) => ProjectItem::Comment(item.clone()),
         ItemRef::Caption(item) => ProjectItem::Caption(item.clone()),
         ItemRef::Video(item) => ProjectItem::Video(Box::new(item.clone())),
@@ -89,12 +89,10 @@ pub fn duplicate(
     }
     let destination = request
         .destination
-        .as_ref()
-        .map(query::model_track_address)
-        .transpose()?
+        .clone()
         .unwrap_or_else(|| address.track());
     if destination.kind() != address.kind()
-        || !project.can_move_item_to_sequence_path(&address, destination.sequence_path())
+        || !project.can_move_item_to_sequence_path(address, destination.sequence_path())
     {
         return Err(
             "duplicate destination is incompatible or would create a recursive sequence".into(),
@@ -114,12 +112,13 @@ pub fn duplicate(
     let inserted = project
         .insert_item(&address.track(), item)
         .ok_or("could not insert duplicate")?;
-    let collision = match request.collision {
-        CollisionBehavior::Reject => edit::CollisionBehavior::Reject,
-        CollisionBehavior::NewTrack => edit::CollisionBehavior::NewTrack,
-        CollisionBehavior::Overwrite => edit::CollisionBehavior::Overwrite,
-    };
-    let result = edit::move_item(project, &inserted, Some(&destination), start, collision);
+    let result = edit::move_item(
+        project,
+        &inserted,
+        Some(&destination),
+        start,
+        request.collision,
+    );
     if let Err(error) = result {
         *project = original;
         return Err(error);
@@ -149,8 +148,8 @@ pub fn reorder(
     project: &mut Project,
     request: &ReorderTrackRequest,
 ) -> Result<MutationResult, String> {
-    let address = query::model_track_address(&request.address)?;
-    let scope = project.track_scope(&address).ok_or("track was not found")?;
+    let address = &request.address;
+    let scope = project.track_scope(address).ok_or("track was not found")?;
     let sequence = project
         .sequence_id_for_scope(&scope)
         .ok_or("scope was not found")?;
@@ -168,7 +167,7 @@ pub fn reorder(
             tracks.insert(request.index, track);
         }};
     }
-    match (request.address.kind, sequence) {
+    match (request.address.kind(), sequence) {
         (ClipKind::Comment, None) => move_track!(&mut project.comment_tracks),
         (ClipKind::Caption, None) => move_track!(&mut project.caption_tracks),
         (ClipKind::Video, None) => move_track!(&mut project.video_tracks),

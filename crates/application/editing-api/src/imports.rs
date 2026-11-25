@@ -81,10 +81,10 @@ impl PreparedEdit {
                     .collect::<Vec<_>>();
                 changed_addresses.sort_by_key(|address| {
                     (
-                        address.kind as u8,
-                        address.sequence_path.clone(),
-                        address.track_id.clone(),
-                        address.item_id.clone(),
+                        crate::query::kind_order(address.kind()),
+                        address.sequence_path().to_vec(),
+                        address.track_id(),
+                        address.item_id(),
                     )
                 });
                 changed_addresses.dedup();
@@ -133,6 +133,7 @@ pub fn prepare(
         linked_sources: Vec::new(),
     };
     for (index, operation) in request.operations.iter().enumerate() {
+        let name: &str = operation.into();
         let result = match operation {
             EditOperation::InsertFiles(import) => apply_import(
                 &mut prepared,
@@ -162,13 +163,10 @@ pub fn prepare(
                 &script_scope.logical,
             ),
         };
-        prepared.mutations.push(result.map_err(|error| {
-            format!(
-                "operation {index} ({}) failed: {error}",
-                operation_name(operation)
-            )
-        })?);
-        prepared.operations.push(operation_name(operation));
+        prepared
+            .mutations
+            .push(result.map_err(|error| format!("operation {index} ({name}) failed: {error}"))?);
+        prepared.operations.push(name);
     }
     prepared
         .project
@@ -282,7 +280,7 @@ fn insert_tts_item(
         path,
         collision,
     } = insertion;
-    let target = track.map(crate::query::model_track_address).transpose()?;
+    let target = track.cloned();
     if target
         .as_ref()
         .is_some_and(|target| target.kind() != ItemKind::Audio)
@@ -556,7 +554,7 @@ fn apply_media(
     if entry
         .targets
         .iter()
-        .any(|target| matches!(target.kind, ClipKind::Comment | ClipKind::Caption))
+        .any(|target| matches!(target.kind(), ClipKind::Comment | ClipKind::Caption))
     {
         return Err("only VTT files can target caption tracks".to_string());
     }
@@ -661,7 +659,7 @@ fn apply_vtt(
     if entry
         .targets
         .iter()
-        .any(|target| target.kind != ClipKind::Caption)
+        .any(|target| target.kind() != ClipKind::Caption)
     {
         return Err("VTT files can target only caption tracks".to_string());
     }
@@ -727,10 +725,9 @@ fn target_indices(
     entry
         .targets
         .iter()
-        .filter(|target| target.kind == kind)
+        .filter(|target| target.kind() == kind)
         .map(|target| {
-            let id = Uuid::parse_str(&target.track_id)
-                .map_err(|error| format!("invalid target track ID: {error}"))?;
+            let id = target.track_id();
             let index = match kind {
                 ClipKind::Comment => project
                     .comment_tracks
@@ -743,7 +740,7 @@ fn target_indices(
                 ClipKind::Video => project.video_tracks.iter().position(|track| track.id == id),
                 ClipKind::Audio => project.audio_tracks.iter().position(|track| track.id == id),
             };
-            index.ok_or_else(|| format!("target track {} was not found", target.track_id))
+            index.ok_or_else(|| format!("target track {} was not found", target.track_id()))
         })
         .collect()
 }
@@ -910,7 +907,7 @@ fn apply_initial_properties(
     for address in addresses {
         let kind = address.kind();
         let request = SetClipPropertiesRequest {
-            address: crate::query::protocol_item_address(&address),
+            address: address.clone(),
             text: (kind == ItemKind::Caption)
                 .then(|| properties.text.clone())
                 .flatten(),
@@ -924,7 +921,7 @@ fn apply_initial_properties(
                 .then(|| properties.playback_speed.clone())
                 .flatten(),
             repeat_strategy: (kind != ItemKind::Caption)
-                .then(|| properties.repeat_strategy.clone())
+                .then_some(properties.repeat_strategy)
                 .flatten(),
         };
         if request.text.is_none()
@@ -1057,14 +1054,13 @@ fn validate_targets(
     scope: &SequenceScopeId,
 ) -> Result<(), String> {
     for target in entries.iter().flat_map(|entry| &entry.targets) {
-        let address = crate::query::model_track_address(target)?;
-        if project.track(&address).is_none() {
-            return Err(format!("target track {} was not found", target.track_id));
+        if project.track(target).is_none() {
+            return Err(format!("target track {} was not found", target.track_id()));
         }
-        if project.track_scope(&address).as_ref() != Some(scope) {
+        if project.track_scope(target).as_ref() != Some(scope) {
             return Err(format!(
                 "target track {} is outside the import scope",
-                target.track_id
+                target.track_id()
             ));
         }
     }
@@ -1080,36 +1076,30 @@ fn import_start(
     source_has_kind: bool,
 ) -> Result<Option<Time>, String> {
     if !source_has_kind
-        || (!entry.targets.is_empty() && !entry.targets.iter().any(|target| target.kind == kind))
+        || (!entry.targets.is_empty() && !entry.targets.iter().any(|target| target.kind() == kind))
     {
         return Ok(None);
     }
-    let item_kind = match kind {
-        ClipKind::Comment => ItemKind::Comment,
-        ClipKind::Caption => ItemKind::Caption,
-        ClipKind::Video => ItemKind::Video,
-        ClipKind::Audio => ItemKind::Audio,
-    };
     let target_paths = entry
         .targets
         .iter()
-        .filter(|target| target.kind == kind)
-        .map(|target| crate::query::parse_path(&target.sequence_path))
-        .collect::<Result<HashSet<_>, _>>()?;
+        .filter(|target| target.kind() == kind)
+        .map(|target| target.sequence_path())
+        .collect::<HashSet<_>>();
     if target_paths.len() > 1 {
         return Err(format!(
             "{kind:?} import targets must use one concrete sequence presentation"
         ));
     }
     let path = if let Some(path) = target_paths.into_iter().next() {
-        path
+        path.to_vec()
     } else if let Some(path) = &scope.concrete_path
-        && project.sequence_scope_for_path(item_kind, path).as_ref() == Some(&scope.logical)
+        && project.sequence_scope_for_path(kind, path).as_ref() == Some(&scope.logical)
     {
         path.clone()
     } else {
         project
-            .sequence_path_for_scope(item_kind, &scope.logical)
+            .sequence_path_for_scope(kind, &scope.logical)
             .ok_or_else(|| {
                 format!(
                     "{kind:?} import scope has no unique concrete presentation; provide a concrete target track"
@@ -1117,7 +1107,7 @@ fn import_start(
             })?
     };
     project
-        .timeline_time_to_sequence_path(item_kind, &path, projected)
+        .timeline_time_to_sequence_path(kind, &path, projected)
         .map(|time| time.snapped(project.frame_step()))
         .map(Some)
         .ok_or_else(|| format!("{kind:?} import scope cannot map the projected anchor frame"))
@@ -1362,35 +1352,5 @@ fn sanitized_name(name: &str) -> String {
         "import".to_string()
     } else {
         sanitized
-    }
-}
-
-fn operation_name(operation: &EditOperation) -> &'static str {
-    match operation {
-        EditOperation::SetProjectSettings(_) => "set_project_settings",
-        EditOperation::SplitClip(_) => "split_clip",
-        EditOperation::DuplicateClip(_) => "duplicate_clip",
-        EditOperation::ReorderTrack(_) => "reorder_track",
-        EditOperation::ReplaceText(_) => "replace_text",
-        EditOperation::InsertFiles(_) => "insert_files",
-        EditOperation::ReplaceClipSource(_) => "replace_clip_source",
-        EditOperation::InsertCaptions(_) => "insert_captions",
-        EditOperation::InsertTts(_) => "insert_tts",
-        EditOperation::InsertText(_) => "insert_text",
-        EditOperation::CreateTrack(_) => "create_track",
-        EditOperation::MoveClip(_) => "move_clip",
-        EditOperation::TrimClip(_) => "trim_clip",
-        EditOperation::DeleteClips(_) => "delete_clips",
-        EditOperation::SetClipProperties(_) => "set_clip_properties",
-        EditOperation::SetVideoTransform(_) => "set_video_transform",
-        EditOperation::UpsertKeyframes(_) => "upsert_keyframes",
-        EditOperation::DeleteKeyframes(_) => "delete_keyframes",
-        EditOperation::UpsertPropertyExpression(_) => "upsert_property_expression",
-        EditOperation::DeletePropertyExpression(_) => "delete_property_expression",
-        EditOperation::SetClipTransitions(_) => "set_clip_transitions",
-        EditOperation::SetExpression(_) => "set_expression",
-        EditOperation::SetTrackEnabled(_) => "set_track_enabled",
-        EditOperation::SetCaptionTrackLanguage(_) => "set_caption_track_language",
-        EditOperation::DeleteTrack(_) => "delete_track",
     }
 }

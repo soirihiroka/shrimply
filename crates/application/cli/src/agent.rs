@@ -539,14 +539,22 @@ fn resolve_addresses(
     if properties.contains_key("item_id") && !properties.contains_key("addresses") {
         return Ok(());
     }
+    let item_id = item_id
+        .map(|id| id.parse::<uuid::Uuid>())
+        .transpose()
+        .map_err(|error| error.to_string())?;
+    let track_id = track_id
+        .map(|id| id.parse::<uuid::Uuid>())
+        .transpose()
+        .map_err(|error| error.to_string())?;
     let snapshot = load_snapshot(path)?;
     let address = if let Some(item_id) = item_id {
         let candidates: Vec<_> = shrimply_editing_api::query::all_clips(&snapshot)?
             .clips
             .into_iter()
             .filter(|clip| {
-                &clip.address.item_id == item_id
-                    && track_id.is_none_or(|id| &clip.address.track_id == id)
+                clip.address.item_id() == item_id
+                    && track_id.is_none_or(|id| clip.address.track_id() == id)
             })
             .map(|clip| clip.address)
             .collect();
@@ -564,7 +572,7 @@ fn resolve_addresses(
             .scopes
             .into_iter()
             .flat_map(|scope| scope.tracks)
-            .filter(|track| &track.address.track_id == id)
+            .filter(|track| track.address.track_id() == id)
             .map(|track| track.address)
             .collect();
         if candidates.len() != 1 {

@@ -62,25 +62,10 @@ pub use shrimply_timeline_paint_skia::math::track_label_button_y;
 pub use shrimply_timeline_paint_skia::track_controls::track_enabled;
 
 pub fn toggle_track_enabled(project: &mut Project, key: TrackKey) -> bool {
-    let enabled = match key.kind {
-        TrackKind::Comment => project
-            .comment_tracks
-            .get_mut(key.track_index)
-            .map(|track| &mut track.enabled),
-        TrackKind::Caption => project
-            .caption_tracks
-            .get_mut(key.track_index)
-            .map(|track| &mut track.enabled),
-        TrackKind::Video => project
-            .video_tracks
-            .get_mut(key.track_index)
-            .map(|track| &mut track.enabled),
-        TrackKind::Audio => project
-            .audio_tracks
-            .get_mut(key.track_index)
-            .map(|track| &mut track.enabled),
-    };
-    if let Some(enabled) = enabled {
+    if let Some(track) =
+        selection_state::track_address(project, key).and_then(|address| project.track_mut(&address))
+    {
+        let enabled = track.enabled_mut();
         *enabled = !*enabled;
         true
     } else {

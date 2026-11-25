@@ -3,10 +3,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use shrimply_editing_api::{
-    protocol::{Presence, ScopeRef},
-    query::{protocol_item_address, protocol_track_address},
-};
+use shrimply_editing_api::protocol::{Presence, ScopeRef};
 use uuid::Uuid;
 
 use super::{Project, SharedPlayerState, SharedSelectionState, player_state, selection_state};
@@ -37,18 +34,10 @@ pub(super) fn capture(
         scope: ScopeRef {
             sequence_path: selection_state::active_scope(selection)
                 .instance_ids()
-                .iter()
-                .map(Uuid::to_string)
-                .collect(),
+                .to_vec(),
         },
-        clips: selection_state::selected_item_addresses(selection, project)
-            .iter()
-            .map(protocol_item_address)
-            .collect(),
-        tracks: selection_state::selected_track_addresses(selection, project)
-            .iter()
-            .map(protocol_track_address)
-            .collect(),
+        clips: selection_state::selected_item_addresses(selection, project),
+        tracks: selection_state::selected_track_addresses(selection, project),
     }
 }
 
