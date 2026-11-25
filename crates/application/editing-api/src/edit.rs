@@ -16,7 +16,7 @@ use uuid::Uuid;
 
 use crate::protocol::{
     ClipAddress, ClipSummary, ClipTransitionInput, CollisionBehavior, CropEdges, CropMode,
-    EditOperation, EditRequest, ExactFraction, InsertCaptionsRequest, InsertTextOperation,
+    EditOperation, ExactFraction, InsertCaptionsRequest, InsertTextOperation,
     ReplaceClipSourceRequest, ScopeRef, SetClipPropertiesRequest, SetClipTransitionsRequest,
     SetVideoTransformRequest, TrackAddress, VideoFitMode,
 };
@@ -85,30 +85,6 @@ pub(crate) fn resolve_scope(project: &Project, scope: &ScopeRef) -> Result<Resol
         #[cfg(feature = "local")]
         concrete_path: Some(path),
     })
-}
-
-/// Apply one shared command batch to a private candidate. Media attachment
-/// takes place through a verified asset transaction before publication.
-pub fn apply_shared_edit(project: &Project, request: &EditRequest) -> Result<Project, String> {
-    if request.operations.is_empty() {
-        return Err("edit request requires at least one operation".into());
-    }
-    let mut candidate = project.clone();
-    let scope = request
-        .scope
-        .as_ref()
-        .map(|scope| resolve_scope(project, scope).map(|scope| scope.logical))
-        .transpose()?
-        .unwrap_or_else(SequenceScopeId::root);
-    let frame = request
-        .frame
-        .ok_or("shared edit requires an explicit frame")?;
-    for (index, operation) in request.operations.iter().enumerate() {
-        apply_non_import(&mut candidate, operation, frame, &scope)
-            .map_err(|error| format!("operation {index} failed: {error}"))?;
-    }
-    candidate.validate()?;
-    Ok(candidate)
 }
 
 pub fn apply_non_import(

@@ -7918,13 +7918,38 @@ dependencies = [
 ]
 
 [[package]]
-name = "shrimply-project-service"
+name = "shrimply-project-protocol"
 version = "0.1.0"
 dependencies = [
+ "serde",
+ "shrimply-resource-pipeline",
+ "uuid",
+]
+
+[[package]]
+name = "shrimply-project-server"
+version = "0.1.0"
+dependencies = [
+ "base64 0.23.1",
  "futures-util",
  "http-body-util",
  "hyper",
  "hyper-util",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "shrimply-project-protocol",
+ "shrimply-resource-pipeline",
+ "tokio",
+ "tokio-util",
+ "uuid",
+]
+
+[[package]]
+name = "shrimply-project-service"
+version = "0.1.0"
+dependencies = [
+ "base64 0.23.1",
  "reqwest",
  "rusqlite",
  "serde",
@@ -7932,10 +7957,9 @@ dependencies = [
  "shrimply-editing-api",
  "shrimply-path-core",
  "shrimply-project-document",
+ "shrimply-project-protocol",
  "shrimply-resource-pipeline",
  "tempfile",
- "tokio",
- "tokio-util",
  "uuid",
 ]
 

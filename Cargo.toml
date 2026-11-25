@@ -6,6 +6,8 @@ members = [
     "crates/application/player-core",
     "crates/application/local-ipc",
     "crates/integrations/project-service",
+    "crates/integrations/project-protocol",
+    "crates/integrations/project-server",
     "crates/gpu/vulkan/gpu-vulkan",
     "crates/gpu/denoise/denoise-metal",
     "crates/gpu/metal/gpu-metal",
@@ -284,6 +286,7 @@ shrimply-process-reporting = { path = "crates/diagnostics/process-reporting" }
 shrimply-recent-projects = { path = "crates/project/recent-projects" }
 shrimply-profiling = { path = "crates/diagnostics/profiling" }
 shrimply-project-service = { path = "crates/integrations/project-service" }
+shrimply-project-protocol = { path = "crates/integrations/project-protocol" }
 shrimply-project-document = { path = "crates/project/project-document", default-features = false }
 shrimply-project-evaluation = { path = "crates/project/project-evaluation" }
 shrimply-project-types = { path = "crates/project/project-types" }

@@ -1,0 +1,63 @@
+name: Project server Docker
+
+on:
+  push:
+    branches: [main]
+    paths: &inputs
+      - ".github/workflows/project-server.yml"
+      - ".dockerignore"
+      - "crates/integrations/project-protocol/**"
+      - "crates/integrations/project-server/**"
+      - "crates/resource-pipeline/**"
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "Dockerfile.project-server"
+      - "Makefile"
+      - "rust-toolchain.toml"
+  pull_request:
+    paths: *inputs
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: project-server-docker-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Build project server image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: Dockerfile.project-server
+          load: true
+          tags: shrimply-project-server:ci
+          cache-from: type=gha,scope=project-server
+          cache-to: type=gha,scope=project-server,mode=max
+
+      - name: Verify workspace version and HTTP startup
+        env:
+          SHRIMPLY_PROJECT_SERVER_TOKEN: ci-smoke-test
+        run: |
+          expected="$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["workspace"]["package"]["version"])')"
+          test "$(docker run --rm shrimply-project-server:ci --version)" = "shrimply-project-server ${expected}"
+          docker run --detach --name project-server-smoke \
+            --env SHRIMPLY_PROJECT_SERVER_TOKEN --publish 127.0.0.1::8080/tcp \
+            shrimply-project-server:ci
+          trap 'docker logs project-server-smoke; docker rm --force project-server-smoke' EXIT
+          endpoint="http://$(docker port project-server-smoke 8080/tcp)/v1"
+          curl --fail --silent --show-error --max-time 3 --retry 20 --retry-connrefused --retry-delay 1 \
+            --header "Authorization: Bearer ${SHRIMPLY_PROJECT_SERVER_TOKEN}" "${endpoint}" \
+            | python3 -c 'import json, sys; assert json.load(sys.stdin)["protocol"] == 2'
+          test "$(curl --silent --show-error --max-time 3 --output /dev/null --write-out '%{http_code}' "${endpoint}")" = 401

@@ -6,27 +6,30 @@ use std::{
     time::Duration,
 };
 
+use base64::{Engine, engine::general_purpose::STANDARD};
 use reqwest::{
     Method, Url,
     blocking::{Client, RequestBuilder, Response},
     header,
 };
 use serde::de::DeserializeOwned;
-use shrimply_project_document::project::Project;
+use serde_json::Value;
+use shrimply_project_document::project::{Project, ProjectEncoding};
 use uuid::Uuid;
 
 use shrimply_resource_pipeline::fingerprint::Writer;
 
-use crate::{
-    ChangeRequest, CommitRequest, ErrorResponse, MediaBlob, MediaCache, MediaReader,
-    ProjectVersion, ProjectVersionReceipt, SyncRequest, SyncResponse, UPLOAD_CHUNK_BYTES,
-    UploadReceipt,
+use crate::{MediaCache, MediaReader, ProjectVersion, SyncRequest, SyncResponse};
+use shrimply_project_protocol::{
+    ErrorResponse, LEGACY_CHECKPOINT_FIELD, MediaBlob, ProjectVersionReceipt, PublishRequest,
+    UPLOAD_CHUNK_BYTES, UploadReceipt, valid_digest,
 };
 
 #[derive(Debug)]
 pub enum RequestError {
     Transport(reqwest::Error),
     Media(io::Error),
+    InvalidProject(String),
     Rejected {
         message: String,
         revision: Option<u64>,
@@ -38,6 +41,7 @@ impl fmt::Display for RequestError {
         match self {
             Self::Transport(error) => error.fmt(formatter),
             Self::Media(error) => error.fmt(formatter),
+            Self::InvalidProject(error) => formatter.write_str(error),
             Self::Rejected {
                 message,
                 revision: None,
@@ -90,47 +94,68 @@ impl ProjectClient {
     }
 
     pub fn create(&self, id: Uuid, project: &Project) -> Result<ProjectVersion, RequestError> {
-        response(self.request(Method::POST, id, &[]).json(project).send())
+        if !project.assets().is_empty() {
+            return Err(invalid_media(
+                "A shared project must be created before uploading media",
+            ));
+        }
+        let mut project = project.clone();
+        project.clear_view_state();
+        project.ensure_ids();
+        project.validate().map_err(RequestError::InvalidProject)?;
+        response(self.request(Method::POST, id, &[]).json(&project).send()).and_then(decode_version)
     }
 
     pub fn get(&self, id: Uuid) -> Result<ProjectVersion, RequestError> {
-        response(self.request(Method::GET, id, &[]).send())
+        response(self.request(Method::GET, id, &[]).send()).and_then(decode_version)
     }
 
-    pub fn commit(
+    pub(super) fn publish(
         &self,
         id: Uuid,
-        request: &CommitRequest,
+        request: &PublishRequest<&Project>,
     ) -> Result<ProjectVersionReceipt, RequestError> {
         response(
-            self.request(Method::POST, id, &["edits"])
+            self.request(Method::POST, id, &["snapshots"])
                 .json(request)
                 .send(),
         )
     }
 
-    pub fn changes(
+    pub(super) fn receipt(
         &self,
         id: Uuid,
-        request: &ChangeRequest,
-    ) -> Result<ProjectVersionReceipt, RequestError> {
-        response(
-            self.request(Method::POST, id, &["changes"])
-                .json(request)
-                .send(),
-        )
+        operation: Uuid,
+    ) -> Result<Option<ProjectVersionReceipt>, RequestError> {
+        let operation = operation.to_string();
+        let reply = self
+            .request(Method::GET, id, &["operations", &operation])
+            .send()
+            .map_err(RequestError::Transport)?;
+        if reply.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        response(Ok(reply)).map(Some)
     }
 
-    pub fn sync(&self, id: Uuid, request: &SyncRequest) -> Result<SyncResponse, RequestError> {
-        response(
+    pub(super) fn sync(
+        &self,
+        id: Uuid,
+        request: &SyncRequest,
+    ) -> Result<SyncResponse, RequestError> {
+        let reply: shrimply_project_protocol::SyncResponse<Value, crate::Presence> = response(
             self.request(Method::POST, id, &["sync"])
                 .json(request)
                 .send(),
-        )
+        )?;
+        Ok(SyncResponse {
+            version: reply.version.map(decode_version).transpose()?,
+            participants: reply.participants,
+        })
     }
 
     pub fn media_blob(&self, id: Uuid, digest: &str) -> Result<MediaBlob, RequestError> {
-        if !crate::valid_digest(digest) {
+        if !valid_digest(digest) {
             return Err(invalid_media("invalid media identifier"));
         }
         let response = self
@@ -298,6 +323,30 @@ impl ProjectClient {
             .extend(action.iter().copied());
         self.client.request(method, url).bearer_auth(&self.token)
     }
+}
+
+fn decode_version(
+    version: shrimply_project_protocol::ProjectVersion<Value>,
+) -> Result<ProjectVersion, RequestError> {
+    let value = std::sync::Arc::unwrap_or_clone(version.project);
+    let project: Project = if let Some(legacy) = value.get(LEGACY_CHECKPOINT_FIELD) {
+        let bytes = STANDARD
+            .decode(legacy.as_str().ok_or_else(|| {
+                RequestError::InvalidProject("invalid legacy project checkpoint".into())
+            })?)
+            .map_err(|error| RequestError::InvalidProject(error.to_string()))?;
+        ProjectEncoding::Shrimp
+            .decode(&bytes)
+            .map_err(RequestError::InvalidProject)?
+    } else {
+        serde_json::from_value(value)
+            .map_err(|error| RequestError::InvalidProject(error.to_string()))?
+    };
+    project.validate().map_err(RequestError::InvalidProject)?;
+    Ok(ProjectVersion {
+        revision: version.revision,
+        project: std::sync::Arc::new(project),
+    })
 }
 
 fn response<T: DeserializeOwned>(

@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fs,
     io::{self, Write},
     path::{Path, PathBuf},
@@ -12,6 +12,8 @@ use shrimply_editing_api::protocol::MediaRewrites;
 use shrimply_project_document::project::{self, Project, ProjectChanges, ProjectEncoding};
 use shrimply_resource_pipeline::fingerprint;
 use uuid::Uuid;
+
+use shrimply_project_protocol::PublishRequest;
 
 use crate::{
     ChangeRequest, MediaBlob, MediaCache, Presence, ProjectClient, ProjectVersion, RequestError,
@@ -250,7 +252,6 @@ impl SharedWorkspace {
         let transaction = self.sqlite.unchecked_transaction().map_err(text)?;
         let request = ChangeRequest {
             operation_id: Uuid::new_v4(),
-            base_revision: confirmed_revision(&transaction)?,
             changes,
         };
         let project = request.changes.apply(&draft(&transaction)?).map_err(text)?;
@@ -308,47 +309,65 @@ impl SharedWorkspace {
         client: &ProjectClient,
         participants: Vec<Presence>,
     ) -> Result<WorkspaceUpdate, String> {
-        let mut revision = self.confirmed_revision()?;
-        let mut highest_ack = revision;
-        let mut sent = Vec::new();
-        let mut conflicts = BTreeMap::new();
-        for (sequence, request) in if self.has_pending_uploads()? {
-            Vec::new()
-        } else {
-            pending(&self.sqlite)?
-        } {
-            match client.changes(self.link.project_id, &request) {
-                Ok(receipt) => {
-                    highest_ack = highest_ack.max(receipt.revision);
-                    sent.push(sequence);
-                }
-                Err(
-                    error @ RequestError::Rejected {
-                        revision: Some(_), ..
-                    },
-                ) => {
-                    conflicts.insert(sequence, text(error));
-                }
-                Err(error) => return Err(text(error)),
-            }
-        }
-        let update = client
+        let previous_revision = self.confirmed_revision()?;
+        let id = self.link.project_id;
+        let mut update = client
             .sync(
-                self.link.project_id,
+                id,
                 &SyncRequest {
-                    revision,
+                    revision: previous_revision,
                     presence: None,
                     participants,
                 },
             )
             .map_err(text)?;
         if let Some(version) = &update.version {
+            require_revision(version.revision, previous_revision)?;
+        }
+        let mut sent = Vec::new();
+        let mut conflicts = BTreeMap::new();
+        if self.has_pending_uploads()? {
+            if let Some(version) = &mut update.version {
+                for (sequence, request) in pending(&self.sqlite)? {
+                    if let Some(receipt) = client.receipt(id, request.operation_id).map_err(text)? {
+                        if receipt.revision > version.revision {
+                            refresh_head(client, id, version, receipt.revision)?;
+                        }
+                        sent.push(sequence);
+                    }
+                }
+            }
+        } else {
+            let edits = pending(&self.sqlite)?;
+            let mut head = match (update.version.take(), edits.is_empty()) {
+                (Some(version), _) => Some(version),
+                (None, true) => None,
+                (None, false) => Some(ProjectVersion {
+                    revision: previous_revision,
+                    project: Arc::new(confirmed(&self.sqlite)?),
+                }),
+            };
+            for (sequence, request) in edits {
+                match publish_edit(
+                    client,
+                    id,
+                    head.as_mut().expect("pending edits have a base"),
+                    &request,
+                )? {
+                    Ok(()) => sent.push(sequence),
+                    Err(conflict) => {
+                        conflicts.insert(sequence, conflict);
+                    }
+                }
+            }
+            update.version = head.filter(|head| head.revision != previous_revision);
+        }
+        let revision = if let Some(version) = &update.version {
             self.record_media(client, &version.project)?;
-            revision = version.revision;
-        }
-        if revision < highest_ack {
-            return Err("project server head is older than its edit receipt".into());
-        }
+            version.revision
+        } else {
+            previous_revision
+        };
         let draft_changed = !sent.is_empty() || !conflicts.is_empty() || update.version.is_some();
         if draft_changed {
             let document = update
@@ -637,10 +656,7 @@ fn draft(connection: &Connection) -> Result<Project, String> {
     ProjectEncoding::Shrimp.decode(&bytes)
 }
 
-fn rebase(
-    connection: &Connection,
-    conflicts: &mut BTreeMap<i64, String>,
-) -> Result<Vec<u8>, String> {
+fn confirmed(connection: &Connection) -> Result<Project, String> {
     let snapshot = connection
         .query_row(
             "SELECT document FROM shared_project WHERE id = 1",
@@ -648,7 +664,99 @@ fn rebase(
             |row| row.get::<_, Vec<u8>>(0),
         )
         .map_err(text)?;
-    let mut project = ProjectEncoding::Shrimp.decode(&snapshot)?;
+    ProjectEncoding::Shrimp.decode(&snapshot)
+}
+
+fn publish_edit(
+    client: &ProjectClient,
+    project_id: Uuid,
+    head: &mut ProjectVersion,
+    request: &ChangeRequest,
+) -> Result<Result<(), String>, String> {
+    const MAX_ATTEMPTS: usize = 4;
+    let operation_digest =
+        fingerprint::digest(&serde_json::to_vec(&request.changes).map_err(text)?);
+    for _ in 0..MAX_ATTEMPTS {
+        let project = match request.changes.apply(&head.project) {
+            Ok(project) => project,
+            Err(error) => {
+                // A response may have been lost after the server committed this edit.
+                let Some(receipt) = client
+                    .receipt(project_id, request.operation_id)
+                    .map_err(text)?
+                else {
+                    return Ok(Err(text(error)));
+                };
+                if receipt.revision > head.revision {
+                    refresh_head(client, project_id, head, receipt.revision)?;
+                }
+                return Ok(Ok(()));
+            }
+        };
+        let media: BTreeSet<_> = project
+            .assets()
+            .into_iter()
+            .map(|asset| {
+                crate::blob_digest(asset.path())
+                    .map(str::to_owned)
+                    .ok_or("shared project assets must reference immutable project media")
+            })
+            .collect::<Result<_, _>>()?;
+        let submission = PublishRequest {
+            operation_id: request.operation_id,
+            operation_digest: operation_digest.clone(),
+            base_revision: head.revision,
+            project: &project,
+            media: media.into_iter().collect(),
+        };
+        match client.publish(project_id, &submission) {
+            Ok(receipt) => {
+                if head.revision.checked_add(1) == Some(receipt.revision) {
+                    head.revision = receipt.revision;
+                    head.project = Arc::new(project);
+                } else if receipt.revision > head.revision {
+                    refresh_head(client, project_id, head, receipt.revision)?;
+                }
+                return Ok(Ok(()));
+            }
+            Err(RequestError::Rejected {
+                revision: Some(revision),
+                ..
+            }) => {
+                refresh_head(client, project_id, head, revision)?;
+            }
+            Err(error) => return Err(text(error)),
+        }
+    }
+    Err("Shared project changed during synchronization; pending edits will retry".into())
+}
+
+fn refresh_head(
+    client: &ProjectClient,
+    id: Uuid,
+    head: &mut ProjectVersion,
+    required_revision: u64,
+) -> Result<(), String> {
+    let latest = client.get(id).map_err(text)?;
+    require_revision(latest.revision, required_revision.max(head.revision))?;
+    *head = latest;
+    Ok(())
+}
+
+fn require_revision(revision: u64, minimum: u64) -> Result<(), String> {
+    if revision < minimum {
+        return Err(format!(
+            "Shared project server returned revision {revision}, expected at least {minimum}"
+        ));
+    }
+    Ok(())
+}
+
+fn rebase(
+    connection: &Connection,
+    conflicts: &mut BTreeMap<i64, String>,
+) -> Result<Vec<u8>, String> {
+    let mut project = confirmed(connection)?;
     for (sequence, request) in pending(connection)? {
         if let std::collections::btree_map::Entry::Vacant(entry) = conflicts.entry(sequence) {
             match request.changes.apply(&project) {

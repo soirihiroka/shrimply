@@ -17,7 +17,8 @@ use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio_util::io::ReaderStream;
 use uuid::Uuid;
 
-use crate::{UploadReceipt, server::Body, store::Failure};
+use crate::{server::Body, store::Failure};
+use shrimply_project_protocol::{UploadReceipt, valid_digest};
 
 pub(super) struct BlobStore {
     directory: PathBuf,
@@ -35,7 +36,7 @@ impl BlobStore {
     }
 
     pub(super) fn blob(&self, project: Uuid, digest: &str) -> Result<PathBuf, Failure> {
-        if !crate::valid_digest(digest) {
+        if !valid_digest(digest) {
             return Err(Failure::BadRequest(
                 "invalid SHA-256 media identifier".into(),
             ));

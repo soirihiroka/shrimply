@@ -1,3 +1,7 @@
+mod media;
+mod server;
+mod store;
+
 use std::path::Path;
 
 #[tokio::main]
@@ -17,5 +21,5 @@ async fn main() -> Result<(), String> {
         .map_err(|error| format!("invalid listen address: {error}"))?;
     let token = std::env::var("SHRIMPLY_PROJECT_SERVER_TOKEN")
         .map_err(|_| "set SHRIMPLY_PROJECT_SERVER_TOKEN")?;
-    shrimply_project_service::serve(address, Path::new(&database), &token).await
+    server::serve(address, Path::new(&database), &token).await
 }

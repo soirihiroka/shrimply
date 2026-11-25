@@ -1,0 +1,62 @@
+FROM alpine:3.24.4 AS base
+
+FROM base AS builder
+WORKDIR /src
+
+RUN apk add --no-cache build-base ca-certificates curl python3
+
+ENV PATH="/root/.cargo/bin:${PATH}"
+COPY rust-toolchain.toml ./
+RUN curl -fsSL https://sh.rustup.rs -o /tmp/rustup.sh \
+    && sh /tmp/rustup.sh -y --default-toolchain none --profile minimal \
+    && python3 -c 'import tomllib; print(tomllib.load(open("rust-toolchain.toml", "rb"))["toolchain"]["channel"])' > /tmp/shrimply-toolchain \
+    && rustup toolchain install --profile minimal "$(cat /tmp/shrimply-toolchain)" \
+    && rm /tmp/rustup.sh
+
+COPY Cargo.toml Cargo.lock Makefile ./
+COPY crates/integrations/project-protocol crates/integrations/project-protocol
+COPY crates/integrations/project-server crates/integrations/project-server
+COPY crates/resource-pipeline crates/resource-pipeline
+# Keep workspace dependency versions while limiting Cargo to the server.
+RUN <<'SH'
+set -eu
+cp Cargo.lock /tmp/shrimply-workspace.lock
+python3 - <<'PY'
+from pathlib import Path
+
+manifest = Path("Cargo.toml")
+package_settings = manifest.read_text().split("[workspace.package]", 1)[1]
+manifest.write_text(
+    '[workspace]\n'
+    'resolver = "3"\n'
+    'members = ["crates/integrations/project-server"]\n\n'
+    '[workspace.package]' + package_settings
+)
+PY
+RUSTFLAGS="-C target-feature=-crt-static" make project-server-release \
+    RUST_TOOLCHAIN="$(cat /tmp/shrimply-toolchain)" PROJECT_SERVER_LOCK=
+python3 - <<'PY'
+import tomllib
+
+def packages(path):
+    with open(path, "rb") as lock:
+        return {
+            (entry["name"], entry["version"], entry.get("source"), entry.get("checksum"))
+            for entry in tomllib.load(lock)["package"]
+        }
+
+unpinned = packages("Cargo.lock") - packages("/tmp/shrimply-workspace.lock")
+if unpinned:
+    raise SystemExit(f"Server dependencies missing from workspace lockfile: {sorted(unpinned)}")
+PY
+install -s target/release/shrimply-project-server /usr/local/bin/shrimply-project-server
+SH
+
+FROM base AS runtime
+RUN apk add --no-cache libgcc && install -d -o 10001 -g 10001 /data
+COPY --from=builder /usr/local/bin/shrimply-project-server /usr/local/bin/shrimply-project-server
+USER 10001:10001
+WORKDIR /data
+EXPOSE 8080
+ENTRYPOINT ["/usr/local/bin/shrimply-project-server"]
+CMD ["0.0.0.0:8080", "/data/projects.sqlite"]

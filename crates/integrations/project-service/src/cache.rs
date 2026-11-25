@@ -246,7 +246,7 @@ impl MediaReader {
         blob: MediaBlob,
         cache: MediaCache,
     ) -> Result<Self, RequestError> {
-        if !crate::valid_digest(&blob.digest) {
+        if !shrimply_project_protocol::valid_digest(&blob.digest) {
             return Err(RequestError::Media(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "invalid media digest",

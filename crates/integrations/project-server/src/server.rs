@@ -16,15 +16,14 @@ use hyper::{
 };
 use hyper_util::rt::TokioIo;
 use serde::{Serialize, de::DeserializeOwned};
-use shrimply_project_document::project::ProjectEncoding;
+use serde_json::Value;
 use tokio::net::TcpListener;
 use uuid::Uuid;
 
 use crate::media::BlobStore;
-use crate::store::{Failure, Store};
-use crate::{
-    ChangeRequest, CommitRequest, ErrorResponse, ProjectVersionReceipt, SyncRequest,
-    UPLOAD_CHUNK_BYTES,
+use crate::store::{Failure, Presence, Store};
+use shrimply_project_protocol::{
+    ErrorResponse, ProjectVersionReceipt, PublishRequest, SyncRequest, UPLOAD_CHUNK_BYTES,
 };
 
 pub(super) type Body = http_body_util::combinators::UnsyncBoxBody<Bytes, io::Error>;
@@ -89,7 +88,7 @@ async fn dispatch(
     }
     let path = request.uri().path();
     if request.method() == Method::GET && path == "/v1" {
-        return Ok(json(StatusCode::OK, serde_json::json!({"protocol":1})));
+        return Ok(json(StatusCode::OK, serde_json::json!({"protocol":2})));
     }
     let relative = path.strip_prefix("/v1/projects/").ok_or(Failure::Missing)?;
     let (id, action) = relative.split_once('/').unwrap_or((relative, ""));
@@ -100,10 +99,7 @@ async fn dispatch(
     }
     match (request.method(), action) {
         (&Method::POST, "") => {
-            let bytes = read_body(request, MAX_DOCUMENT_BYTES).await?;
-            let project = ProjectEncoding::Json
-                .decode(&bytes)
-                .map_err(Failure::BadRequest)?;
+            let project: Value = read_json(request).await?;
             let created = transact(authority, move |store| store.create(id, project)).await?;
             Ok(json(StatusCode::CREATED, created))
         }
@@ -111,18 +107,21 @@ async fn dispatch(
             let version = transact(authority, move |store| store.get(id)).await?;
             Ok(json(StatusCode::OK, version))
         }
-        (&Method::POST, "edits") => {
-            let request: CommitRequest = read_json(request).await?;
-            let revision = transact(authority, move |store| store.commit(id, request)).await?;
+        (&Method::GET, path) if path.starts_with("operations/") => {
+            let operation = Uuid::parse_str(path.trim_start_matches("operations/"))
+                .map_err(|_| Failure::Missing)?;
+            let revision = transact(authority, move |store| store.receipt(id, operation))
+                .await?
+                .ok_or(Failure::Missing)?;
             Ok(json(StatusCode::OK, ProjectVersionReceipt { revision }))
         }
-        (&Method::POST, "changes") => {
-            let request: ChangeRequest = read_json(request).await?;
-            let revision = transact(authority, move |store| store.changes(id, request)).await?;
+        (&Method::POST, "snapshots") => {
+            let request: PublishRequest<Value> = read_json(request).await?;
+            let revision = transact(authority, move |store| store.publish(id, request)).await?;
             Ok(json(StatusCode::OK, ProjectVersionReceipt { revision }))
         }
         (&Method::POST, "sync") => {
-            let request: SyncRequest = read_json(request).await?;
+            let request: SyncRequest<Presence> = read_json(request).await?;
             let sync = transact(authority, move |store| {
                 store.sync(
                     id,

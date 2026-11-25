@@ -5,14 +5,26 @@ use std::{
     time::{Duration, Instant},
 };
 
+use base64::{Engine, engine::general_purpose::STANDARD};
 use rusqlite::{Connection, OptionalExtension, params};
-use shrimply_editing_api::edit::apply_shared_edit;
-use shrimply_project_document::project::{ChangeError, Project, ProjectEncoding, ProjectSession};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use shrimply_project_protocol::{
+    LEGACY_CHECKPOINT_FIELD, ProjectVersion, PublishRequest, SyncResponse, valid_digest,
+};
 use uuid::Uuid;
 
-use crate::{
-    ChangeRequest, CommitRequest, Presence, ProjectVersion, blob_digest, media::BlobStore,
-};
+use crate::media::BlobStore;
+
+const LEGACY_HEADER: &[u8] = b"SHRIMP\0\x01\x07\0\0\0";
+
+#[derive(Clone, Deserialize, Serialize)]
+pub(super) struct Presence {
+    id: Uuid,
+    name: String,
+    #[serde(flatten)]
+    state: serde_json::Map<String, Value>,
+}
 
 const PRESENCE_TTL: Duration = Duration::from_secs(5);
 
@@ -31,22 +43,24 @@ impl From<rusqlite::Error> for Failure {
 }
 
 struct Session {
-    document: ProjectSession,
+    revision: u64,
+    document: Arc<Value>,
     participants: BTreeMap<Uuid, (Instant, Presence)>,
 }
 
 impl Session {
-    fn new(revision: u64, project: Project) -> Self {
+    fn new(revision: u64, project: Value) -> Self {
         Self {
-            document: ProjectSession::at_revision(Arc::new(project), revision, 1),
+            revision,
+            document: Arc::new(project),
             participants: BTreeMap::new(),
         }
     }
 
-    fn version(&self) -> ProjectVersion {
+    fn version(&self) -> ProjectVersion<Value> {
         ProjectVersion {
-            revision: self.document.revision(),
-            project: self.document.current().clone(),
+            revision: self.revision,
+            project: self.document.clone(),
         }
     }
 
@@ -108,21 +122,15 @@ impl Store {
     pub(super) fn create(
         &mut self,
         id: Uuid,
-        mut project: Project,
-    ) -> Result<ProjectVersion, Failure> {
-        project.ensure_ids();
-        project.clear_view_state();
-        project.validate().map_err(Failure::BadRequest)?;
-        verify_media(&self.blobs, id, &project)?;
-        let bytes = ProjectEncoding::Shrimp
-            .encode(&project)
-            .map_err(Failure::BadRequest)?;
+        project: Value,
+    ) -> Result<ProjectVersion<Value>, Failure> {
+        let bytes = encode(&project)?;
         let created = self.connection.execute(
             "INSERT INTO projects VALUES (?1, 0, ?2) ON CONFLICT(id) DO NOTHING",
             params![id.to_string(), bytes],
         )?;
         if created == 0 {
-            return Err(Failure::Conflict(self.session(id)?.document.revision()));
+            return Err(Failure::Conflict(self.session(id)?.revision));
         }
         let session = Session::new(0, project);
         let version = session.version();
@@ -134,7 +142,7 @@ impl Store {
         self.session(id).map(|_| ())
     }
 
-    pub(super) fn get(&mut self, id: Uuid) -> Result<ProjectVersion, Failure> {
+    pub(super) fn get(&mut self, id: Uuid) -> Result<ProjectVersion<Value>, Failure> {
         Ok(self.session(id)?.version())
     }
 
@@ -143,82 +151,67 @@ impl Store {
         id: Uuid,
         revision: u64,
         presence: impl IntoIterator<Item = Presence>,
-    ) -> Result<crate::SyncResponse, Failure> {
+    ) -> Result<SyncResponse<Value, Presence>, Failure> {
         let session = self.session(id)?;
         let participants = session.update_presence(presence)?;
-        Ok(crate::SyncResponse {
-            version: (revision != session.document.revision()).then(|| session.version()),
+        Ok(SyncResponse {
+            version: (revision != session.revision).then(|| session.version()),
             participants,
         })
     }
 
-    pub(super) fn commit(&mut self, id: Uuid, request: CommitRequest) -> Result<u64, Failure> {
-        self.publish(id, request.operation_id, &request, |project, revision| {
-            if request.base_revision != revision {
-                return Err(Failure::Conflict(revision));
-            }
-            apply_shared_edit(project, &request.edit).map_err(Failure::BadRequest)
-        })
+    fn operation(&self, id: Uuid, operation: Uuid) -> Result<Option<(u64, Vec<u8>)>, Failure> {
+        let row = self.connection.query_row(
+            "SELECT revision, request FROM operation_receipts WHERE project = ?1 AND operation = ?2",
+            params![id.to_string(), operation.to_string()],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?)),
+        ).optional()?;
+        row.map(|(revision, digest)| Ok((from_disk_revision(revision)?, digest)))
+            .transpose()
     }
 
-    pub(super) fn changes(&mut self, id: Uuid, request: ChangeRequest) -> Result<u64, Failure> {
-        self.publish(id, request.operation_id, &request, |project, revision| {
-            if request.base_revision > revision {
-                return Err(Failure::Conflict(revision));
-            }
-            if request.changes.is_empty() {
-                return Err(Failure::BadRequest(
-                    "an edit must change the project".into(),
-                ));
-            }
-            request.changes.apply(project).map_err(|error| match error {
-                ChangeError::Conflict(_) => Failure::Conflict(revision),
-                ChangeError::Invalid(_) if request.base_revision != revision => {
-                    Failure::Conflict(revision)
-                }
-                ChangeError::Invalid(error) => Failure::BadRequest(error),
-            })
-        })
+    pub(super) fn receipt(&self, id: Uuid, operation: Uuid) -> Result<Option<u64>, Failure> {
+        Ok(self.operation(id, operation)?.map(|(revision, _)| revision))
     }
 
-    fn publish(
+    pub(super) fn publish(
         &mut self,
         id: Uuid,
-        operation: Uuid,
-        receipt: &impl serde::Serialize,
-        apply: impl FnOnce(&Project, u64) -> Result<Project, Failure>,
+        request: PublishRequest<Value>,
     ) -> Result<u64, Failure> {
+        if !valid_digest(&request.operation_digest) {
+            return Err(Failure::BadRequest("invalid operation digest".into()));
+        }
+        if let Some((revision, recorded)) = self.operation(id, request.operation_id)? {
+            // Older databases stored the legacy command JSON in this column.
+            if !recorded.starts_with(b"{") && recorded != request.operation_digest.as_bytes() {
+                return Err(Failure::BadRequest(
+                    "operation ID was used for a different edit".into(),
+                ));
+            }
+            return Ok(revision);
+        }
         self.session(id)?;
         let session = self.sessions.get_mut(&id).expect("session was opened");
-        let key = id.to_string();
-        let operation = operation.to_string();
-        let serialized =
-            serde_json::to_vec(receipt).map_err(|error| Failure::BadRequest(error.to_string()))?;
-        let previous = self.connection.query_row(
-            "SELECT request, revision FROM operation_receipts WHERE project = ?1 AND operation = ?2",
-            params![key, operation],
-            |row| Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, i64>(1)?)),
-        ).optional()?;
-        if let Some((previous, revision)) = previous {
-            return if previous == serialized {
-                from_disk_revision(revision)
-            } else {
-                Err(Failure::BadRequest(
-                    "operation ID was used for a different edit".into(),
-                ))
-            };
+        let current_revision = session.revision;
+        if request.base_revision != current_revision {
+            return Err(Failure::Conflict(current_revision));
         }
-        let current_revision = session.document.revision();
-        let candidate = apply(session.document.current(), current_revision)?;
-        verify_media(&self.blobs, id, &candidate)?;
+        for digest in &request.media {
+            if !valid_digest(digest) || !self.blobs.is_complete(id, digest)? {
+                return Err(Failure::BadRequest(format!(
+                    "shared project media {digest} has not finished uploading"
+                )));
+            }
+        }
+        let bytes = encode(&request.project)?;
+        let key = id.to_string();
+        let operation = request.operation_id.to_string();
         let previous_revision = i64::try_from(current_revision)
             .map_err(|_| Failure::Storage("project revision exhausted".into()))?;
         let revision = previous_revision
             .checked_add(1)
             .ok_or_else(|| Failure::Storage("project revision exhausted".into()))?;
-        let bytes = ProjectEncoding::Shrimp
-            .encode(&candidate)
-            .map_err(Failure::BadRequest)?;
         let transaction = self.connection.transaction()?;
         let changed = transaction.execute(
             "UPDATE projects SET revision = ?1, document = ?2 WHERE id = ?3 AND revision = ?4",
@@ -227,15 +220,21 @@ impl Store {
         if changed != 1 {
             transaction.rollback()?;
             self.sessions.remove(&id);
-            return Err(Failure::Conflict(self.session(id)?.document.revision()));
+            return Err(Failure::Conflict(self.session(id)?.revision));
         }
         transaction.execute(
             "INSERT INTO operation_receipts VALUES (?1, ?2, ?3, ?4)",
-            params![key, operation, serialized, revision],
+            params![
+                key,
+                operation,
+                request.operation_digest.as_bytes(),
+                revision
+            ],
         )?;
         transaction.commit()?;
         let revision = from_disk_revision(revision)?;
-        session.document.commit(Arc::new(candidate), None);
+        session.document = Arc::new(request.project);
+        session.revision = revision;
         Ok(revision)
     }
 
@@ -253,29 +252,25 @@ impl Store {
                     )
                     .optional()?
                     .ok_or(Failure::Missing)?;
-                let project = ProjectEncoding::Shrimp
-                    .decode(&bytes)
-                    .map_err(Failure::Storage)?;
+                let project = if bytes.starts_with(LEGACY_HEADER) {
+                    serde_json::json!({ (LEGACY_CHECKPOINT_FIELD): STANDARD.encode(bytes) })
+                } else {
+                    serde_json::from_slice(&bytes)
+                        .map_err(|error| Failure::Storage(error.to_string()))?
+                };
                 Ok(entry.insert(Session::new(from_disk_revision(revision)?, project)))
             }
         }
     }
 }
 
-fn verify_media(blobs: &BlobStore, project_id: Uuid, project: &Project) -> Result<(), Failure> {
-    for asset in project.assets() {
-        let digest = blob_digest(asset.path()).ok_or_else(|| {
-            Failure::BadRequest(
-                "shared project assets must reference immutable project media".into(),
-            )
-        })?;
-        if !blobs.is_complete(project_id, digest)? {
-            return Err(Failure::BadRequest(format!(
-                "shared project media {digest} has not finished uploading"
-            )));
-        }
+fn encode(project: &Value) -> Result<Vec<u8>, Failure> {
+    if !project.is_object() || project.get(LEGACY_CHECKPOINT_FIELD).is_some() {
+        return Err(Failure::BadRequest(
+            "project document must be a JSON object".into(),
+        ));
     }
-    Ok(())
+    serde_json::to_vec(project).map_err(|error| Failure::BadRequest(error.to_string()))
 }
 
 fn from_disk_revision(value: i64) -> Result<u64, Failure> {

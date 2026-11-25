@@ -201,11 +201,11 @@ else
 	@test -f "$(FFMPEG_PREFIX)/include/libavcodec/avcodec.h" && test -f "$(FFMPEG_PREFIX)/lib/libavcodec.so" || { echo "Missing packaged FFmpeg under $(FFMPEG_PREFIX)" >&2; exit 1; }
 	@$(HOST_MEDIA_ENV) "$(FFMPEG_PREFIX)/bin/ffmpeg" -version | awk -v required="$$(cat external/ffmpeg/RELEASE)" 'NR == 1 { actual = $$3; sub(/^n/, "", actual) } END { if (actual != required || !required) { print "Expected project FFmpeg " required ", found " actual > "/dev/stderr"; exit 1 } }'
 endif
-native-deps sanim-check video-decoder-check android-host-check android-project-check android-project-bench video-decode-benchmark media-system-check project-server project-server-check: linux-ffmpeg
+native-deps sanim-check video-decoder-check android-host-check android-project-check android-project-bench video-decode-benchmark media-system-check: linux-ffmpeg
 else ifeq ($(HOST_OS),Darwin)
-sanim-check project-server project-server-check: appkit-ffmpeg
+sanim-check: appkit-ffmpeg
 else ifeq ($(HOST_OS),Windows_NT)
-sanim-check project-server project-server-check: windows-ffmpeg
+sanim-check: windows-ffmpeg
 endif
 native-deps:
 	@$(PKG_CONFIG) --exists rubberband || { echo "Missing Rubber Band development files (pkg-config: rubberband)" >&2; exit 1; }
@@ -532,12 +532,16 @@ cli-install-check:
 	"$(CARGO_TARGET_DIR)/cli-install-check/tests"
 endif
 
-.PHONY: project-server project-server-check
+.PHONY: project-server project-server-release project-server-check
 project-server:
-	$(DEV_BUILD_ENV) $(CARGO) build -p shrimply-project-service --features server --bin shrimply-project-server
+	$(CARGO) build -p shrimply-project-server
 
-project-server-check: editing-api-fmt
-	$(DEV_BUILD_ENV) $(CARGO) clippy -p shrimply-project-service --features server --all-targets -- -D warnings
+PROJECT_SERVER_LOCK ?= --locked
+project-server-release:
+	$(CARGO) build $(PROJECT_SERVER_LOCK) --release -p shrimply-project-server
+
+project-server-check:
+	$(CARGO) clippy --locked -p shrimply-project-server --all-targets -- -D warnings
 
 check: project-server-check
 
