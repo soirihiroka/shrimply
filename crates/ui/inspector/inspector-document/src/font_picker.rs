@@ -48,9 +48,10 @@ impl Picker {
             let preview = font_cache::native_preview_source(font);
             let mut choose = command("font_choose");
             choose["name"] = json!(font.name);
-            choose["google"] = json!(font.source == font_cache::FontSource::Google);
+            let google = font.source == font_cache::FontSource::Google;
+            choose["google"] = json!(google);
             choose["revision"] = json!(font.revision);
-            let row = json!({"label":font.name,"source":text(match font.source {font_cache::FontSource::Local=>"Local",font_cache::FontSource::Google=>"Google Fonts"}),
+            let row = json!({"label":font.name,"google":google,
                 "selected":selected.contains(&family),"preview_file":preview.as_ref().map(|preview|&preview.path),"preview_index":preview.as_ref().map_or(0,|preview|preview.index),"command":choose});
             if let Some(preview) = preview {previews.push(preview);}
             row

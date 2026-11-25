@@ -107,7 +107,7 @@ internal fun Inspector(timeline: TimelineSession, document: JSONObject?, enabled
     }
     document?.optJSONObject("font_picker")?.let { picker ->
         val close = { send(picker.getJSONObject("close")) }
-        ModalBottomSheet(onDismissRequest = close) {
+        ModalBottomSheet(onDismissRequest = close, modifier = Modifier.imePadding()) {
             Column(Modifier.fillMaxWidth().fillMaxHeight(0.85f)) {
                 Row(Modifier.fillMaxWidth().padding(horizontal = 24.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text(picker.getString("title"), Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
@@ -216,22 +216,32 @@ internal fun InspectorControl(timeline: TimelineSession, control: JSONObject, en
                         }
                     }
                     "action_list" -> {
-                        Text(label, style = MaterialTheme.typography.labelMedium)
                         val rows = control.getJSONArray("rows").objects()
-                        if (rows.isEmpty()) Text(control.getString("empty"), color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        rows.forEach { row ->
-                            ListItem(headlineContent = { Text(row.getString("label")) },
-                                supportingContent = { Text(row.getString("subtitle")) },
-                                trailingContent = { Row {
-                                    row.getJSONArray("actions").objects().forEach { action ->
-                                        IconButton(enabled = editable && action.getBoolean("enabled"), onClick = { send(action.getJSONObject("command")) }) {
-                                            Icon(iconVector(action.getString("icon")), action.getString("label"), Modifier.size(16.dp))
+                        val add = control.getJSONObject("add")
+                        InspectorField(label) { field ->
+                            Column(field) {
+                                if (rows.isEmpty()) InspectorNavigationInput(
+                                    control.getString("empty"), false, editable, Modifier.fillMaxWidth()
+                                ) { send(add.getJSONObject("command")) }
+                                rows.forEach { row ->
+                                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                        InspectorNavigationInput(row.getString("label"), row.getBoolean("google"),
+                                            editable, Modifier.weight(1f)) { send(row.getJSONObject("command")) }
+                                        AdaptiveMenuButton(editable, Modifier.size(40.dp), icon = {
+                                            Icon(iconVector("view-more-symbolic"), control.getString("actions_label"), Modifier.size(16.dp))
+                                        }) { dismiss ->
+                                            row.getJSONArray("actions").objects().filter { it.getBoolean("enabled") }.forEach { action ->
+                                                DropdownMenuItem(text = { Text(action.getString("label")) },
+                                                    leadingIcon = { Icon(iconVector(action.getString("icon")), null, Modifier.size(16.dp)) },
+                                                    onClick = { dismiss(); send(action.getJSONObject("command")) })
+                                            }
                                         }
                                     }
-                                } }, modifier = Modifier.fillMaxWidth().clickable(enabled = editable) { send(row.getJSONObject("command")) })
+                                }
+                            }
                         }
-                        control.getJSONObject("add").let { add ->
-                            TextButton(enabled = editable, onClick = { send(add.getJSONObject("command")) }) { Text(add.getString("label")) }
+                        if (rows.isNotEmpty()) TextButton(enabled = editable, onClick = { send(add.getJSONObject("command")) }) {
+                            Text(add.getString("label"))
                         }
                     }
                     "file_location" -> {
@@ -333,12 +343,16 @@ internal fun InspectorControl(timeline: TimelineSession, control: JSONObject, en
 
 @Composable
 private fun InspectorEditorButton(label: String, value: String, enabled: Boolean, open: () -> Unit) {
-    InspectorField(label) { modifier ->
-        InspectorInput(modifier.clickable(enabled = enabled, role = Role.Button, onClick = open), enabled) {
-            Text(value, Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis,
-                style = MaterialTheme.typography.bodyMedium)
-            Icon(iconVector("go-next-symbolic"), null, Modifier.size(16.dp))
-        }
+    InspectorField(label) { modifier -> InspectorNavigationInput(value, false, enabled, modifier, open) }
+}
+
+@Composable
+private fun InspectorNavigationInput(value: String, google: Boolean, enabled: Boolean, modifier: Modifier, open: () -> Unit) {
+    InspectorInput(modifier.clickable(enabled = enabled, role = Role.Button, onClick = open), enabled) {
+        Text(value, Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis,
+            style = MaterialTheme.typography.bodyMedium)
+        if (google) GoogleFontIcon()
+        Icon(iconVector("go-next-symbolic"), null, Modifier.size(16.dp))
     }
 }
 

@@ -44,13 +44,8 @@ impl MenuTrigger {
         )
     }
 
-    fn pointer(&self, view: &NSView, event: &NSEvent) -> bool {
-        if self.input.borrow().active()
-            || event
-                .touchesMatchingPhase_inView(NSTouchPhase::Any, Some(view))
-                .iter()
-                .any(|touch| touch.r#type() == NSTouchType::Direct)
-        {
+    fn pointer(&self) -> bool {
+        if self.input.borrow().active() || self.dispatching_touch.get() {
             return false;
         }
         self.input.borrow_mut().cancel();
@@ -69,7 +64,7 @@ define_class!(
     impl MenuButton {
         #[unsafe(method(mouseDown:))]
         fn mouse_down(&self, event: &NSEvent) {
-            if self.ivars().pointer(self, event) {
+            if self.ivars().pointer() {
                 unsafe { let _: () = msg_send![super(self), mouseDown: event]; }
             }
         }
@@ -127,7 +122,7 @@ define_class!(
     impl MenuPopup {
         #[unsafe(method(mouseDown:))]
         fn mouse_down(&self, event: &NSEvent) {
-            if self.ivars().pointer(self, event) {
+            if self.ivars().pointer() {
                 unsafe { let _: () = msg_send![super(self), mouseDown: event]; }
             }
         }

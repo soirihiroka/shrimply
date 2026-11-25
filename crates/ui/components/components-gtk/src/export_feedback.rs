@@ -5,45 +5,26 @@ pub fn show_export_finished_for_widget(
     title: &str,
     path: &std::path::Path,
 ) {
-    let Some(parent) = widget.root().and_downcast::<adw::ApplicationWindow>() else {
-        return;
-    };
-    let Some(toasts) = crate::toast::overlay_for_widget(widget) else {
-        return;
-    };
-    show_export_finished(&toasts, &parent, title, path);
+    if let Some(parent) = widget.root().and_downcast::<adw::ApplicationWindow>() {
+        show_export_finished(&parent, &crate::i18n::text(title), path);
+    }
 }
 
-pub fn show_export_finished(
-    toasts: &adw::ToastOverlay,
-    parent: &adw::ApplicationWindow,
-    title: &str,
-    path: &std::path::Path,
-) {
-    let toast = crate::toast::with_button(title, "Show in Files");
-    add_export_toast(toasts, parent, toast, path);
-}
-
-pub fn show_export_finished_text(
-    toasts: &adw::ToastOverlay,
-    parent: &adw::ApplicationWindow,
-    title: &str,
-    path: &std::path::Path,
-) {
-    let toast = crate::toast::with_button_text(title, "Show in Files");
-    add_export_toast(toasts, parent, toast, path);
-}
-
-fn add_export_toast(
-    toasts: &adw::ToastOverlay,
-    parent: &adw::ApplicationWindow,
-    toast: adw::Toast,
-    path: &std::path::Path,
-) {
-    let reveal_parent = parent.clone();
+pub fn show_export_finished(parent: &adw::ApplicationWindow, title: &str, path: &std::path::Path) {
+    let dialog = adw::AlertDialog::new(Some(title), None);
+    dialog.add_response("close", &crate::i18n::text("Close"));
+    dialog.add_response("files", &crate::i18n::text("Show in Files"));
+    dialog.set_close_response("close");
+    dialog.set_default_response(Some("close"));
     let path = path.to_path_buf();
-    toast.connect_button_clicked(move |_| {
-        crate::desktop_open::reveal_file(reveal_parent.upcast_ref(), path.clone());
-    });
-    crate::toast::add(toasts, toast);
+    let window = parent.clone();
+    dialog.choose(
+        Some(parent),
+        None::<&gtk::gio::Cancellable>,
+        move |answer| {
+            if answer.as_str() == "files" {
+                crate::desktop_open::reveal_file(window.upcast_ref(), path);
+            }
+        },
+    );
 }

@@ -385,7 +385,9 @@ internal fun ProjectApp(timeline: TimelineSession, files: ProjectFiles, caption:
         }
     }
     event.optJSONObject("export")?.let { export ->
-        ExportProgress(export, !busy) { operation -> action { timeline.request(operation, "id" to export.getString("id")) } }
+        ExportProgress(export, !busy, { destination -> action { showExportInFiles(context, destination) } }) { operation ->
+            action { timeline.request(operation, "id" to export.getString("id")) }
+        }
     }
     }
 }

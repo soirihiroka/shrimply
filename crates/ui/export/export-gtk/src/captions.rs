@@ -3,11 +3,7 @@ use shrimply_caption_export_core::{
     CaptionFormat, CaptionOutput, ExportMode, ExportSettings, prepare_export, write_export,
 };
 
-pub(super) fn open_dialog(
-    parent: &adw::ApplicationWindow,
-    toasts: &adw::ToastOverlay,
-    project: Rc<RefCell<project::Project>>,
-) {
+pub(super) fn open_dialog(parent: &adw::ApplicationWindow, project: Rc<RefCell<project::Project>>) {
     let format = adw::ComboRow::builder()
         .title(tr!("Format").as_ref())
         .model(&gtk::StringList::new(
@@ -51,7 +47,6 @@ pub(super) fn open_dialog(
     dialog.set_child(Some(&toolbar));
     let dialog_parent = parent.clone();
     let parent = parent.clone();
-    let toasts = toasts.clone();
     let close = dialog.clone();
     export.connect_clicked(move |_| {
         let settings = ExportSettings {
@@ -78,7 +73,6 @@ pub(super) fn open_dialog(
             .default_filter(&filter)
             .build();
         let result_parent = parent.clone();
-        let toasts = toasts.clone();
         shrimply_components_gtk::file_picker::save(
             "Export Captions",
             &file_dialog,
@@ -122,7 +116,7 @@ pub(super) fn open_dialog(
                     .map(|output| output.path.display().to_string())
                     .collect::<Vec<_>>();
                 if replacements.is_empty() {
-                    finish_export(&result_parent, &toasts, outputs);
+                    finish_export(&result_parent, outputs);
                     return;
                 }
                 let confirm = adw::AlertDialog::new(
@@ -140,7 +134,7 @@ pub(super) fn open_dialog(
                     None::<&gio::Cancellable>,
                     move |response| {
                         if response == "replace" {
-                            finish_export(&parent, &toasts, outputs);
+                            finish_export(&parent, outputs);
                         }
                     },
                 );
@@ -151,11 +145,7 @@ pub(super) fn open_dialog(
     dialog.present(Some(&dialog_parent));
 }
 
-fn finish_export(
-    parent: &adw::ApplicationWindow,
-    toasts: &adw::ToastOverlay,
-    outputs: Vec<CaptionOutput>,
-) {
+fn finish_export(parent: &adw::ApplicationWindow, outputs: Vec<CaptionOutput>) {
     shrimply_export_core::job::run(
         Default::default(),
         |_, _| write_export(outputs),
@@ -169,8 +159,8 @@ fn finish_export(
                         &[("count", paths.len().to_string())],
                     )
                 };
-                shrimply_components_gtk::export_feedback::show_export_finished_text(
-                    toasts, parent, &title, &paths[0],
+                shrimply_components_gtk::export_feedback::show_export_finished(
+                    parent, &title, &paths[0],
                 );
             }
             Event::Finished(Outcome::Failed(error)) => {

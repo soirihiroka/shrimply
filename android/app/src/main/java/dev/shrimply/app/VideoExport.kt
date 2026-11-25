@@ -81,7 +81,7 @@ internal fun ExportChoice(label: String, value: String, choices: JSONArray, enab
 }
 
 @Composable
-internal fun ExportProgress(export: JSONObject, enabled: Boolean, command: (String) -> Unit) {
+internal fun ExportProgress(export: JSONObject, enabled: Boolean, showInFiles: (String) -> Unit, command: (String) -> Unit) {
     val model = export.getJSONObject("presentation")
     val progress = export.optJSONObject("progress")
     val confirm = model.getJSONObject("confirm")
@@ -99,6 +99,10 @@ internal fun ExportProgress(export: JSONObject, enabled: Boolean, command: (Stri
                 Text((0 until files.length()).joinToString("\n", transform = files::getString))
             }
         }
+    }, dismissButton = {
+        if (model.getBoolean("complete")) TextButton(enabled = enabled, onClick = {
+            showInFiles(export.getString("destination"))
+        }) { Text(tr("Show in Files")) }
     }, confirmButton = {
         TextButton(onClick = { command(confirm.getString("action")) },
             enabled = enabled && confirm.getBoolean("enabled")) { Text(confirm.getString("label")) }

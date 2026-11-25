@@ -1,6 +1,7 @@
 package dev.shrimply.app
 
 import android.content.ContentResolver
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.ParcelFileDescriptor
@@ -10,6 +11,15 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
 import org.json.JSONObject
+
+internal fun showExportInFiles(context: Context, destination: String) {
+    val uri = Uri.parse(destination)
+    val initial = if (DocumentsContract.isTreeUri(uri))
+        DocumentsContract.buildDocumentUriUsingTree(uri, DocumentsContract.getTreeDocumentId(uri))
+    else uri
+    context.startActivity(Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE)
+        .setType("*/*").putExtra(DocumentsContract.EXTRA_INITIAL_URI, initial))
+}
 
 @Composable
 internal fun rememberExportPicker(selected: (Uri?) -> Unit): (JSONObject) -> Unit {

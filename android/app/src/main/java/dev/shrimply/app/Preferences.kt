@@ -37,8 +37,10 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -248,8 +250,9 @@ internal fun ColumnScope.FontPreferences(model: JSONObject, enabled: Boolean, se
     var query by rememberSaveable(model.getString("id")) { mutableStateOf("") }
     val choices = model.getJSONArray("choices").objects()
     val list = rememberLazyListState()
-    LaunchedEffect(query) {
+    LaunchedEffect(model.getString("id"), query) {
         delay(model.getLong("search_delay_ms"))
+        if (list.firstVisibleItemIndex != 0 || list.firstVisibleItemScrollOffset != 0) list.scrollToItem(0)
         send(JSONObject(model.getJSONObject("search").toString()).put("query", query))
     }
     LaunchedEffect(list, model.getJSONArray("choices").toString(), model.getLong("preview_revision")) {
@@ -264,22 +267,32 @@ internal fun ColumnScope.FontPreferences(model: JSONObject, enabled: Boolean, se
         itemsIndexed(choices) { _, choice ->
             val name = choice.getString("label")
             val preview = choice.optString("preview_file").takeIf { !choice.isNull("preview_file") }
-            val family = remember(name, preview, choice.getInt("preview_index")) {
-                when {
-                    preview != null -> FontFamily(requireNotNull(Typeface.Builder(preview).setTtcIndex(choice.getInt("preview_index")).build()))
-                    else -> FontFamily.Default
+            val index = choice.getInt("preview_index")
+            val family by produceState<FontFamily>(FontFamily.Default, preview, index) {
+                value = FontFamily.Default
+                if (preview != null) {
+                    val typeface = withContext(Dispatchers.IO) {
+                        runCatching { Typeface.Builder(preview).setTtcIndex(index).build() }.getOrNull()
+                    }
+                    if (typeface != null) value = FontFamily(typeface)
                 }
             }
             Row(Modifier.fillMaxWidth().clickable(enabled = enabled) { send(choice.getJSONObject("command")) }
-                .padding(start = 24.dp, end = 16.dp, top = 16.dp, bottom = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text(name, style = MaterialTheme.typography.titleMedium, fontFamily = family)
-                    Text(choice.getString("source"), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
+                .padding(start = 24.dp, end = 16.dp, top = 16.dp, bottom = 16.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(name, Modifier.weight(1f), style = MaterialTheme.typography.titleMedium,
+                    fontFamily = family, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                if (choice.getBoolean("google")) GoogleFontIcon()
                 RadioButton(choice.getBoolean("selected"), onClick = null, enabled = enabled)
             }
         }
     }
+}
+
+@Composable
+internal fun GoogleFontIcon() {
+    Icon(iconVector("cloud-symbolic"), tr("Google Fonts"), Modifier.size(14.dp),
+        tint = MaterialTheme.colorScheme.onSurfaceVariant)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)

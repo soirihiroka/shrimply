@@ -2,7 +2,7 @@ mod picker;
 
 use super::control::Context;
 use objc2::rc::{Retained, Weak};
-use objc2_app_kit::{NSTextField, NSView};
+use objc2_app_kit::{NSCellImagePosition, NSImage, NSTextField, NSView};
 use objc2_foundation::{MainThreadMarker, NSString};
 use shrimply_components_appkit::{ActionButton, column_append_intrinsic, column_stack, row_stack};
 use shrimply_inspector_core::{InspectorControl, font_selector::FamilyEdit};
@@ -24,18 +24,24 @@ pub(super) fn view(
     }
     for (index, family) in families.iter().enumerate() {
         let row = row_stack(4.0, mtm);
-        let title = match family {
-            FontFamily::GoogleFonts { .. } => format!("{} · Google", family.name()),
-            FontFamily::Local { .. } => family.name().to_string(),
-        };
         let button = picker_button(
-            &title,
+            family.name(),
             Some((index, family.clone())),
             &root,
             control,
             context,
             mtm,
         );
+        if matches!(family, FontFamily::GoogleFonts { .. }) {
+            let image = NSImage::imageWithSystemSymbolName_accessibilityDescription(
+                &NSString::from_str("cloud"),
+                Some(&NSString::from_str("Google Fonts")),
+            );
+            button.view().setImage(image.as_deref());
+            button
+                .view()
+                .setImagePosition(NSCellImagePosition::ImageLeading);
+        }
         row.addArrangedSubview(button.view());
         row.addArrangedSubview(&NSView::new(mtm));
         for (symbol, label, enabled, edit) in [

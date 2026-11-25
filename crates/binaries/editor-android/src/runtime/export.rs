@@ -281,8 +281,8 @@ impl Runtime {
         };
         let limit = shrimply_preferences_core::snapshot(&self.backend.preferences)
             .temporal_decoder_pool_size as usize;
-        self.begin_export(kind, move |cancelled, progress| {
-            operation.run(project, &uri, limit, cancelled, progress)
+        self.begin_export(kind, uri, move |uri, cancelled, progress| {
+            operation.run(project, uri, limit, cancelled, progress)
         })?;
         if kind == "audio" {
             self.timeline_service = None;
@@ -293,7 +293,9 @@ impl Runtime {
     pub(super) fn begin_export(
         &mut self,
         kind: &str,
+        destination: String,
         operation: impl FnOnce(
+            &str,
             Arc<AtomicBool>,
             &mut dyn FnMut(video::ExportProgress),
         ) -> Result<Vec<String>, String>
@@ -301,10 +303,14 @@ impl Runtime {
         + 'static,
     ) -> Result<(), String> {
         let wake = self.backend.wake.clone();
-        let job = Job::spawn(operation, move || wake())?;
+        let uri = destination.clone();
+        let job = Job::spawn(
+            move |cancelled, progress| operation(&uri, cancelled, progress),
+            move || wake(),
+        )?;
         let id = uuid::Uuid::new_v4().to_string();
         let mut state = json!({"id":id,"status":"running","files":[],
-            "kind":kind,"progress":null,"error":null,"cancelling":false});
+            "kind":kind,"destination":destination,"progress":null,"error":null,"cancelling":false});
         state["presentation"] = job_view(&state);
         self.export = Some(Export { job, state });
         Ok(())

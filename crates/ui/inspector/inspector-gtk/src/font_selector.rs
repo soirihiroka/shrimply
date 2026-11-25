@@ -47,12 +47,11 @@ pub(crate) fn font_selector(
         .build();
     let content = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     content.append(&label);
-    let source_label = gtk::Label::builder()
-        .label(tr!("Google").as_ref())
-        .css_classes(["caption", "dim-label"])
-        .visible(selected_google)
-        .build();
-    content.append(&source_label);
+    let source_icon = gtk::Image::from_icon_name("cloud-symbolic");
+    source_icon.set_pixel_size(14);
+    source_icon.set_tooltip_text(Some(tr!("Google Fonts").as_ref()));
+    source_icon.set_visible(selected_google);
+    content.append(&source_icon);
     content.append(&gtk::Image::from_icon_name("external-link-symbolic"));
     let button = gtk::Button::builder()
         .child(&content)
@@ -64,15 +63,15 @@ pub(crate) fn font_selector(
         let selected_family = selected_family.trim().to_string();
         let on_change = on_change.clone();
         let label = label.clone();
-        let source_label = source_label.clone();
+        let source_icon = source_icon.clone();
         move |button| {
             show_font_dialog(button, Some((selected_family.clone(), selected_google)), {
                 let label = label.clone();
-                let source_label = source_label.clone();
+                let source_icon = source_icon.clone();
                 let on_change = on_change.clone();
                 Rc::new(move |choice: FontFamily| {
                     label.set_label(&choice.name);
-                    source_label.set_visible(choice.source == FontSource::Google);
+                    source_icon.set_visible(choice.source == FontSource::Google);
                     on_change(choice);
                 })
             });
@@ -530,6 +529,7 @@ fn connect_canvas(state: &FontBrowserState) {
                         label_typeface: label_typeface.as_ref(),
                         typeface: typeface.as_ref(),
                         selected,
+                        google: family.source == FontSource::Google,
                         button: &mut buttons[index],
                     },
                     foreground,

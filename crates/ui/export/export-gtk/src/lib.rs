@@ -18,7 +18,6 @@ use std::time::{Duration, Instant};
 
 pub fn build_export_button(
     window: &adw::ApplicationWindow,
-    toasts: &adw::ToastOverlay,
     project: Rc<RefCell<project::Project>>,
     preferences: preferences::SharedPreferences,
 ) -> gtk::MenuButton {
@@ -29,16 +28,14 @@ pub fn build_export_button(
     let actions = gio::SimpleActionGroup::new();
     add_menu_action(&actions, "video", {
         let window = window.clone();
-        let toasts = toasts.clone();
         let project = project.clone();
         let preferences = preferences.clone();
-        move || open_export_page(&window, &toasts, project.clone(), preferences.clone())
+        move || open_export_page(&window, project.clone(), preferences.clone())
     });
     add_menu_action(&actions, "captions", {
         let window = window.clone();
-        let toasts = toasts.clone();
         let project = project.clone();
-        move || captions::open_dialog(&window, &toasts, project.clone())
+        move || captions::open_dialog(&window, project.clone())
     });
 
     let popover = gtk::PopoverMenu::from_model(Some(&menu));
@@ -66,7 +63,6 @@ where
 
 fn open_export_page(
     parent: &adw::ApplicationWindow,
-    toasts: &adw::ToastOverlay,
     project: Rc<RefCell<project::Project>>,
     preferences: preferences::SharedPreferences,
 ) {
@@ -217,7 +213,6 @@ fn open_export_page(
     dialog.add(&page);
     export.connect_activated({
         let parent = parent.clone();
-        let toasts = toasts.clone();
         let dialog = dialog.downgrade();
         move |_| {
             let project_snapshot = project.borrow().clone();
@@ -246,7 +241,6 @@ fn open_export_page(
                 ))
                 .build();
             let parent_for_result = parent.clone();
-            let toasts = toasts.clone();
             shrimply_components_gtk::file_picker::save(
                 label,
                 &picker,
@@ -268,12 +262,7 @@ fn open_export_page(
                         path,
                         video::extension_for_container(settings.container),
                     );
-                    start_video_export(
-                        &parent_for_result,
-                        &toasts,
-                        project_snapshot.clone(),
-                        settings,
-                    );
+                    start_video_export(&parent_for_result, project_snapshot.clone(), settings);
                 },
             );
             if let Some(dialog) = dialog.upgrade() {
@@ -286,7 +275,6 @@ fn open_export_page(
 
 fn start_video_export(
     parent: &adw::ApplicationWindow,
-    toasts: &adw::ToastOverlay,
     project: project::Project,
     settings: video::ExportSettings,
 ) {
@@ -297,7 +285,6 @@ fn start_video_export(
     );
     let started = Instant::now();
     let dialog_parent = parent.clone();
-    let toasts = toasts.clone();
     present_export_job(
         parent,
         "Exporting Video",
@@ -309,8 +296,7 @@ fn start_video_export(
                     "Video exported in %{duration}",
                     &[("duration", time_format::human_duration(started.elapsed()))],
                 );
-                shrimply_components_gtk::export_feedback::show_export_finished_text(
-                    &toasts,
+                shrimply_components_gtk::export_feedback::show_export_finished(
                     &dialog_parent,
                     &title,
                     &path,

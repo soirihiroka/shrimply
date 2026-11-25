@@ -159,10 +159,10 @@ impl Runtime {
         } else {
             "selected_frame"
         };
-        self.begin_export(kind, move |cancelled, progress| {
+        self.begin_export(kind, uri, move |uri, cancelled, progress| {
             let png = capture.png(&cancelled)?;
             progress(ExportProgress::Finalizing);
-            let name = write_document(&uri, "image/png", None, |open| {
+            let name = write_document(uri, "image/png", None, |open| {
                 shrimply_export_core::android::write_document(open()?, &png, cancelled)
                     .map_err(|error| error.to_string())
             })?;

@@ -196,6 +196,7 @@ pub struct Specimen<'a> {
     pub label_typeface: Option<&'a Typeface>,
     pub typeface: Option<&'a Typeface>,
     pub selected: bool,
+    pub google: bool,
     pub button: &'a mut button::Button,
 }
 
@@ -309,9 +310,17 @@ pub fn draw_specimen(
             Rect::from_xywh(
                 bounds.left() + 8.0,
                 bounds.bottom() - 38.0,
-                (bounds.width() - 16.0).max(0.0),
+                (bounds.width() - if specimen.google { 34.0 } else { 16.0 }).max(0.0),
                 28.0,
             ),
+            foreground,
+        );
+    }
+    if specimen.google {
+        crate::icon::draw(
+            canvas,
+            crate::icon::Icon("cloud-symbolic"),
+            Rect::from_xywh(bounds.right() - 22.0, bounds.bottom() - 31.0, 14.0, 14.0),
             foreground,
         );
     }

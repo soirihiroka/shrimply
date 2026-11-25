@@ -451,13 +451,13 @@ define_class!(
                 let selected = usize::try_from(selection.indexOfSelectedItem()).ok()
                     .and_then(|index| servers.get(index)).map(String::as_str);
                 let result = match response {
-                    NSAlertFirstButtonReturn => self.prompt_remote("Add Project Server", "Server URL", "")
+                    value if value == NSAlertFirstButtonReturn => self.prompt_remote("Add Project Server", "Server URL", "")
                         .map(|url| launcher::update_project_servers(None, Some(&url))),
-                    NSAlertSecondButtonReturn => selected.and_then(|current| {
+                    value if value == NSAlertSecondButtonReturn => selected.and_then(|current| {
                         self.prompt_remote("Edit Project Server", "Server URL", current)
                             .map(|url| launcher::update_project_servers(Some(current), Some(&url)))
                     }),
-                    NSAlertThirdButtonReturn => selected.map(|current| launcher::update_project_servers(Some(current), None)),
+                    value if value == NSAlertThirdButtonReturn => selected.map(|current| launcher::update_project_servers(Some(current), None)),
                     _ => return,
                 };
                 if let Some(Err(error)) = result {

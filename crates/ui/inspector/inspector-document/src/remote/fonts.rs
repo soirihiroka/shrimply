@@ -24,14 +24,14 @@ pub(super) fn presentation(control: &InspectorControl, item: &str, id: &str) -> 
     let families: Vec<FontFamily> =
         serde_json::from_str(&control.value).expect("font families must be valid");
     let command = |action: &str, index: Option<usize>| json!({"op":"inspector_fonts","item":item,"control":id,"version":control.value,"action":action,"index":index});
-    let rows = families.iter().enumerate().map(|(index,family)|json!({"label":family.name(),"subtitle":text(match family {FontFamily::Local{..}=>"Local",FontFamily::GoogleFonts{..}=>"Google Fonts"}),"command":command("font_open",Some(index)),
+    let rows = families.iter().enumerate().map(|(index,family)|json!({"label":family.name(),"google":matches!(family, FontFamily::GoogleFonts { .. }),"command":command("font_open",Some(index)),
         "actions":[
             {"label":text("Move font up"),"icon":"go-up-symbolic","enabled":index>0,"command":command("move-up",Some(index))},
             {"label":text("Move font down"),"icon":"go-down-symbolic","enabled":index+1<families.len(),"command":command("move-down",Some(index))},
             {"label":text("Remove font"),"icon":"user-trash-symbolic","enabled":true,"command":command("remove",Some(index))}]
     })).collect::<Vec<_>>();
     json!({"id":id,"widget":"action_list","label":text(&control.label),"subtitle":text(&control.subtitle),"enabled":control.sensitive,"editable":control.editable&&control.sensitive,
-        "empty":text("System default"),"rows":rows,"add":{"label":text("Add font…"),"command":command("font_open",None)}})
+        "actions_label":text("Font actions"),"empty":text("System default"),"rows":rows,"add":{"label":text("Add font…"),"command":command("font_open",None)}})
 }
 
 impl Fonts {

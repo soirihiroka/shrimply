@@ -31,7 +31,7 @@ pub(super) fn page(log: Rc<dyn Fn(String)>, mtm: MainThreadMarker) -> Retained<N
                         .map(|name| FontPickerItem {
                             id: format!("Local:0:{}", name.to_lowercase()),
                             name,
-                            source: None,
+                            google: false,
                         })
                         .collect::<Vec<_>>(),
                 );

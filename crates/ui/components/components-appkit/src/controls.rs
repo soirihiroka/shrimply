@@ -517,15 +517,16 @@ fn search_popover(
     column_append(&content, &scroll);
     let controller = NSViewController::new(mtm);
     controller.setView(&content);
-    controller.setPreferredContentSize(NSSize::new(
+    let size = NSSize::new(
         292.0,
         if searchable {
             CONTROL_HEIGHT + SEARCH_FIELD_VERTICAL_INSET * 2.0
         } else {
             0.0
         } + results_height,
-    ));
+    );
     popover.setContentViewController(Some(&controller));
+    popover.setContentSize(size);
 
     let weak_button = main_button;
     let weak_popover = Weak::new(&*popover);
@@ -680,10 +681,8 @@ fn show_menu_parts(
             .showRelativeToRect_ofView_preferredEdge(anchor, view, NSRectEdge::MaxY);
         if parts.search.isHidden() {
             focus_result(&parts.list, false);
-        } else {
-            view.window()
-                .expect("search popover host must be attached")
-                .makeFirstResponder(Some(&parts.search));
+        } else if let Some(window) = parts.search.window() {
+            window.makeFirstResponder(Some(&parts.search));
         }
         unsafe {
             objc_setAssociatedObject(
@@ -989,10 +988,10 @@ fn populate_search_results(
                         button.setTitle(&NSString::from_str(&label));
                     }
                 }
-                on_select(value.clone());
                 if let Some(popover) = popover.load() {
                     dismiss_search(&popover);
                 }
+                on_select(value.clone());
             },
             mtm,
         );
@@ -1824,7 +1823,7 @@ fn clear_stack(stack: &NSStackView) {
     }
 }
 
-fn symbol(name: &str, label: &str) -> Retained<NSImage> {
+pub(crate) fn symbol(name: &str, label: &str) -> Retained<NSImage> {
     NSImage::imageWithSystemSymbolName_accessibilityDescription(
         &NSString::from_str(name),
         Some(&NSString::from_str(label)),

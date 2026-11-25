@@ -2,6 +2,7 @@ pragma ComponentBehavior: Bound
 
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Effects
 import QtQuick.Layouts
 import dev.shrimply.components
 
@@ -19,6 +20,18 @@ ColumnLayout {
     property bool activating: false
     signal edited(string value)
     spacing: 2
+
+    component CloudIcon: Image {
+        Layout.preferredWidth: 14
+        Layout.preferredHeight: 14
+        source: "qrc:/shrimply/icons/cloud-symbolic.svg"
+        Accessible.name: ComponentTranslations.text("Google Fonts")
+        layer.enabled: true
+        layer.effect: MultiEffect {
+            colorization: 1
+            colorizationColor: Application.palette.text
+        }
+    }
 
     onValueChanged: {
         if (activating && browserBackend) {
@@ -129,11 +142,7 @@ ColumnLayout {
                 Layout.fillWidth: true
                 onClicked: root.openBrowser(familyRow.index)
             }
-            Label {
-                visible: root.isGoogle(familyRow.modelData)
-                text: ComponentTranslations.text("Google")
-                opacity: 0.6
-            }
+            CloudIcon { visible: root.isGoogle(familyRow.modelData) }
             ToolButton {
                 icon.source: "qrc:/shrimply/icons/go-up-symbolic.svg"
                 enabled: familyRow.index > 0
@@ -354,12 +363,7 @@ ColumnLayout {
                                 elide: Text.ElideRight
                                 Layout.fillWidth: true
                             }
-                            Label {
-                                visible: choice.google
-                                text: ComponentTranslations.text("Google")
-                                opacity: 0.6
-                                font.pixelSize: 12
-                            }
+                            CloudIcon { visible: choice.google }
                             Label {
                                 visible: choice.selected
                                 text: "✓"

@@ -80,12 +80,8 @@ pub(crate) fn add(
         .popover(&popover)
         .build();
     shrimply_components_gtk::ui::adaptive_menu(&menu_button, "win", window);
-    let export_button = export::build_export_button(
-        window,
-        toasts,
-        session.project.clone(),
-        session.preferences.clone(),
-    );
+    let export_button =
+        export::build_export_button(window, session.project.clone(), session.preferences.clone());
     let header_right = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     header_right.append(&export_button);
     header_right.append(&menu_button);

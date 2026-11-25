@@ -188,7 +188,7 @@ fn refresh(
             FontPickerItem {
                 id,
                 name: family.name.clone(),
-                source: (family.source == FontSource::Google).then(|| "Google".to_string()),
+                google: family.source == FontSource::Google,
             }
         })
         .collect();

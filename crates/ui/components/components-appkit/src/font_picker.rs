@@ -30,7 +30,7 @@ const POLL_INTERVAL: Duration = Duration::from_millis(33);
 pub struct FontPickerItem {
     pub id: String,
     pub name: String,
-    pub source: Option<String>,
+    pub google: bool,
 }
 
 type SearchCallback = Box<dyn Fn(&FontPicker, String, bool)>;

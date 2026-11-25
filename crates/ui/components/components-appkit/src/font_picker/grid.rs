@@ -25,6 +25,7 @@ use std::rc::Weak;
 const ITEM_SIZE: NSSize = NSSize::new(200.0, 240.0);
 const CARD_Y: f64 = 54.0;
 const STATUS_TAG: NSInteger = 1;
+const CLOUD_TAG: NSInteger = 2;
 
 pub(super) struct Ivars {
     state: Weak<State>,
@@ -127,6 +128,7 @@ define_class!(
             item.textField().expect("font label").setStringValue(&NSString::from_str(&entry.name));
             item.imageView().expect("font image").setImage(None);
             view.setToolTip(Some(&NSString::from_str(&entry.name)));
+            view.viewWithTag(CLOUD_TAG).expect("font source icon").setHidden(!entry.google);
             let status = item.view().viewWithTag(STATUS_TAG).expect("font status").downcast::<NSTextField>().expect("font status label");
             let (scale, dark) = state.appearance.get().unwrap_or_else(|| display_style(&state));
             let key = Key { id: entry.id.clone(), scale, dark };
@@ -136,7 +138,7 @@ define_class!(
                     let preview = NSImage::initWithData(NSImage::alloc(), &data).expect("valid encoded font preview");
                     preview.setSize(NSSize::new(SPECIMEN_EDGE, SPECIMEN_EDGE));
                     item.imageView().expect("font image").setImage(Some(&preview));
-                    status.setStringValue(&NSString::from_str(entry.source.as_deref().unwrap_or("")));
+                    status.setStringValue(&NSString::from_str(""));
                 }
                 Some(Err(error)) => {
                     status.setStringValue(&NSString::from_str("Preview unavailable"));
@@ -252,6 +254,14 @@ fn build_card(item: &NSCollectionViewItem, mtm: MainThreadMarker) {
     ));
     status.setTag(STATUS_TAG);
     root.addSubview(&status);
+    let cloud = NSImageView::initWithFrame(
+        NSImageView::alloc(mtm),
+        NSRect::new(NSPoint::new(163.0, 209.0), NSSize::new(14.0, 14.0)),
+    );
+    cloud.setTag(CLOUD_TAG);
+    cloud.setImage(Some(&crate::controls::symbol("cloud", "Google Fonts")));
+    cloud.setHidden(true);
+    root.addSubview(&cloud);
 }
 
 fn display_style(state: &State) -> (u32, bool) {
