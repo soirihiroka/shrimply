@@ -1,4 +1,5 @@
 use shrimply_editing_api::protocol::RenderProjectRequest;
+use shrimply_export_core::video::settings::VideoEncoder;
 use shrimply_export_core::video::{
     ExportAudioEncoder, ExportContainer, ExportVideoCodec, extension_for_container,
     video_frame_rate, video_time_base,
@@ -13,7 +14,7 @@ const DEFAULT_AUDIO_SAMPLE_RATE: u32 = 48_000;
 pub struct Options {
     pub project: PathBuf,
     pub output: PathBuf,
-    pub codec: ExportVideoCodec,
+    pub format: String,
     pub container: ExportContainer,
     pub fps: Option<Fraction>,
     pub video_bitrate: u32,
@@ -64,14 +65,16 @@ pub fn from_request(
             container
         }
     };
-    let codec = match request.codec.as_deref() {
-        Some("h264") => ExportVideoCodec::H264,
-        Some("h265") => ExportVideoCodec::H265,
-        Some("gif") => ExportVideoCodec::Gif,
-        None if container == ExportContainer::Gif => ExportVideoCodec::Gif,
-        None => ExportVideoCodec::H264,
-        Some(_) => return Err("codec must be h264, h265, or gif".into()),
-    };
+    let format = request.codec.unwrap_or_else(|| {
+        if container == ExportContainer::Gif {
+            "gif"
+        } else {
+            "h264"
+        }
+        .into()
+    });
+    let codec =
+        VideoEncoder::request_codec(&format).ok_or("Unknown video format for this platform")?;
     if (codec == ExportVideoCodec::Gif) != (container == ExportContainer::Gif) {
         return Err(
             "GIF encoding requires the GIF container; video encoding requires MP4 or MKV".into(),
@@ -117,7 +120,7 @@ pub fn from_request(
     Ok(Options {
         project,
         output,
-        codec,
+        format,
         container,
         fps,
         video_bitrate,

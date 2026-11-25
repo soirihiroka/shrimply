@@ -18,7 +18,16 @@ internal fun interface TimelineListener { fun changed(payload: String) }
 
 internal object NativeTimeline {
     init { System.loadLibrary("shrimply_android") }
-    external fun initialize(application: android.content.Context, config: String, cache: String, fonts: String)
+    val videoEncoderNames: String by lazy {
+        val names = JSONObject()
+        for ((kind, hardware) in listOf("hardware" to true, "software" to false)) {
+            names.put(kind, org.json.JSONArray(listOf("video/avc", "video/hevc").map { mime ->
+                videoEncoders(mime, hardware).firstOrNull()?.first?.name ?: JSONObject.NULL
+            }))
+        }
+        names.toString()
+    }
+    external fun initialize(application: android.content.Context, config: String, cache: String, fonts: String, videoEncoderNames: String)
     external fun throughput(path: String, scene: String, frames: Int): String
     external fun create(stress: Boolean, benchmark: Boolean, files: ProjectFiles, listener: TimelineListener): Long
     external fun request(handle: Long, request: String, descriptor: Int): String

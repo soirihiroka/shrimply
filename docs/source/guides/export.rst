@@ -44,8 +44,12 @@ Export video as **H.264** or **H.265** (MP4 or Matroska ``.mkv``), or export
 an animated **GIF**. Audio tracks export as AAC, FDK AAC, or Opus depending on
 the container.
 
-Video export requires a supported GPU; see :doc:`/linux`, :doc:`/macos`, or
-:doc:`/windows` for system requirements.
+For H.264 and H.265, the export form lists the encoder with the format and
+defaults to hardware when available. Choose **H.264 (x264 CPU)** or **H.265 (x265 CPU)**
+to use software encoding. **GIF (Software)** always uses the CPU encoder.
+Android also lists **MediaCodec HW** and **MediaCodec CPU** for each codec
+the device provides. All paths use the editor's renderer for compositing. See :doc:`/linux`, :doc:`/macos`, or :doc:`/windows` for system
+requirements.
 
 Command-line rendering
 ----------------------
@@ -80,7 +84,8 @@ Options:
   MP4, Matroska (``.mkv``), or GIF.
 * ``--container mp4|mkv|gif``: select the container explicitly. If the output
   has no extension, append the matching extension. Conflicting extensions fail.
-* ``--codec h264|h265|gif``: select the video codec. GIF requires a GIF container.
+* ``--codec h264|h265|h264-cpu|h265-cpu|gif``: select a video format.
+  ``h264`` and ``h265`` prefer hardware when available. GIF requires a GIF container.
 * ``--fps RATE``: override the output frame rate with an integer, decimal,
   or fraction such as ``30000/1001``.
 * ``--video-bitrate KBPS``: set the video bitrate using bitrate-based encoding.

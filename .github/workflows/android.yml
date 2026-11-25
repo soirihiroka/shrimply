@@ -70,7 +70,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends \
             autoconf automake build-essential clang cmake curl gettext \
-            libclang-dev libglib2.0-dev-bin libtool ninja-build patch pkg-config ripgrep spirv-tools zip
+            libclang-dev libglib2.0-dev-bin libtool nasm ninja-build patch pkg-config ripgrep spirv-tools zip
 
       - uses: astral-sh/setup-uv@v7
         with:

@@ -1,13 +1,12 @@
 package dev.shrimply.app
 
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import org.json.JSONArray
 import org.json.JSONObject
@@ -21,23 +20,19 @@ internal fun VideoExportSettings(timeline: TimelineSession, projectPath: String,
     val scope = rememberCoroutineScope()
     val input = LocalMenuInputSource.current
     val bottomSheet = remember { NativeLayout.menuUsesBottomSheet(input.value) }
-    LaunchedEffect(projectPath) {
+    LaunchedEffect(projectPath, values) {
+        val requested = values
         try {
-            val result = timeline.request("export_schema", "project_path" to projectPath, "values" to (values?.let(::JSONObject) ?: JSONObject()))
+            val result = timeline.request("export_schema", "project_path" to projectPath, "values" to (requested?.let(::JSONObject) ?: JSONObject()))
             schema = result
-            if (values == null) values = result.getJSONObject("values").toString()
-        } catch (failure: Exception) { error = failure.message }
+            if (requested == null) values = result.getJSONObject("values").toString()
+        } catch (cancelled: CancellationException) { throw cancelled }
+        catch (failure: Exception) { error = failure.message }
     }
     val fields = values?.let(::JSONObject)
     fun set(id: String, value: Any) {
-        val next = JSONObject(checkNotNull(values)).put(id, value).toString()
-        values = next
-        scope.launch {
-            try {
-                val result = timeline.request("export_schema", "project_path" to projectPath, "values" to JSONObject(next))
-                if (values == next) { schema = result; error = null }
-            } catch (failure: Exception) { error = failure.message }
-        }
+        values = JSONObject(checkNotNull(values)).put(id, value).toString()
+        error = null
     }
     AdaptiveMenu(expanded = true, bottomSheet = bottomSheet, dismiss = dismiss) {
         Column(Modifier.fillMaxWidth().padding(24.dp).imePadding(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -52,11 +47,14 @@ internal fun VideoExportSettings(timeline: TimelineSession, projectPath: String,
                         when (field.getString("widget")) {
                             "choice" -> {
                                 val choices = field.getJSONArray("choices").objects()
-                                val selected = choices.first { it.getString("value") == fields.get(id).toString() }
+                                val selected = choices.firstOrNull { it.getString("value") == fields.get(id).toString() }
+                                    ?: choices.first { it.getString("value") == field.get("value").toString() }
                                 ChoiceInput(label, selected.getString("label"), choices.map { it.getString("label") }, enabled) { set(id, choices[it].getString("value")) }
                             }
-                            "number" -> OutlinedTextField(fields.get(id).toString(), { set(id, it) }, enabled = enabled,
-                                label = { Text(label) }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
+                            "number" -> {
+                                val range = field.getJSONArray("range")
+                                NumberInput(label, fields.getInt(id), range.getInt(0), range.getInt(1), range.getInt(2), enabled) { set(id, it) }
+                            }
                             "toggle" -> Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                 Text(label)
                                 Switch(checked = fields.getBoolean(id), enabled = enabled, onCheckedChange = { set(id, it) })

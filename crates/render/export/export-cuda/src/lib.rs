@@ -29,16 +29,31 @@ pub use shrimply_export_core::video::{
 };
 
 pub use shrimply_export_core::video::settings::{
-    ExportMultipass, ExportPreset, ExportProfile, ExportTuning,
+    ExportMultipass, ExportPreset, ExportProfile, ExportTuning, VideoEncoder,
 };
 pub use shrimply_visual_cuda::compositor::RenderResourceConfig;
 
-pub fn settings_backend() -> core::settings::Backend {
-    #[cfg(target_os = "linux")]
-    if intel_backend_selected() {
-        return core::settings::Backend::Vaapi;
-    }
-    core::settings::Backend::Nvenc
+pub fn settings_backend() -> &'static core::settings::Encoders {
+    use core::settings::Encoders;
+    static ENCODERS: std::sync::OnceLock<Encoders> = std::sync::OnceLock::new();
+    ENCODERS.get_or_init(|| {
+        Encoders::probe(|encoder| {
+            #[cfg(target_os = "linux")]
+            if intel_backend_selected() {
+                return matches!(encoder, VideoEncoder::H264Vaapi | VideoEncoder::H265Vaapi)
+                    && intel::hardware_available(encoder.format().ffmpeg);
+            }
+            encoder.is_nvenc()
+                && core::hardware_encoder_opens(
+                    encoder.format().ffmpeg,
+                    Pixel::NV12,
+                    |_, options| {
+                        options.set("gpu", &shrimply_gpu_cuda::selected_device().to_string());
+                        Ok(())
+                    },
+                )
+        })
+    })
 }
 
 pub fn parse_settings(
@@ -54,7 +69,7 @@ pub fn parse_settings(
     Ok(ExportSettings {
         path: common.path,
         overwrite: true,
-        video_codec: common.video_codec,
+        video_encoder: common.video_encoder,
         container: common.container,
         fps: common.fps,
         background_alpha: common.background_alpha,
@@ -84,7 +99,7 @@ pub fn parse_settings(
 pub struct ExportSettings {
     pub path: PathBuf,
     pub overwrite: bool,
-    pub video_codec: ExportVideoCodec,
+    pub video_encoder: VideoEncoder,
     pub container: ExportContainer,
     pub fps: Fraction,
     pub background_alpha: u8,
@@ -121,13 +136,15 @@ where
     let core_settings = core::ExportSettings {
         path: settings.path.clone(),
         overwrite: settings.overwrite,
-        video_codec: settings.video_codec,
+        video_encoder: settings.video_encoder,
         container: settings.container,
         fps: settings.fps,
         background_alpha: settings.background_alpha,
         rate_control: settings.rate_control,
         constant_qp: settings.constant_qp,
         bitrate_kbps: settings.bitrate_kbps,
+        max_bitrate_kbps: settings.max_bitrate_kbps,
+        target_quality: settings.target_quality,
         keyframe_interval_seconds: settings.keyframe_interval_seconds,
         b_frames: settings.b_frames,
         audio_encoder: settings.audio_encoder,
@@ -199,23 +216,15 @@ impl VideoBackend for CudaBackend {
         "cuda"
     }
 
-    fn encoder_label(&self, codec: ExportVideoCodec) -> &'static str {
-        match codec {
-            ExportVideoCodec::H264 => "h264_nvenc",
-            ExportVideoCodec::H265 => "hevc_nvenc",
-            ExportVideoCodec::Gif => "gif",
-        }
-    }
-
     fn validate(&self, project: &Project, settings: &core::ExportSettings) -> Result<(), String> {
-        if settings.video_codec != ExportVideoCodec::Gif
+        if settings.video_encoder.codec() != ExportVideoCodec::Gif
             && (!project.canvas_size.width.is_multiple_of(2)
                 || !project.canvas_size.height.is_multiple_of(2))
         {
             return Err("NVENC export requires an even canvas width and height".to_string());
         }
         if self.settings.profile == ExportProfile::Main10
-            && settings.video_codec == ExportVideoCodec::H264
+            && settings.video_encoder.codec() == ExportVideoCodec::H264
         {
             return Err("H.264 Main10 export is not supported by NVENC".to_string());
         }
@@ -224,7 +233,7 @@ impl VideoBackend for CudaBackend {
 
     fn prepare(
         &mut self,
-        project: &Project,
+        _project: &Project,
         settings: &core::ExportSettings,
         _cancelled: &AtomicBool,
     ) -> Result<(), String> {
@@ -235,9 +244,6 @@ impl VideoBackend for CudaBackend {
                 gpu_host_memory_gib: self.settings.gpu_host_memory_gib,
             },
         )?);
-        if settings.video_codec != ExportVideoCodec::Gif {
-            self.hardware_frames = Some(HwFrameContext::new(project, &self.settings)?);
-        }
         Ok(())
     }
 
@@ -247,11 +253,10 @@ impl VideoBackend for CudaBackend {
         settings: &core::ExportSettings,
         global_header: bool,
     ) -> Result<ffmpeg::codec::encoder::video::Encoder, String> {
+        let encoder_name = settings.video_encoder.format().ffmpeg;
         let hardware_frames = self
             .hardware_frames
-            .as_ref()
-            .ok_or("NVENC export requires CUDA hardware frames")?;
-        let encoder_name = self.encoder_label(settings.video_codec);
+            .insert(HwFrameContext::new(project, &self.settings)?);
         let codec = ffmpeg::codec::encoder::find_by_name(encoder_name)
             .ok_or_else(|| format!("FFmpeg encoder {encoder_name} was not found"))?;
         let mut encoder = ffmpeg::codec::Context::new_with_codec(codec)
@@ -289,7 +294,7 @@ impl VideoBackend for CudaBackend {
             .as_mut()
             .expect("renderer was checked while rendering")
             .copy_to_hw_frame(composited, &mut frame, hardware_frames.pixel_format())?;
-        set_bt709_frame_metadata(&mut frame);
+        core::set_bt709_frame_metadata(&mut frame);
         Ok(RenderedFrame {
             frame,
             timing: FrameTiming {
@@ -408,7 +413,7 @@ fn multipass_name(multipass: ExportMultipass) -> &'static str {
 }
 
 fn profile_name(settings: &ExportSettings) -> &'static str {
-    match (settings.video_codec, settings.profile) {
+    match (settings.video_encoder.codec(), settings.profile) {
         (ExportVideoCodec::H264, ExportProfile::Main) => "main",
         (ExportVideoCodec::H265, ExportProfile::Main10) => "main10",
         _ => "main",
@@ -423,16 +428,6 @@ fn rate_control_name(rate_control: ExportRateControl) -> &'static str {
             "vbr"
         }
         ExportRateControl::Lossless => "constqp",
-    }
-}
-
-fn set_bt709_frame_metadata(frame: &mut ffmpeg::frame::Video) {
-    unsafe {
-        let frame = frame.as_mut_ptr();
-        (*frame).color_primaries = sys::AVColorPrimaries::AVCOL_PRI_BT709;
-        (*frame).color_trc = sys::AVColorTransferCharacteristic::AVCOL_TRC_BT709;
-        (*frame).colorspace = sys::AVColorSpace::AVCOL_SPC_BT709;
-        (*frame).color_range = sys::AVColorRange::AVCOL_RANGE_MPEG;
     }
 }
 

@@ -2,6 +2,10 @@
 name = "shrimply-video-decoder"
 version = "0.1.0"
 edition = "2024"
+build = "build.rs"
+
+[build-dependencies]
+cc.workspace = true
 
 [features]
 cuda = ["dep:shrimply-gpu-cuda", "dep:shrimply-decoder-pool", "dep:shrimply-project-document", "dep:uuid"]

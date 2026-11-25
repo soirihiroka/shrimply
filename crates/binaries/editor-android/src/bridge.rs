@@ -1246,6 +1246,7 @@ pub extern "system" fn Java_dev_shrimply_app_NativeTimeline_initialize<'caller>(
     config: JString<'caller>,
     cache: JString<'caller>,
     fonts: JString<'caller>,
+    video_encoder_names: JString<'caller>,
 ) {
     unowned
         .with_env(|env| -> jni::errors::Result<()> {
@@ -1257,6 +1258,10 @@ pub extern "system" fn Java_dev_shrimply_app_NativeTimeline_initialize<'caller>(
             let application = APPLICATION.get_or_init(|| application);
             let vm = env.get_java_vm()?.get_raw().cast();
             crate::localization::initialize_vm(env.get_java_vm()?);
+            shrimply_export_core::android::set_encoder_names(
+                serde_json::from_str(&video_encoder_names.try_to_string(env)?)
+                    .expect("Android video encoder names"),
+            );
             // Native adapters retain and pass the process resources once. The
             // existing shared audio engine and MediaCodec decoder own their use.
             unsafe {

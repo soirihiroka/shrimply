@@ -90,7 +90,9 @@ foreach ($license in @(
     @{ Package = "ffmpeg"; Name = "ffmpeg.txt" },
     @{ Package = "fdk-aac"; Name = "fdk-aac.txt" },
     @{ Package = "ffnvcodec"; Name = "nv-codec-headers.txt" },
-    @{ Package = "opus"; Name = "opus.txt" }
+    @{ Package = "opus"; Name = "opus.txt" },
+    @{ Package = "x264"; Name = "x264.txt" },
+    @{ Package = "x265"; Name = "x265.txt" }
 )) {
     $source = Join-Path $ffmpegRoot "share/$($license.Package)/copyright"
     if (!(Test-Path $source)) { throw "Missing license file: $source" }

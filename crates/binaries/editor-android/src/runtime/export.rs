@@ -109,13 +109,18 @@ impl Runtime {
                 let project = self.backend.project().ok_or("open a project first")?;
                 Ok(settings::schema_for(
                     &project,
-                    settings::Backend::MediaCodec,
+                    shrimply_export_core::android::settings_backend(),
                     request.get("values"),
                 ))
             }
             "export_validate" => {
                 let project = self.backend.project().ok_or("Open a project first")?;
-                settings::parse(&project, PathBuf::new(), request)?;
+                settings::parse_configuration(
+                    &project,
+                    PathBuf::new(),
+                    request,
+                    shrimply_export_core::android::settings_backend(),
+                )?;
                 Ok(json!({}))
             }
             "caption_export_schema" => Ok(json!({
@@ -186,7 +191,13 @@ impl Runtime {
         };
         let is_video = request["op"] == "export_video";
         let (operation, mime, separate) = if is_video {
-            let mut settings = settings::parse(&project, directory.join("video"), request)?;
+            let mut settings = settings::parse_configuration(
+                &project,
+                directory.join("video"),
+                request,
+                shrimply_export_core::android::settings_backend(),
+            )?
+            .common;
             let mime = video::mime_type(settings.container);
             settings.path = output_path(video::extension_for_container(settings.container))?;
             let limit = shrimply_preferences_core::snapshot(&self.backend.preferences)

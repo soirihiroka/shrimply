@@ -113,6 +113,30 @@ modules:
         url: https://github.com/FFmpeg/nv-codec-headers/archive/refs/tags/n12.2.72.0.tar.gz
         sha256: dbeaec433d93b850714760282f1d0992b1254fc3b5a6cb7d76fc1340a1e47563
 
+  - name: x264
+    buildsystem: simple
+    build-commands:
+      - ./configure --prefix=/app --enable-shared --enable-pic --disable-cli --disable-opencl
+      - make -j${FLATPAK_BUILDER_N_JOBS}
+      - make install
+    sources:
+      - type: archive
+        url: https://code.videolan.org/videolan/x264/-/archive/b35605ace3ddf7c1a5d67a2eb553f034aef41d55/x264-b35605ace3ddf7c1a5d67a2eb553f034aef41d55.tar.gz
+        sha256: cd71a7515b0e9a012e1ac9b1f8415bebcaf6fc97d4db32286642ac4c0fbe24f9
+
+  - name: x265
+    buildsystem: cmake-ninja
+    subdir: source
+    config-opts:
+      - -DCMAKE_BUILD_TYPE=Release
+      - -DCMAKE_INSTALL_LIBDIR=lib
+      - -DENABLE_CLI=OFF
+      - -DENABLE_LIBNUMA=OFF
+    sources:
+      - type: archive
+        url: https://codeload.github.com/Multicorewareinc/x265/tar.gz/refs/tags/4.3
+        sha256: fb157f809b74dabbef5002af99489fcaebb4d0073724beffdaaf2be15cbaf7ac
+
   - name: ffmpeg
     buildsystem: autotools
     config-opts:
@@ -123,6 +147,9 @@ modules:
       - --enable-libfdk-aac
       - --enable-nonfree
       - --enable-libopus
+      - --enable-gpl
+      - --enable-libx264
+      - --enable-libx265
       - --enable-ffnvcodec
       - --enable-vulkan
       - --enable-vaapi

@@ -32,6 +32,10 @@ POPPLER_VERSION = "26.01.0"
 POPPLER_SHA256 = "1cb944a4b88847f5fb6551683bc799db59f04990f5d8be07aba2acbf38601089"
 LCMS_VERSION = "2.20"
 LCMS_SHA256 = "18ff5504fa9cc8a2b1f3591180d90ead16c8a2ea78e530523b46eab70e1ca6b9"
+X264_REVISION = "b35605ace3ddf7c1a5d67a2eb553f034aef41d55"
+X264_SHA256 = "cd71a7515b0e9a012e1ac9b1f8415bebcaf6fc97d4db32286642ac4c0fbe24f9"
+X265_VERSION = "4.3"
+X265_SHA256 = "fb157f809b74dabbef5002af99489fcaebb4d0073724beffdaaf2be15cbaf7ac"
 ANDROID_API = 33
 ABIS = {
     "arm64-v8a": ("aarch64", "aarch64-linux-android"),
@@ -239,13 +243,28 @@ def main():
         build_rubberband(sources, root, prefix, compiler, toolchain, args.profile, ndk)
         if stamp.exists() and stamp.read_text() == identity and all(
             (prefix / "lib" / name).is_file()
-            for name in ("libavcodec.a", "libopus.a", "libmp3lame.a", "libogg.a", "libvorbis.a", "libvorbisenc.a")
+            for name in ("libavcodec.a", "libopus.a", "libmp3lame.a", "libogg.a", "libvorbis.a", "libvorbisenc.a", "libx264.a", "libx265.a")
         ):
             print(f"Android media dependencies are current: {prefix}", flush=True)
             return
         opus = source(sources, f"opus-{OPUS_VERSION}", f"https://downloads.xiph.org/releases/opus/opus-{OPUS_VERSION}.tar.gz", OPUS_SHA256)
         cmake_build(args, root, "opus", opus, ["-DOPUS_BUILD_TESTING=OFF", "-DOPUS_BUILD_PROGRAMS=OFF"])
         build_audio_encoders(args, sources, root, compiler)
+        x264_name = f"x264-{X264_REVISION}"
+        x264 = source(sources, x264_name, f"https://code.videolan.org/videolan/x264/-/archive/{X264_REVISION}/{x264_name}.tar.gz", X264_SHA256)
+        x264_build = root / x264_name
+        x264_build.mkdir(exist_ok=True)
+        subprocess.run([str(x264 / "configure"), f"--prefix={prefix}", f"--host={triple}",
+                        f"--cross-prefix={toolchain}/llvm-",
+                        "--enable-static", "--enable-pic", "--disable-cli", "--disable-opencl"],
+                       cwd=x264_build, env=dict(os.environ, CC=str(compiler)), check=True)
+        subprocess.run(["make", f"-j{args.jobs}", "install"], cwd=x264_build, check=True)
+        x265 = source(sources, f"x265-{X265_VERSION}", f"https://codeload.github.com/Multicorewareinc/x265/tar.gz/refs/tags/{X265_VERSION}", X265_SHA256)
+        # x265's assembly rules call Clang without the Android target flags.
+        cmake_build(args, root, "x265-ndk", x265 / "source", ["-DCMAKE_BUILD_TYPE=Release", "-DENABLE_ASSEMBLY=OFF", "-DENABLE_SHARED=OFF", "-DENABLE_CLI=OFF", "-DENABLE_LIBNUMA=OFF", "-DENABLE_PIC=ON"])
+        # The generated .pc file prefixes NDK linker flags with an extra -l.
+        x265_pc = package_directory / "x265.pc"
+        x265_pc.write_text(re.sub(r"^Libs\.private:.*$", "Libs.private: -lc++ -lm -ldl", x265_pc.read_text(), flags=re.M))
         # FFmpeg keeps its first configure's src symlink. Reusing that tree
         # across source patches can silently compile the previous source.
         ffmpeg_build = root / ffmpeg.name
@@ -266,6 +285,7 @@ def main():
             f"--strip={toolchain}/llvm-strip", "--enable-pic", "--enable-static", "--disable-shared",
             "--disable-autodetect", "--disable-programs", "--disable-doc", "--disable-stripping",
             "--enable-mediacodec", "--enable-jni", "--enable-libopus", "--enable-libmp3lame", "--enable-libvorbis", "--enable-debug=2",
+            "--enable-gpl", "--enable-libx264", "--enable-libx265",
             "--pkg-config-flags=--static",
             f"--extra-ldflags=-L{prefix}/lib -Wl,-z,max-page-size=16384",
             f"--extra-cflags=-I{prefix}/include" + (" -O0 -g" if args.profile == "debug" else ""),

@@ -6689,6 +6689,7 @@ dependencies = [
  "shrimply-render-vulkan",
  "shrimply-visual-core",
  "skia-safe",
+ "strum 0.28.0",
  "tempfile",
  "tracing",
 ]
@@ -6760,6 +6761,7 @@ dependencies = [
  "cxx-qt",
  "cxx-qt-build",
  "cxx-qt-lib",
+ "serde_json",
  "shrimply-application-qt",
  "shrimply-components-qt",
  "shrimply-cross-ui-core",
@@ -6767,7 +6769,6 @@ dependencies = [
  "shrimply-export-core",
  "shrimply-export-cuda",
  "shrimply-i18n-qt",
- "shrimply-math-core",
  "shrimply-math-media",
 ]
 
@@ -8388,6 +8389,7 @@ dependencies = [
 name = "shrimply-video-decoder"
 version = "0.1.0"
 dependencies = [
+ "cc",
  "ffmpeg-next",
  "libc",
  "ndk",

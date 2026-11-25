@@ -33,6 +33,8 @@ fn decode_mode(accuracy: CompositeAccuracy) -> DecodeMode {
     if accuracy.content_accurate() {
         // A fully accurate request must await its source, including unpaced playback.
         DecodeMode::Accurate
+    } else if !accuracy.continuous_playback() && shrimply_video_decoder::exact_scrub_enabled() {
+        DecodeMode::ExactScrub
     } else if accuracy.continuous_playback() {
         DecodeMode::Continuous
     } else if accuracy.local_scrub() {

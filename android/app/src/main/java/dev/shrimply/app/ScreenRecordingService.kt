@@ -1,5 +1,7 @@
 package dev.shrimply.app
 
+import android.media.MediaCodecInfo
+
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -15,8 +17,6 @@ import android.graphics.ColorSpace
 import android.graphics.PixelFormat
 import android.hardware.HardwareBuffer
 import android.media.ImageReader
-import android.media.MediaCodecInfo
-import android.media.MediaCodecList
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
 import android.os.Handler
@@ -219,14 +219,13 @@ class ScreenRecordingService : Service() {
             val screenHeight = config.getInt("screen_height")
             val mime = config.getString("mime")
             val fps = config.getLong("fps_numerator").toDouble() / config.getLong("fps_denominator")
-            val settings = MediaCodecList(MediaCodecList.ALL_CODECS).codecInfos.firstNotNullOfOrNull { codec ->
-                if (!codec.isEncoder || !codec.isHardwareAccelerated || codec.supportedTypes.none { it.equals(mime, ignoreCase = true) }) return@firstNotNullOfOrNull null
-                val caps = codec.getCapabilitiesForType(mime)
+            val settings = videoEncoders(mime, hardware = true).firstNotNullOfOrNull { (codec, caps) ->
+                if (MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface !in caps.colorFormats) return@firstNotNullOfOrNull null
                 val video = caps.videoCapabilities ?: return@firstNotNullOfOrNull null
                 fun align(size: Int, multiple: Int) = ((size + multiple - 1) / multiple) * multiple
                 val width = align(screenWidth, video.widthAlignment)
                 val height = align(screenHeight, video.heightAlignment)
-                if (MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface !in caps.colorFormats || !video.areSizeAndRateSupported(width, height, fps)) return@firstNotNullOfOrNull null
+                if (!video.areSizeAndRateSupported(width, height, fps)) return@firstNotNullOfOrNull null
                 config.put("width", width).put("height", height).put("codec_name", codec.name)
                     .put("bitrate", video.bitrateRange.clamp(config.getInt("bitrate")))
             } ?: error("No hardware encoder supports the captured screen size and frame rate")

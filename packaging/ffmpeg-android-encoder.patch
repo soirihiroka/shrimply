@@ -1,9 +1,62 @@
 --- a/libavcodec/mediacodecenc.c
 +++ b/libavcodec/mediacodecenc.c
-@@ -430,10 +430,13 @@
+@@ -216,16 +216,30 @@
+     ret = av_bsf_init(s->bsf);
+-
++
+     return ret;
+ }
+-
++
+-static void copy_frame_to_buffer(AVCodecContext *avctx, const AVFrame *frame,
++static int copy_frame_to_buffer(AVCodecContext *avctx, const AVFrame *frame,
+                                  uint8_t *dst, size_t size)
+ {
+     MediaCodecEncContext *s = avctx->priv_data;
+     uint8_t *dst_data[4] = {};
+     int dst_linesize[4] = {};
++    int required = av_image_get_buffer_size(avctx->pix_fmt, s->width, s->height, 1);
++
++    if (required < 0)
++        return required;
++    if (!dst || size < required) {
++        av_log(avctx, AV_LOG_ERROR, "MediaCodec input buffer is unavailable or too small.\n");
++        return AVERROR_EXTERNAL;
++    }
++
++    if (s->width != avctx->width || s->height != avctx->height) {
++        size_t luma_size = (size_t)s->width * s->height;
++        memset(dst, 16, luma_size);
++        memset(dst + luma_size, 128, required - luma_size);
++    }
+-
++
+     if (avctx->pix_fmt == AV_PIX_FMT_YUV420P) {
+         dst_data[0] = dst;
+         dst_data[1] = dst + s->width * s->height;
+         dst_data[2] = dst_data[1] + s->width * s->height / 4;
+@@ -242,10 +256,11 @@
          av_assert0(0);
      }
- 
+-
++
+     av_image_copy2(dst_data, dst_linesize, frame->data, frame->linesize,
+                    avctx->pix_fmt, avctx->width, avctx->height);
++    return required;
+ }
+-
++
+-
++
+ static void on_error(FFAMediaCodec *codec, void *userdata, int error,
+                      const char *detail)
+@@ -428,14 +443,17 @@
+         break;
+     default:
+         av_assert0(0);
+     }
+-
++
 -    if (s->name)
 -        s->codec = ff_AMediaCodec_createCodecByName(s->name, s->use_ndk_codec);
 -    else
@@ -18,3 +71,38 @@
      if (!s->codec) {
          av_log(avctx, AV_LOG_ERROR, "Failed to create encoder for type %s\n",
                 codec_mime);
+         return AVERROR_EXTERNAL;
+     }
+@@ -822,19 +840,26 @@
+         return AVERROR_EXTERNAL;
+     }
+-
++
+     if (frame) {
+         input_buf = ff_AMediaCodec_getInputBuffer(codec, index, &input_size);
+-        copy_frame_to_buffer(avctx, frame, input_buf, input_size);
++        ret = copy_frame_to_buffer(avctx, frame, input_buf, input_size);
++        if (ret < 0)
++            return ret;
++        input_size = ret;
+-
++
+         pts = av_rescale_q(frame->pts, avctx->time_base, AV_TIME_BASE_Q);
+     } else {
+         flags |= ff_AMediaCodec_getBufferFlagEndOfStream(codec);
+         s->eof_sent = 1;
+     }
+-
++
+-    ff_AMediaCodec_queueInputBuffer(codec, index, 0, input_size, pts, flags);
++    ret = ff_AMediaCodec_queueInputBuffer(codec, index, 0, input_size, pts, flags);
++    if (ret != 0) {
++        av_log(avctx, AV_LOG_ERROR, "MediaCodec rejected an input buffer: %d.\n", ret);
++        return AVERROR_EXTERNAL;
++    }
+     return 0;
+ }
+-
++
+ static int mediacodec_encode(AVCodecContext *avctx, AVPacket *pkt)
+ {

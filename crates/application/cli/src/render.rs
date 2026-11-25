@@ -1,5 +1,9 @@
 use crate::render_options::Options;
-use shrimply_export_core::video::{ExportProgress, ExportVideoCodec};
+use shrimply_export_core::video::{ExportProgress, ExportVideoCodec, settings::VideoEncoder};
+#[cfg(not(target_os = "macos"))]
+use shrimply_export_cuda::settings_backend;
+#[cfg(target_os = "macos")]
+use shrimply_export_metal::settings_backend;
 use shrimply_preferences_core as preferences;
 use shrimply_project_document::project;
 use std::{
@@ -22,7 +26,15 @@ pub fn run(options: Options) -> Result<(), String> {
     let preferences = preferences::snapshot(&preferences::open_with_defaults());
     shrimply_blender_core::set_binary(preferences.blender_binary.clone());
     shrimply_audio_engine::pneuma::set_server_url(&preferences.compute_server_url);
-    let settings = settings(&options, options.fps.unwrap_or(project.fps), &preferences);
+    let encoder = settings_backend()
+        .resolve(&options.format)
+        .ok_or_else(|| format!("Video format {} is unavailable", options.format))?;
+    let settings = settings(
+        &options,
+        options.fps.unwrap_or(project.fps),
+        &preferences,
+        encoder,
+    );
     let mut last_progress = Instant::now();
     #[cfg(not(target_os = "macos"))]
     use shrimply_export_cuda::export_project;
@@ -75,6 +87,7 @@ fn settings(
     options: &Options,
     fps: shrimply_math_core::Fraction,
     preferences: &preferences::PreferencesSnapshot,
+    encoder: VideoEncoder,
 ) -> shrimply_export_cuda::ExportSettings {
     use shrimply_export_cuda::{
         ExportMultipass, ExportPreset, ExportProfile, ExportRateControl, ExportSettings,
@@ -83,10 +96,10 @@ fn settings(
     ExportSettings {
         path: options.output.clone(),
         overwrite: options.overwrite,
-        video_codec: options.codec,
+        video_encoder: encoder,
         container: options.container,
         fps,
-        background_alpha: if options.codec == ExportVideoCodec::Gif {
+        background_alpha: if encoder.codec() == ExportVideoCodec::Gif {
             0
         } else {
             u8::MAX
@@ -118,6 +131,7 @@ fn settings(
     options: &Options,
     fps: shrimply_math_core::Fraction,
     preferences: &preferences::PreferencesSnapshot,
+    encoder: VideoEncoder,
 ) -> shrimply_export_metal::ExportSettings {
     use shrimply_export_metal::{
         ExportSettings, H264Entropy, VideoToolboxProfile, VideoToolboxRateControl,
@@ -125,16 +139,16 @@ fn settings(
     ExportSettings {
         path: options.output.clone(),
         overwrite: options.overwrite,
-        video_codec: options.codec,
+        video_encoder: encoder,
         container: options.container,
         fps,
-        background_alpha: if options.codec == ExportVideoCodec::Gif {
+        background_alpha: if encoder.codec() == ExportVideoCodec::Gif {
             0
         } else {
             u8::MAX
         },
         rate_control: VideoToolboxRateControl::AverageBitrate,
-        profile: if options.codec == ExportVideoCodec::H264 {
+        profile: if encoder.codec() == ExportVideoCodec::H264 {
             VideoToolboxProfile::H264Baseline
         } else {
             VideoToolboxProfile::HevcMain
@@ -158,7 +172,7 @@ fn settings(
 pub fn dry_run(options: &Options) -> Result<serde_json::Value, String> {
     let (path, project) = load(options)?;
     Ok(
-        serde_json::json!({"success":true,"dry_run":true,"validation":"partial","execution_mode":"saved","project":path,"output":options.output,"codec":format!("{:?}",options.codec),"container":format!("{:?}",options.container),"base_revision":shrimply_editing_api::preview::revision(&project)?,"deferred":["GPU setup, source execution, media decoding, encoding, and output creation were not performed"]}),
+        serde_json::json!({"success":true,"dry_run":true,"validation":"partial","execution_mode":"saved","project":path,"output":options.output,"codec":format!("{:?}",VideoEncoder::request_codec(&options.format).expect("validated format")),"container":format!("{:?}",options.container),"base_revision":shrimply_editing_api::preview::revision(&project)?,"deferred":["GPU setup, source execution, media decoding, encoding, and output creation were not performed"]}),
     )
 }
 

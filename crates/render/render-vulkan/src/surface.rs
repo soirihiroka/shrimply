@@ -37,11 +37,18 @@ impl Renderer {
     /// Retain the Android window until this renderer is dropped or rebound.
     #[cfg(target_os = "android")]
     pub fn new(window: &ndk::native_window::NativeWindow, width: u32, height: u32) -> Self {
-        unsafe {
-            let shared = Device::get().expect("initialize the shared GPU renderer");
-            let surface = android_surface(&shared, window);
-            Self::from_surface(shared, surface, width, height)
-        }
+        Self::try_new(window, width, height).expect("initialize Android surface renderer")
+    }
+
+    #[cfg(target_os = "android")]
+    pub fn try_new(
+        window: &ndk::native_window::NativeWindow,
+        width: u32,
+        height: u32,
+    ) -> Result<Self, String> {
+        let shared = Device::get()?;
+        let surface = android_surface(&shared, window)?;
+        unsafe { Self::try_from_surface(shared, surface, width, height) }
     }
 
     /// Use an existing native surface with the shared Vulkan device.
@@ -55,6 +62,16 @@ impl Renderer {
         width: u32,
         height: u32,
     ) -> Self {
+        unsafe { Self::try_from_surface(shared, surface, width, height) }
+            .expect("initialize surface renderer")
+    }
+
+    unsafe fn try_from_surface(
+        shared: Arc<Device>,
+        surface: vk::SurfaceKHR,
+        width: u32,
+        height: u32,
+    ) -> Result<Self, String> {
         let _measure = shrimply_profiling::measure("GPU / Surface context creation");
         unsafe {
             let entry = &shared.entry;
@@ -62,27 +79,7 @@ impl Renderer {
             let device = shared.raw.clone();
             let (physical, family, queue) = (shared.physical, shared.family, shared.queue);
             let surface_api = ash::khr::surface::Instance::new(entry, &instance);
-            assert!(
-                surface_api
-                    .get_physical_device_surface_support(physical, family, surface)
-                    .expect("query presentation support"),
-                "the shared Vulkan queue cannot present to this window"
-            );
-            let mut context = shared
-                .skia_context(true)
-                .expect("create Skia Vulkan context");
-            shrimply_profiling::increment("GPU / Surface contexts created");
-            context.set_resource_cache_limit(SKIA_CACHE_BYTES);
             let swapchain_api = ash::khr::swapchain::Device::new(&instance, &device);
-            let acquired = device
-                .create_semaphore(&vk::SemaphoreCreateInfo::default(), None)
-                .expect("create acquire semaphore");
-            let fence = device
-                .create_fence(
-                    &vk::FenceCreateInfo::default().flags(vk::FenceCreateFlags::SIGNALED),
-                    None,
-                )
-                .expect("create frame fence");
             let mut renderer = Self {
                 shared,
                 surface_api,
@@ -96,29 +93,61 @@ impl Renderer {
                 images: Vec::new(),
                 presented: Vec::new(),
                 rendered: Vec::new(),
-                acquired,
-                fence,
-                context: Some(context),
+                acquired: vk::Semaphore::null(),
+                fence: vk::Fence::null(),
+                context: None,
                 extent: vk::Extent2D::default(),
                 recreate: true,
                 format: vk::Format::UNDEFINED,
                 #[cfg(feature = "renderer")]
                 sampled: None,
             };
-            renderer.resize(width, height);
-            renderer
+            if !renderer
+                .surface_api
+                .get_physical_device_surface_support(physical, family, surface)
+                .map_err(|error| format!("Query Vulkan presentation support: {error}"))?
+            {
+                return Err("The shared Vulkan queue cannot present to this window".into());
+            }
+            let mut context = renderer.shared.skia_context(true)?;
+            context.set_resource_cache_limit(SKIA_CACHE_BYTES);
+            renderer.context = Some(context);
+            shrimply_profiling::increment("GPU / Surface contexts created");
+            renderer.acquired = renderer
+                .device
+                .create_semaphore(&vk::SemaphoreCreateInfo::default(), None)
+                .map_err(|error| format!("Create acquire semaphore: {error}"))?;
+            renderer.fence = renderer
+                .device
+                .create_fence(
+                    &vk::FenceCreateInfo::default().flags(vk::FenceCreateFlags::SIGNALED),
+                    None,
+                )
+                .map_err(|error| format!("Create frame fence: {error}"))?;
+            renderer.try_resize(width, height)?;
+            Ok(renderer)
         }
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {
+        self.try_resize(width, height)
+            .expect("resize surface renderer");
+    }
+
+    #[cfg(target_os = "android")]
+    pub fn size(&self) -> (u32, u32) {
+        (self.extent.width, self.extent.height)
+    }
+
+    fn try_resize(&mut self, width: u32, height: u32) -> Result<(), String> {
         if !self.recreate && self.extent.width == width && self.extent.height == height {
-            return;
+            return Ok(());
         }
         let _measure = shrimply_profiling::measure("GPU / Surface swapchain rebuild");
         shrimply_profiling::increment("GPU / Surface swapchains rebuilt");
         self.shared
             .wait_idle()
-            .expect("wait before swapchain replacement");
+            .map_err(|error| format!("Wait before swapchain replacement: {error}"))?;
         unsafe {
             // Swapchain images are borrowed by frame-local Skia surfaces. Keep
             // the context's glyph/image caches and the independent compositor
@@ -126,7 +155,7 @@ impl Renderer {
             let caps = self
                 .surface_api
                 .get_physical_device_surface_capabilities(self.physical, self.surface)
-                .expect("surface capabilities");
+                .map_err(|error| format!("Query surface capabilities: {error}"))?;
             // Android permits a chosen extent, and its reported current extent
             // can lag a SurfaceView resize. Follow the supplied pixel size so
             // SurfaceFlinger does not stretch a stale buffer into the new view.
@@ -139,14 +168,13 @@ impl Renderer {
             } else {
                 caps.current_extent
             };
-            assert!(
-                extent.width > 0 && extent.height > 0,
-                "surface must have a positive extent"
-            );
+            if extent.width == 0 || extent.height == 0 {
+                return Err("Surface must have a positive extent".into());
+            }
             let formats = self
                 .surface_api
                 .get_physical_device_surface_formats(self.physical, self.surface)
-                .expect("surface formats");
+                .map_err(|error| format!("Query surface formats: {error}"))?;
             let format = formats
                 .iter()
                 .find(|format| {
@@ -154,14 +182,13 @@ impl Renderer {
                         .contains(&format.format)
                         && format.color_space == vk::ColorSpaceKHR::SRGB_NONLINEAR
                 })
-                .expect("an RGBA/BGRA UNORM surface is required");
+                .ok_or("An RGBA/BGRA UNORM surface is required")?;
             let usage = vk::ImageUsageFlags::COLOR_ATTACHMENT
                 | vk::ImageUsageFlags::TRANSFER_SRC
                 | vk::ImageUsageFlags::TRANSFER_DST;
-            assert!(
-                caps.supported_usage_flags.contains(usage),
-                "surface must support Skia color and transfer usage"
-            );
+            if !caps.supported_usage_flags.contains(usage) {
+                return Err("Surface must support Skia color and transfer usage".into());
+            }
             let count = (caps.min_image_count + 1).min(if caps.max_image_count == 0 {
                 u32::MAX
             } else {
@@ -173,14 +200,15 @@ impl Renderer {
             ]
             .into_iter()
             .find(|flag| caps.supported_composite_alpha.contains(*flag))
-            .expect("opaque or inherited surface alpha");
+            .ok_or("Surface must support opaque or inherited alpha")?;
             // Let Android's compositor apply window rotation; Skia and input use
             // the same upright coordinates rather than implementing pre-rotation.
-            assert!(
-                caps.supported_transforms
-                    .contains(vk::SurfaceTransformFlagsKHR::IDENTITY),
-                "an upright Android presentation surface is required"
-            );
+            if !caps
+                .supported_transforms
+                .contains(vk::SurfaceTransformFlagsKHR::IDENTITY)
+            {
+                return Err("An upright presentation surface is required".into());
+            }
             let info = vk::SwapchainCreateInfoKHR::default()
                 .surface(self.surface)
                 .min_image_count(count)
@@ -198,7 +226,7 @@ impl Renderer {
             let replacement = self
                 .swapchain_api
                 .create_swapchain(&info, None)
-                .expect("create Android swapchain");
+                .map_err(|error| format!("Create Vulkan swapchain: {error}"))?;
             for semaphore in self.rendered.drain(..) {
                 self.device.destroy_semaphore(semaphore, None);
             }
@@ -207,21 +235,20 @@ impl Renderer {
             self.images = self
                 .swapchain_api
                 .get_swapchain_images(replacement)
-                .expect("swapchain images");
+                .map_err(|error| format!("Get swapchain images: {error}"))?;
             self.presented = vec![false; self.images.len()];
-            self.rendered = self
-                .images
-                .iter()
-                .map(|_| {
+            for _ in &self.images {
+                self.rendered.push(
                     self.device
                         .create_semaphore(&vk::SemaphoreCreateInfo::default(), None)
-                        .expect("create presentation semaphore")
-                })
-                .collect();
+                        .map_err(|error| format!("Create presentation semaphore: {error}"))?,
+                );
+            }
             self.extent = extent;
             self.format = format.format;
             self.recreate = false;
         }
+        Ok(())
     }
 
     /// Rebind presentation while retaining this rendering thread's Skia resource cache.
@@ -263,6 +290,7 @@ impl Renderer {
     ) {
         let surface = window.map_or(vk::SurfaceKHR::null(), |window| {
             android_surface(&self.shared, window)
+                .expect("create replacement Android Vulkan surface")
         });
         unsafe { self.replace_surface(surface, width, height) };
     }
@@ -271,9 +299,11 @@ impl Renderer {
         if self.surface == vk::SurfaceKHR::null() {
             return;
         }
-        self.shared
-            .wait_idle()
-            .expect("finish native surface access");
+        if self.swapchain != vk::SwapchainKHR::null()
+            && let Err(error) = self.shared.wait_idle()
+        {
+            tracing::warn!(%error, "Wait for native surface teardown");
+        }
         unsafe {
             #[cfg(feature = "renderer")]
             drop(self.sampled.take());
@@ -413,7 +443,7 @@ impl Renderer {
                 vk::Fence::null(),
             ) {
                 Ok(result) => result,
-                Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => {
+                Err(vk::Result::ERROR_OUT_OF_DATE_KHR | vk::Result::ERROR_SURFACE_LOST_KHR) => {
                     self.recreate = true;
                     return false;
                 }
@@ -526,7 +556,9 @@ impl Renderer {
             let stage = shrimply_profiling::measure("GPU / Surface queue present");
             let valid = match self.swapchain_api.queue_present(self.queue, &present) {
                 Ok(changed) => !changed && !suboptimal,
-                Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => false,
+                Err(vk::Result::ERROR_OUT_OF_DATE_KHR | vk::Result::ERROR_SURFACE_LOST_KHR) => {
+                    false
+                }
                 Err(error) => panic!("present timeline: {error}"),
             };
             drop(stage);
@@ -550,13 +582,16 @@ impl Drop for Renderer {
 }
 
 #[cfg(target_os = "android")]
-fn android_surface(shared: &Device, window: &ndk::native_window::NativeWindow) -> vk::SurfaceKHR {
+fn android_surface(
+    shared: &Device,
+    window: &ndk::native_window::NativeWindow,
+) -> Result<vk::SurfaceKHR, String> {
     unsafe {
         ash::khr::android_surface::Instance::new(&shared.entry, &shared.instance)
             .create_android_surface(
                 &vk::AndroidSurfaceCreateInfoKHR::default().window(window.ptr().as_ptr().cast()),
                 None,
             )
-            .expect("create Android Vulkan surface")
+            .map_err(|error| format!("Create Android Vulkan surface: {error}"))
     }
 }

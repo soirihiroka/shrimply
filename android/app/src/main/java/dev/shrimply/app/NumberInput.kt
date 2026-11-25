@@ -28,6 +28,8 @@ import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.disabled
 import androidx.compose.ui.semantics.semantics
@@ -45,6 +47,43 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
+
+@Composable
+internal fun NumberInput(label: String, value: Int, minimum: Int, maximum: Int, step: Int,
+    enabled: Boolean, onValueChange: (Int) -> Unit) {
+    val focus = LocalFocusManager.current
+    var editing by remember { mutableStateOf(false) }
+    var draft by remember { mutableStateOf("") }
+    val typography = MaterialTheme.typography.bodyMedium.copy(
+        color = MaterialTheme.colorScheme.onSurface, fontFeatureSettings = "tnum")
+    InspectorField(label) { modifier ->
+        InspectorInput(modifier, enabled) {
+            val decrease = tr("Decrease")
+            val increase = tr("Increase")
+            IconButton(onClick = { focus.clearFocus(); onValueChange((value - step).coerceAtLeast(minimum)) },
+                enabled = enabled && value > minimum, modifier = Modifier.semantics { contentDescription = decrease }) {
+                Text("−", style = typography)
+            }
+            BasicTextField(value = if (editing) draft else value.toString(), onValueChange = { text ->
+                if (text.isEmpty() || text.all { it in '0'..'9' } && text.length <= maximum.toString().length) {
+                    draft = text
+                    text.toIntOrNull()?.let { onValueChange(it.coerceIn(minimum, maximum)) }
+                }
+            }, enabled = enabled, singleLine = true, textStyle = typography,
+                cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Done),
+                keyboardActions = KeyboardActions(onDone = { focus.clearFocus() }),
+                modifier = Modifier.weight(1f).semantics { contentDescription = label }.onFocusChanged {
+                    if (it.isFocused && !editing) draft = value.toString()
+                    editing = it.isFocused
+                })
+            IconButton(onClick = { focus.clearFocus(); onValueChange((value + step).coerceAtMost(maximum)) },
+                enabled = enabled && value < maximum, modifier = Modifier.semantics { contentDescription = increase }) {
+                Text("+", style = typography)
+            }
+        }
+    }
+}
 
 /** Native fields render Rust values and forward raw input; Rust owns all math. */
 @Composable

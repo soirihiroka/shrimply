@@ -3,6 +3,31 @@ use shrimply_preview_render_vulkan::{Compositor, Rendered};
 
 const MAX_QUANTIZATION_PARAMETER: u32 = 51;
 
+pub(super) fn hardware_available(name: &str) -> bool {
+    core::hardware_encoder_opens(name, Pixel::VAAPI, |encoder, _| {
+        let device = shrimply_render_vulkan::device::Device::get()?;
+        if device.va.is_null() {
+            return Err("VA-API device unavailable".into());
+        }
+        unsafe {
+            let frames = sys::av_hwframe_ctx_alloc(device.va);
+            if frames.is_null() {
+                return Err("Allocate VA-API probe frames".into());
+            }
+            (*encoder.as_mut_ptr()).hw_frames_ctx = frames;
+            let context = &mut *(*frames).data.cast::<sys::AVHWFramesContext>();
+            context.format = sys::AVPixelFormat::AV_PIX_FMT_VAAPI;
+            context.sw_format = sys::AVPixelFormat::AV_PIX_FMT_NV12;
+            context.width = encoder.width() as i32;
+            context.height = encoder.height() as i32;
+            core::ffmpeg_check(
+                sys::av_hwframe_ctx_init(frames),
+                "Initialize VA-API probe frames",
+            )
+        }
+    })
+}
+
 fn unmodified_video(
     plan: &shrimply_preview_render_core::FramePlan,
     format: sys::AVPixelFormat,
@@ -87,27 +112,19 @@ impl VideoBackend for IntelBackend {
         "intel-vaapi"
     }
 
-    fn encoder_label(&self, codec: ExportVideoCodec) -> &'static str {
-        match codec {
-            ExportVideoCodec::H264 => "h264_vaapi",
-            ExportVideoCodec::H265 => "hevc_vaapi",
-            ExportVideoCodec::Gif => "gif",
-        }
-    }
-
     fn validate(&self, project: &Project, settings: &core::ExportSettings) -> Result<(), String> {
         let size = project.canvas_size;
         if size.width == 0 || size.height == 0 {
             return Err("Intel export dimensions must be positive".into());
         }
-        if settings.video_codec == ExportVideoCodec::Gif {
+        if settings.video_encoder.codec() == ExportVideoCodec::Gif {
             return Ok(());
         }
         if !size.width.is_multiple_of(2) || !size.height.is_multiple_of(2) {
             return Err("VA-API export requires an even canvas width and height".into());
         }
         if self.settings.profile == ExportProfile::Main10
-            && settings.video_codec == ExportVideoCodec::H264
+            && settings.video_encoder.codec() == ExportVideoCodec::H264
         {
             return Err("Intel H.264 encoding does not support Main10; use H.265".into());
         }
@@ -136,27 +153,14 @@ impl VideoBackend for IntelBackend {
 
     fn prepare(
         &mut self,
-        project: &Project,
-        settings: &core::ExportSettings,
+        _project: &Project,
+        _settings: &core::ExportSettings,
         _cancelled: &AtomicBool,
     ) -> Result<(), String> {
         let _measurement = shrimply_profiling::measure("Intel export / Initialize");
         let mut compositor = Compositor::new()?;
         compositor.set_decoder_limit(self.settings.maximum_temporal_decoders);
         self.compositor = Some(compositor);
-        if settings.video_codec != ExportVideoCodec::Gif {
-            let device = shrimply_render_vulkan::device::Device::get()?;
-            let reference = unsafe { sys::av_buffer_ref(device.va) };
-            if reference.is_null() {
-                return Err("Retain Intel VA-API encoder device".into());
-            }
-            self.hardware_frames = Some(HwFrameContext::initialize(
-                project,
-                &self.settings,
-                reference,
-                sys::AVPixelFormat::AV_PIX_FMT_VAAPI,
-            )?);
-        }
         Ok(())
     }
 
@@ -167,11 +171,21 @@ impl VideoBackend for IntelBackend {
         global_header: bool,
     ) -> Result<ffmpeg::codec::encoder::video::Encoder, String> {
         let _measurement = shrimply_profiling::measure("Intel export / Open encoder");
-        let hardware = self
-            .hardware_frames
-            .as_ref()
-            .ok_or("Intel encoder frames were not prepared")?;
-        let name = self.encoder_label(settings.video_codec);
+        let name = settings.video_encoder.format().ffmpeg;
+        let device = shrimply_render_vulkan::device::Device::get()?;
+        if device.va.is_null() {
+            return Err("VA-API device unavailable".into());
+        }
+        let reference = unsafe { sys::av_buffer_ref(device.va) };
+        if reference.is_null() {
+            return Err("Retain Intel VA-API encoder device".into());
+        }
+        let hardware = self.hardware_frames.insert(HwFrameContext::initialize(
+            project,
+            &self.settings,
+            reference,
+            sys::AVPixelFormat::AV_PIX_FMT_VAAPI,
+        )?);
         let codec = ffmpeg::codec::encoder::find_by_name(name)
             .ok_or_else(|| format!("FFmpeg encoder {name} is unavailable"))?;
         let mut encoder = ffmpeg::codec::Context::new_with_codec(codec)
@@ -251,7 +265,7 @@ impl VideoBackend for IntelBackend {
             unsafe {
                 (*frame.as_mut_ptr()).pict_type = sys::AVPictureType::AV_PICTURE_TYPE_NONE;
             }
-            set_bt709_frame_metadata(&mut frame);
+            core::set_bt709_frame_metadata(&mut frame);
             return Ok(RenderedFrame {
                 frame,
                 timing: FrameTiming::default(),
@@ -276,7 +290,7 @@ impl VideoBackend for IntelBackend {
         // VA-API's encoder consumes this surface after the Vulkan release. This
         // fence waits for GPU work only; no pixels are downloaded or reuploaded.
         submission.wait()?;
-        set_bt709_frame_metadata(&mut frame);
+        core::set_bt709_frame_metadata(&mut frame);
         Ok(RenderedFrame {
             frame,
             timing: FrameTiming::default(),

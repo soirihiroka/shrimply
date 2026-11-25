@@ -1,5 +1,8 @@
 //! MediaCodec surface adapter for the shared export pipeline and Vulkan compositor.
-use crate::video::{self as core, ExportSettings, FrameTiming, RenderedFrame, VideoBackend};
+use crate::video::{
+    self as core, ExportSettings, ExportVideoCodec, FrameTiming, RenderedFrame, VideoBackend,
+};
+use core::settings::VideoEncoder;
 use ffmpeg_next::{self as ffmpeg, format::Pixel, sys};
 use ndk::native_window::NativeWindow;
 use shrimply_preview_render_vulkan::{Compositor, Rendered};
@@ -7,13 +10,15 @@ use shrimply_project_document::project::{Project, Time};
 use shrimply_render_vulkan::surface::Renderer;
 use std::{
     ptr,
-    sync::{Arc, atomic::AtomicBool},
+    sync::{Arc, OnceLock, atomic::AtomicBool},
 };
 
 pub struct Backend {
     maximum_temporal_decoders: usize,
     compositor: Option<Compositor>,
     surface: Option<Renderer>,
+    buffer_format: Option<Pixel>,
+    scaler: Option<ffmpeg::software::scaling::Context>,
 }
 
 struct Hardware(*mut sys::AVBufferRef);
@@ -24,6 +29,77 @@ impl Drop for Hardware {
 }
 
 pub mod recording;
+
+const MEDIA_CODEC_INPUTS: [Pixel; 3] = [Pixel::MEDIACODEC, Pixel::NV12, Pixel::YUV420P];
+
+#[derive(serde::Deserialize)]
+pub struct EncoderNames {
+    hardware: [Option<String>; 2],
+    software: [Option<String>; 2],
+}
+
+static ENCODER_NAMES: OnceLock<EncoderNames> = OnceLock::new();
+
+pub fn set_encoder_names(names: EncoderNames) {
+    ENCODER_NAMES.get_or_init(|| names);
+}
+
+fn encoder_name(encoder: VideoEncoder) -> Option<&'static str> {
+    let names = ENCODER_NAMES.get()?;
+    let format = encoder.format();
+    let names = if format.hardware {
+        &names.hardware
+    } else {
+        &names.software
+    };
+    match format.codec {
+        ExportVideoCodec::H264 => names[0].as_deref(),
+        ExportVideoCodec::H265 => names[1].as_deref(),
+        ExportVideoCodec::Gif => None,
+    }
+}
+
+fn media_inputs(encoder: VideoEncoder) -> impl Iterator<Item = Pixel> {
+    let surface = encoder.format().hardware
+        && shrimply_render_vulkan::device::Device::get()
+            .is_ok_and(|device| device.presentation_timing);
+    MEDIA_CODEC_INPUTS
+        .into_iter()
+        .filter(move |&pixel| surface || pixel != Pixel::MEDIACODEC)
+}
+
+pub fn settings_backend() -> &'static core::settings::Encoders {
+    use core::settings::Encoders;
+    static ENCODERS: OnceLock<Encoders> = OnceLock::new();
+    ENCODERS.get_or_init(|| {
+        Encoders::probe(|encoder| {
+            let Some(name) = encoder_name(encoder) else {
+                return false;
+            };
+            let wrapper = encoder.format().ffmpeg;
+            // Some devices reject the Vulkan swapchain on hardware input windows.
+            // Test buffered input as well before declaring the encoder unavailable.
+            media_inputs(encoder).any(|pixel| {
+                let attempt = core::probe_encoder(wrapper, pixel).and_then(|encoder| {
+                    let mut options = ffmpeg::Dictionary::new();
+                    set_input_options(&mut options, name);
+                    options.set("bitrate_mode", "vbr");
+                    open_encoder(encoder, options)
+                });
+                if let Err(error) = &attempt {
+                    tracing::debug!(name, ?pixel, %error, "MediaCodec input probe failed");
+                }
+                attempt.is_ok()
+            })
+        })
+    })
+}
+
+fn set_input_options(options: &mut ffmpeg::Dictionary<'static>, name: &str) {
+    options.set("codec_name", name);
+    options.set("ndk_codec", "1");
+    options.set("pts_as_dts", "0");
+}
 
 fn encoder_window(
     encoder: &mut ffmpeg::codec::encoder::video::Video,
@@ -59,12 +135,94 @@ fn encoder_window(
     Ok(window)
 }
 
+fn open_encoder(
+    mut encoder: ffmpeg::codec::encoder::video::Video,
+    options: ffmpeg::Dictionary<'static>,
+) -> Result<(ffmpeg::codec::encoder::video::Encoder, Option<Renderer>), String> {
+    let name = encoder
+        .codec()
+        .ok_or("Missing MediaCodec encoder")?
+        .name()
+        .to_owned();
+    let window = (encoder.format() == Pixel::MEDIACODEC)
+        .then(|| encoder_window(&mut encoder))
+        .transpose()?;
+    let encoder = encoder.open_with(options).map_err(|error| match error {
+        ffmpeg::Error::Other { errno } if errno == libc::ENOSYS => format!(
+            "MediaCodec encoder {name} does not support the requested quality or B-frame settings"
+        ),
+        _ => format!("Open MediaCodec encoder {name}: {error}"),
+    })?;
+    let dimensions = (encoder.width(), encoder.height());
+    let surface = window
+        .as_ref()
+        .map(|window| {
+            let surface = Renderer::try_new(window, dimensions.0, dimensions.1)?;
+            if surface.size() != dimensions {
+                return Err("MediaCodec surface does not match the export dimensions".into());
+            }
+            Ok::<_, String>(surface)
+        })
+        .transpose()?;
+    Ok((encoder, surface))
+}
+
+fn open_project_encoder(
+    project: &Project,
+    settings: &ExportSettings,
+    pixel: Pixel,
+) -> Result<(ffmpeg::codec::encoder::video::Encoder, Option<Renderer>), String> {
+    let name = settings.video_encoder.format().ffmpeg;
+    let codec = ffmpeg::codec::encoder::find_by_name(name)
+        .ok_or_else(|| format!("FFmpeg encoder {name} is unavailable"))?;
+    let mut encoder = ffmpeg::codec::Context::new_with_codec(codec)
+        .encoder()
+        .video()
+        .map_err(|error| error.to_string())?;
+    // FFmpeg probes global headers with dummy input followed by a flush.
+    // MediaCodec encoders can stall after that flush. Mux the real first packet.
+    core::configure_video_encoder(&mut encoder, project, settings, pixel, false)?;
+    unsafe {
+        if settings.b_frames > 0 {
+            // Android otherwise defaults AVC to Baseline, which cannot
+            // represent B frames even when the encoder supports them.
+            if settings.video_encoder.codec() == ExportVideoCodec::H264 {
+                (*encoder.as_mut_ptr()).profile = sys::AV_PROFILE_H264_MAIN;
+            }
+            (*encoder.as_mut_ptr()).strict_std_compliance = sys::FF_COMPLIANCE_EXPERIMENTAL;
+            (*encoder.as_mut_ptr()).has_b_frames = i32::try_from(settings.b_frames)
+                .map_err(|_| "B-frame count exceeds the encoder range")?;
+        }
+    }
+    let mut options = ffmpeg::Dictionary::new();
+    let name =
+        encoder_name(settings.video_encoder).ok_or("No MediaCodec encoder for this format")?;
+    set_input_options(&mut options, name);
+    options.set(
+        "bitrate_mode",
+        if settings.rate_control == core::ExportRateControl::ConstantBitrate {
+            "cbr"
+        } else {
+            "vbr"
+        },
+    );
+    if settings.rate_control == core::ExportRateControl::ConstantQp {
+        unsafe {
+            (*encoder.as_mut_ptr()).qmin = settings.constant_qp as i32;
+            (*encoder.as_mut_ptr()).qmax = settings.constant_qp as i32;
+        }
+    }
+    open_encoder(encoder, options)
+}
+
 impl Backend {
     pub fn new(maximum_temporal_decoders: usize) -> Self {
         Self {
             maximum_temporal_decoders,
             compositor: None,
             surface: None,
+            buffer_format: None,
+            scaler: None,
         }
     }
 
@@ -92,29 +250,12 @@ impl VideoBackend for Backend {
         "android-vulkan-mediacodec"
     }
 
-    fn encoder_label(&self, codec: core::ExportVideoCodec) -> &'static str {
-        match codec {
-            core::ExportVideoCodec::H264 => "h264_mediacodec",
-            core::ExportVideoCodec::H265 => "hevc_mediacodec",
-            core::ExportVideoCodec::Gif => "gif",
-        }
-    }
-
     fn decode_order_delay(&self, settings: &ExportSettings) -> Option<u32> {
         Some(settings.b_frames)
     }
 
     fn validate(&self, _project: &Project, settings: &ExportSettings) -> Result<(), String> {
-        core::settings::validate_backend(settings, core::settings::Backend::MediaCodec)?;
-        if settings.video_codec != core::ExportVideoCodec::Gif
-            && !shrimply_render_vulkan::device::Device::get()?.presentation_timing
-        {
-            return Err(
-                "Hardware export requires VK_GOOGLE_display_timing to preserve media timestamps"
-                    .into(),
-            );
-        }
-        Ok(())
+        core::settings::validate_rate_control(settings)
     }
 
     fn prepare(
@@ -133,66 +274,22 @@ impl VideoBackend for Backend {
         &mut self,
         project: &Project,
         settings: &ExportSettings,
-        global_header: bool,
+        _global_header: bool,
     ) -> Result<ffmpeg::codec::encoder::video::Encoder, String> {
-        let name = self.encoder_label(settings.video_codec);
-        let codec = ffmpeg::codec::encoder::find_by_name(name)
-            .ok_or_else(|| format!("FFmpeg encoder {name} is unavailable"))?;
-        let mut encoder = ffmpeg::codec::Context::new_with_codec(codec)
-            .encoder()
-            .video()
-            .map_err(|error| error.to_string())?;
-        core::configure_video_encoder(
-            &mut encoder,
-            project,
-            settings,
-            Pixel::MEDIACODEC,
-            global_header,
-        )?;
-        let window = encoder_window(&mut encoder)?;
-        unsafe {
-            if settings.b_frames > 0 {
-                // Android otherwise defaults AVC to Baseline, which cannot
-                // represent B frames even when the encoder supports them.
-                if settings.video_codec == core::ExportVideoCodec::H264 {
-                    (*encoder.as_mut_ptr()).profile = sys::AV_PROFILE_H264_MAIN;
+        let mut first_error = None;
+        for pixel in media_inputs(settings.video_encoder) {
+            match open_project_encoder(project, settings, pixel) {
+                Ok((encoder, surface)) => {
+                    self.surface = surface;
+                    self.buffer_format = (pixel != Pixel::MEDIACODEC).then_some(pixel);
+                    return Ok(encoder);
                 }
-                (*encoder.as_mut_ptr()).strict_std_compliance = sys::FF_COMPLIANCE_EXPERIMENTAL;
-                (*encoder.as_mut_ptr()).has_b_frames = i32::try_from(settings.b_frames)
-                    .map_err(|_| "B-frame count exceeds the encoder range")?;
+                Err(error) => {
+                    first_error.get_or_insert(error);
+                }
             }
         }
-        let mut options = ffmpeg::Dictionary::new();
-        options.set("ndk_codec", "1");
-        options.set("pts_as_dts", "0");
-        options.set(
-            "bitrate_mode",
-            if settings.rate_control == core::ExportRateControl::ConstantBitrate {
-                "cbr"
-            } else {
-                "vbr"
-            },
-        );
-        if settings.rate_control == core::ExportRateControl::ConstantQp {
-            unsafe {
-                (*encoder.as_mut_ptr()).qmin = settings.constant_qp as i32;
-                (*encoder.as_mut_ptr()).qmax = settings.constant_qp as i32;
-            }
-        }
-        let encoder = encoder
-            .open_as_with(codec, options)
-            .map_err(|error| match error {
-                ffmpeg::Error::Other { errno } if errno == libc::ENOSYS => format!(
-                    "Hardware encoder {name} does not support the requested quality or B-frame settings"
-                ),
-                _ => format!("Open hardware encoder {name}: {error}"),
-            })?;
-        self.surface = Some(Renderer::new(
-            &window,
-            project.canvas_size.width,
-            project.canvas_size.height,
-        ));
-        Ok(encoder)
+        Err(first_error.expect("at least one MediaCodec input"))
     }
 
     fn render_video_frame(
@@ -202,6 +299,11 @@ impl VideoBackend for Backend {
         position: Time,
         cancelled: &AtomicBool,
     ) -> Result<RenderedFrame, String> {
+        if let Some(pixel) = self.buffer_format {
+            let mut rendered = self.render_rgba_frame(project, settings, position, cancelled)?;
+            rendered.frame = core::rgba_to_bt709(&mut self.scaler, &rendered.frame, pixel)?;
+            return Ok(rendered);
+        }
         let rendered = self.render(project, settings, position, cancelled)?;
         let (texture, submission) = self
             .compositor
@@ -266,8 +368,7 @@ impl VideoBackend for Backend {
     ) -> Result<RenderedFrame, String> {
         let rendered = self.render(project, settings, position, cancelled)?;
         rendered.wait()?;
-        // GIF uses the same explicit readback and shared palette encoder as the
-        // desktop backends. H.264/H.265 never enter this CPU-pixel path.
+        // Buffered MediaCodec, software video and GIF share this readback.
         let bytes = self
             .compositor
             .as_ref()

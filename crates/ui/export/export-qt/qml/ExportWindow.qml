@@ -60,7 +60,8 @@ Item {
 
     ApplicationWindow {
         id: videoWindow
-        title: exportBackend.translate("Export Video")
+        readonly property var form: exportBackend.videoForm.length ? JSON.parse(exportBackend.videoForm) : null
+        title: form ? form.title : ""
         transientParent: root.owner
         modality: Qt.WindowModal
         flags: Qt.Dialog
@@ -86,257 +87,77 @@ Item {
                     width: videoScroll.availableWidth
                     spacing: 16
 
-                    GroupBox {
-                        title: exportBackend.translate("Video format")
-                        Layout.fillWidth: true
+                    Repeater {
+                        model: videoWindow.form ? videoWindow.form.groups.length : 0
 
-                        ColumnLayout {
-                            anchors.fill: parent
-                            spacing: 12
+                        GroupBox {
+                            id: groupBox
+                            required property int index
+                            readonly property var group: videoWindow.form.groups[index]
+                            title: group.label
+                            visible: group.visible
+                            Layout.fillWidth: true
 
-                            ControlRow {
-                                label: exportBackend.translate("Export format")
-                                AdaptiveComboBox {
-                                    model: ["H.264", "H.265", "GIF"]
-                                    currentIndex: exportBackend.videoCodec
-                                    onActivated: exportBackend.videoCodec = currentIndex
-                                }
-                            }
-                            ControlRow {
-                                label: exportBackend.translate("Container")
-                                visible: exportBackend.videoCodec !== 2
-                                AdaptiveComboBox {
-                                    model: ["MP4", "MKV"]
-                                    currentIndex: exportBackend.container
-                                    onActivated: exportBackend.container = currentIndex
-                                }
-                            }
-                        }
-                    }
+                            ColumnLayout {
+                                anchors.fill: parent
+                                spacing: 12
 
-                    GroupBox {
-                        title: exportBackend.translate("Encoder settings")
-                        Layout.fillWidth: true
-                        visible: exportBackend.videoCodec !== 2
+                                Repeater {
+                                    model: videoWindow.form.fields.length
 
-                        ColumnLayout {
-                            anchors.fill: parent
-                            spacing: 12
+                                    Loader {
+                                        id: fieldLoader
+                                        required property int index
+                                        readonly property var field: videoWindow.form.fields[index]
+                                        visible: field.visible && field.group === groupBox.group.label
+                                        active: visible
+                                        enabled: field.enabled
+                                        Layout.fillWidth: true
+                                        sourceComponent: field.widget === "choice" ? choiceField
+                                            : field.widget === "toggle" ? toggleField : numberField
 
-                            ControlRow {
-                                label: exportBackend.translate("Rate Control")
-                                AdaptiveComboBox {
-                                    model: [
-                                        exportBackend.translate("Constant QP"),
-                                        exportBackend.translate("Constant Bitrate"),
-                                        exportBackend.translate("Variable Bitrate"),
-                                        exportBackend.translate("Variable Bitrate with Target Quality"),
-                                        exportBackend.translate("Lossless")
-                                    ]
-                                    currentIndex: exportBackend.rateControl
-                                    onActivated: exportBackend.rateControl = currentIndex
-                                }
-                            }
-                            ControlRow {
-                                label: exportBackend.translate("Video Bitrate")
-                                visible: exportBackend.rateControl >= 1 && exportBackend.rateControl <= 3
-                                NumberPicker {
-                                    minimum: 50
-                                    maximum: 250000
-                                    dragStep: 50
-                                    digits: 0
-                                    value: exportBackend.bitrateKbps
-                                    onEdited: function(value) { exportBackend.bitrateKbps = value }
-                                }
-                            }
-                            ControlRow {
-                                label: exportBackend.translate("Max Video Bitrate")
-                                visible: exportBackend.rateControl === 2 || exportBackend.rateControl === 3
-                                NumberPicker {
-                                    minimum: 50
-                                    maximum: 250000
-                                    dragStep: 50
-                                    digits: 0
-                                    value: exportBackend.maxBitrateKbps
-                                    onEdited: function(value) { exportBackend.maxBitrateKbps = value }
-                                }
-                            }
-                            ControlRow {
-                                label: exportBackend.translate("Target Quality")
-                                visible: exportBackend.rateControl === 3
-                                NumberPicker {
-                                    minimum: 1
-                                    maximum: 51
-                                    digits: 0
-                                    value: exportBackend.targetQuality
-                                    onEdited: function(value) { exportBackend.targetQuality = value }
-                                }
-                            }
-                            ControlRow {
-                                label: exportBackend.translate("Constant QP")
-                                visible: exportBackend.rateControl === 0
-                                NumberPicker {
-                                    minimum: 0
-                                    maximum: 51
-                                    digits: 0
-                                    value: exportBackend.constantQp
-                                    onEdited: function(value) { exportBackend.constantQp = value }
-                                }
-                            }
-                            ControlRow {
-                                label: exportBackend.translate("Keyframe Interval")
-                                NumberPicker {
-                                    minimum: 0
-                                    maximum: 10
-                                    digits: 0
-                                    unitName: "s"
-                                    value: exportBackend.keyframeIntervalSeconds
-                                    onEdited: function(value) { exportBackend.keyframeIntervalSeconds = value }
-                                }
-                            }
-                            ControlRow {
-                                label: exportBackend.translate("Preset")
-                                AdaptiveComboBox {
-                                    model: [
-                                        exportBackend.translate("P1: Fastest (Lowest Quality)"),
-                                        exportBackend.translate("P2: Faster (Lower Quality)"),
-                                        exportBackend.translate("P3: Fast (Low Quality)"),
-                                        exportBackend.translate("P4: Medium (Medium Quality)"),
-                                        exportBackend.translate("P5: Slow (Good Quality)"),
-                                        exportBackend.translate("P6: Slower (Better Quality)"),
-                                        exportBackend.translate("P7: Slowest (Best Quality)")
-                                    ]
-                                    currentIndex: exportBackend.preset
-                                    onActivated: exportBackend.preset = currentIndex
-                                }
-                            }
-                            ControlRow {
-                                label: exportBackend.translate("Tuning")
-                                visible: exportBackend.rateControl !== 4
-                                AdaptiveComboBox {
-                                    model: [
-                                        exportBackend.translate("Ultra High Quality"),
-                                        exportBackend.translate("High Quality"),
-                                        exportBackend.translate("Low Latency"),
-                                        exportBackend.translate("Ultra Low Latency")
-                                    ]
-                                    currentIndex: exportBackend.tuning
-                                    onActivated: exportBackend.tuning = currentIndex
-                                }
-                            }
-                            ControlRow {
-                                label: exportBackend.translate("Multi Pass")
-                                AdaptiveComboBox {
-                                    model: [
-                                        exportBackend.translate("Single Pass"),
-                                        exportBackend.translate("Two Passes (Quarter Resolution)"),
-                                        exportBackend.translate("Two Passes (Full Resolution)")
-                                    ]
-                                    currentIndex: exportBackend.multipass
-                                    onActivated: exportBackend.multipass = currentIndex
-                                }
-                            }
-                            ControlRow {
-                                label: exportBackend.translate("Profile")
-                                AdaptiveComboBox {
-                                    model: ["Main", "Main10"]
-                                    currentIndex: exportBackend.profile
-                                    onActivated: exportBackend.profile = currentIndex
-                                }
-                            }
-                            SwitchRow {
-                                label: exportBackend.translate("Look-ahead")
-                                active: exportBackend.lookAhead
-                                onToggled: function(active) { exportBackend.lookAhead = active }
-                            }
-                            SwitchRow {
-                                label: exportBackend.translate("Adaptive Quantization")
-                                active: exportBackend.adaptiveQuantization
-                                onToggled: function(active) { exportBackend.adaptiveQuantization = active }
-                            }
-                            ControlRow {
-                                label: exportBackend.translate("B Frames")
-                                NumberPicker {
-                                    minimum: 0
-                                    maximum: 16
-                                    digits: 0
-                                    value: exportBackend.bFrames
-                                    onEdited: function(value) { exportBackend.bFrames = value }
-                                }
-                            }
-                            SwitchRow {
-                                label: exportBackend.translate("B Frame as Reference")
-                                active: exportBackend.bFrameAsReference
-                                onToggled: function(active) { exportBackend.bFrameAsReference = active }
-                            }
-                        }
-                    }
+                                        function setValue(value) {
+                                            exportBackend.setVideoField(field.id, JSON.stringify(value))
+                                        }
 
-                    GroupBox {
-                        title: exportBackend.translate("Output")
-                        Layout.fillWidth: true
+                                        Component {
+                                            id: choiceField
+                                            ControlRow {
+                                                label: fieldLoader.field.label
+                                                AdaptiveComboBox {
+                                                    readonly property var choices: fieldLoader.field.choices
+                                                    model: choices.map(choice => choice.label)
+                                                    currentIndex: choices.findIndex(choice => choice.value === String(fieldLoader.field.value))
+                                                    onActivated: fieldLoader.setValue(choices[currentIndex].value)
+                                                }
+                                            }
+                                        }
 
-                        ColumnLayout {
-                            anchors.fill: parent
-                            spacing: 12
+                                        Component {
+                                            id: numberField
+                                            ControlRow {
+                                                label: fieldLoader.field.label
+                                                subtitle: fieldLoader.field.subtitle || ""
+                                                NumberPicker {
+                                                    minimum: fieldLoader.field.range[0]
+                                                    maximum: fieldLoader.field.range[1]
+                                                    dragStep: fieldLoader.field.range[2]
+                                                    digits: 0
+                                                    value: fieldLoader.field.value
+                                                    onEdited: function(value) { fieldLoader.setValue(Math.round(value)) }
+                                                }
+                                            }
+                                        }
 
-                            ControlRow {
-                                label: exportBackend.translate("Frame rate")
-                                AdaptiveComboBox {
-                                    model: exportBackend.frameRateLabels
-                                    currentIndex: exportBackend.frameRateIndex
-                                    onActivated: exportBackend.frameRateIndex = currentIndex
-                                }
-                            }
-                            ControlRow {
-                                label: exportBackend.translate("Background Alpha")
-                                visible: exportBackend.videoCodec === 2
-                                NumberPicker {
-                                    minimum: 0
-                                    maximum: 255
-                                    digits: 0
-                                    value: exportBackend.backgroundAlpha
-                                    onEdited: function(value) { exportBackend.backgroundAlpha = value }
-                                }
-                            }
-                        }
-                    }
-
-                    GroupBox {
-                        title: exportBackend.translate("Audio")
-                        Layout.fillWidth: true
-                        visible: exportBackend.videoCodec !== 2
-
-                        ColumnLayout {
-                            anchors.fill: parent
-                            spacing: 12
-
-                            ControlRow {
-                                label: exportBackend.translate("Audio Encoder")
-                                AdaptiveComboBox {
-                                    model: exportBackend.audioEncoderLabels()
-                                    currentIndex: exportBackend.audioEncoder
-                                    onActivated: exportBackend.audioEncoder = currentIndex
-                                }
-                            }
-                            ControlRow {
-                                label: exportBackend.translate("Audio Sample Rate")
-                                AdaptiveComboBox {
-                                    model: ["44100", "48000", "96000"]
-                                    currentIndex: exportBackend.audioSampleRate
-                                    onActivated: exportBackend.audioSampleRate = currentIndex
-                                }
-                            }
-                            ControlRow {
-                                label: exportBackend.translate("Audio Bitrate")
-                                NumberPicker {
-                                    minimum: 32
-                                    maximum: 512
-                                    dragStep: 8
-                                    digits: 0
-                                    unitName: "kbps"
-                                    value: exportBackend.audioBitrateKbps
-                                    onEdited: function(value) { exportBackend.audioBitrateKbps = value }
+                                        Component {
+                                            id: toggleField
+                                            SwitchRow {
+                                                label: fieldLoader.field.label
+                                                active: fieldLoader.field.value
+                                                onToggled: function(active) { fieldLoader.setValue(active) }
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -349,9 +170,9 @@ Item {
                 Layout.fillWidth: true
                 Layout.margins: 12
                 Item { Layout.fillWidth: true }
-                Button { text: exportBackend.translate("Cancel"); onClicked: videoWindow.close() }
+                Button { text: videoWindow.form ? videoWindow.form.cancel_label : ""; onClicked: videoWindow.close() }
                 Button {
-                    text: exportBackend.translate("Export")
+                    text: videoWindow.form ? videoWindow.form.submit_label : ""
                     highlighted: true
                     onClicked: {
                         if (exportBackend.startVideo()) {

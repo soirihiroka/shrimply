@@ -12,7 +12,9 @@ use objc2_foundation::{NSObject, NSObjectProtocol, NSSize};
 use shrimply_components_appkit::export_dialog::{
     self, ROW_HEIGHT, WIDTH, add_choices, popup_row, text_row,
 };
-use shrimply_export_core::video::{ExportContainer, ExportVideoCodec, available_audio_encoders};
+use shrimply_export_core::video::{
+    ExportContainer, ExportVideoCodec, available_audio_encoders, settings::VideoEncoder,
+};
 use shrimply_export_metal::{
     ExportSettings, H264Entropy, VideoToolboxProfile, VideoToolboxRateControl,
 };
@@ -20,17 +22,21 @@ use shrimply_project_document::project::{self, Project};
 use std::{cell::OnceCell, path::PathBuf};
 
 const HEIGHT: f64 = 555.0;
-const GIF_HEIGHT: f64 = 165.0;
+
+#[derive(Clone, Copy, Debug)]
+enum Visibility {
+    Always,
+    Gif,
+    Video,
+    Hardware,
+    HardwareH264,
+}
 
 struct DialogIvars {
     sheet: OnceCell<Retained<NSWindow>>,
-    format_row: OnceCell<Retained<NSView>>,
-    fps_row: OnceCell<Retained<NSView>>,
+    formats: &'static [VideoEncoder],
     profile: OnceCell<Retained<NSPopUpButton>>,
-    video_rows: OnceCell<Vec<Retained<NSView>>>,
-    rows_below_entropy: OnceCell<Vec<Retained<NSView>>>,
-    alpha_row: OnceCell<Retained<NSView>>,
-    entropy_row: OnceCell<Retained<NSView>>,
+    rows: OnceCell<Vec<(Retained<NSView>, Visibility)>>,
 }
 
 define_class!(
@@ -44,42 +50,34 @@ define_class!(
     impl Dialog {
         #[unsafe(method(formatChanged:))]
         fn format_changed(&self, sender: &NSPopUpButton) {
-            let codec = sender.indexOfSelectedItem();
-            let gif = codec == 2;
-            for row in self.ivars().video_rows.get().expect("video rows installed") {
-                row.setHidden(gif);
+            let ivars = self.ivars();
+            let format = ivars.formats[sender.indexOfSelectedItem() as usize].format();
+            let codec = format.codec;
+            let gif = codec == ExportVideoCodec::Gif;
+            let hardware = format.hardware;
+            let mut row_index = 0;
+            for (row, visibility) in ivars.rows.get().expect("export rows installed").iter().rev() {
+                let visible = match visibility {
+                    Visibility::Always => true,
+                    Visibility::Gif => gif,
+                    Visibility::Video => !gif,
+                    Visibility::Hardware => hardware,
+                    Visibility::HardwareH264 => hardware && codec == ExportVideoCodec::H264,
+                };
+                row.setHidden(!visible);
+                if visible {
+                    let mut frame = row.frame();
+                    frame.origin.y = 60.0 + row_index as f64 * ROW_HEIGHT;
+                    row.setFrame(frame);
+                    row_index += 1;
+                }
             }
-            self.ivars().alpha_row.get().expect("alpha row installed").setHidden(!gif);
-            let mut format_frame = self.ivars().format_row.get().expect("format row installed").frame();
-            format_frame.origin.y = if gif { 120.0 } else { 510.0 };
-            self.ivars().format_row.get().expect("format row installed").setFrame(format_frame);
-            let mut fps_frame = self.ivars().fps_row.get().expect("FPS row installed").frame();
-            fps_frame.origin.y = if gif { 90.0 } else { 450.0 };
-            self.ivars().fps_row.get().expect("FPS row installed").setFrame(fps_frame);
-            self.ivars()
-                .sheet
-                .get()
-                .expect("sheet installed")
-                .setContentSize(NSSize::new(WIDTH, if gif { GIF_HEIGHT } else { HEIGHT }));
-            let entropy_hidden = gif || codec != 0;
-            self.ivars().entropy_row.get().expect("entropy row installed").setHidden(entropy_hidden);
-            for (index, row) in self
-                .ivars()
-                .rows_below_entropy
-                .get()
-                .expect("lower rows installed")
-                .iter()
-                .enumerate()
-            {
-                let mut frame = row.frame();
-                frame.origin.y = 60.0
-                    + (6 - index + usize::from(entropy_hidden)) as f64 * ROW_HEIGHT;
-                row.setFrame(frame);
-            }
+            ivars.sheet.get().expect("sheet installed")
+                .setContentSize(NSSize::new(WIDTH, 75.0 + row_index as f64 * ROW_HEIGHT));
             if gif { return; }
-            let profile = self.ivars().profile.get().expect("profile installed");
+            let profile = ivars.profile.get().expect("profile installed");
             profile.removeAllItems();
-            if codec == 0 {
+            if codec == ExportVideoCodec::H264 {
                 add_choices(profile, &["Baseline", "Main", "High"]);
                 profile.selectItemAtIndex(2);
             } else {
@@ -96,15 +94,12 @@ pub fn choose_settings(
     maximum_temporal_decoders: usize,
 ) -> Option<ExportSettings> {
     let mtm = parent.mtm();
+    let encoders = shrimply_export_metal::settings_backend();
     let dialog = Dialog::alloc(mtm).set_ivars(DialogIvars {
         sheet: OnceCell::new(),
-        format_row: OnceCell::new(),
-        fps_row: OnceCell::new(),
+        formats: encoders.formats(),
         profile: OnceCell::new(),
-        video_rows: OnceCell::new(),
-        rows_below_entropy: OnceCell::new(),
-        alpha_row: OnceCell::new(),
-        entropy_row: OnceCell::new(),
+        rows: OnceCell::new(),
     });
     let dialog: Retained<Dialog> = unsafe { objc2::msg_send![super(dialog), init] };
     let sheet = export_dialog::new("Export Video", HEIGHT, mtm);
@@ -117,18 +112,23 @@ pub fn choose_settings(
         .contentView()
         .expect("export dialog content installed");
 
-    let (codec_row, codec) = popup_row("Format", &["H.264", "H.265 / HEVC", "GIF"], 15, mtm);
-    codec.selectItemAtIndex(1);
+    let formats = &dialog.ivars().formats;
+    let labels: Vec<_> = formats
+        .iter()
+        .map(|encoder| encoder.format().label)
+        .collect();
+    let default = encoders.default_encoder();
+    let initial = formats
+        .iter()
+        .position(|&encoder| encoder == default)
+        .expect("default export format");
+    let (codec_row, codec) = popup_row("Format", &labels, 15, mtm);
+    codec.selectItemAtIndex(initial as isize);
     unsafe {
         codec.setTarget(Some(&*dialog));
         codec.setAction(Some(sel!(formatChanged:)));
     }
     content.addSubview(&codec_row);
-    dialog
-        .ivars()
-        .format_row
-        .set(codec_row.clone())
-        .expect("format row installed once");
     let (container_row, container) = popup_row("Container", &["MP4", "MKV"], 14, mtm);
     content.addSubview(&container_row);
 
@@ -155,12 +155,6 @@ pub fn choose_settings(
     let (fps_row, fps) = popup_row("Frame rate", &fps_label_refs, 13, mtm);
     fps.selectItemAtIndex(selected_fps as isize);
     content.addSubview(&fps_row);
-    dialog
-        .ivars()
-        .fps_row
-        .set(fps_row.clone())
-        .expect("FPS row installed once");
-
     let (rate_row, rate) = popup_row(
         "Rate control",
         &["Average bitrate", "Constant bitrate"],
@@ -185,11 +179,6 @@ pub fn choose_settings(
     entropy.selectItemAtIndex(1);
     entropy_row.setHidden(true);
     content.addSubview(&entropy_row);
-    dialog
-        .ivars()
-        .entropy_row
-        .set(entropy_row.clone())
-        .expect("entropy row installed once");
     let (speed_row, prioritize_speed) =
         popup_row("Prioritize speed", &["Disabled", "Enabled"], 6, mtm);
     content.addSubview(&speed_row);
@@ -212,55 +201,39 @@ pub fn choose_settings(
     let (alpha_row, alpha) = text_row("Background alpha (0–255)", "0", 0, mtm);
     alpha_row.setHidden(true);
     content.addSubview(&alpha_row);
+    use Visibility::*;
     dialog
         .ivars()
-        .alpha_row
-        .set(alpha_row)
-        .expect("alpha row installed once");
-    dialog
-        .ivars()
-        .video_rows
+        .rows
         .set(vec![
-            container_row,
-            rate_row,
-            bitrate_row,
-            keyframe_row,
-            profile_row,
-            b_frames_row,
-            entropy_row,
-            speed_row.clone(),
-            power_row.clone(),
-            aq_row.clone(),
-            refs_row.clone(),
-            audio_row.clone(),
-            audio_rate_row.clone(),
-            audio_bitrate_row.clone(),
+            (codec_row, Always),
+            (container_row, Video),
+            (fps_row, Always),
+            (rate_row, Video),
+            (bitrate_row, Video),
+            (keyframe_row, Video),
+            (profile_row, Hardware),
+            (b_frames_row, Video),
+            (entropy_row, HardwareH264),
+            (speed_row, Hardware),
+            (power_row, Hardware),
+            (aq_row, Hardware),
+            (refs_row, Hardware),
+            (audio_row, Video),
+            (audio_rate_row, Video),
+            (audio_bitrate_row, Video),
+            (alpha_row, Gif),
         ])
-        .expect("video rows installed once");
-    dialog
-        .ivars()
-        .rows_below_entropy
-        .set(vec![
-            speed_row,
-            power_row,
-            aq_row,
-            refs_row,
-            audio_row,
-            audio_rate_row,
-            audio_bitrate_row,
-        ])
-        .expect("lower rows installed once");
+        .expect("export rows installed once");
     dialog.format_changed(sel!(formatChanged:), &codec);
 
     if !export_dialog::run(parent, &sheet) {
         return None;
     }
 
-    let video_codec = match codec.indexOfSelectedItem() {
-        0 => ExportVideoCodec::H264,
-        1 => ExportVideoCodec::H265,
-        _ => ExportVideoCodec::Gif,
-    };
+    let encoder = *formats.get(codec.indexOfSelectedItem() as usize)?;
+    let format = encoder.format();
+    let video_codec = format.codec;
     let container = if video_codec == ExportVideoCodec::Gif {
         ExportContainer::Gif
     } else if container.indexOfSelectedItem() == 1 {
@@ -284,7 +257,7 @@ pub fn choose_settings(
         maximum_temporal_decoders,
         path: PathBuf::new(),
         overwrite: true,
-        video_codec,
+        video_encoder: encoder,
         container,
         fps: *fps_values.get(fps.indexOfSelectedItem() as usize)?,
         background_alpha: if video_codec == ExportVideoCodec::Gif {
@@ -309,7 +282,11 @@ pub fn choose_settings(
         prioritize_speed: prioritize_speed.indexOfSelectedItem() == 1,
         power_efficient: power_efficient.indexOfSelectedItem() == 1,
         spatial_aq: spatial_aq.indexOfSelectedItem() == 1,
-        max_reference_frames: parse_u32(&max_refs)?,
+        max_reference_frames: if format.hardware {
+            parse_u32(&max_refs)?
+        } else {
+            0
+        },
         audio_encoder: *encoders.get(audio.indexOfSelectedItem() as usize)?,
         audio_sample_rate: match audio_rate.indexOfSelectedItem() {
             0 => 44_100,

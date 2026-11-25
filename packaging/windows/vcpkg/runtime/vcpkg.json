@@ -17,7 +17,9 @@
         "nvcodec",
         "opus",
         "swresample",
-        "swscale"
+        "swscale",
+        "x264",
+        "x265"
       ]
     },
     "pango",

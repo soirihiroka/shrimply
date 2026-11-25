@@ -1037,7 +1037,7 @@ use std::collections::BTreeMap;
 pub struct RenderProjectRequest {
     /// Destination file. Existing files require overwrite=true.
     pub output: String,
-    /// h264, h265, or gif.
+    /// h264 or h265 (prefer hardware), h264-cpu or h265-cpu, gif, or a platform encoder ID.
     pub codec: Option<String>,
     /// mp4, mkv, or gif; defaults to the output extension.
     pub container: Option<String>,

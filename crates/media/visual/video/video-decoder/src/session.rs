@@ -50,6 +50,7 @@ pub enum DecodeMode {
     Accurate,
     Continuous,
     LocalScrub,
+    ExactScrub,
 }
 
 impl DecodeMode {
@@ -63,6 +64,10 @@ impl DecodeMode {
 
     pub const fn realtime(self) -> bool {
         matches!(self, Self::Continuous | Self::LocalScrub)
+    }
+
+    pub const fn exact_scrub(self) -> bool {
+        matches!(self, Self::ExactScrub)
     }
 }
 
@@ -110,6 +115,10 @@ pub struct VideoDecoderSession {
     seek_first_frame_received: bool,
     active_request: Option<DecodeRequestState>,
     nonadvancing_frames: usize,
+    #[cfg(feature = "cuda")]
+    scrub: Option<crate::scrub::ScrubState>,
+    #[cfg(feature = "cuda")]
+    skip_nonref_before_pts: Option<(i64, i64)>,
 }
 
 impl VideoDecoderSession {
@@ -172,7 +181,7 @@ impl VideoDecoderSession {
     ) -> Result<Self, String> {
         source.verify_current()?;
         ffmpeg::init().map_err(|error| error.to_string())?;
-        let input = shrimply_media_info::demux::open_with_interrupt(source.path(), move || {
+        let mut input = shrimply_media_info::demux::open_with_interrupt(source.path(), move || {
             cancellation.as_ref().is_some_and(DecodeControl::superseded)
         })
         .map_err(|error| error.to_string())?;
@@ -199,6 +208,15 @@ impl VideoDecoderSession {
                 stream.parameters(),
             )
         };
+        // Skip demuxing/seeking non-selected streams (e.g. interleaved audio tracks).
+        unsafe {
+            let fmt = input.as_mut_ptr();
+            for idx in 0..(*fmt).nb_streams as usize {
+                if idx != stream_index {
+                    (*(*(*fmt).streams.add(idx))).discard = sys::AVDiscard::AVDISCARD_ALL;
+                }
+            }
+        }
         let frame_duration = if frame_rate.numerator() > 0 && frame_rate.denominator() > 0 {
             Time::from_fraction(
                 i64::from(frame_rate.denominator()),
@@ -256,6 +274,10 @@ impl VideoDecoderSession {
             seek_first_frame_received: false,
             active_request: None,
             nonadvancing_frames: 0,
+            #[cfg(feature = "cuda")]
+            scrub: None,
+            #[cfg(feature = "cuda")]
+            skip_nonref_before_pts: None,
         })
     }
 
@@ -266,6 +288,8 @@ impl VideoDecoderSession {
         index: u64,
         controls: DecodeControls<'_>,
     ) -> Result<DecodeOutcome, String> {
+        #[cfg(feature = "cuda")]
+        self.invalidate_dirty_scrub_cursor();
         if self.cancel_if_superseded(controls) {
             return Ok(DecodeOutcome::Superseded(None));
         }
@@ -414,11 +438,180 @@ impl VideoDecoderSession {
         controls: DecodeControls<'_>,
         mode: DecodeMode,
     ) -> Result<DecodeOutcome, String> {
+        #[cfg(feature = "cuda")]
+        if mode.exact_scrub() {
+            return self.frame_at_exact_scrub(position, cached, controls);
+        }
+        #[cfg(feature = "cuda")]
+        self.invalidate_dirty_scrub_cursor();
         if mode.time_accurate() {
             self.frame_at_exact(position, cached, controls, mode.continuous())
         } else {
             self.frame_at(position, cached, controls)
         }
+    }
+
+    fn reset_stream_state(&mut self) {
+        self.frame_index = 0;
+        self.last_decoded_position = None;
+        self.previous_decoded_position = None;
+        self.lookahead = None;
+        self.pending_packet = None;
+        self.input_eof = false;
+        self.eof_sent = false;
+        self.decoder_eof = false;
+        self.nonadvancing_frames = 0;
+        self.active_request = None;
+    }
+
+    #[cfg(feature = "cuda")]
+    fn invalidate_dirty_scrub_cursor(&mut self) {
+        if self
+            .scrub
+            .as_mut()
+            .is_some_and(|scrub| std::mem::replace(&mut scrub.ffmpeg_cursor_dirty, false))
+        {
+            self.decoder.flush();
+            self.reset_stream_state();
+        }
+    }
+
+    #[cfg(feature = "cuda")]
+    fn set_decoder_skip_nonref(&mut self, skip: bool) {
+        let mode = if skip {
+            sys::AVDiscard::AVDISCARD_NONREF
+        } else {
+            sys::AVDiscard::AVDISCARD_NONE
+        };
+        unsafe {
+            let raw = self.decoder.as_mut_ptr();
+            if (*raw).skip_frame != mode {
+                (*raw).skip_frame = mode;
+            }
+        }
+    }
+
+    #[cfg(feature = "cuda")]
+    fn ensure_scrub_state(&mut self) -> &mut crate::scrub::ScrubState {
+        if self.scrub.is_none() {
+            let hw_device_ctx = unsafe { (*self.decoder.as_ptr()).hw_device_ctx };
+            let codecpar = self
+                .input
+                .stream(self.stream_index)
+                .expect("selected video stream")
+                .parameters();
+            self.scrub = Some(crate::scrub::ScrubState::new(
+                hw_device_ctx,
+                unsafe { codecpar.as_ptr() },
+                self.stream_time_base,
+            ));
+        }
+        self.scrub.as_mut().expect("scrub state initialized")
+    }
+
+    #[cfg(feature = "cuda")]
+    fn frame_at_exact_scrub(
+        &mut self,
+        position: Time,
+        cached: Option<DecodedVisual>,
+        controls: DecodeControls<'_>,
+    ) -> Result<DecodeOutcome, String> {
+        const NONREF_PREROLL_MARGIN_FRAMES: i64 = 8;
+
+        let _measurement = shrimply_profiling::measure("Video decode / Exact scrub total");
+        if self.cancel_if_superseded(controls) {
+            return Ok(DecodeOutcome::Superseded(cached));
+        }
+        let target_pts = source_time_to_stream_timestamp(
+            position,
+            self.stream_time_base,
+            self.stream_start_time,
+        );
+        self.ensure_scrub_state();
+        if let Some(hit) = self
+            .scrub
+            .as_mut()
+            .expect("scrub state")
+            .lookup_frame(target_pts)
+        {
+            return Ok(DecodeOutcome::Frame(Some(hit)));
+        }
+
+        let direct = {
+            let scrub = self.scrub.as_mut().expect("scrub state");
+            if scrub.has_native() {
+                scrub.decode_direct(
+                    &mut self.input,
+                    self.stream_index,
+                    self.stream_time_base,
+                    self.stream_start_time,
+                    self.frame_duration,
+                    target_pts,
+                )?
+            } else {
+                crate::scrub::DirectScrubOutcome::Fallback
+            }
+        };
+
+        match direct {
+            crate::scrub::DirectScrubOutcome::Hit(visual) => {
+                if self.cancel_if_superseded(controls) {
+                    return Ok(DecodeOutcome::Superseded(Some(visual)));
+                }
+                return Ok(DecodeOutcome::Frame(Some(visual)));
+            }
+            crate::scrub::DirectScrubOutcome::Decoded(visual) => {
+                self.scrub.as_ref().expect("scrub state").record_miss();
+                self.record_first_frame(visual.1.native());
+                if self.cancel_if_superseded(controls) {
+                    return Ok(DecodeOutcome::Superseded(Some(visual)));
+                }
+                return Ok(DecodeOutcome::Frame(Some(visual)));
+            }
+            crate::scrub::DirectScrubOutcome::Fallback => {}
+        }
+
+        // Fallback to unified FFmpeg exact decode with safe non-reference preroll skipping.
+        {
+            let scrub = self.scrub.as_ref().expect("scrub state");
+            scrub.record_miss();
+            scrub.record_ffmpeg_fallback();
+        }
+        self.invalidate_dirty_scrub_cursor();
+
+        let frame_ts_step =
+            source_time_to_stream_timestamp(self.frame_duration, self.stream_time_base, 0).max(1);
+        self.skip_nonref_before_pts = Some((
+            target_pts.saturating_sub(frame_ts_step.saturating_mul(NONREF_PREROLL_MARGIN_FRAMES)),
+            frame_ts_step.saturating_mul(2),
+        ));
+        let outcome = self.frame_at_exact(position, None, controls, false);
+        self.skip_nonref_before_pts = None;
+        self.set_decoder_skip_nonref(false);
+        let outcome = outcome?;
+
+        if let DecodeOutcome::Frame(Some(ref visual)) = outcome {
+            let start_pts = visual.1.native().timestamp().unwrap_or(target_pts);
+            let end_pts = self
+                .lookahead
+                .as_ref()
+                .and_then(|next| next.1.native().timestamp())
+                .filter(|&next_pts| next_pts > start_pts)
+                .unwrap_or_else(|| {
+                    if self.decoder_eof {
+                        i64::MAX
+                    } else {
+                        let dur = unsafe { (*visual.1.native().as_ptr()).duration };
+                        start_pts.saturating_add(dur.max(1))
+                    }
+                });
+            self.scrub.as_mut().expect("scrub state").insert_frame(
+                start_pts,
+                end_pts,
+                visual.clone(),
+            );
+        }
+        Ok(outcome)
     }
 
     fn frame_at(
@@ -638,18 +831,14 @@ impl VideoDecoderSession {
         }
         self.decoder.flush();
         shrimply_profiling::increment("Video decode / Decoder flush");
-        self.frame_index = 0;
-        self.last_decoded_position = None;
-        self.previous_decoded_position = None;
-        self.lookahead = None;
-        self.pending_packet = None;
-        self.input_eof = false;
-        self.eof_sent = false;
-        self.decoder_eof = false;
+        #[cfg(feature = "cuda")]
+        if let Some(scrub) = self.scrub.as_mut() {
+            scrub.ffmpeg_cursor_dirty = false;
+        }
+        self.reset_stream_state();
         self.seek_started_at = Some(Instant::now());
         self.seek_target = Some(position);
         self.seek_first_frame_received = false;
-        self.nonadvancing_frames = 0;
         self.active_request = Some(DecodeRequestState {
             target: position,
             best_before: None,
@@ -726,7 +915,19 @@ impl VideoDecoderSession {
                 self.input_eof = self.pending_packet.is_none();
             }
 
-            if let Some(packet) = self.pending_packet.as_ref() {
+            if self.pending_packet.is_some() {
+                #[cfg(feature = "cuda")]
+                if let Some((cutoff, max_cfr_dur)) = self.skip_nonref_before_pts {
+                    let packet = self.pending_packet.as_ref().expect("pending packet");
+                    let pkt_pts = packet.pts().unwrap_or(i64::MAX);
+                    let pkt_dur = packet.duration();
+                    let want_skip = pkt_dur > 0
+                        && pkt_dur <= max_cfr_dur
+                        && pkt_pts < cutoff
+                        && pkt_pts.saturating_add(pkt_dur) < cutoff;
+                    self.set_decoder_skip_nonref(want_skip);
+                }
+                let packet = self.pending_packet.as_ref().expect("pending packet");
                 shrimply_profiling::increment("Video decode / Video packets offered");
                 match self.decoder.send_packet(packet) {
                     Ok(()) => {
@@ -746,6 +947,11 @@ impl VideoDecoderSession {
                     }
                 }
                 continue;
+            }
+
+            #[cfg(feature = "cuda")]
+            if self.skip_nonref_before_pts.is_some() {
+                self.set_decoder_skip_nonref(false);
             }
 
             if self.eof_sent {

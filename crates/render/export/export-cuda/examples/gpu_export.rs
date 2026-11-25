@@ -94,9 +94,9 @@ fn main() -> Result<(), String> {
         project
     };
     let settings = ExportSettings {
+        video_encoder: shrimply_export_cuda::settings_backend().preferred(video_codec),
         path,
         overwrite: false,
-        video_codec,
         container: if video_codec == ExportVideoCodec::Gif {
             ExportContainer::Gif
         } else {

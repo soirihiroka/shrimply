@@ -59,7 +59,7 @@ class MainActivity : ComponentActivity() {
         val fontDirectories = android.graphics.fonts.SystemFonts.getAvailableFonts()
             .mapNotNull { it.file?.parentFile?.absolutePath }.distinct().sorted()
         NativeTimeline.initialize(applicationContext, java.io.File(filesDir, "config").absolutePath,
-            cacheDir.absolutePath, org.json.JSONArray(fontDirectories).toString())
+            cacheDir.absolutePath, org.json.JSONArray(fontDirectories).toString(), NativeTimeline.videoEncoderNames)
         NativeI18n.initializeLocale(resources.configuration.locales.toLanguageTags())
         val stress = intent.getBooleanExtra("stress", false)
         val benchmark = intent.getBooleanExtra("benchmark", false)

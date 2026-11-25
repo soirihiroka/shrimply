@@ -357,7 +357,7 @@ impl Runtime {
                 }
                 #[cfg(not(target_os = "android"))]
                 {
-                    Err("Hardware export requires the native Android host".into())
+                    Err("Export requires the native Android host".into())
                 }
             }
             "native_palette" => {

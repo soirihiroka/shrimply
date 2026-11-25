@@ -16,9 +16,14 @@ use shrimply_project_document::project::{self, Project, Time};
 const AUDIO_CHANNELS: usize = 2;
 const DEFAULT_AUDIO_FRAME_SIZE: usize = 1024;
 const EXPORT_DEBUG_FRAME_PERIOD: u64 = 300;
+const VIDEO_ENCODER_STALL_TIMEOUT: Duration = Duration::from_secs(5);
 pub(crate) mod mux;
 pub mod progress;
 pub mod settings;
+use settings::VideoEncoder;
+mod software;
+
+pub use software::rgba_to_bt709;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -68,13 +73,15 @@ impl Default for ExportAudioEncoder {
 pub struct ExportSettings {
     pub path: PathBuf,
     pub overwrite: bool,
-    pub video_codec: ExportVideoCodec,
+    pub video_encoder: VideoEncoder,
     pub container: ExportContainer,
     pub fps: Fraction,
     pub background_alpha: u8,
     pub rate_control: ExportRateControl,
     pub constant_qp: u32,
     pub bitrate_kbps: u32,
+    pub max_bitrate_kbps: u32,
+    pub target_quality: u32,
     pub keyframe_interval_seconds: u32,
     pub b_frames: u32,
     pub audio_encoder: ExportAudioEncoder,
@@ -115,8 +122,6 @@ pub struct RenderedFrame {
 
 pub trait VideoBackend {
     fn name(&self) -> &'static str;
-
-    fn encoder_label(&self, codec: ExportVideoCodec) -> &'static str;
 
     /// MediaCodec exposes output in decode order with PTS only. Other encoders
     /// keep their native DTS and do not opt into this CFR clock.
@@ -242,7 +247,13 @@ where
     shrimply_visual_core::sam2::validate_cache(project)?;
     shrimply_visual_core::transparent_fill::validate_cache(project)?;
     validate_settings(project, settings)?;
-    backend.validate(project, settings)?;
+    let software = matches!(
+        settings.video_encoder,
+        VideoEncoder::X264 | VideoEncoder::X265
+    );
+    if !software {
+        backend.validate(project, settings)?;
+    }
     crate::ensure_output_is_not_an_asset(project, &settings.path)?;
     let assets = crate::snapshot_assets(project)?;
 
@@ -258,14 +269,14 @@ where
         duration = %export_duration(project).as_label(),
         fps.numerator = project::fraction_numerator(settings.fps),
         fps.denominator = project::fraction_denominator(settings.fps),
-        video_codec = ?settings.video_codec,
+        video_codec = ?settings.video_encoder.codec(),
         audio_encoder = ?settings.audio_encoder,
     )
     .entered();
     tracing::info!("video export started");
 
     let audio_mix_started = Instant::now();
-    let audio_samples = if settings.video_codec == ExportVideoCodec::Gif {
+    let audio_samples = if settings.video_encoder == VideoEncoder::Gif {
         Vec::new()
     } else {
         mix_entire_audio_track(
@@ -301,18 +312,25 @@ where
     check_cancelled(cancelled)?;
 
     progress(ExportProgress::SettingUp("Opening video encoder"));
-    let mut video_encoder = if settings.video_codec == ExportVideoCodec::Gif {
+    let mut video_encoder = if settings.video_encoder == VideoEncoder::Gif {
         open_gif_encoder(project, settings, global_header)?
+    } else if software {
+        software::open(project, settings, global_header)?
     } else {
         backend.open_video_encoder(project, settings, global_header)?
     };
+    let encoder_label = video_encoder
+        .codec()
+        .ok_or("Missing open video encoder")?
+        .name()
+        .to_owned();
     let video_time_base = video_time_base(settings.fps)?;
     let video_stream_index = {
         let mut stream = output
             .add_stream_with(video_encoder.as_ref())
             .map_err(|error| error.to_string())?;
         if settings.container == ExportContainer::Mp4
-            && settings.video_codec == ExportVideoCodec::H265
+            && settings.video_encoder.codec() == ExportVideoCodec::H265
         {
             // FFmpeg defaults to `hev1`; `hvc1` is required for reliable QuickTime playback.
             unsafe {
@@ -326,7 +344,7 @@ where
     };
 
     let audio_time_base = ffmpeg::Rational(1, settings.audio_sample_rate as i32);
-    let (mut audio_encoder, audio_stream_index) = if settings.video_codec == ExportVideoCodec::Gif {
+    let (mut audio_encoder, audio_stream_index) = if settings.video_encoder == VideoEncoder::Gif {
         (None, None)
     } else {
         progress(ExportProgress::SettingUp("Opening audio encoder"));
@@ -341,11 +359,8 @@ where
         (Some(encoder), Some(stream_index))
     };
 
-    // Most encoders expose global headers on open. Surface encoders can only
-    // provide them with their first packet; Matroska needs that codec-private
-    // data before its header is written. Keep this policy in the shared muxer.
-    let wait_for_header = settings.container == ExportContainer::Mkv
-        && settings.video_codec != ExportVideoCodec::Gif
+    // MediaCodec can provide global headers with the first real packet.
+    let wait_for_header = settings.video_encoder != VideoEncoder::Gif
         && unsafe { (*video_encoder.as_ptr()).extradata_size == 0 };
     progress(ExportProgress::SettingUp(if wait_for_header {
         "Preparing media header"
@@ -366,7 +381,7 @@ where
             )
         }),
         wait_for_header,
-        if settings.video_codec == ExportVideoCodec::Gif {
+        if software || settings.video_encoder == VideoEncoder::Gif {
             None
         } else {
             backend
@@ -434,13 +449,13 @@ where
         version: 3,
         output: settings.path.clone(),
         backend: backend.name().to_string(),
-        encoder: backend.encoder_label(settings.video_codec).to_string(),
+        encoder: encoder_label,
         canvas_width: project.canvas_size.width,
         canvas_height: project.canvas_size.height,
         project_duration: export_duration(project),
         fps_numerator: project::fraction_numerator(settings.fps),
         fps_denominator: project::fraction_denominator(settings.fps),
-        video_codec: format!("{:?}", settings.video_codec),
+        video_codec: format!("{:?}", settings.video_encoder.codec()),
         decoder_sessions: backend.decoder_session_count(),
         frame_count: frames.len() as u64,
         total_elapsed_ns: export_started.elapsed().as_nanos(),
@@ -498,7 +513,7 @@ pub fn export_duration(project: &Project) -> Time {
 }
 
 fn validate_settings(project: &Project, settings: &ExportSettings) -> Result<(), String> {
-    if settings.video_codec != ExportVideoCodec::Gif {
+    if settings.video_encoder != VideoEncoder::Gif {
         if settings.rate_control == ExportRateControl::ConstantQp
             && settings.constant_qp > settings::MAX_CONSTANT_QP
         {
@@ -517,7 +532,7 @@ fn validate_settings(project: &Project, settings: &ExportSettings) -> Result<(),
     if project.canvas_size.width == 0 || project.canvas_size.height == 0 {
         return Err("Project canvas size must be larger than zero".to_string());
     }
-    if settings.video_codec != ExportVideoCodec::Gif
+    if settings.video_encoder != VideoEncoder::Gif
         && (!project.canvas_size.width.is_multiple_of(2)
             || !project.canvas_size.height.is_multiple_of(2))
     {
@@ -531,8 +546,7 @@ fn validate_settings(project: &Project, settings: &ExportSettings) -> Result<(),
     {
         return Err("Frame rate must be larger than zero".to_string());
     }
-    if (settings.video_codec == ExportVideoCodec::Gif)
-        != (settings.container == ExportContainer::Gif)
+    if (settings.video_encoder == VideoEncoder::Gif) != (settings.container == ExportContainer::Gif)
     {
         return Err("GIF encoding requires the GIF container".to_string());
     }
@@ -562,7 +576,7 @@ fn open_gif_encoder(
     settings: &ExportSettings,
     global_header: bool,
 ) -> Result<ffmpeg::codec::encoder::video::Encoder, String> {
-    let codec = ffmpeg::codec::encoder::find_by_name("gif")
+    let codec = ffmpeg::codec::encoder::find_by_name(settings.video_encoder.format().ffmpeg)
         .ok_or_else(|| "FFmpeg encoder gif was not found".to_string())?;
     let mut encoder = ffmpeg::codec::Context::new_with_codec(codec)
         .encoder()
@@ -596,6 +610,42 @@ pub fn configure_video_encoder(
         }
     }
     Ok(())
+}
+
+/// Open a small native encoding session to detect drivers and encoder devices,
+/// rather than relying on the names compiled into FFmpeg.
+pub fn hardware_encoder_opens(
+    name: &str,
+    pixel: Pixel,
+    configure: impl FnOnce(
+        &mut ffmpeg::codec::encoder::video::Video,
+        &mut ffmpeg::Dictionary<'static>,
+    ) -> Result<(), String>,
+) -> bool {
+    let Ok(mut encoder) = probe_encoder(name, pixel) else {
+        return false;
+    };
+    let mut options = ffmpeg::Dictionary::new();
+    configure(&mut encoder, &mut options).is_ok() && encoder.open_with(options).is_ok()
+}
+
+pub(crate) fn probe_encoder(
+    name: &str,
+    pixel: Pixel,
+) -> Result<ffmpeg::codec::encoder::video::Video, String> {
+    let codec = ffmpeg::codec::encoder::find_by_name(name)
+        .ok_or_else(|| format!("FFmpeg encoder {name} is unavailable"))?;
+    let mut encoder = ffmpeg::codec::Context::new_with_codec(codec)
+        .encoder()
+        .video()
+        .map_err(|error| error.to_string())?;
+    encoder.set_width(256);
+    encoder.set_height(256);
+    encoder.set_format(pixel);
+    encoder.set_time_base(ffmpeg::Rational(1, 30));
+    encoder.set_frame_rate(Some(ffmpeg::Rational(30, 1)));
+    encoder.set_bit_rate(1_000_000);
+    Ok(encoder)
 }
 
 fn open_audio_encoder(
@@ -690,6 +740,7 @@ fn encode_video_packets<B: VideoBackend>(
         fps_milli: 0,
     });
     let mut benchmarks = Vec::new();
+    let mut scaler = None;
     let mut fps_window = VecDeque::from([(0, Instant::now())]);
     for frame_index in 0..total {
         check_cancelled(cancelled)?;
@@ -698,12 +749,19 @@ fn encode_video_packets<B: VideoBackend>(
         let position = time_from_frame(frame_index, settings.fps)
             .ok_or_else(|| "export frame exceeds the exact range".to_string())?;
         let render_started = Instant::now();
-        let RenderedFrame { mut frame, timing } = if settings.video_codec == ExportVideoCodec::Gif {
+        let RenderedFrame { mut frame, timing } = if settings.video_encoder == VideoEncoder::Gif {
             let rendered = backend.render_rgba_frame(project, settings, position, cancelled)?;
             RenderedFrame {
                 frame: rgba_to_gif_frame(&rendered.frame)?,
                 timing: rendered.timing,
             }
+        } else if matches!(
+            settings.video_encoder,
+            VideoEncoder::X264 | VideoEncoder::X265
+        ) {
+            let mut rendered = backend.render_rgba_frame(project, settings, position, cancelled)?;
+            rendered.frame = rgba_to_bt709(&mut scaler, &rendered.frame, encoder.format())?;
+            rendered
         } else {
             backend.render_video_frame(project, settings, position, cancelled)?
         };
@@ -711,12 +769,10 @@ fn encode_video_packets<B: VideoBackend>(
         frame.set_pts(Some(frame_index as i64));
         unsafe { (*frame.as_mut_ptr()).duration = 1 };
         let encoder_send_started = Instant::now();
-        encoder
-            .send_frame(&frame)
-            .map_err(|error| error.to_string())?;
+        let drained = send_video_frame(encoder, output, Some(&frame), cancelled)?;
         let encoder_send_ns = encoder_send_started.elapsed().as_nanos();
         let packet_started = Instant::now();
-        let packets_received = receive_video_packets(encoder, output)?;
+        let packets_received = drained + receive_video_packets(encoder, output)?;
         let current_frame = frame_index + 1;
         let completed_at = Instant::now();
         fps_window.push_back((current_frame, completed_at));
@@ -756,7 +812,7 @@ fn encode_video_packets<B: VideoBackend>(
         });
     }
     crate::ensure_assets_current(assets)?;
-    encoder.send_eof().map_err(|error| error.to_string())?;
+    send_video_frame(encoder, output, None, cancelled)?;
     receive_video_packets(encoder, output)?;
     Ok(benchmarks)
 }
@@ -832,6 +888,39 @@ fn receive_audio_packets(
             }
             Err(ffmpeg::Error::Other { errno }) if errno == EAGAIN => return Ok(()),
             Err(ffmpeg::Error::Eof) => return Ok(()),
+            Err(error) => return Err(error.to_string()),
+        }
+    }
+}
+
+fn send_video_frame(
+    encoder: &mut ffmpeg::codec::encoder::video::Encoder,
+    output: &mut mux::Muxer,
+    frame: Option<&ffmpeg::frame::Video>,
+    cancelled: &AtomicBool,
+) -> Result<usize, String> {
+    let mut written = 0;
+    let mut last_progress = Instant::now();
+    loop {
+        check_cancelled(cancelled)?;
+        let result = match frame {
+            Some(frame) => encoder.send_frame(frame),
+            None => encoder.send_eof(),
+        };
+        match result {
+            Ok(()) => return Ok(written),
+            Err(ffmpeg::Error::Eof) if frame.is_none() => return Ok(written),
+            Err(ffmpeg::Error::Other { errno }) if errno == EAGAIN => {
+                let drained = receive_video_packets(encoder, output)?;
+                written += drained;
+                if drained != 0 {
+                    last_progress = Instant::now();
+                } else if last_progress.elapsed() >= VIDEO_ENCODER_STALL_TIMEOUT {
+                    return Err("Video encoder stalled while accepting frames".into());
+                } else {
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+            }
             Err(error) => return Err(error.to_string()),
         }
     }

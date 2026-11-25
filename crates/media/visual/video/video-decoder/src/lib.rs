@@ -14,6 +14,8 @@ mod math;
 #[cfg(feature = "cuda")]
 mod pool;
 mod rgb;
+#[cfg(feature = "cuda")]
+mod scrub;
 mod session;
 #[cfg(feature = "cuda")]
 mod track;
@@ -24,6 +26,11 @@ pub use lifecycle::is_decoder_startup_pressure;
 #[cfg(feature = "cuda")]
 pub use pool::{DecodeRequest, PendingDecode, VideoDecoderHandle, VideoDecoderPool};
 pub use rgb::RgbFrameConverter;
+#[cfg(feature = "cuda")]
+pub use scrub::{
+    ExactScrubBackend, MAX_SCRUB_CACHE_BYTES, ScrubTelemetry, exact_scrub_backend,
+    exact_scrub_budget_bytes, exact_scrub_enabled, reset_scrub_telemetry, scrub_telemetry,
+};
 pub use session::{
     DecodeControl, DecodeControls, DecodeMode, DecodeOutcome, DecodedVisual, NextFrame,
     VideoDecoderSession,

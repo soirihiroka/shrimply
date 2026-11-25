@@ -5,6 +5,7 @@ use std::{
     sync::{Arc, atomic::AtomicBool},
 };
 
+use core::settings::VideoEncoder;
 use ffmpeg::format::Pixel;
 use ffmpeg_next as ffmpeg;
 use shrimply_export_core::video::{
@@ -15,8 +16,15 @@ use shrimply_math_core::Fraction;
 use shrimply_preview_render_metal::ExportRenderer;
 use shrimply_project_document::project::{Project, Time};
 
-const SWS_COLORSPACE_BT709: i32 = 1;
-const SWS_FIXED_POINT_ONE: i32 = 1 << 16;
+pub fn settings_backend() -> &'static core::settings::Encoders {
+    use core::settings::Encoders;
+    static ENCODERS: std::sync::OnceLock<Encoders> = std::sync::OnceLock::new();
+    ENCODERS.get_or_init(|| {
+        Encoders::probe(|encoder| {
+            core::hardware_encoder_opens(encoder.format().ffmpeg, Pixel::NV12, |_, _| Ok(()))
+        })
+    })
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum VideoToolboxRateControl {
@@ -44,7 +52,7 @@ pub struct ExportSettings {
     pub maximum_temporal_decoders: usize,
     pub path: PathBuf,
     pub overwrite: bool,
-    pub video_codec: ExportVideoCodec,
+    pub video_encoder: VideoEncoder,
     pub container: ExportContainer,
     pub fps: Fraction,
     pub background_alpha: u8,
@@ -75,13 +83,18 @@ where
     let core_settings = core::ExportSettings {
         path: settings.path.clone(),
         overwrite: settings.overwrite,
-        video_codec: settings.video_codec,
+        video_encoder: settings.video_encoder,
         container: settings.container,
         fps: settings.fps,
         background_alpha: settings.background_alpha,
-        rate_control: core::ExportRateControl::VariableBitrate,
+        rate_control: match settings.rate_control {
+            VideoToolboxRateControl::AverageBitrate => core::ExportRateControl::VariableBitrate,
+            VideoToolboxRateControl::ConstantBitrate => core::ExportRateControl::ConstantBitrate,
+        },
         constant_qp: 0,
         bitrate_kbps: settings.bitrate_kbps,
+        max_bitrate_kbps: 0,
+        target_quality: 0,
         keyframe_interval_seconds: settings.keyframe_interval_seconds,
         b_frames: settings.b_frames,
         audio_encoder: settings.audio_encoder,
@@ -123,20 +136,11 @@ impl VideoToolboxBackend {
             .as_mut()
             .ok_or("Metal export renderer was not prepared")?
             .render_rgba(project, position, cancelled)?;
-        let mut frame = ffmpeg::frame::Video::new(
-            Pixel::RGBA,
+        core::rgba_frame(
             project.canvas_size.width,
             project.canvas_size.height,
-        );
-        let row_bytes = project.canvas_size.width as usize * 4;
-        let stride = frame.stride(0);
-        for (source, destination) in pixels
-            .chunks_exact(row_bytes)
-            .zip(frame.data_mut(0).chunks_exact_mut(stride))
-        {
-            destination[..row_bytes].copy_from_slice(source);
-        }
-        Ok(frame)
+            &pixels,
+        )
     }
 }
 
@@ -145,16 +149,8 @@ impl VideoBackend for VideoToolboxBackend {
         "metal"
     }
 
-    fn encoder_label(&self, codec: ExportVideoCodec) -> &'static str {
-        match codec {
-            ExportVideoCodec::H264 => "h264_videotoolbox",
-            ExportVideoCodec::H265 => "hevc_videotoolbox",
-            ExportVideoCodec::Gif => "gif",
-        }
-    }
-
     fn validate(&self, _project: &Project, settings: &core::ExportSettings) -> Result<(), String> {
-        match (settings.video_codec, self.settings.profile) {
+        match (settings.video_encoder.codec(), self.settings.profile) {
             (
                 ExportVideoCodec::H264,
                 VideoToolboxProfile::HevcMain | VideoToolboxProfile::HevcMain10,
@@ -188,7 +184,7 @@ impl VideoBackend for VideoToolboxBackend {
         settings: &core::ExportSettings,
         global_header: bool,
     ) -> Result<ffmpeg::codec::encoder::video::Encoder, String> {
-        let name = self.encoder_label(settings.video_codec);
+        let name = settings.video_encoder.format().ffmpeg;
         let codec = ffmpeg::codec::encoder::find_by_name(name)
             .ok_or_else(|| format!("FFmpeg encoder {name} was not found"))?;
         let pixel = if self.settings.profile == VideoToolboxProfile::HevcMain10 {
@@ -205,7 +201,7 @@ impl VideoBackend for VideoToolboxBackend {
         options.set("allow_sw", "0");
         options.set("require_sw", "0");
         options.set("profile", profile_name(self.settings.profile));
-        if settings.video_codec == ExportVideoCodec::H264 {
+        if settings.video_encoder.codec() == ExportVideoCodec::H264 {
             options.set(
                 "coder",
                 match self.settings.h264_entropy {
@@ -259,43 +255,7 @@ impl VideoBackend for VideoToolboxBackend {
         } else {
             Pixel::NV12
         };
-        if self.scaler.is_none() {
-            let mut scaler = ffmpeg::software::scaling::Context::get(
-                Pixel::RGBA,
-                project.canvas_size.width,
-                project.canvas_size.height,
-                pixel,
-                project.canvas_size.width,
-                project.canvas_size.height,
-                ffmpeg::software::scaling::flag::Flags::BILINEAR,
-            )
-            .map_err(|error| error.to_string())?;
-            let coefficients = unsafe { ffmpeg::sys::sws_getCoefficients(SWS_COLORSPACE_BT709) };
-            core::ffmpeg_check(
-                unsafe {
-                    ffmpeg::sys::sws_setColorspaceDetails(
-                        scaler.as_mut_ptr(),
-                        coefficients,
-                        1,
-                        coefficients,
-                        0,
-                        0,
-                        SWS_FIXED_POINT_ONE,
-                        SWS_FIXED_POINT_ONE,
-                    )
-                },
-                "configure BT.709 video conversion",
-            )?;
-            self.scaler = Some(scaler);
-        }
-        let mut frame =
-            ffmpeg::frame::Video::new(pixel, project.canvas_size.width, project.canvas_size.height);
-        self.scaler
-            .as_mut()
-            .expect("scaler initialized")
-            .run(&rgba, &mut frame)
-            .map_err(|error| error.to_string())?;
-        core::set_bt709_frame_metadata(&mut frame);
+        let frame = core::rgba_to_bt709(&mut self.scaler, &rgba, pixel)?;
         Ok(RenderedFrame {
             frame,
             timing: FrameTiming::default(),

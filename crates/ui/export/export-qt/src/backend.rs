@@ -1,12 +1,12 @@
 use core::pin::Pin;
 use cxx_qt::CxxQtType;
-use cxx_qt_lib::{QString, QStringList, QUrl};
+use cxx_qt_lib::{QString, QUrl};
+use serde_json::Value;
 use shrimply_cross_ui_core::editor::EditorSession;
 use shrimply_editor_state::preferences::{self, SharedPreferences};
-use shrimply_export_core::video::available_audio_encoders;
+use shrimply_export_core::video::settings;
 use shrimply_export_core::{caption::ytt, json, output, project, time_format};
 use shrimply_export_cuda as video;
-use shrimply_math_core::Fraction;
 use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -65,8 +65,6 @@ pub mod qobject {
     unsafe extern "C++" {
         include!("cxx-qt-lib/qstring.h");
         type QString = cxx_qt_lib::QString;
-        include!("cxx-qt-lib/qstringlist.h");
-        type QStringList = cxx_qt_lib::QStringList;
         include!("cxx-qt-lib/qurl.h");
         type QUrl = cxx_qt_lib::QUrl;
     }
@@ -79,33 +77,15 @@ pub mod qobject {
         #[qproperty(QString, progress_text, cxx_name = "progressText")]
         #[qproperty(f64, progress)]
         #[qproperty(bool, progress_determinate, cxx_name = "progressDeterminate")]
-        #[qproperty(QStringList, frame_rate_labels, cxx_name = "frameRateLabels")]
-        #[qproperty(i32, video_codec, cxx_name = "videoCodec")]
-        #[qproperty(i32, container)]
-        #[qproperty(i32, frame_rate_index, cxx_name = "frameRateIndex")]
-        #[qproperty(i32, background_alpha, cxx_name = "backgroundAlpha")]
-        #[qproperty(i32, rate_control, cxx_name = "rateControl")]
-        #[qproperty(i32, bitrate_kbps, cxx_name = "bitrateKbps")]
-        #[qproperty(i32, max_bitrate_kbps, cxx_name = "maxBitrateKbps")]
-        #[qproperty(i32, target_quality, cxx_name = "targetQuality")]
-        #[qproperty(i32, constant_qp, cxx_name = "constantQp")]
-        #[qproperty(i32, keyframe_interval_seconds, cxx_name = "keyframeIntervalSeconds")]
-        #[qproperty(i32, preset)]
-        #[qproperty(i32, tuning)]
-        #[qproperty(i32, multipass)]
-        #[qproperty(i32, profile)]
-        #[qproperty(bool, look_ahead, cxx_name = "lookAhead")]
-        #[qproperty(bool, adaptive_quantization, cxx_name = "adaptiveQuantization")]
-        #[qproperty(i32, b_frames, cxx_name = "bFrames")]
-        #[qproperty(bool, b_frame_as_reference, cxx_name = "bFrameAsReference")]
-        #[qproperty(i32, audio_encoder, cxx_name = "audioEncoder")]
-        #[qproperty(i32, audio_sample_rate, cxx_name = "audioSampleRate")]
-        #[qproperty(i32, audio_bitrate_kbps, cxx_name = "audioBitrateKbps")]
+        #[qproperty(QString, video_form, cxx_name = "videoForm")]
         type ExportBackend = super::ExportBackendRust;
 
         #[qinvokable]
         #[cxx_name = "resetVideo"]
         fn reset_video(self: Pin<&mut ExportBackend>);
+        #[qinvokable]
+        #[cxx_name = "setVideoField"]
+        fn set_video_field(self: Pin<&mut ExportBackend>, id: &QString, value: &QString);
         #[qinvokable]
         #[cxx_name = "startVideo"]
         fn start_video(self: Pin<&mut ExportBackend>) -> bool;
@@ -121,9 +101,6 @@ pub mod qobject {
         fn poll(self: Pin<&mut ExportBackend>);
         #[qinvokable]
         fn translate(self: &ExportBackend, key: &QString) -> QString;
-        #[qinvokable]
-        #[cxx_name = "audioEncoderLabels"]
-        fn audio_encoder_labels(self: &ExportBackend) -> QStringList;
         #[qinvokable]
         #[cxx_name = "revealLastOutput"]
         fn reveal_last_output(self: Pin<&mut ExportBackend>);
@@ -148,29 +125,8 @@ pub struct ExportBackendRust {
     progress_text: QString,
     progress: f64,
     progress_determinate: bool,
-    frame_rate_labels: QStringList,
-    video_codec: i32,
-    container: i32,
-    frame_rate_index: i32,
-    background_alpha: i32,
-    rate_control: i32,
-    bitrate_kbps: i32,
-    max_bitrate_kbps: i32,
-    target_quality: i32,
-    constant_qp: i32,
-    keyframe_interval_seconds: i32,
-    preset: i32,
-    tuning: i32,
-    multipass: i32,
-    profile: i32,
-    look_ahead: bool,
-    adaptive_quantization: bool,
-    b_frames: i32,
-    b_frame_as_reference: bool,
-    audio_encoder: i32,
-    audio_sample_rate: i32,
-    audio_bitrate_kbps: i32,
-    frame_rates: Vec<Fraction>,
+    video_form: QString,
+    video_values: Value,
     job: Option<ExportJob>,
     last_output: Option<PathBuf>,
 }
@@ -183,29 +139,8 @@ impl Default for ExportBackendRust {
             progress_text: shrimply_i18n_qt::text("Preparing"),
             progress: 0.0,
             progress_determinate: false,
-            frame_rate_labels: QStringList::default(),
-            video_codec: 1,
-            container: 0,
-            frame_rate_index: 0,
-            background_alpha: 0,
-            rate_control: 0,
-            bitrate_kbps: 10_000,
-            max_bitrate_kbps: 10_000,
-            target_quality: 20,
-            constant_qp: 20,
-            keyframe_interval_seconds: 0,
-            preset: 5,
-            tuning: 1,
-            multipass: 1,
-            profile: 0,
-            look_ahead: true,
-            adaptive_quantization: true,
-            b_frames: 2,
-            b_frame_as_reference: false,
-            audio_encoder: 0,
-            audio_sample_rate: 1,
-            audio_bitrate_kbps: 192,
-            frame_rates: Vec::new(),
+            video_form: QString::default(),
+            video_values: Value::Null,
             job: None,
             last_output: None,
         }
@@ -219,49 +154,26 @@ impl cxx_qt::Initialize for qobject::ExportBackend {
 impl qobject::ExportBackend {
     pub fn reset_video(mut self: Pin<&mut Self>) {
         assert!(!self.busy, "cannot reset settings during an export");
-        let project_fps = context().project.borrow().fps;
-        let mut rates = project::COMMON_FRAME_RATES
-            .iter()
-            .map(|rate| (rate.value, rate.label.to_string()))
-            .collect::<Vec<_>>();
-        if !rates.iter().any(|(rate, _)| *rate == project_fps) {
-            rates.push((project_fps, project::fraction_as_label(project_fps)));
+        self.as_mut().refresh_video_form(None);
+    }
+
+    pub fn set_video_field(mut self: Pin<&mut Self>, id: &QString, value: &QString) {
+        let id = id.to_string();
+        let mut values = self.as_ref().rust().video_values.clone();
+        if let Some(field) = values.get_mut(id.as_str())
+            && let Ok(value) = serde_json::from_str(&value.to_string())
+        {
+            *field = value;
+            self.as_mut().refresh_video_form(Some(&values));
         }
-        let selected = rates
-            .iter()
-            .position(|(rate, _)| *rate == project_fps)
-            .expect("project frame rate must be available for export");
-        self.as_mut().rust_mut().get_mut().frame_rates =
-            rates.iter().map(|(rate, _)| *rate).collect();
-        self.as_mut().set_frame_rate_labels(
-            rates
-                .into_iter()
-                .map(|(_, label)| QString::from(label))
-                .collect(),
-        );
-        self.as_mut().set_frame_rate_index(
-            i32::try_from(selected).expect("frame rate index exceeds Qt model capacity"),
-        );
-        self.as_mut().set_video_codec(1);
-        self.as_mut().set_container(0);
-        self.as_mut().set_background_alpha(0);
-        self.as_mut().set_rate_control(0);
-        self.as_mut().set_bitrate_kbps(10_000);
-        self.as_mut().set_max_bitrate_kbps(10_000);
-        self.as_mut().set_target_quality(20);
-        self.as_mut().set_constant_qp(20);
-        self.as_mut().set_keyframe_interval_seconds(0);
-        self.as_mut().set_preset(5);
-        self.as_mut().set_tuning(1);
-        self.as_mut().set_multipass(1);
-        self.as_mut().set_profile(0);
-        self.as_mut().set_look_ahead(true);
-        self.as_mut().set_adaptive_quantization(true);
-        self.as_mut().set_b_frames(2);
-        self.as_mut().set_b_frame_as_reference(false);
-        self.as_mut().set_audio_encoder(0);
-        self.as_mut().set_audio_sample_rate(1);
-        self.as_mut().set_audio_bitrate_kbps(192);
+    }
+
+    fn refresh_video_form(mut self: Pin<&mut Self>, values: Option<&Value>) {
+        let context = context();
+        let schema =
+            settings::schema_for(&context.project.borrow(), video::settings_backend(), values);
+        self.as_mut().rust_mut().get_mut().video_values = schema["values"].clone();
+        self.set_video_form(QString::from(schema.to_string()));
     }
 
     pub fn start_video(mut self: Pin<&mut Self>) -> bool {
@@ -270,21 +182,35 @@ impl qobject::ExportBackend {
         }
         let context = context();
         let project = context.project.borrow().clone();
-        let extension =
-            video::extension_for_container(container_for(self.video_codec, self.container));
-        let path = choose_path(
+        let preferences = preferences::snapshot(&context.preferences);
+        let mut settings = match video::parse_settings(
+            &project,
+            PathBuf::new(),
+            &self.as_ref().rust().video_values,
+            video::RenderResourceConfig {
+                maximum_temporal_decoders: preferences.temporal_decoder_pool_size as usize,
+                gpu_host_memory_gib: preferences.gpu_host_memory_gib,
+            },
+        ) {
+            Ok(settings) => settings,
+            Err(error) => {
+                self.as_mut().failed(
+                    shrimply_i18n_qt::text("Export failed"),
+                    QString::from(error),
+                );
+                return false;
+            }
+        };
+        let extension = video::extension_for_container(settings.container);
+        let Some(path) = choose_path(
             &output::default_filename(&project, extension),
             "Export Video",
             video_filter(extension),
             extension,
-        );
-        let Some(path) = path else {
+        ) else {
             return false;
         };
-        let settings = self.video_settings(
-            output::ensure_extension(path, extension),
-            &preferences::snapshot(&context.preferences),
-        );
+        settings.path = output::ensure_extension(path, extension);
         let (sender, receiver) = std::sync::mpsc::channel();
         let cancelled = Arc::new(AtomicBool::new(false));
         let worker_cancelled = cancelled.clone();
@@ -408,12 +334,6 @@ impl qobject::ExportBackend {
         shrimply_i18n_qt::text(&key.to_string())
     }
 
-    pub fn audio_encoder_labels(&self) -> QStringList {
-        available_audio_encoders()
-            .map(|(_, label)| shrimply_i18n_qt::text(label))
-            .collect()
-    }
-
     pub fn reveal_last_output(mut self: Pin<&mut Self>) {
         let Some(path) = self.as_ref().rust().last_output.clone() else {
             return;
@@ -448,56 +368,6 @@ impl qobject::ExportBackend {
         self.as_mut()
             .set_progress_text(shrimply_i18n_qt::text(status));
         self.as_mut().set_busy(true);
-    }
-
-    fn video_settings(
-        &self,
-        path: PathBuf,
-        preferences: &preferences::PreferencesSnapshot,
-    ) -> video::ExportSettings {
-        let fps = *self
-            .frame_rates
-            .get(usize::try_from(self.frame_rate_index).expect("negative frame rate index"))
-            .expect("Qt selected an unavailable frame rate");
-        video::ExportSettings {
-            path,
-            overwrite: true,
-            video_codec: video_codec(self.video_codec),
-            container: container_for(self.video_codec, self.container),
-            fps,
-            background_alpha: if self.video_codec == 2 {
-                u8::try_from(self.background_alpha).expect("background alpha is out of range")
-            } else {
-                u8::MAX
-            },
-            rate_control: rate_control(self.rate_control),
-            constant_qp: as_u32(self.constant_qp, "constant QP"),
-            bitrate_kbps: as_u32(self.bitrate_kbps, "video bitrate"),
-            max_bitrate_kbps: as_u32(self.max_bitrate_kbps, "maximum video bitrate"),
-            target_quality: as_u32(self.target_quality, "target quality"),
-            keyframe_interval_seconds: as_u32(self.keyframe_interval_seconds, "keyframe interval"),
-            preset: preset(self.preset),
-            tuning: tuning(self.tuning),
-            multipass: multipass(self.multipass),
-            profile: profile(self.profile),
-            look_ahead: self.look_ahead,
-            adaptive_quantization: self.adaptive_quantization,
-            b_frames: as_u32(self.b_frames, "B frames"),
-            b_frame_as_reference: self.b_frame_as_reference,
-            audio_encoder: available_audio_encoders()
-                .nth(self.audio_encoder as usize)
-                .expect("unknown audio encoder index")
-                .0,
-            audio_sample_rate: match self.audio_sample_rate {
-                0 => 44_100,
-                1 => 48_000,
-                2 => 96_000,
-                value => panic!("unknown audio sample rate index {value}"),
-            },
-            audio_bitrate_kbps: as_u32(self.audio_bitrate_kbps, "audio bitrate"),
-            maximum_temporal_decoders: preferences.temporal_decoder_pool_size as usize,
-            gpu_host_memory_gib: preferences.gpu_host_memory_gib,
-        }
     }
 
     fn show_progress(mut self: Pin<&mut Self>, event: video::ExportProgress) {
@@ -658,82 +528,6 @@ fn video_filter(extension: &str) -> &'static str {
         "gif" => "GIF image (*.gif)",
         _ => unreachable!("unsupported video extension"),
     }
-}
-
-fn video_codec(index: i32) -> video::ExportVideoCodec {
-    match index {
-        0 => video::ExportVideoCodec::H264,
-        1 => video::ExportVideoCodec::H265,
-        2 => video::ExportVideoCodec::Gif,
-        value => panic!("unknown video codec index {value}"),
-    }
-}
-
-fn container_for(codec: i32, container: i32) -> video::ExportContainer {
-    if codec == 2 {
-        video::ExportContainer::Gif
-    } else {
-        match container {
-            0 => video::ExportContainer::Mp4,
-            1 => video::ExportContainer::Mkv,
-            value => panic!("unknown video container index {value}"),
-        }
-    }
-}
-
-fn rate_control(index: i32) -> video::ExportRateControl {
-    match index {
-        0 => video::ExportRateControl::ConstantQp,
-        1 => video::ExportRateControl::ConstantBitrate,
-        2 => video::ExportRateControl::VariableBitrate,
-        3 => video::ExportRateControl::VariableBitrateTargetQuality,
-        4 => video::ExportRateControl::Lossless,
-        value => panic!("unknown rate control index {value}"),
-    }
-}
-
-fn preset(index: i32) -> video::ExportPreset {
-    match index {
-        0 => video::ExportPreset::P1,
-        1 => video::ExportPreset::P2,
-        2 => video::ExportPreset::P3,
-        3 => video::ExportPreset::P4,
-        4 => video::ExportPreset::P5,
-        5 => video::ExportPreset::P6,
-        6 => video::ExportPreset::P7,
-        value => panic!("unknown preset index {value}"),
-    }
-}
-
-fn tuning(index: i32) -> video::ExportTuning {
-    match index {
-        0 => video::ExportTuning::UltraHighQuality,
-        1 => video::ExportTuning::HighQuality,
-        2 => video::ExportTuning::LowLatency,
-        3 => video::ExportTuning::UltraLowLatency,
-        value => panic!("unknown tuning index {value}"),
-    }
-}
-
-fn multipass(index: i32) -> video::ExportMultipass {
-    match index {
-        0 => video::ExportMultipass::SinglePass,
-        1 => video::ExportMultipass::QuarterResolution,
-        2 => video::ExportMultipass::FullResolution,
-        value => panic!("unknown multipass index {value}"),
-    }
-}
-
-fn profile(index: i32) -> video::ExportProfile {
-    match index {
-        0 => video::ExportProfile::Main,
-        1 => video::ExportProfile::Main10,
-        value => panic!("unknown profile index {value}"),
-    }
-}
-
-fn as_u32(value: i32, name: &str) -> u32 {
-    u32::try_from(value).unwrap_or_else(|_| panic!("{name} must not be negative"))
 }
 
 fn progress_fraction(current: u64, total: u64) -> f64 {

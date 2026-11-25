@@ -84,6 +84,8 @@ function Assert-FfmpegPackage([string]$directory) {
         "--enable-nonfree",
         "--enable-libfdk-aac",
         "--enable-libopus",
+        "--enable-libx264",
+        "--enable-libx265",
         "--enable-cuda",
         "--enable-ffnvcodec",
         "--enable-nvenc",
@@ -91,11 +93,6 @@ function Assert-FfmpegPackage([string]$directory) {
     )) {
         if (!$configuration.Contains($value)) {
             throw "Packaged FFmpeg configuration is missing $value"
-        }
-    }
-    foreach ($value in @("--enable-libx264", "--enable-libx265", "--enable-libopenh264")) {
-        if ($configuration.Contains($value)) {
-            throw "Packaged FFmpeg unexpectedly contains $value"
         }
     }
 }

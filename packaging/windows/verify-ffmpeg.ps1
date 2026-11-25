@@ -118,6 +118,8 @@ foreach ($option in @(
     "--enable-nonfree",
     "--enable-libfdk-aac",
     "--enable-libopus",
+    "--enable-libx264",
+    "--enable-libx265",
     "--enable-cuda",
     "--enable-ffnvcodec",
     "--enable-nvenc",
@@ -126,20 +128,9 @@ foreach ($option in @(
 )) {
     Assert-Contains $version ([regex]::Escape($option)) "configure option $option"
 }
-foreach ($option in @("--enable-libx264", "--enable-libx265", "--enable-libopenh264")) {
-    if ($version -match [regex]::Escape($option)) {
-        throw "Pinned FFmpeg unexpectedly contains configure option $option"
-    }
-}
-
 $encoders = Invoke-PinnedFfmpeg "encoders" @("-hide_banner", "-encoders")
-foreach ($encoder in @("libfdk_aac", "libopus", "h264_nvenc", "hevc_nvenc")) {
+foreach ($encoder in @("libfdk_aac", "libopus", "h264_nvenc", "hevc_nvenc", "libx264", "libx265")) {
     Assert-Contains $encoders "(?m)\b$encoder\b" "encoder $encoder"
-}
-foreach ($encoder in @("libx264", "libx265", "libopenh264")) {
-    if ($encoders -match "(?m)\b$encoder\b") {
-        throw "Pinned FFmpeg unexpectedly contains software encoder $encoder"
-    }
 }
 
 $hwaccels = Invoke-PinnedFfmpeg "hwaccels" @("-hide_banner", "-hwaccels")

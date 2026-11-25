@@ -774,9 +774,9 @@ fn validate(
     drop(compositor);
     drop(cuda);
     let settings = ExportSettings {
+        video_encoder: shrimply_export_cuda::settings_backend().preferred(ExportVideoCodec::H264),
         path: output.join(format!("{name}.mp4")),
         overwrite: false,
-        video_codec: ExportVideoCodec::H264,
         container: ExportContainer::Mp4,
         fps: project.fps,
         background_alpha: u8::MAX,
