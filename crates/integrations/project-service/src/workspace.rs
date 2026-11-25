@@ -20,10 +20,38 @@ use crate::{
     SyncRequest,
 };
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProjectLink {
     pub server: String,
     pub project_id: Uuid,
+}
+
+impl ProjectLink {
+    pub fn from_url(url: &str, servers: &[String]) -> Result<Self, String> {
+        let (server, id) = url
+            .trim()
+            .rsplit_once("/v1/projects/")
+            .ok_or("Enter a Shrimply project link")?;
+        let server = shrimply_preferences_core::normalize_project_server_url(server)?;
+        if !servers.contains(&server) {
+            return Err(format!(
+                "Add {server} in Project Servers before opening its project link"
+            ));
+        }
+        let project_id = Uuid::parse_str(id).map_err(|_| "The project link has an invalid ID")?;
+        Ok(Self { server, project_id })
+    }
+}
+
+impl std::fmt::Display for ProjectLink {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "{}/v1/projects/{}",
+            self.server.trim_end_matches('/'),
+            self.project_id
+        )
+    }
 }
 
 pub struct WorkspaceUpdate {
@@ -51,9 +79,14 @@ impl SharedWorkspace {
     }
 
     pub fn managed_path(filename: &str) -> Result<PathBuf, String> {
-        let directory = shrimply_path_core::config_directory()
-            .join("project-workspaces")
-            .join(Uuid::new_v4().to_string());
+        Self::managed_path_in(
+            &shrimply_path_core::config_directory().join("project-workspaces"),
+            filename,
+        )
+    }
+
+    pub fn managed_path_in(directory: &Path, filename: &str) -> Result<PathBuf, String> {
+        let directory = directory.join(Uuid::new_v4().to_string());
         fs::create_dir_all(&directory).map_err(text)?;
         Ok(directory.join(filename))
     }

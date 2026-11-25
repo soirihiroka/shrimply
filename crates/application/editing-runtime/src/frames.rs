@@ -33,7 +33,11 @@ pub(super) async fn analyze_transparent_fill(
     }
     fill.analysis_generation = fill.analysis_generation.wrapping_add(1).max(1);
     let generation = fill.analysis_generation;
-    let run_id = transparent_fill_analysis::analyze(project.clone(), address, modifier_id)?;
+    #[cfg(not(target_os = "android"))]
+    let analyze = transparent_fill_analysis::analyze;
+    #[cfg(target_os = "android")]
+    let analyze = transparent_fill_analysis_fn;
+    let run_id = analyze(project.clone(), address, modifier_id)?;
 
     loop {
         if canceled.load(Ordering::Acquire) {
@@ -106,13 +110,19 @@ pub(super) async fn view_frame(
     thread::Builder::new()
         .name("shrimply-editing-frame".to_string())
         .spawn(move || {
-            #[cfg(not(target_os = "macos"))]
+            #[cfg(any(target_os = "linux", windows))]
             let result = shrimply_visual_cuda::compositor::render_project_rgba(
                 &project,
                 position,
                 &render_canceled,
             )
             .map(|frame| frame.pixels);
+            #[cfg(target_os = "android")]
+            let result = shrimply_preview_render_vulkan::Compositor::new()
+                .and_then(|mut compositor| {
+                    compositor.render_rgba(&project, position, None, &render_canceled)
+                })
+                .map(|frame| frame.pixels);
             #[cfg(target_os = "macos")]
             let result = shrimply_preview_render_metal::render_png_cancelable(
                 &project,

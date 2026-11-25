@@ -4,12 +4,17 @@ use shrimply_local_ipc::Stream;
 use shrimply_project_document::project::ProjectLockOwner;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
+#[cfg(not(target_os = "android"))]
 use std::process::{Command, Stdio};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+#[cfg(not(target_os = "android"))]
+use std::time::Instant;
 
 const WRITE_TIMEOUT: Duration = Duration::from_secs(5);
 const RESPONSE_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+#[cfg(not(target_os = "android"))]
 const START_TIMEOUT: Duration = Duration::from_secs(30);
+#[cfg(not(target_os = "android"))]
 const START_POLL_INTERVAL: Duration = Duration::from_millis(100);
 const FLATPAK_INSTANCE_HASH_LENGTH: usize = 16;
 
@@ -89,6 +94,12 @@ impl Bridge {
     }
 
     /// Connect to the active owner, or start the local editing service.
+    #[cfg(target_os = "android")]
+    pub fn connect_or_launch(path: &Path) -> Result<Self, BridgeError> {
+        Self::connect(path)
+    }
+
+    #[cfg(not(target_os = "android"))]
     pub fn connect_or_launch(path: &Path) -> Result<Self, BridgeError> {
         let owner = shrimply_project_document::project::project_lock_owner;
         let deadline = Instant::now() + START_TIMEOUT;
@@ -105,6 +116,7 @@ impl Bridge {
     }
 
     /// Start the same binary as a detached project owner; concurrent callers reuse the winner.
+    #[cfg(not(target_os = "android"))]
     fn launch(path: &Path) -> Result<Self, BridgeError> {
         let mut executable =
             std::env::current_exe().map_err(|error| BridgeError::Transport(error.to_string()))?;

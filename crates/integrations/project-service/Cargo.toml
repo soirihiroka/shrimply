@@ -11,6 +11,7 @@ serde = { workspace = true, features = ["derive", "rc"] }
 serde_json.workspace = true
 shrimply-editing-api.workspace = true
 shrimply-path-core.workspace = true
+shrimply-preferences-core.workspace = true
 shrimply-project-document.workspace = true
 shrimply-project-protocol.workspace = true
 shrimply-resource-pipeline.workspace = true

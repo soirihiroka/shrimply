@@ -31,6 +31,8 @@ use shrimply_editor_state::{
 use shrimply_math_core::{Time, fraction_new, time_from_frame};
 #[cfg(target_os = "macos")]
 use shrimply_preview_render_metal::transparent_fill_analysis;
+#[cfg(target_os = "android")]
+use shrimply_preview_render_vulkan::analysis::transparent_fill as transparent_fill_analysis_fn;
 use shrimply_project_document::project::{
     AudioSource, ItemAddress, ManimParameter, ManimParameterControl, ManimParameterValue, Project,
     SequenceScopeId, TrackRef, VideoItemContent, caption_languages, fraction_denominator,
@@ -40,12 +42,14 @@ use shrimply_timeline_edit::selection_state::{self, SharedSelectionState};
 use shrimply_visual_core::transparent_fill::analysis::{
     self as transparent_fill_jobs, Status as TransparentFillStatus,
 };
-#[cfg(not(target_os = "macos"))]
+#[cfg(any(target_os = "linux", windows))]
 use shrimply_visual_cuda::transparent_fill_analysis;
 use shrimply_visual_modifiers::{ModifierEffect, RasterModifierEffect};
 use uuid::Uuid;
 
 pub mod attached;
+#[cfg(target_os = "android")]
+pub mod embedded;
 mod execute;
 mod frames;
 mod peers;
@@ -365,6 +369,17 @@ fn start_session(
                     BridgeCommand::SessionUpdates(_) => {
                         unreachable!("presence requests have their own queue")
                     }
+                    BridgeCommand::FlushCheckpoint => {
+                        shrimply_project_document::flush_history().map(|()| json!(true))
+                    }
+                    BridgeCommand::ReloadCheckpoint => reload_checkpoint(
+                        &project_path,
+                        &project,
+                        &player_state,
+                        &selection_state,
+                        remote_actor.is_some(),
+                    )
+                    .map(|changed| json!({"project":changed.then(|| project.borrow().clone())})),
                     BridgeCommand::Handshake => Ok(json!({"ready":true,"mode":"headless"})),
                     BridgeCommand::Version => {
                         serde_json::to_value(shrimply_editing_api::protocol::BuildVersion::current(
@@ -869,7 +884,7 @@ async fn commit_candidate(
         {
             tracing::warn!(%error, "Shared edit remains in the local recovery queue");
         }
-    } else if operation_id.is_some() {
+    } else if operation_id.is_some() && !cfg!(target_os = "android") {
         shrimply_project_document::project::commit_edit_checked(&candidate, label)?;
     } else {
         shrimply_project_document::project::commit_edit_saved(&candidate, label)?;
@@ -904,12 +919,42 @@ fn replace_live_project(
     );
 }
 
+fn reload_checkpoint(
+    path: &str,
+    project: &Rc<RefCell<Project>>,
+    player: &SharedPlayerState,
+    selection: &SharedSelectionState,
+    shared: bool,
+) -> Result<bool, String> {
+    use shrimply_project_document as document;
+    if shared {
+        return Ok(false);
+    }
+    let path = std::path::Path::new(path);
+    let observed = document::checkpoint_fingerprint(path)?;
+    let Some((mut candidate, fingerprint)) = document::changed_checkpoint(path, &observed)? else {
+        return Ok(false);
+    };
+    candidate.copy_view_state_from(&project.borrow());
+    document::adopt_project_snapshot(&candidate, &fingerprint)?;
+    replace_live_project(project, player, selection, candidate);
+    Ok(true)
+}
+
 /// Run a project owner without a display server or audio playback device.
 pub fn serve(path: &std::path::Path) -> Result<(), String> {
     #[cfg(target_os = "linux")]
     if let Err(error) = shrimply_visual_cuda::gpu::configure_gtk_backend() {
         tracing::warn!(%error, "The editing service could not configure its render backend");
     }
+    serve_until(path, &AtomicBool::new(false), || {})
+}
+
+fn serve_until(
+    path: &std::path::Path,
+    stop: &AtomicBool,
+    ready: impl FnOnce(),
+) -> Result<(), String> {
     ffmpeg_next::init().map_err(|error| error.to_string())?;
     let prepared = shrimply_project_document::project::prepare_project(path)
         .map_err(|error| format!("could not acquire project: {error:?}"))?;
@@ -929,7 +974,8 @@ pub fn serve(path: &std::path::Path) -> Result<(), String> {
             selection_state::new(),
             preferences,
         )?;
-        while !server.stop.load(Ordering::Acquire) {
+        ready();
+        while !stop.load(Ordering::Acquire) && !server.stop.load(Ordering::Acquire) {
             server.poll();
             shrimply_project_document::project::poll_commit_status();
             thread::sleep(HEADLESS_POLL_INTERVAL);
@@ -937,6 +983,6 @@ pub fn serve(path: &std::path::Path) -> Result<(), String> {
         Ok(())
     })();
     let saved = shrimply_project_document::project::shutdown_history();
-    shrimply_project_document::project::clear_project_file_locks();
+    shrimply_project_document::project::release_project_lock(path);
     result.and(saved)
 }

@@ -1,12 +1,16 @@
-//! The Android adapter owns the same validated Project and history as the desktop.
+//! Android project commands and document-provider checkpoint notifications.
 //! Invoke this service on one native worker thread, never the Android UI thread.
 mod watch;
 use serde_json::{Value, json};
+#[cfg(target_os = "android")]
+use shrimply_editing_runtime::{attached, embedded};
 use shrimply_math_core::Time;
 use shrimply_project_document::{
     self as document, Project,
     creation::{NewProject, apply_project_settings},
 };
+#[cfg(target_os = "android")]
+use shrimply_project_service::{ProjectClient, ProjectLink, SharedWorkspace};
 use shrimply_timeline_edit::project_menu::{self, Action};
 use shrimply_timeline_edit::selection_state;
 use std::{
@@ -20,6 +24,10 @@ pub(crate) use watch::MirrorListener;
 
 pub(crate) struct ProjectBackend {
     project: Option<Rc<RefCell<Project>>>,
+    #[cfg(target_os = "android")]
+    owner: Option<embedded::Lease>,
+    #[cfg(target_os = "android")]
+    shared_link: Option<String>,
     path: Option<PathBuf>,
     watcher: Option<watch::Watch>,
     mirror_root: Option<String>,
@@ -45,6 +53,10 @@ impl ProjectBackend {
         document::connect_commit_status(move |value| *observed.borrow_mut() = value);
         Ok(Self {
             project: None,
+            #[cfg(target_os = "android")]
+            owner: None,
+            #[cfg(target_os = "android")]
+            shared_link: None,
             path: None,
             watcher: None,
             mirror_root: None,
@@ -106,6 +118,24 @@ impl ProjectBackend {
                     return Err("close the current project before creating another project".into());
                 }
                 let project = NewProject::from_fields(request)?;
+                #[cfg(target_os = "android")]
+                if let Some(server) = request["server"]
+                    .as_str()
+                    .filter(|server| !server.is_empty())
+                {
+                    let old = shrimply_preferences_core::snapshot(&self.preferences);
+                    if !old.project_server_urls.iter().any(|url| url == server) {
+                        return Err("Choose a server from Project Servers".into());
+                    }
+                    let project = project.into_document();
+                    let name = document::creation::filename_stem(&project.name);
+                    let directory = Path::new(string(request, "directory")?);
+                    let path =
+                        SharedWorkspace::managed_path_in(directory, &format!("{name}.shrimp"))?;
+                    SharedWorkspace::create(&path, server, &project)?;
+                    self.open(&path, None)?;
+                    return self.snapshot();
+                }
                 let path = if let Some(path) = request["path"].as_str() {
                     project.write(PathBuf::from(path), false)?
                 } else {
@@ -128,24 +158,80 @@ impl ProjectBackend {
                 Path::new(string(request, "path")?),
                 request["mirror_root"].as_str().map(Path::new),
             )?,
+            #[cfg(target_os = "android")]
+            "open_shared" => {
+                if self.project.is_some() {
+                    return Err("close the current project before opening another project".into());
+                }
+                let settings = shrimply_preferences_core::snapshot(&self.preferences);
+                let link =
+                    ProjectLink::from_url(string(request, "link")?, &settings.project_server_urls)?;
+                let directory = Path::new(string(request, "directory")?);
+                let mut existing = None;
+                for recent in &self.recents {
+                    let Some(path) = recent["path"].as_str().map(Path::new) else {
+                        continue;
+                    };
+                    if path.starts_with(directory)
+                        && path.is_file()
+                        && SharedWorkspace::open(path)?
+                            .is_some_and(|workspace| workspace.link() == &link)
+                    {
+                        existing = Some(path.to_path_buf());
+                        break;
+                    }
+                }
+                let path = if let Some(path) = existing {
+                    path
+                } else {
+                    let path = SharedWorkspace::managed_path_in(
+                        directory,
+                        &format!("{}.shrimp", link.project_id),
+                    )?;
+                    SharedWorkspace::join(&path, &link.server, link.project_id)?;
+                    path
+                };
+                self.open(&path, None)?;
+            }
+            #[cfg(target_os = "android")]
+            "update_project_server" => {
+                let previous = request["previous"].as_str();
+                let server = request["server"]
+                    .as_str()
+                    .map(shrimply_preferences_core::normalize_project_server_url)
+                    .transpose()?;
+                if let Some(server) = server.as_deref() {
+                    if let Some(token) = request["token"]
+                        .as_str()
+                        .filter(|token| !token.trim().is_empty())
+                    {
+                        ProjectClient::store_android_token(server, token)?;
+                    }
+                    ProjectClient::configured(server)?;
+                }
+                shrimply_preferences_core::update_project_server(
+                    &self.preferences,
+                    previous,
+                    server.as_deref(),
+                )?;
+            }
             "close" => self.close()?,
             "save" => self.save()?,
             "save_as" => {
                 self.save()?;
                 let path = std::path::absolute(string(request, "path")?)
                     .map_err(|error| error.to_string())?;
-                document::save_as(&path)?;
-                self.mirror_root = self
-                    .mirror_root
-                    .take()
-                    .filter(|root| path.starts_with(root));
-                self.path = Some(path);
-                self.observe_saved()?;
-                self.watch()?;
-                self.touch_recent()?;
+                self.save_as(path)?;
             }
             "export" => {
                 self.save()?;
+                #[cfg(target_os = "android")]
+                if self.shared_link.is_some() {
+                    let path = Path::new(string(request, "path")?);
+                    let canonical = attached::load(self.path().expect("open project"))?;
+                    attached::save_copy(path, &canonical)?;
+                    return self.snapshot();
+                }
                 let directory = self
                     .path
                     .as_ref()
@@ -373,6 +459,40 @@ impl ProjectBackend {
         Ok(value)
     }
 
+    fn save_as(&mut self, path: PathBuf) -> Result<(), String> {
+        #[cfg(target_os = "android")]
+        {
+            if self.path.as_ref() == Some(&path) {
+                return Ok(());
+            }
+            let old_path = self.path.clone().ok_or("open a project first")?;
+            let mirror = self.mirror_root.clone();
+            attached::save_copy(&path, &*self.required()?)?;
+            self.close()?;
+            let new_mirror = mirror
+                .as_deref()
+                .map(Path::new)
+                .filter(|root| path.starts_with(root));
+            if let Err(error) = self.open(&path, new_mirror) {
+                self.open(&old_path, mirror.as_deref().map(Path::new))?;
+                return Err(error);
+            }
+            Ok(())
+        }
+        #[cfg(not(target_os = "android"))]
+        {
+            document::save_as(&path)?;
+            self.mirror_root = self
+                .mirror_root
+                .take()
+                .filter(|root| path.starts_with(root));
+            self.path = Some(path);
+            self.observe_saved()?;
+            self.watch()?;
+            self.touch_recent()
+        }
+    }
+
     fn open(&mut self, path: &Path, mirror_root: Option<&Path>) -> Result<(), String> {
         if self.project.is_some() {
             return Err("close the current project before opening another project".into());
@@ -400,13 +520,27 @@ impl ProjectBackend {
         if mirror_root.is_some() && self.mirror_listener.is_none() {
             return Err("the document-provider mirror has no storage listener".into());
         }
-        let prepared = document::prepare_project(&path).map_err(|error| match error {
-            document::ProjectLoadError::LockedByOtherInstance { owner } => {
-                format!("project is already open in process {}", owner.pid())
-            }
-            document::ProjectLoadError::Other(message) => message,
-        })?;
-        let project = document::activate_project(prepared);
+        #[cfg(target_os = "android")]
+        let project = {
+            let shared_link =
+                SharedWorkspace::open(&path)?.map(|workspace| workspace.link().to_string());
+            let owner = embedded::Lease::open(&path)?;
+            let project = attached::load(&path)?;
+            attached::activate(&path, &project);
+            self.owner = Some(owner);
+            self.shared_link = shared_link;
+            project
+        };
+        #[cfg(not(target_os = "android"))]
+        let project = {
+            let prepared = document::prepare_project(&path).map_err(|error| match error {
+                document::ProjectLoadError::LockedByOtherInstance { owner } => {
+                    format!("project is already open in process {}", owner.pid())
+                }
+                document::ProjectLoadError::Other(message) => message,
+            })?;
+            document::activate_project(prepared)
+        };
         self.project = Some(Rc::new(RefCell::new(project)));
         self.path = Some(path);
         self.mirror_root = mirror_root;
@@ -434,6 +568,8 @@ impl ProjectBackend {
             document::save_view_state(&*self.required()?);
         }
         document::flush_history()?;
+        #[cfg(target_os = "android")]
+        attached::flush_checkpoint(self.path.as_ref().expect("open project has a path"))?;
         self.observe_saved()?;
         document::poll_commit_status();
         Ok(())
@@ -447,6 +583,12 @@ impl ProjectBackend {
         document::shutdown_history()?;
         self.watcher = None;
         self.mirror_root = None;
+        #[cfg(target_os = "android")]
+        {
+            self.owner = None;
+            self.shared_link = None;
+        }
+        #[cfg(not(target_os = "android"))]
         document::release_project_lock(self.path.as_ref().expect("open project has a path"));
         self.project = None;
         self.selection = selection_state::new();
@@ -460,10 +602,13 @@ impl ProjectBackend {
     }
 
     fn observe_saved(&mut self) -> Result<(), String> {
-        self.fingerprint = Some(
-            document::saved_project_fingerprint()
-                .ok_or("the active document has no canonical I/O receipt")?,
-        );
+        #[cfg(not(target_os = "android"))]
+        {
+            self.fingerprint = Some(
+                document::saved_project_fingerprint()
+                    .ok_or("the active document has no canonical I/O receipt")?,
+            );
+        }
         self.error = None;
         self.view_dirty = false;
         document::poll_commit_status();
@@ -519,33 +664,39 @@ impl ProjectBackend {
 
     fn reload(&mut self) -> Result<bool, String> {
         let path = self.path.as_ref().ok_or("open a project first")?.clone();
-        let current = fingerprint(&path)?;
+        let current = document::checkpoint_fingerprint(&path)?;
         if self.fingerprint.as_ref() == Some(&current) {
             return Ok(false);
         }
-        // Shared Scene edits commit through the same document history. Its I/O
-        // receipt distinguishes our own completed save from an external edit.
-        if document::saved_project_fingerprint().as_ref() == Some(&current) {
-            self.fingerprint = Some(current);
-            return Ok(false);
-        }
-        // Validate before touching the live document or its history worker. A
-        // partially written/broken external project keeps the last good state.
-        let (mut candidate, loaded_fingerprint) =
-            document::load_project_snapshot_with_fingerprint(&path)?;
-        if fingerprint(&path)? != loaded_fingerprint {
-            return Err(
-                "project changed again while loading; waiting for its next complete save".into(),
-            );
-        }
-        if self.view_dirty {
-            let project = self.required()?;
-            candidate.cursor_position = project
-                .cursor_position
-                .map(|cursor| cursor.clamp(Time::ZERO, candidate.duration()));
-            candidate.timeline_zoom = project.timeline_zoom;
-        }
-        document::adopt_project_snapshot(&candidate, &loaded_fingerprint)?;
+        #[cfg(target_os = "android")]
+        let (candidate, loaded_fingerprint) = {
+            let started = std::time::Instant::now();
+            let Some(mut candidate) = attached::reload_checkpoint(&path)? else {
+                self.fingerprint = Some(current);
+                return Ok(false);
+            };
+            candidate.copy_view_state_from(&*self.required()?);
+            document::adopt_attached_snapshot(&candidate, started)?;
+            (candidate, current)
+        };
+        #[cfg(not(target_os = "android"))]
+        let (candidate, loaded_fingerprint) = {
+            let Some((mut candidate, loaded_fingerprint)) =
+                document::changed_checkpoint(&path, &current)?
+            else {
+                self.fingerprint = Some(current);
+                return Ok(false);
+            };
+            if self.view_dirty {
+                let project = self.required()?;
+                candidate.cursor_position = project
+                    .cursor_position
+                    .map(|cursor| cursor.clamp(Time::ZERO, candidate.duration()));
+                candidate.timeline_zoom = project.timeline_zoom;
+            }
+            document::adopt_project_snapshot(&candidate, &loaded_fingerprint)?;
+            (candidate, loaded_fingerprint)
+        };
         *self.project.as_ref().expect("open project").borrow_mut() = candidate;
         self.fingerprint = Some(loaded_fingerprint);
         self.error = None;
@@ -570,8 +721,12 @@ impl ProjectBackend {
 
     pub fn snapshot(&self) -> Result<Value, String> {
         document::poll_commit_status();
+        #[cfg(target_os = "android")]
+        let shared_link = self.shared_link.as_deref();
+        #[cfg(not(target_os = "android"))]
+        let shared_link: Option<&str> = None;
         let project = self.project().map(|project| json!({
-            "path":self.path, "name":project.name, "tags":project.tags,
+            "path":self.path, "shared_link":shared_link, "name":project.name, "tags":project.tags,
             "canvas_width":project.canvas_size.width, "canvas_height":project.canvas_size.height,
             "fps":project.fps.to_string(), "duration_frames":project.duration().as_frame_ceil(project.fps),
             "cursor_frame":project.cursor_position.unwrap_or(Time::ZERO).as_frame(project.fps),
@@ -592,6 +747,7 @@ impl ProjectBackend {
             project_menu::document(|action| menu_effect(action).is_some(), can_undo, can_redo)
         });
         Ok(json!({"project":project,"project_menu":menu,
+            "project_servers":shrimply_preferences_core::snapshot(&self.preferences).project_server_urls,
             "save_state":state,"save_error":save_error,"watch_error":self.error,"revision":self.revision,"recents":self.recents}))
     }
 
@@ -902,15 +1058,6 @@ fn settings_schema() -> Value {
         }).collect::<std::collections::BTreeMap<_,_>>()),
         "frame_rates":document::project::frame_rate_choices(defaults.fps).into_iter().map(|(value,label)|json!({"label":label,"value":value.to_string()})).collect::<Vec<_>>()
     })
-}
-
-fn fingerprint(path: &Path) -> Result<String, String> {
-    let mut file = fs::File::open(path)
-        .map_err(|error| format!("could not read {}: {error}", path.display()))?;
-    let mut hash = shrimply_resource_pipeline::fingerprint::Writer::default();
-    std::io::copy(&mut file, &mut hash)
-        .map_err(|error| format!("could not read project: {error}"))?;
-    Ok(hash.finish())
 }
 
 #[cfg(test)]

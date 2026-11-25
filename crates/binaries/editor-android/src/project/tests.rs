@@ -25,12 +25,15 @@ fn canonical_io_receipts_do_not_adopt_racing_external_writes_as_our_baseline() {
     document::create_project_file(&path, &external).unwrap();
     backend.observe_saved().unwrap();
     assert_eq!(backend.fingerprint.as_ref(), Some(&own_receipt));
-    assert_ne!(own_receipt, fingerprint(&path).unwrap());
+    assert_ne!(
+        own_receipt,
+        document::checkpoint_fingerprint(&path).unwrap()
+    );
     assert!(backend.reload().unwrap());
     assert_eq!(backend.required().unwrap().name, "External racing edit");
     assert_eq!(
         document::saved_project_fingerprint().unwrap(),
-        fingerprint(&path).unwrap()
+        document::checkpoint_fingerprint(&path).unwrap()
     );
     // An edit/undo may be dequeued before the native watch wake. Preserve
     // that external content, and resolve stable targets after reloading it.
@@ -70,7 +73,7 @@ fn canonical_io_receipts_do_not_adopt_racing_external_writes_as_our_baseline() {
     assert_eq!(project.name, "External before undo");
     assert_ne!(
         document::saved_project_fingerprint().unwrap(),
-        fingerprint(&path).unwrap()
+        document::checkpoint_fingerprint(&path).unwrap()
     );
     backend.project = Some(Rc::new(RefCell::new(project)));
     backend.path = Some(path.clone());
@@ -97,7 +100,10 @@ fn canonical_io_receipts_do_not_adopt_racing_external_writes_as_our_baseline() {
     let public = document::from_json_file(&json_path).unwrap();
     let (loaded, receipt) = document::load_project_snapshot_with_fingerprint(&json_path).unwrap();
     assert_eq!(loaded.name, public.name);
-    assert_eq!(receipt, fingerprint(&json_path).unwrap());
+    assert_eq!(
+        receipt,
+        document::checkpoint_fingerprint(&json_path).unwrap()
+    );
     backend
         .dispatch(&json!({"op":"open","path":json_path}))
         .unwrap();
@@ -110,7 +116,7 @@ fn canonical_io_receipts_do_not_adopt_racing_external_writes_as_our_baseline() {
     );
     assert_eq!(
         document::saved_project_fingerprint().unwrap(),
-        fingerprint(&json_path).unwrap()
+        document::checkpoint_fingerprint(&json_path).unwrap()
     );
     backend.close().unwrap();
 }

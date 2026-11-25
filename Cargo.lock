@@ -6344,7 +6344,6 @@ dependencies = [
  "shrimply-timeline-edit",
  "shrimply-trust-core",
  "tracing",
- "uuid",
 ]
 
 [[package]]
@@ -6463,6 +6462,7 @@ dependencies = [
  "shrimply-manim-bridge",
  "shrimply-math-core",
  "shrimply-preview-render-metal",
+ "shrimply-preview-render-vulkan",
  "shrimply-project-document",
  "shrimply-project-service",
  "shrimply-resource-pipeline",
@@ -6497,6 +6497,7 @@ dependencies = [
  "shrimply-components-skia",
  "shrimply-cross-ui-theme",
  "shrimply-editing-api",
+ "shrimply-editing-runtime",
  "shrimply-export-core",
  "shrimply-fonts",
  "shrimply-framegraph-skia",
@@ -6515,6 +6516,7 @@ dependencies = [
  "shrimply-preview-render-vulkan",
  "shrimply-profiling",
  "shrimply-project-document",
+ "shrimply-project-service",
  "shrimply-property-transfer",
  "shrimply-recent-projects",
  "shrimply-render-vulkan",
@@ -7960,6 +7962,7 @@ dependencies = [
  "serde_json",
  "shrimply-editing-api",
  "shrimply-path-core",
+ "shrimply-preferences-core",
  "shrimply-project-document",
  "shrimply-project-protocol",
  "shrimply-resource-pipeline",

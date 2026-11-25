@@ -65,9 +65,46 @@ pub struct ProjectClient {
 
 impl ProjectClient {
     pub fn configured(base: &str) -> Result<Self, String> {
+        #[cfg(target_os = "android")]
+        let token = std::fs::read_to_string(Self::android_token_path(base))
+            .map_err(|_| "Set the access token for this project server in Project Servers")?;
+        #[cfg(not(target_os = "android"))]
         let token = std::env::var("SHRIMPLY_PROJECT_SERVER_TOKEN")
             .map_err(|_| "set SHRIMPLY_PROJECT_SERVER_TOKEN to connect to a project server")?;
         Self::new(base, token)
+    }
+
+    #[cfg(target_os = "android")]
+    fn android_token_path(base: &str) -> std::path::PathBuf {
+        shrimply_path_core::config_directory()
+            .join("project-server-tokens")
+            .join(shrimply_resource_pipeline::fingerprint::digest(
+                base.trim_end_matches('/').as_bytes(),
+            ))
+    }
+
+    #[cfg(target_os = "android")]
+    pub fn store_android_token(base: &str, token: &str) -> Result<(), String> {
+        use std::io::Write as _;
+        let token = token.trim();
+        if token.is_empty()
+            || token.chars().any(char::is_whitespace)
+            || header::HeaderValue::from_str(token).is_err()
+        {
+            return Err("Enter a valid project server access token".into());
+        }
+        let path = Self::android_token_path(base);
+        let directory = path.parent().expect("token directory");
+        std::fs::create_dir_all(directory).map_err(|error| error.to_string())?;
+        let mut staged =
+            tempfile::NamedTempFile::new_in(directory).map_err(|error| error.to_string())?;
+        staged
+            .write_all(token.as_bytes())
+            .map_err(|error| error.to_string())?;
+        staged
+            .persist(path)
+            .map_err(|error| error.error.to_string())?;
+        Ok(())
     }
 
     pub fn new(base: &str, token: String) -> Result<Self, String> {

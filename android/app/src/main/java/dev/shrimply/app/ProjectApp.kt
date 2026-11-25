@@ -1,5 +1,7 @@
 package dev.shrimply.app
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Intent
 import androidx.activity.compose.LocalActivity
 import android.view.WindowInsets
@@ -39,7 +41,9 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.DpOffset
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -72,6 +76,12 @@ internal fun ProjectApp(timeline: TimelineSession, files: ProjectFiles, caption:
     var pendingExport by rememberSaveable { mutableStateOf<String?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var preferences by rememberSaveable { mutableStateOf(false) }
+    val servers = status.optJSONArray("project_servers")?.let { values ->
+        List(values.length()) { values.getString(it) }
+    }.orEmpty()
+    var showServers by rememberSaveable { mutableStateOf(false) }
+    var showSharedLink by rememberSaveable { mutableStateOf(false) }
+    var projectServer by rememberSaveable { mutableStateOf("") }
     var create by rememberSaveable { mutableStateOf(false) }
     var name by rememberSaveable { mutableStateOf("") }
     var canvasWidth by rememberSaveable { mutableStateOf("") }
@@ -133,8 +143,22 @@ internal fun ProjectApp(timeline: TimelineSession, files: ProjectFiles, caption:
     }
     val exportFolder = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         if (uri != null && project != null) action {
-            timeline.request("export")
-            files.exportTree(project.getString("path"), uri) { file -> scope.launch { progress = file } }
+            val path = project.getString("path")
+            if (project.isNull("shared_link")) {
+                timeline.request("export", "project_path" to path)
+                files.exportTree(path, uri) { file -> scope.launch { progress = file } }
+            } else {
+                val folder = withContext(Dispatchers.IO) {
+                    java.nio.file.Files.createTempDirectory(files.projectDirectory().toPath(), "export-").toFile()
+                }
+                try {
+                    val copy = File(folder, File(path).name).absolutePath
+                    timeline.request("export", "project_path" to path, "path" to copy)
+                    files.exportTree(copy, uri) { file -> scope.launch { progress = file } }
+                } finally {
+                    withContext(Dispatchers.IO) { folder.deleteRecursively() }
+                }
+            }
         }
     }
     val saveExport = rememberExportPicker { uri ->
@@ -256,13 +280,16 @@ internal fun ProjectApp(timeline: TimelineSession, files: ProjectFiles, caption:
     val workspace: @Composable (Boolean) -> Unit = { renderOnly -> workspaceState.SaveableStateProvider(workspaceKey) {
     Box(Modifier.fillMaxSize().then(if (project == null) Modifier.safeDrawingPadding() else Modifier).then(if (renderOnly) Modifier.clearAndSetSemantics {}.focusProperties { canFocus = false } else Modifier)) {
         if (project == null) {
-            Launcher(status, !renderOnly && !busy && schema.has("defaults"), { useSettings(schema.getJSONObject("defaults")); create = true }, { choicesBottomSheet = NativeLayout.menuUsesBottomSheet(menuInputSource.value); openFolder.launch(null) }, ::open,
+            Launcher(status, !renderOnly && !busy && schema.has("defaults"), { useSettings(schema.getJSONObject("defaults")); projectServer = ""; create = true },
+                { choicesBottomSheet = NativeLayout.menuUsesBottomSheet(menuInputSource.value); openFolder.launch(null) },
+                { showSharedLink = true }, { showServers = true }, ::open,
                 { action { timeline.request("clear_recents") } },
                 command = { command -> action { timeline.request(command) } },
                 showInFiles = { path -> action { files.showInFiles(path) } })
         } else {
             Editor(timeline, files, project, playback, status, !renderOnly && !busy,
                 onError = { error = it },
+                syncError = event.optString("sync_error").takeUnless { event.isNull("sync_error") },
                 selectFile = { control ->
                     inspectorFileTarget = JSONObject().put("project_path", project.getString("path"))
                         .put("command", control.getJSONObject("command")).toString()
@@ -306,6 +333,25 @@ internal fun ProjectApp(timeline: TimelineSession, files: ProjectFiles, caption:
     }
     } }
     if (preferences) PreferencesScreen(timeline, files, { preferences = false }) { workspace(true) } else workspace(false)
+    if (showServers) ProjectServersDialog(servers, busy, { showServers = false }) { update, complete ->
+        action {
+            timeline.request(update)
+            complete()
+        }
+    }
+    if (showSharedLink) {
+        var link by rememberSaveable { mutableStateOf("") }
+        AlertDialog(modifier = Modifier.imePadding(), onDismissRequest = { if (!busy) showSharedLink = false },
+            title = { Text(tr("Open Shared Project")) },
+            text = { OutlinedTextField(link, { link = it }, label = { Text(tr("Project link")) }, singleLine = true, enabled = !busy) },
+            confirmButton = { TextButton(enabled = !busy && link.isNotBlank(), onClick = {
+                action {
+                    timeline.request("open_shared", "directory" to files.projectDirectory().absolutePath, "link" to link)
+                    showSharedLink = false
+                }
+            }) { Text(tr("Open")) } },
+            dismissButton = { TextButton(enabled = !busy, onClick = { showSharedLink = false }) { Text(tr("Cancel")) } })
+    }
     if (create && schema.has("frame_rates")) AlertDialog(
         modifier = Modifier.imePadding(),
         onDismissRequest = { if (!busy) { create = false } },
@@ -327,6 +373,12 @@ internal fun ProjectApp(timeline: TimelineSession, files: ProjectFiles, caption:
                 OutlinedTextField(canvasWidth, { canvasWidth = it }, label = { Text(tr("Width")) }, singleLine = true, modifier = Modifier.weight(1f), enabled = !busy)
                 OutlinedTextField(canvasHeight, { canvasHeight = it }, label = { Text(tr("Height")) }, singleLine = true, modifier = Modifier.weight(1f), enabled = !busy)
             }
+            if (servers.isNotEmpty()) {
+                ChoiceInput(tr("Location"), projectServer.ifEmpty { tr("On this device") },
+                    listOf(tr("On this device")) + servers, !busy) { index ->
+                    projectServer = servers.getOrNull(index - 1).orEmpty()
+                }
+            }
             val rates = schema.getJSONArray("frame_rates").objects()
             ChoiceInput(tr("FPS"), rates.first { it.getString("value") == fps }.getString("label"),
                 rates.map { it.getString("label") }, !busy) { fps = rates[it].getString("value") }
@@ -335,7 +387,7 @@ internal fun ProjectApp(timeline: TimelineSession, files: ProjectFiles, caption:
             action {
                 timeline.request("create", "directory" to files.projectDirectory().absolutePath,
                     "name" to name, "canvas_width" to canvasWidth, "canvas_height" to canvasHeight,
-                    "fps" to fps, "tags" to tags)
+                    "fps" to fps, "tags" to tags, "server" to projectServer)
                 create = false
             }
         }) { Text(tr("Create")) } },
@@ -399,7 +451,8 @@ private fun targetArguments(saved: String): Array<Pair<String, Any>> {
 }
 
 @Composable
-private fun Launcher(status: JSONObject, enabled: Boolean, create: () -> Unit, open: () -> Unit, recent: (String) -> Unit, clear: () -> Unit,
+private fun Launcher(status: JSONObject, enabled: Boolean, create: () -> Unit, open: () -> Unit,
+    openShared: () -> Unit, projectServers: () -> Unit, recent: (String) -> Unit, clear: () -> Unit,
     command: (JSONObject) -> Unit, showInFiles: (String) -> Unit) {
     var search by rememberSaveable { mutableStateOf("") }
     var info by remember { mutableStateOf<JSONObject?>(null) }
@@ -409,6 +462,8 @@ private fun Launcher(status: JSONObject, enabled: Boolean, create: () -> Unit, o
             if (expanded) Column(Modifier.width(200.dp).fillMaxHeight().background(MaterialTheme.colorScheme.surfaceContainerLow)) {
                 Button(onClick = create, enabled = enabled, modifier = Modifier.padding(12.dp).fillMaxWidth()) { Text(tr("Create Project")) }
                 OutlinedButton(onClick = open, enabled = enabled, modifier = Modifier.padding(horizontal = 12.dp).fillMaxWidth()) { Text(tr("Open Project")) }
+                TextButton(onClick = openShared, enabled = enabled, modifier = Modifier.fillMaxWidth()) { Text(tr("Open Shared Project")) }
+                TextButton(onClick = projectServers, enabled = enabled, modifier = Modifier.fillMaxWidth()) { Text(tr("Project Servers")) }
             }
             Column(Modifier.weight(1f).fillMaxHeight()) {
                 if (expanded) {
@@ -418,6 +473,10 @@ private fun Launcher(status: JSONObject, enabled: Boolean, create: () -> Unit, o
                 if (!expanded) Row(Modifier.padding(12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     Button(onClick = create, enabled = enabled, modifier = Modifier.weight(1f)) { Text(tr("Create Project")) }
                     OutlinedButton(onClick = open, enabled = enabled, modifier = Modifier.weight(1f)) { Text(tr("Open Project")) }
+                }
+                if (!expanded) Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    TextButton(onClick = openShared, enabled = enabled, modifier = Modifier.weight(1f)) { Text(tr("Open Shared Project")) }
+                    TextButton(onClick = projectServers, enabled = enabled, modifier = Modifier.weight(1f)) { Text(tr("Project Servers")) }
                 }
                 Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
                     OutlinedTextField(search, { search = it }, label = { Text(tr("Search history")) }, singleLine = true, modifier = Modifier.weight(1f))
@@ -478,13 +537,14 @@ private fun ActionIcon(icon: String, description: String, enabled: Boolean = tru
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun Editor(timeline: TimelineSession, files: ProjectFiles, project: JSONObject, playback: JSONObject, status: JSONObject, enabled: Boolean,
-    onError: (String) -> Unit, selectFile: (JSONObject) -> Unit, command: (String, Array<out Pair<String, Any>>) -> Unit,
+    onError: (String) -> Unit, syncError: String?, selectFile: (JSONObject) -> Unit, command: (String, Array<out Pair<String, Any>>) -> Unit,
     activateProjectMenu: (String) -> Unit, export: () -> Unit, exportVideo: () -> Unit, exportCaptions: () -> Unit, viewChange: (JSONObject, () -> Unit) -> Unit,
     pendingOperation: String? = null, renderOnly: Boolean = false, windowCaption: WindowCaption = WindowCaption()) {
     var fullscreen by rememberSaveable(project.getString("path")) { mutableStateOf(false) }
     val inspectorState = rememberSaveableStateHolder()
     val paneDividerSize = remember { NativeLayout.panelDividerWidth().dp }
     val window = checkNotNull(LocalActivity.current).window
+    val clipboard = LocalContext.current.getSystemService(ClipboardManager::class.java)
     BackHandler(fullscreen && !renderOnly) { fullscreen = false }
     DisposableEffect(window, fullscreen, renderOnly) {
         val immersive = fullscreen && !renderOnly
@@ -565,6 +625,18 @@ private fun Editor(timeline: TimelineSession, files: ProjectFiles, project: JSON
                             Icon(iconVector(menu.getString("icon")), menu.getString("label"), Modifier.size(16.dp))
                         }) { dismiss ->
                             ProjectMenuItems(menu, dismiss, activateProjectMenu)
+                            if (!project.isNull("shared_link")) DropdownMenuItem(
+                                text = { Text(tr("Copy Project Link")) },
+                                leadingIcon = { Icon(iconVector("edit-copy-symbolic"), null, Modifier.size(16.dp)) },
+                                onClick = {
+                                    dismiss()
+                                    clipboard.setPrimaryClip(ClipData.newPlainText(tr("Project link"), project.getString("shared_link")))
+                                })
+                            if (!syncError.isNullOrEmpty()) {
+                                HorizontalDivider()
+                                Text(syncError, Modifier.padding(12.dp), color = MaterialTheme.colorScheme.error,
+                                    style = MaterialTheme.typography.bodySmall)
+                            }
                         }
                     }
                 } })

@@ -22,6 +22,7 @@ ColumnLayout {
     spacing: 2
 
     component CloudIcon: Image {
+        id: cloud
         Layout.preferredWidth: 14
         Layout.preferredHeight: 14
         source: "qrc:/shrimply/icons/cloud-symbolic.svg"
@@ -29,7 +30,7 @@ ColumnLayout {
         layer.enabled: true
         layer.effect: MultiEffect {
             colorization: 1
-            colorizationColor: Application.palette.text
+            colorizationColor: cloud.palette.text
         }
     }
 

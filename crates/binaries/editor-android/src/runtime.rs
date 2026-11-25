@@ -45,6 +45,10 @@ pub(crate) struct Runtime {
     inspect_serial: u64,
     pub backend: ProjectBackend,
     #[cfg(target_os = "android")]
+    attachment: Option<shrimply_editing_runtime::attached::Editor>,
+    #[cfg(target_os = "android")]
+    sync_error: Option<String>,
+    #[cfg(target_os = "android")]
     wake: Arc<dyn Fn() + Send + Sync>,
     #[cfg(target_os = "android")]
     pub preview_frame: Option<shrimply_preview_render_vulkan::worker::Frame>,
@@ -106,6 +110,10 @@ impl Runtime {
             serde_json::to_string(&backend.snapshot()?).map_err(|error| error.to_string())?;
         Ok(Self {
             backend,
+            #[cfg(target_os = "android")]
+            attachment: None,
+            #[cfg(target_os = "android")]
+            sync_error: None,
             #[cfg(target_os = "android")]
             wake,
             #[cfg(target_os = "android")]
@@ -560,6 +568,7 @@ impl Runtime {
                     self.sync_cursor();
                 }
                 let previous_path = self.backend.path().map(std::path::Path::to_path_buf);
+                let previous_project = self.backend.shared_project();
                 let previous_revision = self.backend.revision;
                 let result = if let Some(source) = source {
                     self.backend.import_file(request, Some(source))
@@ -567,7 +576,14 @@ impl Runtime {
                     self.backend.dispatch(request)
                 };
                 let lifecycle = self.synchronize_lifecycle();
-                let reset = previous_path.as_deref() != self.backend.path();
+                let reset = previous_path.as_deref() != self.backend.path()
+                    || match (previous_project, self.backend.shared_project()) {
+                        (Some(previous), Some(current)) => {
+                            !std::rc::Rc::ptr_eq(&previous, &current)
+                        }
+                        (None, None) => false,
+                        _ => true,
+                    };
                 let model_changed = previous_revision != self.backend.revision;
                 if reset {
                     self.generation = self
@@ -620,6 +636,24 @@ impl Runtime {
 
     fn refresh(&mut self, reset: bool) {
         if reset {
+            #[cfg(target_os = "android")]
+            {
+                self.sync_error = None;
+                self.attachment = self.backend.path().and_then(|path| {
+                    match shrimply_editing_runtime::attached::Editor::new(
+                        path,
+                        self.backend.shared_project().expect("open project"),
+                        self.player.clone(),
+                        self.backend.selection.clone(),
+                    ) {
+                        Ok(editor) => Some(editor),
+                        Err(error) => {
+                            self.sync_error = Some(error);
+                            None
+                        }
+                    }
+                });
+            }
             self.file_drop = None;
             self.discard_video_recording();
             self.framegraphs.clear();
@@ -777,8 +811,27 @@ impl Runtime {
         let before = self.synchronize_lifecycle()?;
         let revision = self.backend.revision;
         let changed = self.backend.changed();
+        #[cfg(target_os = "android")]
+        let sync_changed = if let Some(editor) = &self.attachment {
+            let history = shrimply_project_document::history_revision();
+            let player = player::snapshot(&self.player);
+            editor.poll();
+            if shrimply_project_document::history_revision() != history {
+                self.backend.revision += 1;
+            }
+            let error = editor.sync_error();
+            let changed = self.sync_error != error || player::snapshot(&self.player) != player;
+            self.sync_error = error;
+            changed
+        } else {
+            false
+        };
+        #[cfg(not(target_os = "android"))]
+        let sync_changed = false;
         let after = self.synchronize_lifecycle()?;
-        let changed = changed.map(|value| value || before || after);
+        let changed = changed.map(|value| {
+            value || before || after || sync_changed || revision != self.backend.revision
+        });
         if !matches!(changed, Ok(false)) {
             if revision != self.backend.revision {
                 self.refresh(false);
@@ -856,10 +909,15 @@ impl Runtime {
         let preview_image = self.preview_image_snapshot();
         #[cfg(not(target_os = "android"))]
         let preview_image = Value::Null;
+        #[cfg(target_os = "android")]
+        let sync_error = self.sync_error.as_deref();
+        #[cfg(not(target_os = "android"))]
+        let sync_error: Option<&str> = None;
         // The project/recents payload changes only on project events, not every frame.
         format!(
-            "{{\"status\":{},\"editor_layout\":{},\"playback\":{},\"preview_controls\":{},\"preview_context\":{},\"preview_image\":{},\"timeline_service\":{},\"error\":{},\"inspector\":{},\"video_recording\":{},\"export\":{},\"timeline\":{{\"button_feedback\":{},\"tools_progress\":{},\"show_tools\":{},\"audio_monitor_progress\":{},\"show_audio_monitor\":{},\"ruler_height\":{},\"action\":{},\"tools\":{},\"context\":{},\"inspect_serial\":{}}}}}",
+            "{{\"status\":{},\"sync_error\":{},\"editor_layout\":{},\"playback\":{},\"preview_controls\":{},\"preview_context\":{},\"preview_image\":{},\"timeline_service\":{},\"error\":{},\"inspector\":{},\"video_recording\":{},\"export\":{},\"timeline\":{{\"button_feedback\":{},\"tools_progress\":{},\"show_tools\":{},\"audio_monitor_progress\":{},\"show_audio_monitor\":{},\"ruler_height\":{},\"action\":{},\"tools\":{},\"context\":{},\"inspect_serial\":{}}}}}",
             self.status,
+            json!(sync_error),
             shrimply_preferences_core::snapshot(&self.backend.preferences)
                 .editor_layout
                 .json(),

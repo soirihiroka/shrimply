@@ -32,8 +32,11 @@ tempfile.workspace = true
 tracing.workspace = true
 uuid.workspace = true
 
-[target.'cfg(not(target_os = "macos"))'.dependencies]
+[target.'cfg(any(target_os = "linux", windows))'.dependencies]
 shrimply-visual-cuda.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 shrimply-preview-render-metal.workspace = true
+
+[target.'cfg(target_os = "android")'.dependencies]
+shrimply-preview-render-vulkan.workspace = true

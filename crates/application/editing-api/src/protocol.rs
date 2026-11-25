@@ -189,6 +189,8 @@ pub enum BridgeCommand {
     Handshake,
     Version,
     Snapshot,
+    FlushCheckpoint,
+    ReloadCheckpoint,
     Execute(ApiCall),
     ApplyChanges(ApplyChanges),
     SessionUpdates(SessionUpdates),

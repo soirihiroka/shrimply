@@ -197,6 +197,15 @@ pub fn saved_project_fingerprint() -> Option<String> {
     })
 }
 
+pub fn checkpoint_fingerprint(path: &Path) -> Result<String, String> {
+    let mut file = std::fs::File::open(path)
+        .map_err(|error| format!("could not read {}: {error}", path.display()))?;
+    let mut hash = shrimply_resource_pipeline::fingerprint::Writer::default();
+    std::io::copy(&mut file, &mut hash)
+        .map_err(|error| format!("could not read project: {error}"))?;
+    Ok(hash.finish())
+}
+
 pub struct PreparedProject {
     project: Option<Project>,
     fingerprint: String,
@@ -251,6 +260,21 @@ pub fn load_project_snapshot_with_fingerprint(path: &Path) -> Result<(Project, S
             Err("Project needs frame-grid repair. Open and save it in the editor first.".into())
         }
     }
+}
+
+/// Check for a new on-disk document without adopting a partially written checkpoint.
+pub fn changed_checkpoint(
+    path: &Path,
+    observed_fingerprint: &str,
+) -> Result<Option<(Project, String)>, String> {
+    if saved_project_fingerprint().as_deref() == Some(observed_fingerprint) {
+        return Ok(None);
+    }
+    let (project, fingerprint) = load_project_snapshot_with_fingerprint(path)?;
+    if checkpoint_fingerprint(path)? != fingerprint {
+        return Err("Project changed while loading. Wait for its next complete save.".into());
+    }
+    Ok(Some((project, fingerprint)))
 }
 
 fn read_project_with_frame_grid_repair(

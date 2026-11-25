@@ -37,6 +37,15 @@ pub fn load(path: &Path) -> Result<Project, String> {
     Ok(snapshot.project)
 }
 
+pub fn flush_checkpoint(path: &Path) -> Result<(), String> {
+    request(path, BridgeCommand::FlushCheckpoint).map(|_| ())
+}
+
+pub fn reload_checkpoint(path: &Path) -> Result<Option<Project>, String> {
+    let mut response = request(path, BridgeCommand::ReloadCheckpoint)?;
+    serde_json::from_value(response["project"].take()).map_err(|error| error.to_string())
+}
+
 pub fn save_copy(path: &Path, project: &Project) -> Result<(), String> {
     if SharedWorkspace::database(path).is_file() {
         return Err("Choose a destination outside other shared project workspaces".into());

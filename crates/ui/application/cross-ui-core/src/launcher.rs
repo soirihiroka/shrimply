@@ -214,32 +214,15 @@ pub fn create_shared_project(
 }
 
 pub fn shared_project_link(path: &Path) -> Result<Option<String>, String> {
-    Ok(
-        shrimply_project_service::SharedWorkspace::open(path)?.map(|workspace| {
-            let link = workspace.link();
-            format!(
-                "{}/v1/projects/{}",
-                link.server.trim_end_matches('/'),
-                link.project_id
-            )
-        }),
-    )
+    Ok(shrimply_project_service::SharedWorkspace::open(path)?
+        .map(|workspace| workspace.link().to_string()))
 }
 
-pub fn open_shared_project(link: &str) -> Result<PathBuf, String> {
-    let (server, id) = link
-        .trim()
-        .rsplit_once("/v1/projects/")
-        .ok_or("Enter a Shrimply project link")?;
-    let server = shrimply_editor_state::preferences::normalize_project_server_url(server)?;
-    if !project_servers().contains(&server) {
-        return Err(format!(
-            "Add {server} in Project Servers before opening its project link"
-        ));
-    }
-    let id = uuid::Uuid::parse_str(id).map_err(|_| "The project link has an invalid ID")?;
-    let path = shrimply_project_service::SharedWorkspace::managed_path(&format!("{id}.shrimp"))?;
-    let (_, document) = shrimply_project_service::SharedWorkspace::join(&path, &server, id)?;
+pub fn open_shared_project(url: &str) -> Result<PathBuf, String> {
+    use shrimply_project_service::{ProjectLink, SharedWorkspace};
+    let link = ProjectLink::from_url(url, &project_servers())?;
+    let path = SharedWorkspace::managed_path(&format!("{}.shrimp", link.project_id))?;
+    let (_, document) = SharedWorkspace::join(&path, &link.server, link.project_id)?;
     recent_projects::touch(&path, &document.name, &document.tags)?;
     Ok(path)
 }
