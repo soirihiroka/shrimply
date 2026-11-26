@@ -43,24 +43,82 @@ jobs:
         run: nix develop --accept-flake-config --command make export-check check
 
   macos:
-    permissions:
-      actions: write
-      contents: write
-    uses: ./.github/workflows/macos.yml
-    with:
-      check_only: true
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          submodules: recursive
+
+      - uses: ./.github/actions/setup-macos
+        id: setup
+        with:
+          profile: debug
+
+      - name: Check AppKit and run Clippy
+        env:
+          CARGO_BUILD_JOBS: "2"
+          CARGO_INCREMENTAL: "0"
+          CARGO_PROFILE_DEV_DEBUG: "0"
+        run: make check
+
+      - name: Save macOS check cache
+        if: steps.setup.outputs.application-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            target/debug
+            ${{ env.CARGO_HOME }}/registry
+            ${{ env.CARGO_HOME }}/git
+          key: ${{ steps.setup.outputs.application-key }}
 
   windows:
-    permissions:
-      contents: write
-    uses: ./.github/workflows/windows.yml
-    with:
-      check_only: true
+    runs-on: windows-2022
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-windows
+
+      - name: Check Windows and run Clippy
+        shell: powershell
+        env:
+          CARGO_BUILD_JOBS: "3"
+          CARGO_INCREMENTAL: "0"
+          CARGO_PROFILE_DEV_DEBUG: "0"
+        run: |
+          $env:PATH += ";C:\Program Files\Git\bin;C:\Program Files\Git\usr\bin"
+          make windows-check
+
+      - name: Upload build diagnostics
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: windows-build-diagnostics
+          path: |
+            .ci/ffmpeg-validation/*.log
+            .ci/vcpkg/buildtrees/**/*.log
+          if-no-files-found: ignore
 
   android:
-    permissions:
-      contents: write
-    uses: ./.github/workflows/android.yml
-    with:
-      check_only: true
-    secrets: inherit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          submodules: recursive
+
+      - uses: ./.github/actions/setup-android
+
+      - name: Check Android Rust and Kotlin
+        run: make android-check ANDROID_PROFILE=release ANDROID_SDK_ROOT="${ANDROID_HOME}"
+
+      - name: Upload Android lint report
+        uses: actions/upload-artifact@v6
+        with:
+          name: android-lint
+          path: android/app/build/reports/lint-results-release.html
+          if-no-files-found: error

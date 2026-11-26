@@ -1,0 +1,101 @@
+name: Set up Android build
+description: Prepare the Android SDK, native dependencies, and Skia cache.
+outputs:
+  skia-key:
+    description: Cache key for the compiled Skia archive.
+    value: ${{ steps.skia-cache.outputs.cache-primary-key }}
+  skia-hit:
+    description: Whether the compiled Skia archive was restored.
+    value: ${{ steps.skia-cache.outputs.cache-hit }}
+runs:
+  using: composite
+  steps:
+    - name: Configure Android build paths
+      shell: bash
+      run: |
+        echo "CARGO_BUILD_JOBS=3" >> "$GITHUB_ENV"
+        echo "CARGO_INCREMENTAL=0" >> "$GITHUB_ENV"
+        echo "ANDROID_NDK_VERSION=28.2.13676358" >> "$GITHUB_ENV"
+        echo "SKIA_ARCHIVE=target/android-skia.tar.gz" >> "$GITHUB_ENV"
+        echo "GRADLE_OPTS=-Dorg.gradle.daemon=false -Dorg.gradle.jvmargs=-Xmx2g" >> "$GITHUB_ENV"
+
+    - name: Free space for the Android build
+      shell: bash
+      run: sudo rm -rf /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL
+
+    - name: Install native build tools
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install --yes --no-install-recommends \
+          autoconf automake build-essential clang cmake curl gettext \
+          libclang-dev libglib2.0-dev-bin libtool nasm ninja-build patch pkg-config ripgrep spirv-tools zip
+
+    - uses: astral-sh/setup-uv@v7
+      with:
+        version: 0.12.12
+        enable-cache: true
+
+    - name: Install Meson
+      shell: bash
+      run: |
+        uv tool install meson==1.11.2
+        echo "$(uv tool dir --bin)" >> "${GITHUB_PATH}"
+
+    - name: Install Rust and Android SDK components
+      shell: bash
+      run: |
+        rustup show
+        export JAVA_HOME="${JAVA_HOME_21_X64}"
+        echo "JAVA_HOME=${JAVA_HOME}" >> "${GITHUB_ENV}"
+        echo "${JAVA_HOME}/bin" >> "${GITHUB_PATH}"
+        "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37.0" "build-tools;37.0.0" "ndk;${ANDROID_NDK_VERSION}"
+
+    - uses: actions/cache@v6
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          ~/.gradle/caches
+          ~/.gradle/wrapper
+        key: android-release-v1-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml', 'android/**/*.kts', 'android/gradle/libs.versions.toml', 'android/gradle/wrapper/gradle-wrapper.properties') }}
+        restore-keys: |
+          android-release-v1-${{ runner.os }}-
+
+    - name: Read the pinned FFmpeg commit
+      id: ffmpeg
+      shell: bash
+      run: echo "revision=$(git rev-parse :external/ffmpeg)" >> "${GITHUB_OUTPUT}"
+
+    - uses: actions/cache/restore@v6
+      id: android-native-cache
+      with:
+        path: |
+          target/android-native/arm64-v8a/release/install
+          target/android-native/arm64-v8a/release/*.sha256
+        key: android-native-v1-${{ runner.os }}-arm64-v8a-release-${{ steps.ffmpeg.outputs.revision }}-${{ hashFiles('Cargo.lock', 'Makefile', 'packaging/android-*.py', 'packaging/native_sources.py', 'packaging/*.patch') }}
+        restore-keys: android-native-v1-${{ runner.os }}-arm64-v8a-release-
+
+    - name: Build Android native dependencies
+      shell: bash
+      run: make android-pdf-deps ANDROID_PROFILE=release ANDROID_SDK_ROOT="${ANDROID_HOME}"
+
+    - uses: actions/cache/save@v6
+      if: steps.android-native-cache.outputs.cache-hit != 'true'
+      with:
+        path: |
+          target/android-native/arm64-v8a/release/install
+          target/android-native/arm64-v8a/release/*.sha256
+        key: ${{ steps.android-native-cache.outputs.cache-primary-key }}
+
+    - name: Restore Android Skia binaries
+      id: skia-cache
+      uses: actions/cache/restore@v6
+      with:
+        path: ${{ env.SKIA_ARCHIVE }}
+        key: android-skia-v1-${{ runner.os }}-${{ runner.arch }}-arm64-v8a-${{ env.ANDROID_NDK_VERSION }}-${{ steps.android-native-cache.outputs.cache-primary-key }}-${{ hashFiles('Cargo.toml', 'crates/**/Cargo.toml', 'sanim/**/Cargo.toml', 'external/**/Cargo.toml', '.cargo/config.toml', 'rust-toolchain.toml') }}
+
+    - name: Use cached Skia binaries
+      if: steps.skia-cache.outputs.cache-hit == 'true'
+      shell: bash
+      run: echo "SKIA_BINARIES_URL=file://${GITHUB_WORKSPACE}/${SKIA_ARCHIVE}" >> "${GITHUB_ENV}"

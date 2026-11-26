@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - ".github/workflows/android.yml"
+      - ".github/actions/setup-android/**"
       - ".github/scripts/publish-prerelease.sh"
       - "android/**"
       - "packaging/android-*.py"
@@ -28,22 +29,12 @@ on:
       - "!**/*.rst"
       - "!**/docs/**"
   workflow_dispatch:
-    inputs:
-      check_only:
-        description: Build and check without publishing a prerelease
-        type: boolean
-        default: false
-  workflow_call:
-    inputs:
-      check_only:
-        type: boolean
-        default: true
 
 permissions:
   contents: read
 
 concurrency:
-  group: android-${{ inputs.check_only && 'check' || 'prerelease' }}-${{ github.ref }}
+  group: android-prerelease-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -53,99 +44,21 @@ jobs:
   build:
     runs-on: ubuntu-24.04
     timeout-minutes: 180
-    env:
-      CARGO_BUILD_JOBS: "3"
-      CARGO_INCREMENTAL: "0"
-      ANDROID_NDK_VERSION: "28.2.13676358"
-      SKIA_ARCHIVE: target/android-skia.tar.gz
-      GRADLE_OPTS: -Dorg.gradle.daemon=false -Dorg.gradle.jvmargs=-Xmx2g
     steps:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
           submodules: recursive
 
-      - name: Free space for the Android build
-        run: sudo rm -rf /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL
+      - uses: ./.github/actions/setup-android
+        id: setup
 
-      - name: Install native build tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends \
-            autoconf automake build-essential clang cmake curl gettext \
-            libclang-dev libglib2.0-dev-bin libtool nasm ninja-build patch pkg-config ripgrep spirv-tools zip
-
-      - uses: astral-sh/setup-uv@v7
-        with:
-          version: 0.12.12
-          enable-cache: true
-
-      - name: Install Meson
-        run: |
-          uv tool install meson==1.11.2
-          echo "$(uv tool dir --bin)" >> "${GITHUB_PATH}"
-
-      - name: Install Rust and Android SDK components
-        run: |
-          rustup show
-          export JAVA_HOME="${JAVA_HOME_21_X64}"
-          echo "JAVA_HOME=${JAVA_HOME}" >> "${GITHUB_ENV}"
-          echo "${JAVA_HOME}/bin" >> "${GITHUB_PATH}"
-          "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37.0" "build-tools;37.0.0" "ndk;${ANDROID_NDK_VERSION}"
-
-      - uses: actions/cache@v6
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-          key: android-release-v1-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml', 'android/**/*.kts', 'android/gradle/libs.versions.toml', 'android/gradle/wrapper/gradle-wrapper.properties') }}
-          restore-keys: |
-            android-release-v1-${{ runner.os }}-
-
-      - name: Read the pinned FFmpeg commit
-        id: ffmpeg
-        run: echo "revision=$(git rev-parse :external/ffmpeg)" >> "${GITHUB_OUTPUT}"
-
-      - uses: actions/cache/restore@v6
-        id: android-native-cache
-        with:
-          path: |
-            target/android-native/arm64-v8a/release/install
-            target/android-native/arm64-v8a/release/*.sha256
-          key: android-native-v1-${{ runner.os }}-arm64-v8a-release-${{ steps.ffmpeg.outputs.revision }}-${{ hashFiles('Cargo.lock', 'Makefile', 'packaging/android-*.py', 'packaging/native_sources.py', 'packaging/*.patch') }}
-          restore-keys: android-native-v1-${{ runner.os }}-arm64-v8a-release-
-
-      - name: Build Android native dependencies
-        run: make android-pdf-deps ANDROID_PROFILE=release ANDROID_SDK_ROOT="${ANDROID_HOME}"
-
-      - uses: actions/cache/save@v6
-        if: steps.android-native-cache.outputs.cache-hit != 'true'
-        with:
-          path: |
-            target/android-native/arm64-v8a/release/install
-            target/android-native/arm64-v8a/release/*.sha256
-          key: ${{ steps.android-native-cache.outputs.cache-primary-key }}
-
-      - name: Restore Android Skia binaries
-        id: skia-cache
-        uses: actions/cache/restore@v6
-        with:
-          path: ${{ env.SKIA_ARCHIVE }}
-          key: android-skia-v1-${{ runner.os }}-${{ runner.arch }}-arm64-v8a-${{ env.ANDROID_NDK_VERSION }}-${{ steps.android-native-cache.outputs.cache-primary-key }}-${{ hashFiles('Cargo.toml', 'crates/**/Cargo.toml', 'sanim/**/Cargo.toml', 'external/**/Cargo.toml', '.cargo/config.toml', 'rust-toolchain.toml') }}
-
-      - name: Use cached Skia binaries
-        if: steps.skia-cache.outputs.cache-hit == 'true'
-        run: echo "SKIA_BINARIES_URL=file://${GITHUB_WORKSPACE}/${SKIA_ARCHIVE}" >> "${GITHUB_ENV}"
-
-      - name: Build the Android native library on a Skia cache miss
-        if: steps.skia-cache.outputs.cache-hit != 'true'
-        run: make android-native ANDROID_PROFILE=release ANDROID_SDK_ROOT="${ANDROID_HOME}"
+      - name: Build the release APK
+        run: make android-build ANDROID_PROFILE=release ANDROID_SDK_ROOT="${ANDROID_HOME}"
 
       - name: Archive compiled Skia binaries
         id: skia-archive
-        if: steps.skia-cache.outputs.cache-hit != 'true'
+        if: steps.setup.outputs.skia-hit != 'true'
         run: python3 packaging/cache-skia.py target/aarch64-linux-android/release/build "${SKIA_ARCHIVE}"
 
       - name: Save Android Skia binaries
@@ -153,13 +66,9 @@ jobs:
         uses: actions/cache/save@v6
         with:
           path: ${{ env.SKIA_ARCHIVE }}
-          key: ${{ steps.skia-cache.outputs.cache-primary-key }}
-
-      - name: Build and check the release APK
-        run: make android-check ANDROID_PROFILE=release ANDROID_SDK_ROOT="${ANDROID_HOME}"
+          key: ${{ steps.setup.outputs.skia-key }}
 
       - name: Sign, verify, and package the release APK
-        if: github.event_name != 'pull_request'
         env:
           ANDROID_RELEASE_KEYSTORE_BASE64: ${{ secrets.ANDROID_RELEASE_KEYSTORE_BASE64 }}
           ANDROID_RELEASE_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_RELEASE_KEYSTORE_PASSWORD }}
@@ -185,7 +94,6 @@ jobs:
           (cd dist && zip -9 -q shrimply-android-arm64.zip shrimply-android-arm64.apk && sha256sum shrimply-android-arm64.zip > shrimply-android-arm64.zip.sha256)
 
       - name: Upload signed release APK ZIP
-        if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@v6
         with:
           name: shrimply-android-arm64
@@ -194,15 +102,8 @@ jobs:
             dist/shrimply-android-arm64.zip.sha256
           if-no-files-found: error
 
-      - name: Upload lint report
-        uses: actions/upload-artifact@v6
-        with:
-          name: android-lint
-          path: android/app/build/reports/lint-results-release.html
-          if-no-files-found: error
-
   publish:
-    if: github.ref == 'refs/heads/main' && !inputs.check_only
+    if: github.ref == 'refs/heads/main'
     needs: build
     runs-on: ubuntu-24.04
     permissions:

@@ -39,6 +39,9 @@ concurrency:
   group: nix-build-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  TZ: UTC
+
 jobs:
   build-and-cache:
     name: Build Nix Package & Push to Cachix

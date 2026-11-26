@@ -1,0 +1,244 @@
+name: Set up Windows build
+description: Prepare the Windows toolchains, native libraries, and Skia cache.
+outputs:
+  skia-key:
+    description: Cache key for the compiled Skia archive.
+    value: ${{ steps.skia-cache.outputs.cache-primary-key }}
+  skia-hit:
+    description: Whether the compiled Skia archive was restored.
+    value: ${{ steps.skia-cache.outputs.cache-hit }}
+runs:
+  using: composite
+  steps:
+    - name: Configure Windows build paths
+      shell: powershell
+      run: |
+        "CARGO_HOME=C:\c" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+        "CARGO_TARGET_DIR=C:\t" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+        "CARGO_UNSTABLE_CHECKSUM_FRESHNESS=true" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+        "LLVM_HOME=C:\Program Files\LLVM" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+        "RUSTUP_HOME=C:\r" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+        "SKIA_ARCHIVE=target/windows-skia.tar.gz" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+        "VCPKG_DEFAULT_TRIPLET=x64-windows" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+        "VCPKG_INSTALLED_DIR=${{ github.workspace }}\.ci\vcpkg\installed" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+        "VCPKGRS_DYNAMIC=1" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+
+    - name: Enable Windows long paths
+      shell: powershell
+      run: |
+        git config --global core.longpaths true
+        New-ItemProperty -Path HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem -Name LongPathsEnabled -Value 1 -PropertyType DWord -Force | Out-Null
+
+    - name: Check out source submodules
+      shell: powershell
+      run: |
+        git submodule update --init --recursive --depth=1
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+    - name: Check out pinned vcpkg
+      uses: actions/checkout@v7
+      with:
+        repository: microsoft/vcpkg
+        ref: e93e1f6ab41a22fe711b1045dbbac5cbc9db60af
+        path: .ci/vcpkg
+        persist-credentials: false
+
+    - name: Configure MSVC x64
+      uses: ilammy/msvc-dev-cmd@v1
+      with:
+        arch: x64
+
+    - name: Identify native cache ABI
+      id: native-cache-abi
+      shell: powershell
+      run: |
+        $sdk = $env:WindowsSDKVersion.TrimEnd('\')
+        $ffmpeg = git -C external/ffmpeg rev-parse HEAD
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        $vcpkg = git -C .ci/vcpkg rev-parse HEAD
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        $clang = (Get-FileHash -Algorithm SHA256 "$env:LLVM_HOME\bin\clang.exe").Hash
+        $libclang = (Get-FileHash -Algorithm SHA256 "$env:LLVM_HOME\bin\libclang.dll").Hash
+        "skia=msvc-$env:VCToolsVersion-sdk-$sdk-clang-$clang-bindgen-$libclang" | Out-File -Append -Encoding utf8 $env:GITHUB_OUTPUT
+        "ffmpeg=$ffmpeg" | Out-File -Append -Encoding utf8 $env:GITHUB_OUTPUT
+        "key=ffmpeg-$ffmpeg-$env:ImageOS-$env:ImageVersion-msvc-$env:VCToolsVersion-sdk-$sdk-x64-vcpkg-$vcpkg" | Out-File -Append -Encoding utf8 $env:GITHUB_OUTPUT
+
+    - name: Install host tools
+      shell: powershell
+      run: |
+        $packages = @()
+        if (!(Get-Command make.exe -ErrorAction SilentlyContinue)) { $packages += "make" }
+        if (!(Get-Command rg.exe -ErrorAction SilentlyContinue)) { $packages += "ripgrep" }
+        if ($packages.Count -gt 0) {
+          choco install @packages --yes --no-progress
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        }
+        Get-Command make.exe -ErrorAction Stop
+        Get-Command rg.exe -ErrorAction Stop
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v7
+      with:
+        version: 0.12.12
+        enable-cache: true
+
+    - name: Install pinned Rust toolchain
+      shell: powershell
+      run: |
+        if (!(Test-Path "$env:CARGO_HOME\bin\rustup.exe")) {
+          $installer = "$env:RUNNER_TEMP\rustup-init.exe"
+          Invoke-WebRequest https://win.rustup.rs/x86_64 -OutFile $installer
+          & $installer -y --default-toolchain none --profile minimal
+        }
+        "$env:CARGO_HOME\bin" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+        & "$env:CARGO_HOME\bin\rustup.exe" show
+
+    - name: Install Qt 6.11.1
+      uses: jurplel/install-qt-action@v4
+      with:
+        version: 6.11.1
+        host: windows
+        target: desktop
+        arch: win64_msvc2022_64
+        aqtsource: https://github.com/miurahr/aqtinstall/archive/076e1659807d0b362a3ed684d54c2e9c775eb9c7.zip
+        cache: true
+        cache-key-prefix: windows-qt-6.11.1-msvc2022-aqt-076e1659
+
+    - name: Restore installed CUDA 12.9.2
+      id: cuda-cache
+      uses: actions/cache/restore@v6
+      with:
+        path: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.9
+        key: windows-2022-x64-cuda-12.9.2-v2
+
+    - name: Install CUDA 12.9.2
+      if: steps.cuda-cache.outputs.cache-hit != 'true'
+      uses: Jimver/cuda-toolkit@v0.2.36
+      with:
+        cuda: 12.9.2
+        method: local
+        sub-packages: '["nvcc", "cudart"]'
+        use-github-cache: true
+
+    - name: Export CUDA environment
+      shell: powershell
+      run: |
+        $cuda = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.9"
+        foreach ($file in @("bin/nvcc.exe", "include/cuda.h", "include/cuda_runtime.h", "lib/x64/cuda.lib", "lib/x64/cudart.lib")) {
+          if (!(Test-Path (Join-Path $cuda $file))) { throw "CUDA 12.9 installation is missing $file" }
+        }
+        $version = & "$cuda\bin\nvcc.exe" --version
+        if ($LASTEXITCODE -ne 0 -or ($version -join "`n") -notmatch 'release 12\.9,') {
+          throw "Expected CUDA 12.9 nvcc: $version"
+        }
+        $version | Write-Host
+        "CUDA_PATH=$cuda" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+        "CUDA_PATH_V12_9=$cuda" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+        "$cuda\bin" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+
+    - name: Save installed CUDA 12.9.2
+      if: steps.cuda-cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v6
+      with:
+        path: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.9
+        key: ${{ steps.cuda-cache.outputs.cache-primary-key }}
+
+    - name: Bootstrap vcpkg
+      shell: powershell
+      run: .ci/vcpkg/bootstrap-vcpkg.bat -disableMetrics
+
+    # vcpkg validates each restored archive against its own package ABI.
+    - name: Restore FFmpeg cache
+      id: ffmpeg-cache
+      uses: actions/cache/restore@v6
+      with:
+        path: .ci/vcpkg/binary-cache/ffmpeg
+        key: windows-vcpkg-ffmpeg-v4-cuda-12.9.2-${{ steps.native-cache-abi.outputs.key }}-${{ hashFiles('packaging/windows/vcpkg/**', 'packaging/windows/build-ffmpeg.ps1', 'packaging/windows-ffmpeg.py', 'packaging/native_sources.py') }}
+        restore-keys: |
+          windows-vcpkg-ffmpeg-v4-cuda-12.9.2-ffmpeg-${{ steps.native-cache-abi.outputs.ffmpeg }}-
+
+    - name: Install FFmpeg
+      shell: powershell
+      run: |
+        $cache = "$pwd\.ci\vcpkg\binary-cache\ffmpeg"
+        New-Item -ItemType Directory -Force $cache | Out-Null
+        $sources = "clear;files,$cache,readwrite"
+        & packaging/windows/build-ffmpeg.ps1 `
+          -VcpkgRoot "$pwd\.ci\vcpkg" `
+          -InstalledDir "$env:VCPKG_INSTALLED_DIR" `
+          -BinarySources $sources
+
+    - name: Save FFmpeg cache
+      if: steps.ffmpeg-cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v6
+      with:
+        path: .ci/vcpkg/binary-cache/ffmpeg
+        key: ${{ steps.ffmpeg-cache.outputs.cache-primary-key }}
+
+    - name: Restore remaining native library cache
+      id: runtime-cache
+      uses: actions/cache/restore@v6
+      with:
+        path: .ci/vcpkg/binary-cache/runtime
+        key: windows-vcpkg-runtime-v4-cuda-12.9.2-${{ steps.native-cache-abi.outputs.key }}-${{ hashFiles('packaging/windows/vcpkg/**', 'packaging/windows/build-ffmpeg.ps1', 'packaging/windows-ffmpeg.py', 'packaging/native_sources.py') }}
+        restore-keys: |
+          windows-vcpkg-runtime-v4-cuda-12.9.2-
+
+    - name: Install remaining native libraries
+      shell: powershell
+      run: |
+        New-Item -ItemType Directory -Force .ci/vcpkg/binary-cache/runtime | Out-Null
+        $env:VCPKG_BINARY_SOURCES = "clear;files,$pwd\.ci\vcpkg\binary-cache\runtime,readwrite;files,$pwd\.ci\vcpkg\binary-cache\ffmpeg,read"
+        & packaging/windows/build-ffmpeg.ps1 -Manifest runtime `
+          -VcpkgRoot "$pwd\.ci\vcpkg" -InstalledDir "$env:VCPKG_INSTALLED_DIR"
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+    - name: Save remaining native library cache
+      if: steps.runtime-cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v6
+      with:
+        path: .ci/vcpkg/binary-cache/runtime
+        key: ${{ steps.runtime-cache.outputs.cache-primary-key }}
+
+    - name: Validate FFmpeg installation
+      shell: powershell
+      run: |
+        & packaging/windows/verify-ffmpeg.ps1 `
+          -FfmpegRoot "$env:VCPKG_INSTALLED_DIR\x64-windows" `
+          -OutputDir "$pwd\.ci\ffmpeg-validation"
+
+    - name: Export native build environment
+      shell: powershell
+      run: |
+        $linker = (Get-Command link.exe -ErrorAction Stop).Source
+        $linkerInfo = (Get-Item -LiteralPath $linker).VersionInfo
+        if ($linkerInfo.CompanyName -notlike "Microsoft*") { throw "MSVC link.exe not found: $linker" }
+        $pkgConfig = "$env:VCPKG_INSTALLED_DIR\x64-windows\tools\pkgconf\pkgconf.exe"
+        if (!(Test-Path $pkgConfig)) { throw "vcpkg pkgconf.exe is missing: $pkgConfig" }
+        $vcpkgRoot = "$pwd\.ci\vcpkg".Replace('\', '/')
+        $installed = $env:VCPKG_INSTALLED_DIR.Replace('\', '/')
+        $ffmpeg = "$installed/x64-windows"
+        "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=$linker" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+        "VCPKG_ROOT=$vcpkgRoot" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+        "VCPKG_INSTALLED_DIR=$installed" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+        "FFMPEG_DIR=$ffmpeg" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+        "PKG_CONFIG=$($pkgConfig.Replace('\', '/'))" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+        "PKG_CONFIG_PATH=$ffmpeg/lib/pkgconfig;$ffmpeg/share/pkgconfig" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+        "LIBCLANG_PATH=$env:LLVM_HOME\bin" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+        "CLANG_PATH=$env:LLVM_HOME\bin\clang.exe" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+        "QT_QMAKE=qmake.exe" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+        "$env:VCPKG_INSTALLED_DIR\x64-windows\bin" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+
+    - name: Restore Windows Skia binaries
+      id: skia-cache
+      uses: actions/cache/restore@v6
+      with:
+        path: ${{ env.SKIA_ARCHIVE }}
+        key: windows-skia-v1-${{ runner.arch }}-${{ steps.native-cache-abi.outputs.skia }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/**/Cargo.toml', 'sanim/**/Cargo.toml', 'external/**/Cargo.toml', '.cargo/config.toml', 'rust-toolchain.toml', 'Makefile', 'packaging/windows/windows-release.ps1') }}
+
+    - name: Use cached Skia binaries
+      if: steps.skia-cache.outputs.cache-hit == 'true'
+      shell: powershell
+      run: |
+        $archive = Join-Path $env:GITHUB_WORKSPACE $env:SKIA_ARCHIVE
+        "SKIA_BINARIES_URL=file://$archive" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV

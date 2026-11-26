@@ -1,0 +1,103 @@
+name: Set up macOS build
+description: Prepare the AppKit toolchain and native and Cargo caches.
+inputs:
+  profile:
+    description: Cargo profile for the application cache.
+    required: true
+outputs:
+  application-key:
+    description: Cache key for the application build.
+    value: ${{ steps.application-cache.outputs.cache-primary-key }}
+  application-hit:
+    description: Whether the application cache was restored.
+    value: ${{ steps.application-cache.outputs.cache-hit }}
+runs:
+  using: composite
+  steps:
+    - name: Configure macOS build paths
+      shell: bash
+      run: |
+        echo "CARGO_HOME=${GITHUB_WORKSPACE}/.ci/cargo" >> "$GITHUB_ENV"
+        echo "RUSTUP_HOME=${GITHUB_WORKSPACE}/.ci/rustup" >> "$GITHUB_ENV"
+        echo "CARGO_UNSTABLE_CHECKSUM_FRESHNESS=true" >> "$GITHUB_ENV"
+        echo "MACOSX_DEPLOYMENT_TARGET=15.0" >> "$GITHUB_ENV"
+
+    - name: Install host build dependencies
+      shell: bash
+      run: |
+        brew install \
+          dylibbundler \
+          ffmpeg \
+          librsvg \
+          llvm@22 \
+          pkgconf \
+          poppler \
+          ripgrep \
+          rubberband \
+          uv
+
+    - name: Restore Rust toolchain
+      id: rust-cache
+      uses: actions/cache/restore@v6
+      with:
+        path: |
+          ${{ env.CARGO_HOME }}/bin
+          ${{ env.RUSTUP_HOME }}
+        key: rust-v2-macos-26-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml') }}
+
+    - name: Install Rust toolchain
+      shell: bash
+      run: |
+        if [[ ! -x "${CARGO_HOME}/bin/rustup" ]]; then
+          rustup_init="${RUNNER_TEMP}/rustup-init"
+          curl --proto '=https' --tlsv1.2 --fail --location --silent --show-error \
+            https://sh.rustup.rs \
+            --output "${rustup_init}"
+          chmod +x "${rustup_init}"
+          "${rustup_init}" --yes --default-toolchain none --profile minimal
+        fi
+        echo "${CARGO_HOME}/bin" >> "${GITHUB_PATH}"
+        "${CARGO_HOME}/bin/rustup" show
+
+    - name: Save Rust toolchain
+      if: steps.rust-cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v6
+      with:
+        path: |
+          ${{ env.CARGO_HOME }}/bin
+          ${{ env.RUSTUP_HOME }}
+        key: ${{ steps.rust-cache.outputs.cache-primary-key }}
+
+    - name: Resolve application cache key
+      id: application-cache-key
+      shell: bash
+      run: |
+        native_versions="$(brew list --versions)"
+        native_hash="$(printf '%s\n' "${ImageOS}" "${ImageVersion}" "${native_versions}" "$(git -C external/ffmpeg rev-parse HEAD)" \
+          | LC_ALL=C sort | shasum -a 256 | cut -d ' ' -f 1)"
+        echo "prefix=macos-application-v2${{ inputs.profile == 'debug' && '-debug' || '' }}-macos-26-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml') }}-${native_hash}" >> "${GITHUB_OUTPUT}"
+
+    - name: Restore macOS application cache
+      id: application-cache
+      uses: actions/cache/restore@v6
+      with:
+        path: |
+          target/${{ inputs.profile }}
+          ${{ env.CARGO_HOME }}/registry
+          ${{ env.CARGO_HOME }}/git
+        key: ${{ steps.application-cache-key.outputs.prefix }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/**/Cargo.toml', 'external/**/Cargo.toml', '.cargo/config.toml', 'Makefile', '.github/workflows/macos.yml') }}-${{ github.sha }}
+        restore-keys: |
+          ${{ steps.application-cache-key.outputs.prefix }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/**/Cargo.toml', 'external/**/Cargo.toml', '.cargo/config.toml', 'Makefile', '.github/workflows/macos.yml') }}-
+          ${{ steps.application-cache-key.outputs.prefix }}-
+
+    - name: Cache hardware-only FFmpeg
+      uses: actions/cache@v6
+      with:
+        path: target/macos-ffmpeg
+        key: ${{ steps.application-cache-key.outputs.prefix }}-ffmpeg-${{ hashFiles('packaging/native_sources.py', 'packaging/macos-ffmpeg.py', 'packaging/macos/ffmpeg-hardware.patch') }}
+
+    - name: Cache PocketSphinx resources
+      uses: actions/cache@v6
+      with:
+        path: target/pocketsphinx-cache
+        key: pocketsphinx-model-v1-${{ runner.os }}-${{ hashFiles('vendor/pocketsphinx/build.rs') }}

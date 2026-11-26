@@ -133,7 +133,6 @@ Write-Host "Windows dependencies: $ffmpegRoot"
 
 Push-Location $root
 try {
-    Invoke-Cargo @("build", "-p", "shrimply-render-kernels-cuda")
     Invoke-Cargo @(
         "build", "--release",
         "-p", $QtEditorPackage,

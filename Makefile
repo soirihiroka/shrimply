@@ -320,9 +320,7 @@ appkit-release: appkit-ffmpeg appkit-icon
 	@test "$$(uname -s)" = Darwin || { echo "AppKit release requires macOS" >&2; exit 1; }
 	$(APPKIT_BUILD_ENV) RUSTFLAGS="" CARGO_TERM_COLOR=always MACOSX_DEPLOYMENT_TARGET=$(APPKIT_DEPLOYMENT_TARGET) $(CARGO) build --release -p $(APPKIT_LAUNCHER_PACKAGE) -p $(APPKIT_EDITOR_PACKAGE) --bins
 
-appkit-check: appkit-build
-	$(APPKIT_BUILD_ENV) $(CARGO) check -p $(APPKIT_EDITOR_PACKAGE) -p $(APPKIT_LAUNCHER_PACKAGE) -p $(FRAMEGRAPH_CORE_PACKAGE) -p $(APPKIT_COMPONENT_METAL_PACKAGE) -p $(APPKIT_COMPONENTS_PACKAGE) -p $(APPKIT_COMPONENTS_DEMO_PACKAGE) --all-targets
-	$(MAKE) appkit-lint
+appkit-check: appkit-lint
 
 appkit-lint: appkit-ffmpeg
 	@test "$$(uname -s)" = Darwin || { echo "AppKit lint requires macOS" >&2; exit 1; }
@@ -414,8 +412,7 @@ endif
 
 windows-check: override CUDA_IMAGE_FORMAT = ptx
 windows-check: override CUDA_PTX_TARGET = compute_50
-windows-check: windows-native-deps fmt-check source-size-check cuda-artifacts
-	$(BUILD_ENV) QMAKE=$(QT_QMAKE) $(CARGO) build -p $(QT_EDITOR_PACKAGE) -p $(QT_LAUNCHER_PACKAGE) --bins
+windows-check: windows-native-deps fmt-check source-size-check cuda-target-check
 	$(BUILD_ENV) QMAKE=$(QT_QMAKE) $(CARGO) clippy -p $(QT_EDITOR_PACKAGE) -p $(QT_LAUNCHER_PACKAGE) --bins -- -D warnings
 
 ifeq ($(HOST_OS),Windows_NT)
@@ -832,12 +829,14 @@ ifeq ($(ANDROID_ABI),arm64-v8a)
 ANDROID_SKIA_CFLAGS += ,"-mno-outline-atomics"
 endif
 ANDROID_ENV = HOST_CC="$(CC)" HOST_CXX="$(CXX)" SKIA_GN_ARGS='ndk_api=33 skia_use_ndk_images=false skia_use_system_libjpeg_turbo=true extra_cflags=[] extra_cflags=[$(ANDROID_SKIA_CFLAGS)]' ANDROID_HOME="$(ANDROID_SDK_ROOT)" ANDROID_NDK_HOME="$(ANDROID_NDK_HOME)" ANDROID_NDK_ROOT="$(ANDROID_NDK_HOME)" ANDROID_NDK="$(ANDROID_NDK_HOME)" PATH="$(ANDROID_TOOLCHAIN)/bin:$(PATH)" CC="$(ANDROID_TOOLCHAIN)/bin/$(ANDROID_CLANG)" CXX="$(ANDROID_TOOLCHAIN)/bin/$(ANDROID_CLANG)++" AR="$(ANDROID_TOOLCHAIN)/bin/llvm-ar" RUSTFLAGS="-C linker=$(ANDROID_TOOLCHAIN)/bin/$(ANDROID_CLANG) -C link-arg=-Wl,-z,max-page-size=16384"
-.PHONY: android-native android-build android-install android-check android-benchmark android-host-check
-android-native: android-pdf-deps
+.PHONY: android-toolchain android-native android-build android-install android-check android-benchmark android-host-check
+android-toolchain: android-pdf-deps
 	@test "$(ANDROID_ABI)" = arm64-v8a -o "$(ANDROID_ABI)" = x86_64 || { echo "Unsupported Android ABI" >&2; exit 1; }
 	@test "$(ANDROID_PROFILE)" = debug -o "$(ANDROID_PROFILE)" = release || { echo "Use ANDROID_PROFILE=debug or release" >&2; exit 1; }
 	@test "$(ANDROID_PROFILE)" != release -o "$(ANDROID_ABI)" = arm64-v8a || { echo "Android releases require arm64-v8a" >&2; exit 1; }
 	$(RUSTUP) target add --toolchain $(RUST_TOOLCHAIN) $(ANDROID_TARGET)
+
+android-native: android-toolchain
 	$(ANDROID_ENV) $(ANDROID_MEDIA_ENV) PKG_CONFIG_ALL_STATIC=1 $(CARGO) build -p shrimply-editor-android --target $(ANDROID_TARGET) $(if $(filter release,$(ANDROID_PROFILE)),--release)
 	mkdir -p android/app/src/main/jniLibs/$(ANDROID_ABI)
 	cp $(CARGO_TARGET_DIR)/$(ANDROID_TARGET)/$(ANDROID_PROFILE)/libshrimply_android.so android/app/src/main/jniLibs/$(ANDROID_ABI)/
@@ -855,10 +854,9 @@ android-host-check:
 	$(BUILD_ENV) $(CARGO) check -p shrimply-timeline-paint-skia -p shrimply-editor-android
 	$(BUILD_ENV) $(CARGO) clippy -p shrimply-timeline-paint-skia -p shrimply-editor-android -- -D warnings
 
-android-check: android-build
+android-check: android-toolchain android-dependency-check
 	$(ANDROID_ENV) $(ANDROID_MEDIA_ENV) PKG_CONFIG_ALL_STATIC=1 $(CARGO) clippy -p shrimply-editor-android -p shrimply-timeline-paint-skia --target $(ANDROID_TARGET) $(if $(filter release,$(ANDROID_PROFILE)),--release) --no-deps -- -D warnings
-	ANDROID_HOME="$(ANDROID_SDK_ROOT)" "$(ANDROID_GRADLE)" -p android -PnativeAbi=$(ANDROID_ABI) lint$(if $(filter release,$(ANDROID_PROFILE)),Release,Debug)
-	python3 packaging/android-check.py android/app/build/outputs/apk/$(ANDROID_PROFILE)/app-$(ANDROID_PROFILE)$(if $(and $(filter release,$(ANDROID_PROFILE)),$(filter-out true,$(ANDROID_DEV_SIGN))),-unsigned).apk "$(ANDROID_TOOLCHAIN)/bin/llvm-readelf" "$(ANDROID_SDK_ROOT)"
+	ANDROID_HOME="$(ANDROID_SDK_ROOT)" "$(ANDROID_GRADLE)" -p android -PnativeAbi=$(ANDROID_ABI) compile$(if $(filter release,$(ANDROID_PROFILE)),Release,Debug)Kotlin lint$(if $(filter release,$(ANDROID_PROFILE)),Release,Debug)
 
 android-benchmark: android-device-check
 	ANDROID_SERIAL="$(ANDROID_SERIAL)" python3 packaging/android-benchmark.py $(or $(STRESS),false)
@@ -888,8 +886,6 @@ android-project-bench:
 	@test "$(ANDROID_PROFILE)" = debug || { echo "Android development benchmarks use debug builds; do not start a release build." >&2; exit 1; }
 	$(BUILD_ENV) $(CARGO) test $(ANDROID_PROJECT_TEST_ARGS) project::tests::project_edit_memory_benchmark --lib -- --ignored --nocapture
 	$(BUILD_ENV) $(CARGO) test $(ANDROID_PROJECT_TEST_ARGS) disjoint_viewport_lookup_benchmark --lib -- --ignored --nocapture
-
-android-check: android-dependency-check
 
 # Benchmark installs use the selected profile; debug is the default.
 .PHONY: android-benchmark-install

@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - ".github/workflows/macos.yml"
+      - ".github/actions/setup-macos/**"
       - ".github/scripts/**"
       - "packaging/macos/**"
       - "packaging/macos-ffmpeg.py"
@@ -27,32 +28,18 @@ on:
       - "!**/*.rst"
       - "!**/docs/**"
   workflow_dispatch:
-    inputs:
-      check_only:
-        description: Run debug checks without packaging or publishing a release
-        type: boolean
-        default: false
-  workflow_call:
-    inputs:
-      check_only:
-        type: boolean
-        default: true
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
-  group: macos-${{ inputs.check_only && 'check' || 'prerelease' }}-${{ github.ref }}
+  group: macos-prerelease-${{ github.ref }}
   cancel-in-progress: true
 
 env:
   TZ: UTC
-  CARGO_HOME: ${{ github.workspace }}/.ci/cargo
-  CARGO_UNSTABLE_CHECKSUM_FRESHNESS: "true"
   MACOS_APP: dist/Shrimply.app
   MACOS_ARCHIVE: dist/shrimply-macos-arm64.zip
-  MACOSX_DEPLOYMENT_TARGET: "15.0"
-  RUSTUP_HOME: ${{ github.workspace }}/.ci/rustup
 
 jobs:
   build-and-release:
@@ -60,126 +47,42 @@ jobs:
     permissions:
       actions: write
       contents: write
-
     steps:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
           submodules: recursive
 
-      - name: Install host build dependencies
-        run: |
-          brew install \
-            dylibbundler \
-            ffmpeg \
-            librsvg \
-            llvm@22 \
-            pkgconf \
-            poppler \
-            ripgrep \
-            rubberband \
-            uv
-
-      - name: Restore Rust toolchain
-        id: rust-cache
-        uses: actions/cache/restore@v6
+      - uses: ./.github/actions/setup-macos
+        id: setup
         with:
-          path: |
-            ${{ env.CARGO_HOME }}/bin
-            ${{ env.RUSTUP_HOME }}
-          key: rust-v2-macos-26-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml') }}
-
-      - name: Install Rust toolchain
-        run: |
-          if [[ ! -x "${CARGO_HOME}/bin/rustup" ]]; then
-            rustup_init="${RUNNER_TEMP}/rustup-init"
-            curl --proto '=https' --tlsv1.2 --fail --location --silent --show-error \
-              https://sh.rustup.rs \
-              --output "${rustup_init}"
-            chmod +x "${rustup_init}"
-            "${rustup_init}" --yes --default-toolchain none --profile minimal
-          fi
-          echo "${CARGO_HOME}/bin" >> "${GITHUB_PATH}"
-          "${CARGO_HOME}/bin/rustup" show
-
-      - name: Save Rust toolchain
-        if: steps.rust-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v6
-        with:
-          path: |
-            ${{ env.CARGO_HOME }}/bin
-            ${{ env.RUSTUP_HOME }}
-          key: ${{ steps.rust-cache.outputs.cache-primary-key }}
-
-      - name: Resolve application cache key
-        id: application-cache-key
-        shell: bash
-        run: |
-          native_versions="$(brew list --versions)"
-          native_hash="$(printf '%s\n' "${ImageOS}" "${ImageVersion}" "${native_versions}" "$(git -C external/ffmpeg rev-parse HEAD)" \
-            | LC_ALL=C sort | shasum -a 256 | cut -d ' ' -f 1)"
-          echo "prefix=macos-application-v2${{ inputs.check_only && '-debug' || '' }}-macos-26-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml') }}-${native_hash}" >> "${GITHUB_OUTPUT}"
-
-      - name: Restore macOS application cache
-        id: application-cache
-        uses: actions/cache/restore@v6
-        with:
-          path: |
-            target/${{ inputs.check_only && 'debug' || 'release' }}
-            ${{ env.CARGO_HOME }}/registry
-            ${{ env.CARGO_HOME }}/git
-          key: ${{ steps.application-cache-key.outputs.prefix }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/**/Cargo.toml', 'external/**/Cargo.toml', '.cargo/config.toml', 'Makefile', '.github/workflows/macos.yml') }}-${{ github.sha }}
-          restore-keys: |
-            ${{ steps.application-cache-key.outputs.prefix }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/**/Cargo.toml', 'external/**/Cargo.toml', '.cargo/config.toml', 'Makefile', '.github/workflows/macos.yml') }}-
-            ${{ steps.application-cache-key.outputs.prefix }}-
-
-      - name: Cache hardware-only FFmpeg
-        uses: actions/cache@v6
-        with:
-          path: target/macos-ffmpeg
-          key: ${{ steps.application-cache-key.outputs.prefix }}-ffmpeg-${{ hashFiles('packaging/native_sources.py', 'packaging/macos-ffmpeg.py', 'packaging/macos/ffmpeg-hardware.patch') }}
-
-      - name: Cache PocketSphinx resources
-        uses: actions/cache@v6
-        with:
-          path: target/pocketsphinx-cache
-          key: pocketsphinx-model-v1-${{ runner.os }}-${{ hashFiles('vendor/pocketsphinx/build.rs') }}
+          profile: release
 
       - name: Build AppKit release
-        if: ${{ !inputs.check_only }}
         run: make appkit-release
-
-      - name: Check AppKit debug build
-        if: inputs.check_only
-        env:
-          CARGO_BUILD_JOBS: "2"
-          CARGO_INCREMENTAL: "0"
-          CARGO_PROFILE_DEV_DEBUG: "0"
-        run: make appkit-check fmt source-size-check
 
       - name: Save macOS application cache
         id: save-application-cache
-        if: ${{ success() && steps.application-cache.outputs.cache-hit != 'true' }}
+        if: ${{ success() && steps.setup.outputs.application-hit != 'true' }}
         uses: actions/cache/save@v6
         with:
           path: |
-            target/${{ inputs.check_only && 'debug' || 'release' }}
+            target/release
             ${{ env.CARGO_HOME }}/registry
             ${{ env.CARGO_HOME }}/git
-          key: ${{ steps.application-cache.outputs.cache-primary-key }}
+          key: ${{ steps.setup.outputs.application-key }}
 
       - name: Prune old macOS application caches
-        if: github.ref == 'refs/heads/main' && !inputs.check_only && steps.save-application-cache.outcome == 'success'
+        if: github.ref == 'refs/heads/main' && steps.save-application-cache.outcome == 'success'
         env:
           GH_TOKEN: ${{ github.token }}
-          CACHE_KEY: ${{ steps.application-cache.outputs.cache-primary-key }}
+          CACHE_KEY: ${{ steps.setup.outputs.application-key }}
         run: |
           bash .github/scripts/prune-application-caches.sh "${CACHE_KEY}" \
             "macos-application-v2-macos-26-${{ runner.arch }}-" \
             "macos-application-prebuilt-macos-26-${{ runner.arch }}-"
 
       - name: Assemble application bundle
-        if: ${{ !inputs.check_only }}
         shell: bash
         run: |
           contents="${MACOS_APP}/Contents"
@@ -230,7 +133,6 @@ jobs:
           codesign --force --deep --sign - "${MACOS_APP}"
 
       - name: Verify application bundle
-        if: ${{ !inputs.check_only }}
         shell: bash
         run: |
           contents="${MACOS_APP}/Contents"
@@ -271,7 +173,6 @@ jobs:
           fi
 
       - name: Create and verify archive
-        if: ${{ !inputs.check_only }}
         run: |
           archive_name="$(basename "${MACOS_ARCHIVE}")"
           ditto -c -k --sequesterRsrc --keepParent "${MACOS_APP}" "${MACOS_ARCHIVE}"
@@ -288,7 +189,7 @@ jobs:
           test -s "${MACOS_ARCHIVE}.sha256"
 
       - name: Publish prerelease
-        if: github.ref == 'refs/heads/main' && !inputs.check_only
+        if: github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
