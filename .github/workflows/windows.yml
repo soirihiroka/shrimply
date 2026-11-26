@@ -91,12 +91,21 @@ jobs:
           $sdk = $env:WindowsSDKVersion.TrimEnd('\')
           $ffmpeg = git -C external/ffmpeg rev-parse HEAD
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          "key=ffmpeg-$ffmpeg-$env:ImageOS-$env:ImageVersion-msvc-$env:VCToolsVersion-sdk-$sdk-x64" | Out-File -Append -Encoding utf8 $env:GITHUB_OUTPUT
+          $vcpkg = git -C .ci/vcpkg rev-parse HEAD
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "ffmpeg=$ffmpeg" | Out-File -Append -Encoding utf8 $env:GITHUB_OUTPUT
+          "key=ffmpeg-$ffmpeg-$env:ImageOS-$env:ImageVersion-msvc-$env:VCToolsVersion-sdk-$sdk-x64-vcpkg-$vcpkg" | Out-File -Append -Encoding utf8 $env:GITHUB_OUTPUT
 
       - name: Install host tools
         shell: powershell
         run: |
-          choco install make ripgrep --yes --no-progress
+          $packages = @()
+          if (!(Get-Command make.exe -ErrorAction SilentlyContinue)) { $packages += "make" }
+          if (!(Get-Command rg.exe -ErrorAction SilentlyContinue)) { $packages += "ripgrep" }
+          if ($packages.Count -gt 0) {
+            choco install @packages --yes --no-progress
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
           Get-Command make.exe -ErrorAction Stop
           Get-Command rg.exe -ErrorAction Stop
 
@@ -171,12 +180,15 @@ jobs:
         shell: powershell
         run: .ci/vcpkg/bootstrap-vcpkg.bat -disableMetrics
 
+      # vcpkg validates each restored archive against its own package ABI.
       - name: Restore FFmpeg cache
         id: ffmpeg-cache
         uses: actions/cache/restore@v6
         with:
           path: .ci/vcpkg/binary-cache/ffmpeg
           key: windows-vcpkg-ffmpeg-v4-cuda-12.9.2-${{ steps.native-cache-abi.outputs.key }}-${{ hashFiles('packaging/windows/vcpkg/**', 'packaging/windows/build-ffmpeg.ps1', 'packaging/windows-ffmpeg.py', 'packaging/native_sources.py') }}
+          restore-keys: |
+            windows-vcpkg-ffmpeg-v4-cuda-12.9.2-ffmpeg-${{ steps.native-cache-abi.outputs.ffmpeg }}-
 
       - name: Install FFmpeg
         shell: powershell
@@ -202,6 +214,8 @@ jobs:
         with:
           path: .ci/vcpkg/binary-cache/runtime
           key: windows-vcpkg-runtime-v4-cuda-12.9.2-${{ steps.native-cache-abi.outputs.key }}-${{ hashFiles('packaging/windows/vcpkg/**', 'packaging/windows/build-ffmpeg.ps1', 'packaging/windows-ffmpeg.py', 'packaging/native_sources.py') }}
+          restore-keys: |
+            windows-vcpkg-runtime-v4-cuda-12.9.2-
 
       - name: Install remaining native libraries
         shell: powershell

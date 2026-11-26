@@ -53,8 +53,10 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     env:
-      CARGO_BUILD_JOBS: "2"
+      CARGO_BUILD_JOBS: "3"
       CARGO_INCREMENTAL: "0"
+      ANDROID_NDK_VERSION: "28.2.13676358"
+      SKIA_ARCHIVE: target/android-skia.tar.gz
       GRADLE_OPTS: -Dorg.gradle.daemon=false -Dorg.gradle.jvmargs=-Xmx2g
     steps:
       - uses: actions/checkout@v7
@@ -88,7 +90,7 @@ jobs:
           export JAVA_HOME="${JAVA_HOME_21_X64}"
           echo "JAVA_HOME=${JAVA_HOME}" >> "${GITHUB_ENV}"
           echo "${JAVA_HOME}/bin" >> "${GITHUB_PATH}"
-          "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37.0" "build-tools;37.0.0" "ndk;28.2.13676358"
+          "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37.0" "build-tools;37.0.0" "ndk;${ANDROID_NDK_VERSION}"
 
       - uses: actions/cache@v6
         with:
@@ -125,6 +127,44 @@ jobs:
             target/android-native/arm64-v8a/release/*.sha256
           key: ${{ steps.android-native-cache.outputs.cache-primary-key }}
 
+      - name: Restore Android Skia binaries
+        id: skia-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ env.SKIA_ARCHIVE }}
+          key: android-skia-v1-${{ runner.os }}-${{ runner.arch }}-arm64-v8a-${{ env.ANDROID_NDK_VERSION }}-${{ steps.android-native-cache.outputs.cache-primary-key }}-${{ hashFiles('Cargo.toml', 'crates/**/Cargo.toml', 'sanim/**/Cargo.toml', 'external/**/Cargo.toml', '.cargo/config.toml', 'rust-toolchain.toml') }}
+
+      - name: Use cached Skia binaries
+        if: steps.skia-cache.outputs.cache-hit == 'true'
+        run: echo "SKIA_BINARIES_URL=file://${GITHUB_WORKSPACE}/${SKIA_ARCHIVE}" >> "${GITHUB_ENV}"
+
+      - name: Build the Android native library on a Skia cache miss
+        if: steps.skia-cache.outputs.cache-hit != 'true'
+        run: make android-native ANDROID_PROFILE=release ANDROID_SDK_ROOT="${ANDROID_HOME}"
+
+      - name: Archive compiled Skia binaries
+        id: skia-archive
+        if: steps.skia-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          shopt -s nullglob
+          bindings=(target/aarch64-linux-android/release/build/skia-bindings-*/out/skia/bindings.rs)
+          if (( ${#bindings[@]} != 1 )); then
+            echo "::notice::Expected one Android Skia bindings directory; skipping the binary cache."
+            exit 0
+          fi
+          cd "${bindings[0]%/bindings.rs}"
+          # rust-skia reads static libraries and bindings from a skia-binaries directory.
+          tar --transform='s|^|skia-binaries/|' -czf "${GITHUB_WORKSPACE}/${SKIA_ARCHIVE}" *.a bindings.rs
+          echo "ready=true" >> "${GITHUB_OUTPUT}"
+
+      - name: Save Android Skia binaries
+        if: steps.skia-archive.outputs.ready == 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ env.SKIA_ARCHIVE }}
+          key: ${{ steps.skia-cache.outputs.cache-primary-key }}
+
       - name: Build and check the release APK
         run: make android-check ANDROID_PROFILE=release ANDROID_SDK_ROOT="${ANDROID_HOME}"
 
@@ -150,7 +190,7 @@ jobs:
             android/app/build/outputs/apk/release/app-release-unsigned.apk
           "${ANDROID_HOME}/build-tools/37.0.0/apksigner" verify --verbose --print-certs "${apk}"
           python3 packaging/android-check.py "${apk}" \
-            "${ANDROID_HOME}/ndk/28.2.13676358/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf" \
+            "${ANDROID_HOME}/ndk/${ANDROID_NDK_VERSION}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf" \
             "${ANDROID_HOME}"
           (cd dist && zip -9 -q shrimply-android-arm64.zip shrimply-android-arm64.apk && sha256sum shrimply-android-arm64.zip > shrimply-android-arm64.zip.sha256)
 
