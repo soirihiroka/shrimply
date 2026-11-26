@@ -96,11 +96,9 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $vcpkg = git -C .ci/vcpkg rev-parse HEAD
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $clang = & "$env:LLVM_HOME\bin\clang.exe" --version | Select-Object -First 1
-          if ($LASTEXITCODE -ne 0 -or $clang -notmatch '^clang version (\S+)') {
-            throw "Could not identify the LLVM version used by Skia"
-          }
-          "skia=msvc-$env:VCToolsVersion-sdk-$sdk-clang-$($Matches[1])" | Out-File -Append -Encoding utf8 $env:GITHUB_OUTPUT
+          $clang = (Get-FileHash -Algorithm SHA256 "$env:LLVM_HOME\bin\clang.exe").Hash
+          $libclang = (Get-FileHash -Algorithm SHA256 "$env:LLVM_HOME\bin\libclang.dll").Hash
+          "skia=msvc-$env:VCToolsVersion-sdk-$sdk-clang-$clang-bindgen-$libclang" | Out-File -Append -Encoding utf8 $env:GITHUB_OUTPUT
           "ffmpeg=$ffmpeg" | Out-File -Append -Encoding utf8 $env:GITHUB_OUTPUT
           "key=ffmpeg-$ffmpeg-$env:ImageOS-$env:ImageVersion-msvc-$env:VCToolsVersion-sdk-$sdk-x64-vcpkg-$vcpkg" | Out-File -Append -Encoding utf8 $env:GITHUB_OUTPUT
 
