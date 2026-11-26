@@ -60,7 +60,7 @@ jobs:
           CARGO_BUILD_JOBS: "2"
           CARGO_INCREMENTAL: "0"
           CARGO_PROFILE_DEV_DEBUG: "0"
-        run: make check
+        run: make appkit-check fmt source-size-check
 
       - name: Save macOS check cache
         if: steps.setup.outputs.application-hit != 'true'
