@@ -8,6 +8,7 @@ on:
       - ".github/scripts/publish-prerelease.sh"
       - "android/**"
       - "packaging/android-*.py"
+      - "packaging/cache-skia.py"
       - "packaging/native_sources.py"
       - "packaging/*.patch"
       - ".cargo/**"
@@ -99,7 +100,7 @@ jobs:
             ~/.cargo/git
             ~/.gradle/caches
             ~/.gradle/wrapper
-          key: android-release-v1-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'Makefile', 'rust-toolchain.toml', 'packaging/android-*.py', 'packaging/native_sources.py', 'packaging/*.patch', 'android/**/*.kts', 'android/gradle/wrapper/gradle-wrapper.properties', '.github/workflows/android.yml') }}
+          key: android-release-v1-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml', 'android/**/*.kts', 'android/gradle/libs.versions.toml', 'android/gradle/wrapper/gradle-wrapper.properties') }}
           restore-keys: |
             android-release-v1-${{ runner.os }}-
 
@@ -145,18 +146,7 @@ jobs:
       - name: Archive compiled Skia binaries
         id: skia-archive
         if: steps.skia-cache.outputs.cache-hit != 'true'
-        shell: bash
-        run: |
-          shopt -s nullglob
-          bindings=(target/aarch64-linux-android/release/build/skia-bindings-*/out/skia/bindings.rs)
-          if (( ${#bindings[@]} != 1 )); then
-            echo "::notice::Expected one Android Skia bindings directory; skipping the binary cache."
-            exit 0
-          fi
-          cd "${bindings[0]%/bindings.rs}"
-          # rust-skia reads static libraries and bindings from a skia-binaries directory.
-          tar --transform='s|^|skia-binaries/|' -czf "${GITHUB_WORKSPACE}/${SKIA_ARCHIVE}" *.a bindings.rs
-          echo "ready=true" >> "${GITHUB_OUTPUT}"
+        run: python3 packaging/cache-skia.py target/aarch64-linux-android/release/build "${SKIA_ARCHIVE}"
 
       - name: Save Android Skia binaries
         if: steps.skia-archive.outputs.ready == 'true'

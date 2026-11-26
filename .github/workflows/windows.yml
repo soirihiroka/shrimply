@@ -7,6 +7,7 @@ on:
       - ".github/workflows/windows.yml"
       - ".github/scripts/publish-prerelease.sh"
       - "packaging/windows/**"
+      - "packaging/cache-skia.py"
       - "packaging/windows-ffmpeg.py"
       - "packaging/native_sources.py"
       - ".cargo/**"
@@ -48,7 +49,9 @@ env:
   CARGO_HOME: C:\c
   CARGO_TARGET_DIR: C:\t
   CARGO_UNSTABLE_CHECKSUM_FRESHNESS: "true"
+  LLVM_HOME: C:\Program Files\LLVM
   RUSTUP_HOME: C:\r
+  SKIA_ARCHIVE: target/windows-skia.tar.gz
   TZ: UTC
   VCPKG_DEFAULT_TRIPLET: x64-windows
   VCPKG_INSTALLED_DIR: ${{ github.workspace }}\.ci\vcpkg\installed
@@ -93,6 +96,11 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $vcpkg = git -C .ci/vcpkg rev-parse HEAD
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $clang = & "$env:LLVM_HOME\bin\clang.exe" --version | Select-Object -First 1
+          if ($LASTEXITCODE -ne 0 -or $clang -notmatch '^clang version (\S+)') {
+            throw "Could not identify the LLVM version used by Skia"
+          }
+          "skia=msvc-$env:VCToolsVersion-sdk-$sdk-clang-$($Matches[1])" | Out-File -Append -Encoding utf8 $env:GITHUB_OUTPUT
           "ffmpeg=$ffmpeg" | Out-File -Append -Encoding utf8 $env:GITHUB_OUTPUT
           "key=ffmpeg-$ffmpeg-$env:ImageOS-$env:ImageVersion-msvc-$env:VCToolsVersion-sdk-$sdk-x64-vcpkg-$vcpkg" | Out-File -Append -Encoding utf8 $env:GITHUB_OUTPUT
 
@@ -257,21 +265,48 @@ jobs:
           "FFMPEG_DIR=$ffmpeg" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
           "PKG_CONFIG=$($pkgConfig.Replace('\', '/'))" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
           "PKG_CONFIG_PATH=$ffmpeg/lib/pkgconfig;$ffmpeg/share/pkgconfig" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
-          "LIBCLANG_PATH=C:\Program Files\LLVM\bin" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
-          "CLANG_PATH=C:\Program Files\LLVM\bin\clang.exe" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          "LIBCLANG_PATH=$env:LLVM_HOME\bin" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          "CLANG_PATH=$env:LLVM_HOME\bin\clang.exe" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
           "QT_QMAKE=qmake.exe" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
           "$env:VCPKG_INSTALLED_DIR\x64-windows\bin" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+
+      - name: Restore Windows Skia binaries
+        id: skia-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ env.SKIA_ARCHIVE }}
+          key: windows-skia-v1-${{ runner.arch }}-${{ steps.native-cache-abi.outputs.skia }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/**/Cargo.toml', 'sanim/**/Cargo.toml', 'external/**/Cargo.toml', '.cargo/config.toml', 'rust-toolchain.toml', 'Makefile', 'packaging/windows/windows-release.ps1') }}
+
+      - name: Use cached Skia binaries
+        if: steps.skia-cache.outputs.cache-hit == 'true'
+        shell: powershell
+        run: |
+          $archive = Join-Path $env:GITHUB_WORKSPACE $env:SKIA_ARCHIVE
+          "SKIA_BINARIES_URL=file://$archive" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
 
       - name: Package portable application
         if: ${{ !inputs.check_only }}
         shell: powershell
         run: make windows-package
 
+      - name: Archive compiled Skia binaries
+        id: skia-archive
+        if: ${{ !inputs.check_only && steps.skia-cache.outputs.cache-hit != 'true' }}
+        shell: powershell
+        run: python packaging/cache-skia.py "$env:CARGO_TARGET_DIR/release/build" "$env:SKIA_ARCHIVE"
+
+      - name: Save Windows Skia binaries
+        if: steps.skia-archive.outputs.ready == 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ env.SKIA_ARCHIVE }}
+          key: ${{ steps.skia-cache.outputs.cache-primary-key }}
+
       - name: Check Windows debug build
         if: inputs.check_only
         shell: powershell
         env:
-          CARGO_BUILD_JOBS: "2"
+          CARGO_BUILD_JOBS: "3"
           CARGO_INCREMENTAL: "0"
           CARGO_PROFILE_DEV_DEBUG: "0"
         run: |
