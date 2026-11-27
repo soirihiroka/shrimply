@@ -20,7 +20,6 @@
 - You are not allowed to use `#[allow(deprecated)]`.
 - Put math logic into the `math` module and use `num_traits` when it fits.
 - Use fractions instead of `f64` when dealing with time.
-- CUDA Oxide supports many Rust features like `enum` and `match`; use them when needed.
 
 ## UI & Platform Guidelines
 

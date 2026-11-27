@@ -62,7 +62,7 @@ struct GpuStorage {
 }
 
 enum GpuOwner {
-    Oxide { buffers: Vec<GpuBuffer<u8>> },
+    Buffers(Vec<GpuBuffer<u8>>),
     External { _owner: Box<dyn Any + Send + Sync> },
 }
 
@@ -251,7 +251,7 @@ impl VisualFrame {
             inner: Arc::new(FrameStorage::Gpu(GpuStorage::new(
                 context,
                 planes,
-                GpuOwner::Oxide { buffers },
+                GpuOwner::Buffers(buffers),
             ))),
             format,
             width,
@@ -342,7 +342,7 @@ impl VisualFrame {
             height,
             planes,
             &memory_kinds,
-            GpuOwner::Oxide { buffers },
+            GpuOwner::Buffers(buffers),
         )
     }
 
@@ -441,7 +441,7 @@ impl VisualFrame {
             return None;
         };
         let plane = storage.planes.get(index)?;
-        if let GpuOwner::Oxide { buffers } = &storage._owner {
+        if let GpuOwner::Buffers(buffers) = &storage._owner {
             buffers.get(index)?.cu_deviceptr();
         }
         Some(VisualPlane {
@@ -474,7 +474,7 @@ impl VisualFrame {
         let FrameStorage::Gpu(storage) = &*self.inner else {
             return false;
         };
-        let GpuOwner::Oxide { buffers } = &storage._owner else {
+        let GpuOwner::Buffers(buffers) = &storage._owner else {
             return false;
         };
         !buffers.is_empty()
@@ -487,7 +487,7 @@ impl VisualFrame {
         let FrameStorage::Gpu(storage) = &*self.inner else {
             return Ok(());
         };
-        let GpuOwner::Oxide { buffers } = &storage._owner else {
+        let GpuOwner::Buffers(buffers) = &storage._owner else {
             return Ok(());
         };
         for buffer in buffers {
