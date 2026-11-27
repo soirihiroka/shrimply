@@ -11,11 +11,7 @@ if [[ ! $3 =~ ^[[:xdigit:]]{40}$ ]]; then
 fi
 
 source_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
-source_time="${SHRIMPLY_BUILD_SOURCE_TIME:-}"
-if [[ -z "$source_time" && -e "$source_root/.git" ]]; then
-    source_time="$(git -C "$source_root" show -s --format=%ct "$3")"
-fi
-[[ "$source_time" =~ ^[0-9]*$ ]]
+source_time="$(git -C "$source_root" show -s --format=%ct "$3")"
 source_archive="$(realpath -- "$2")"
 test -f "$source_archive"
 template="$source_root/dev.shrimply.Shrimply.yml"
@@ -27,15 +23,8 @@ output_dir="$(dirname -- "$(realpath -m -- "$1")")"
 temporary="$(mktemp "$output_dir/manifest.XXXXXX")"
 ffmpeg_tar="$(mktemp "$output_dir/ffmpeg.XXXXXX")"
 trap 'rm -f -- "$temporary" "$ffmpeg_tar"' EXIT
-if [[ -e "$source_root/.git" ]]; then
-    revision="$(git -C "$source_root" rev-parse :external/ffmpeg)"
-    git -C "$source_root/external/ffmpeg" archive --format=tar "$revision" > "$ffmpeg_tar"
-else
-    # The Docker build context already contains the exported submodule without .git.
-    test -s "$source_root/external/ffmpeg/RELEASE"
-    tar -C "$source_root/external/ffmpeg" --sort=name --mtime=@0 --numeric-owner \
-        --owner=0 --group=0 --exclude=.git -cf "$ffmpeg_tar" .
-fi
+revision="$(git -C "$source_root" rev-parse :external/ffmpeg)"
+git -C "$source_root/external/ffmpeg" archive --format=tar "$revision" > "$ffmpeg_tar"
 ffmpeg_name="ffmpeg-$(sha256sum "$ffmpeg_tar" | cut -d' ' -f1).tar"
 mv -- "$ffmpeg_tar" "$output_dir/$ffmpeg_name"
 

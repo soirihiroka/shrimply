@@ -84,11 +84,6 @@ warnings with ``make docs-check``.
 Packaging
 ---------
 
-Build a local Flatpak bundle with ``make flatpak-gtk``. This passes the
-checkout's full Git commit to Docker. When building from a source archive
-without Git metadata, set ``SHRIMPLY_BUILD_GIT_HASH`` to the archive's full
-source commit SHA.
-
 Docker [Experimental]
 ~~~~~~~~~~~~~~~~~~~~~
 

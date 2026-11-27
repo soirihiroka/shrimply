@@ -6,7 +6,6 @@
 .flatpak-builder
 .slang-artifacts
 Dockerfile
-Dockerfile.flatpak-gtk
 AGENTS.md
 CONTRIBUTING.md
 shared.md

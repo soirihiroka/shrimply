@@ -119,11 +119,6 @@ CRASH_CORE ?= target/$(EDITOR_BIN_NAME).core
 CRASH_STACK ?= target/$(EDITOR_BIN_NAME).stack
 CRASH_PROFILE ?= debug
 CRASH_SINCE ?= -1 day
-DOCKER ?= docker
-FLATPAK_GTK_IMAGE ?= shrimply-flatpak-gtk-builder
-FLATPAK_GTK_CACHE ?= $(CURDIR)/target/flatpak-gtk
-FLATPAK_BUNDLE := dist/shrimply-gtk-x86_64.flatpak
-SHRIMPLY_BUILD_GIT_HASH ?= $(shell git rev-parse HEAD)
 
 PREFIX ?= $(HOME)/.local
 BINDIR ?= $(PREFIX)/bin
@@ -191,7 +186,7 @@ FEDORA_PACKAGES := \
 	qt6-qtdeclarative-devel \
 	spirv-tools
 
-.PHONY: native-deps windows-ffmpeg windows-ffmpeg-verify windows-native-deps windows-build windows-dev windows-check windows-release windows-package qt-native-deps qt-desktop-file desktop-icon cuda-target-check cuda-artifacts dev dev-mac qt-build dev-qt dev-server docs docs-check run run-qt build release check intel-check components-check gtk-components-showcase qt-components-showcase server-python-check manim manim-python-check manim-parameter-check cargo-check fmt fmt-check lint test frame-rate-test video-lifecycle-test transparent-fill-frame-range-test transparent-fill-decoder-test transparent-fill-kernel-test transparent-fill-compositor-test transparent-fill-playback-test transparent-fill-e2e-fixture transparent-fill-e2e-test decode-ahead-benchmark paint-interpolation-test process-reporting-test crash-report clean deps-fedora deps-fedora-qt qt-release install install-qt uninstall uninstall-qt flatpak-gtk
+.PHONY: native-deps windows-ffmpeg windows-ffmpeg-verify windows-native-deps windows-build windows-dev windows-check windows-release windows-package qt-native-deps qt-desktop-file desktop-icon cuda-target-check cuda-artifacts dev dev-mac qt-build dev-qt dev-server docs docs-check run run-qt build release check intel-check components-check gtk-components-showcase qt-components-showcase server-python-check manim manim-python-check manim-parameter-check cargo-check fmt fmt-check lint test frame-rate-test video-lifecycle-test transparent-fill-frame-range-test transparent-fill-decoder-test transparent-fill-kernel-test transparent-fill-compositor-test transparent-fill-playback-test transparent-fill-e2e-fixture transparent-fill-e2e-test decode-ahead-benchmark paint-interpolation-test process-reporting-test crash-report clean deps-fedora deps-fedora-qt qt-release install install-qt uninstall uninstall-qt
 ifeq ($(HOST_OS),Linux)
 .PHONY: linux-ffmpeg
 linux-ffmpeg:
@@ -733,18 +728,6 @@ endif
 		command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database "$(APPLICATIONSDIR)" >/dev/null || true; \
 	fi
 	@echo "Installed $(APP_NAME) under $(DESTDIR)$(PREFIX)"
-
-flatpak-gtk:
-	@command -v $(DOCKER) >/dev/null 2>&1 || { echo "Missing Docker ($(DOCKER))" >&2; exit 1; }
-	mkdir -p "$(dir $(FLATPAK_BUNDLE))" "$(FLATPAK_GTK_CACHE)"
-	$(DOCKER) build -f Dockerfile.flatpak-gtk -t "$(FLATPAK_GTK_IMAGE)" --build-arg SHRIMPLY_BUILD_GIT_HASH="$(SHRIMPLY_BUILD_GIT_HASH)" .
-	$(DOCKER) run --rm --privileged \
-		--env OUTPUT_UID="$$(id -u)" \
-		--env OUTPUT_GID="$$(id -g)" \
-		--volume "$(FLATPAK_GTK_CACHE):/flatpak:Z" \
-		--volume "$(CURDIR)/$(dir $(FLATPAK_BUNDLE)):/output:Z" \
-		"$(FLATPAK_GTK_IMAGE)"
-	@echo "Flatpak bundle: $(FLATPAK_BUNDLE)"
 
 install-qt: qt-release desktop-icon project-mime install-manim-worker
 	$(INSTALL) -Dm755 $(QT_TARGET_DIR)/release/$(QT_BIN_NAME) "$(DESTDIR)$(QT_BINDIR)/$(QT_BIN_NAME)"
