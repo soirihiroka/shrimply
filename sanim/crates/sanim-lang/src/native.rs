@@ -825,3 +825,53 @@ fn positive(
         Ok(value)
     }
 }
+
+pub(crate) const TIMECODE_FIELDS: [&str; 4] = ["hours", "minutes", "seconds", "frames"];
+
+pub(crate) fn timecode(
+    name: &str,
+    args: &imbl::OrdMap<String, Value>,
+    _context: Context<'_>,
+) -> Result<Value, String> {
+    use math::temporal;
+    let rate = args["fps"].number()?.value;
+    if name == "frame_index" {
+        let frame = temporal::frame_index(args["time"].number()?.value, rate)?;
+        return Ok(Value::Number(Number::scalar(frame)));
+    }
+    let frame = args["frame"].number()?.value;
+    let frame = math::integer_i64(frame).ok_or("timecode frame is out of range")?;
+    let drop_frame = args
+        .get("drop_frame")
+        .map(Value::boolean)
+        .transpose()?
+        .unwrap_or(false);
+    let value = temporal::smpte_timecode(frame, rate, drop_frame)
+        .ok_or("timecode requires a nonnegative frame and positive rate in range")?;
+    if name == "timecode" {
+        return Ok(Value::String(temporal::format_smpte_timecode(value).into()));
+    }
+    Ok(Value::Record(
+        TIMECODE_FIELDS
+            .into_iter()
+            .zip([value.hours, value.minutes, value.seconds, value.frames])
+            .map(|(name, value)| (name.to_owned(), Value::Number(Number::scalar(value))))
+            .collect(),
+    ))
+}
+
+pub(crate) fn lerp(
+    _name: &str,
+    args: &imbl::OrdMap<String, Value>,
+    mut context: Context<'_>,
+) -> Result<Value, String> {
+    use math::operations::{binary, binary_work};
+    let mut combine = |operator, left, right| {
+        context.charge_work(binary_work(operator, &left, &right))?;
+        binary(operator, left, right)
+    };
+    let a = args["a"].clone();
+    let delta = combine("-", args["b"].clone(), a.clone())?;
+    let delta = combine("*", delta, args["progress"].clone())?;
+    combine("+", a, delta)
+}

@@ -19,6 +19,7 @@ pub(crate) type Evaluator = for<'a> fn(
 pub(crate) type TypeRule = fn(&Builtin, &[Type]) -> Result<Type, String>;
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum Execution {
+    Host,
     Native(Evaluator),
     /// Watched asset reads must execute even when their argument values are unchanged.
     Source(Evaluator),
@@ -500,6 +501,59 @@ fn build_builtins() -> Vec<Builtin> {
         false,
         Execution::Native(native::relationship),
         native_types::fixed,
+    );
+    let frame_type = Type::RefinedNumeric(sanim_core::math::domain::NumericDomain::all(
+        Dimension::Number,
+        true,
+    ));
+    let rate_type = Type::Numeric(Dimension::Rate);
+    add(
+        "frame_index",
+        vec![
+            p("time", Type::Numeric(Dimension::Duration), true),
+            p("fps", rate_type.clone(), true),
+        ],
+        frame_type.clone(),
+        false,
+        Execution::Native(native::timecode),
+        native_types::fixed,
+    );
+    for (name, result) in [
+        ("timecode", Type::String),
+        (
+            "timecode_parts",
+            Type::Record(
+                native::TIMECODE_FIELDS
+                    .into_iter()
+                    .map(|field| (field.into(), frame_type.clone()))
+                    .collect(),
+            ),
+        ),
+    ] {
+        add(
+            name,
+            vec![
+                p("frame", num.clone(), true),
+                p("fps", rate_type.clone(), true),
+                p("drop_frame", Type::Bool, false),
+            ],
+            result,
+            false,
+            Execution::Native(native::timecode),
+            native_types::fixed,
+        );
+    }
+    add(
+        "lerp",
+        vec![
+            p("a", Unknown, true),
+            p("b", Unknown, true),
+            p("progress", num.clone(), true),
+        ],
+        Unknown,
+        false,
+        Execution::Native(native::lerp),
+        native_types::lerp,
     );
     for function in sanim_core::math::functions::functions() {
         add(

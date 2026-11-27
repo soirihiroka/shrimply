@@ -111,3 +111,10 @@ impl Window {
         }))
     }
 }
+
+pub use shrimply_math_core::{SmpteTimecode, format_smpte_timecode, smpte_timecode};
+
+pub fn frame_index(seconds: Fraction, rate: Fraction) -> Result<i64, String> {
+    shrimply_math_core::frame_index(shrimply_math_core::Time { seconds }, rate)
+        .ok_or_else(|| "frame index requires finite time and a positive rate in range".into())
+}

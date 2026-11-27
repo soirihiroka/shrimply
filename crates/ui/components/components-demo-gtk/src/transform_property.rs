@@ -149,7 +149,7 @@ fn property(
     let expression_label = config.label.to_string();
     let expression = ExpressionEditor::new(
         shrimply_components_demo_core::EXPRESSION_SOURCE,
-        Some("rhai"),
+        Some("sanim"),
         &shrimply_components_demo_core::expression_output(
             shrimply_components_demo_core::EXPRESSION_SOURCE,
         ),

@@ -13,7 +13,7 @@ use shrimply_components_gtk::{
 };
 use shrimply_inspector_core::{
     ControlKind, InspectorControl, InspectorController, InspectorTarget,
-    rhai_editor::ExpressionValue,
+    expression_editor::ExpressionValue,
 };
 use shrimply_project_document::project::Color;
 
@@ -667,7 +667,7 @@ fn expression(
         context,
         "native value expression",
         move |refresh| {
-            crate::rhai_editor::editor(
+            crate::expression_editor::editor(
                 Some(source.layered.expression_source.clone()),
                 kind,
                 move |value| {

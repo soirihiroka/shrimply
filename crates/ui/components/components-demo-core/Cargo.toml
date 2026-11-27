@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-rhai.workspace = true
+sanim-lang.workspace = true
 shrimply-property-model = { workspace = true }
 shrimply-math-interpolation = { workspace = true }
 shrimply-keyframe-graph-skia = { workspace = true }

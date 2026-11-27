@@ -1,3 +1,4 @@
+pub mod motion_noise;
 use fraction::ToPrimitive;
 use std::str::FromStr;
 use std::time::Duration;

@@ -268,10 +268,11 @@ fn start_session(
     let (sender, receiver) = async_channel::bounded::<Work>(WORK_QUEUE_CAPACITY);
     let stop = Arc::new(AtomicBool::new(false));
     let worker_stop = stop.clone();
+    let worker_path: Arc<str> = Arc::from(project_path.as_str());
     drop(
         thread::Builder::new()
             .name("shrimply-editing-bridge".to_string())
-            .spawn(move || accept_loop(listener, sender, presence_sender, worker_stop))
+            .spawn(move || accept_loop(listener, sender, presence_sender, worker_stop, worker_path))
             .map_err(|error| format!("could not start editing API bridge: {error}"))?,
     );
 
@@ -386,12 +387,8 @@ fn start_session(
                         remote_actor.is_some(),
                     )
                     .map(|changed| json!({"project":changed.then(|| project.borrow().clone())})),
-                    BridgeCommand::Handshake => Ok(json!({"ready":true,"mode":"headless"})),
-                    BridgeCommand::Version => {
-                        serde_json::to_value(shrimply_editing_api::protocol::BuildVersion::current(
-                            env!("CARGO_PKG_VERSION"),
-                        ))
-                        .map_err(|error| error.to_string())
+                    BridgeCommand::Handshake | BridgeCommand::Version => {
+                        unreachable!("connection metadata does not enter the work queue")
                     }
                     BridgeCommand::Snapshot => snapshot(&project, &player_state, &selection_state)
                         .and_then(|snapshot| {
@@ -500,6 +497,7 @@ fn accept_loop(
     sender: async_channel::Sender<Work>,
     presence_sender: async_channel::Sender<Work>,
     stop: Arc<AtomicBool>,
+    project_path: Arc<str>,
 ) {
     while !stop.load(Ordering::Acquire) {
         match listener.accept() {
@@ -508,7 +506,8 @@ fn accept_loop(
                 let sender = sender.clone();
                 let presence_sender = presence_sender.clone();
                 let stop = stop.clone();
-                thread::spawn(move || serve_connection(stream, &sender, &presence_sender, &stop));
+                let project_path = project_path.clone();
+                thread::spawn(move || serve_connection(stream, &sender, &presence_sender, &stop, &project_path));
             }
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                 thread::sleep(Duration::from_millis(10));
@@ -523,6 +522,7 @@ fn serve_connection(
     sender: &async_channel::Sender<Work>,
     presence_sender: &async_channel::Sender<Work>,
     stop: &AtomicBool,
+    project_path: &str,
 ) {
     stream
         .set_read_timeout(Some(SOCKET_REQUEST_TIMEOUT))
@@ -538,6 +538,17 @@ fn serve_connection(
             .map_err(|error| format!("could not read editing API bridge request: {error}"))?;
         let request: BridgeRequest = serde_json::from_str(&line)
             .map_err(|error| format!("malformed editing API bridge request: {error}"))?;
+        if request.project_path != project_path {
+            return Ok(bridge_response(project_path, Err(format!("editing service is open for {project_path}"))));
+        }
+        let metadata = match request.command {
+            BridgeCommand::Handshake => Some(json!({"ready":true,"mode":"headless"})),
+            BridgeCommand::Version => Some(json!(shrimply_editing_api::protocol::BuildVersion::current(env!("CARGO_PKG_VERSION")))),
+            _ => None,
+        };
+        if let Some(metadata) = metadata {
+            return Ok(bridge_response(project_path, Ok(metadata)));
+        }
         let sender = if matches!(request.command, BridgeCommand::SessionUpdates(_)) {
             presence_sender
         } else {

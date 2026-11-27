@@ -1,9 +1,11 @@
 mod shapes;
+pub use sanim_core as expression;
+use sanim_core::{List, ListLength, Number, Type, Unit, Value};
 pub use shapes::{ShapeKind, ShapeRoundingStrategy};
-use std::{collections::BTreeMap, fmt::Debug};
+use std::fmt::Debug;
 
 use glam::{Vec2, Vec3};
-use num_traits::{Bounded, NumCast, ToPrimitive};
+use num_traits::{Bounded, ToPrimitive};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use shrimply_math_color::{Color, LayerBlendMode};
 use shrimply_math_geometry::{ScalarValue, Vector2Value};
@@ -212,55 +214,49 @@ pub trait TimelineValueType: Clone + Debug + PartialEq + Sized + 'static {
     fn value_at(keyframes: &[Self::Keyframe], time: Time) -> Self;
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub enum ExpressionData {
-    Unit,
-    Bool(bool),
-    Number(f32),
-    Integer(i64),
-    Text(String),
-    Array(Vec<Self>),
-    Object(BTreeMap<String, Self>),
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct ExpressionInput {
-    pub value: ExpressionData,
-    pub y: Option<f32>,
-    pub z: Option<f32>,
-    pub color: Option<Color>,
-}
-
-impl ExpressionInput {
-    pub fn new(value: ExpressionData) -> Self {
-        Self {
-            value,
-            y: None,
-            z: None,
-            color: None,
-        }
-    }
-
-    pub fn y(mut self, value: f32) -> Self {
-        self.y = Some(value);
-        self
-    }
-
-    pub fn z(mut self, value: f32) -> Self {
-        self.z = Some(value);
-        self
-    }
-
-    pub fn color(mut self, value: Color) -> Self {
-        self.color = Some(value);
-        self
-    }
-}
-
-/// A timeline value that owns its expression representation and validation.
+/// A timeline value owns the static schema and conversion for its Sanim expression.
 pub trait TimelineExpressionValue: TimelineValueType {
-    fn expression_input(&self) -> ExpressionInput;
-    fn expression_output(&self, output: ExpressionData) -> Option<Self>;
+    fn expression_type() -> Type;
+    fn expression_input(&self) -> Result<Value, String>;
+    fn expression_output(&self, output: Value) -> Option<Self>;
+}
+
+pub fn expression_number(value: f32) -> Result<Value, String> {
+    let value = f64::from(value);
+    let fraction = sanim_core::math::from_f64(value)
+        .or_else(|_| sanim_core::math::functions::approximate(value))?;
+    Ok(Value::Number(Number {
+        value: fraction,
+        unit: Unit::Number,
+    }))
+}
+
+pub fn expression_f32(value: &Value) -> Option<f32> {
+    let number = value.number().ok()?;
+    if number.unit != Unit::Number {
+        return None;
+    }
+    let value = sanim_core::math::to_f64(number.value).ok()? as f32;
+    value.is_finite().then_some(value)
+}
+
+fn vector_expression_type(length: usize) -> Type {
+    Type::List(
+        Box::new(Type::Numeric(Unit::Number)),
+        ListLength::Exact(length),
+    )
+}
+
+fn vector_expression(values: &[f32]) -> Result<Value, String> {
+    let values = values
+        .iter()
+        .copied()
+        .map(expression_number)
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(Value::List(List::typed(
+        Type::Numeric(Unit::Number),
+        values,
+    )))
 }
 
 pub trait TimelineScalar: TimelineValueType<Keyframe = TimelineCurveKeyframe<Self>> {
@@ -277,6 +273,23 @@ pub trait TimelineStep:
     TimelineValueType<Keyframe = TimelineStepKeyframe<Self>> + Copy + Eq
 {
     fn variants() -> &'static [TimelineStepVariant<Self>];
+
+    fn expression_variant(self) -> Value {
+        let key = Self::variants()
+            .iter()
+            .find(|variant| variant.value == self)
+            .expect("timeline step value is missing from its variants")
+            .key;
+        Value::String(key.into())
+    }
+
+    fn from_expression_variant(output: &Value) -> Option<Self> {
+        let key = output.string().ok()?;
+        Self::variants()
+            .iter()
+            .find(|variant| variant.key == key)
+            .map(|variant| variant.value)
+    }
 }
 
 impl<T: TimelineValueType> TimelineValue<T> {
@@ -450,23 +463,16 @@ impl TimelineStep for RotationOrder {
 }
 
 impl TimelineExpressionValue for RotationOrder {
-    fn expression_input(&self) -> ExpressionInput {
-        let key = Self::variants()
-            .iter()
-            .find(|variant| variant.value == *self)
-            .expect("rotation order is missing from its variants")
-            .key;
-        ExpressionInput::new(ExpressionData::Text(key.to_string()))
+    fn expression_type() -> Type {
+        Type::String
     }
 
-    fn expression_output(&self, output: ExpressionData) -> Option<Self> {
-        let ExpressionData::Text(key) = output else {
-            return None;
-        };
-        Self::variants()
-            .iter()
-            .find(|variant| variant.key == key.as_str())
-            .map(|variant| variant.value)
+    fn expression_input(&self) -> Result<Value, String> {
+        Ok(self.expression_variant())
+    }
+
+    fn expression_output(&self, output: Value) -> Option<Self> {
+        Self::from_expression_variant(&output)
     }
 }
 
@@ -564,23 +570,16 @@ impl TimelineStep for VideoSampleMethod {
 }
 
 impl TimelineExpressionValue for VideoSampleMethod {
-    fn expression_input(&self) -> ExpressionInput {
-        let key = Self::variants()
-            .iter()
-            .find(|variant| variant.value == *self)
-            .expect("video sample method is missing from its variants")
-            .key;
-        ExpressionInput::new(ExpressionData::Text(key.to_string()))
+    fn expression_type() -> Type {
+        Type::String
     }
 
-    fn expression_output(&self, output: ExpressionData) -> Option<Self> {
-        let ExpressionData::Text(key) = output else {
-            return None;
-        };
-        Self::variants()
-            .iter()
-            .find(|variant| variant.key == key.as_str())
-            .map(|variant| variant.value)
+    fn expression_input(&self) -> Result<Value, String> {
+        Ok(self.expression_variant())
+    }
+
+    fn expression_output(&self, output: Value) -> Option<Self> {
+        Self::from_expression_variant(&output)
     }
 }
 
@@ -679,15 +678,16 @@ impl TimelineValueType for String {
 }
 
 impl TimelineExpressionValue for String {
-    fn expression_input(&self) -> ExpressionInput {
-        ExpressionInput::new(ExpressionData::Text(self.clone()))
+    fn expression_type() -> Type {
+        Type::String
     }
 
-    fn expression_output(&self, output: ExpressionData) -> Option<Self> {
-        match output {
-            ExpressionData::Text(value) => Some(value),
-            _ => None,
-        }
+    fn expression_input(&self) -> Result<Value, String> {
+        Ok(Value::String(self.clone().into()))
+    }
+
+    fn expression_output(&self, output: Value) -> Option<Self> {
+        output.string().ok().map(str::to_owned)
     }
 }
 
@@ -731,40 +731,57 @@ impl TimelineScalar for f32 {
 }
 
 impl TimelineExpressionValue for f32 {
-    fn expression_input(&self) -> ExpressionInput {
-        ExpressionInput::new(ExpressionData::Number(*self))
+    fn expression_type() -> Type {
+        Type::Numeric(Unit::Number)
     }
 
-    fn expression_output(&self, output: ExpressionData) -> Option<Self> {
-        expression_number(output)
+    fn expression_input(&self) -> Result<Value, String> {
+        expression_number(*self)
+    }
+
+    fn expression_output(&self, output: Value) -> Option<Self> {
+        expression_f32(&output)
     }
 }
 
 impl TimelineExpressionValue for u32 {
-    fn expression_input(&self) -> ExpressionInput {
-        ExpressionInput::new(ExpressionData::Number(*self as f32))
+    fn expression_type() -> Type {
+        Type::Numeric(Unit::Number)
     }
 
-    fn expression_output(&self, output: ExpressionData) -> Option<Self> {
-        expression_number(output).map(|value| <Self as TimelineScalar>::from_f64(value as f64))
+    fn expression_input(&self) -> Result<Value, String> {
+        Ok(Value::Number(Number::scalar(i64::from(*self))))
+    }
+
+    fn expression_output(&self, output: Value) -> Option<Self> {
+        let value = output
+            .number()
+            .ok()?
+            .value
+            .round()
+            .clamp(Fraction::from(0), Fraction::from(u32::MAX));
+        u32::try_from(sanim_core::math::integer_i64(value)?).ok()
     }
 }
 
 impl TimelineExpressionValue for i64 {
-    fn expression_input(&self) -> ExpressionInput {
-        ExpressionInput::new(ExpressionData::Number(*self as f32))
+    fn expression_type() -> Type {
+        Type::Numeric(Unit::Number)
     }
 
-    fn expression_output(&self, output: ExpressionData) -> Option<Self> {
-        expression_number(output).map(|value| <Self as TimelineScalar>::from_f64(value as f64))
+    fn expression_input(&self) -> Result<Value, String> {
+        Ok(Value::Number(Number {
+            value: fraction_from_integer(*self),
+            unit: Unit::Number,
+        }))
     }
-}
 
-fn expression_number(output: ExpressionData) -> Option<f32> {
-    match output {
-        ExpressionData::Number(value) => Some(value),
-        ExpressionData::Integer(value) => Some(value as f32),
-        _ => None,
+    fn expression_output(&self, output: Value) -> Option<Self> {
+        let value = output.number().ok()?.value.round().clamp(
+            fraction_from_integer(i64::MIN),
+            fraction_from_integer(i64::MAX),
+        );
+        sanim_core::math::integer_i64(value)
     }
 }
 
@@ -780,7 +797,7 @@ macro_rules! integer_scalar {
                     ToPrimitive::to_f64(&<$ty as Bounded>::min_value()).unwrap_or(f64::MIN);
                 let maximum =
                     ToPrimitive::to_f64(&<$ty as Bounded>::max_value()).unwrap_or(f64::MAX);
-                NumCast::from(value.round().clamp(minimum, maximum)).unwrap_or_default()
+                num_traits::NumCast::from(value.round().clamp(minimum, maximum)).unwrap_or_default()
             }
         }
     };
@@ -821,35 +838,21 @@ impl TimelineVector for Color<u8> {
 }
 
 impl TimelineExpressionValue for Color<u8> {
-    fn expression_input(&self) -> ExpressionInput {
-        let color = Color::<f32>::from(*self);
-        ExpressionInput::new(ExpressionData::Number(color.r))
-            .y(color.g)
-            .color(color)
+    fn expression_type() -> Type {
+        Type::Color
     }
 
-    fn expression_output(&self, output: ExpressionData) -> Option<Self> {
-        let ExpressionData::Array(values) = output else {
+    fn expression_input(&self) -> Result<Value, String> {
+        Ok(Value::Color(sanim_core::Color(self.to_array().map(
+            |channel| Fraction::new(u64::from(channel), u64::from(u8::MAX)),
+        ))))
+    }
+
+    fn expression_output(&self, output: Value) -> Option<Self> {
+        let Value::Color(color) = output else {
             return None;
         };
-        let numbers = values
-            .into_iter()
-            .map(|value| match value {
-                ExpressionData::Number(value) => Some(value),
-                ExpressionData::Integer(value) => Some(value as f32),
-                _ => None,
-            })
-            .collect::<Option<Vec<_>>>()?;
-        let color = match numbers.as_slice() {
-            [luminance] => [*luminance, *luminance, *luminance, 1.0],
-            [luminance, alpha] => [*luminance, *luminance, *luminance, *alpha],
-            [red, green, blue] => [*red, *green, *blue, 1.0],
-            [red, green, blue, alpha] => [*red, *green, *blue, *alpha],
-            _ => return None,
-        };
-        Some(Self::from_srgba(
-            color.map(|channel| channel.clamp(0.0, 1.0)),
-        ))
+        color.srgba().ok().map(Self::from_srgba)
     }
 }
 
@@ -885,22 +888,21 @@ impl TimelineVector for Vec2 {
 }
 
 impl TimelineExpressionValue for Vec2 {
-    fn expression_input(&self) -> ExpressionInput {
-        ExpressionInput::new(ExpressionData::Number(self.x)).y(self.y)
+    fn expression_type() -> Type {
+        vector_expression_type(2)
     }
 
-    fn expression_output(&self, output: ExpressionData) -> Option<Self> {
-        let ExpressionData::Array(values) = output else {
-            return None;
-        };
-        let [x, y] = values.as_slice() else {
-            return None;
-        };
+    fn expression_input(&self) -> Result<Value, String> {
+        vector_expression(&self.to_array())
+    }
+
+    fn expression_output(&self, output: Value) -> Option<Self> {
+        let list = output.list().ok()?;
+        (list.len() == 2).then_some(())?;
         Some(Self::new(
-            expression_number(x.clone())?,
-            expression_number(y.clone())?,
+            expression_f32(list.get(0)?)?,
+            expression_f32(list.get(1)?)?,
         ))
-        .filter(|value| value.is_finite())
     }
 }
 
@@ -936,25 +938,22 @@ impl TimelineVector for Vec3 {
 }
 
 impl TimelineExpressionValue for Vec3 {
-    fn expression_input(&self) -> ExpressionInput {
-        ExpressionInput::new(ExpressionData::Number(self.x))
-            .y(self.y)
-            .z(self.z)
+    fn expression_type() -> Type {
+        vector_expression_type(3)
     }
 
-    fn expression_output(&self, output: ExpressionData) -> Option<Self> {
-        let ExpressionData::Array(values) = output else {
-            return None;
-        };
-        let [x, y, z] = values.as_slice() else {
-            return None;
-        };
+    fn expression_input(&self) -> Result<Value, String> {
+        vector_expression(&self.to_array())
+    }
+
+    fn expression_output(&self, output: Value) -> Option<Self> {
+        let list = output.list().ok()?;
+        (list.len() == 3).then_some(())?;
         Some(Self::new(
-            expression_number(x.clone())?,
-            expression_number(y.clone())?,
-            expression_number(z.clone())?,
+            expression_f32(list.get(0)?)?,
+            expression_f32(list.get(1)?)?,
+            expression_f32(list.get(2)?)?,
         ))
-        .filter(|value| value.is_finite())
     }
 }
 
@@ -988,23 +987,16 @@ macro_rules! timeline_step_type {
         }
 
         impl $crate::TimelineExpressionValue for $ty {
-            fn expression_input(&self) -> $crate::ExpressionInput {
-                let key = <Self as $crate::TimelineStep>::variants()
-                    .iter()
-                    .find(|variant| variant.value == *self)
-                    .expect("timeline step value is missing from its variants")
-                    .key;
-                $crate::ExpressionInput::new($crate::ExpressionData::Text(key.to_string()))
+            fn expression_type() -> $crate::expression::Type {
+                $crate::expression::Type::String
             }
 
-            fn expression_output(&self, output: $crate::ExpressionData) -> Option<Self> {
-                let $crate::ExpressionData::Text(key) = output else {
-                    return None;
-                };
-                <Self as $crate::TimelineStep>::variants()
-                    .iter()
-                    .find(|variant| variant.key == key.as_str())
-                    .map(|variant| variant.value)
+            fn expression_input(&self) -> Result<$crate::expression::Value, String> {
+                Ok(<Self as $crate::TimelineStep>::expression_variant(*self))
+            }
+
+            fn expression_output(&self, output: $crate::expression::Value) -> Option<Self> {
+                <Self as $crate::TimelineStep>::from_expression_variant(&output)
             }
         }
     };
@@ -1105,15 +1097,16 @@ impl TimelineStep for TimelineBool {
 }
 
 impl TimelineExpressionValue for TimelineBool {
-    fn expression_input(&self) -> ExpressionInput {
-        ExpressionInput::new(ExpressionData::Bool(self.get()))
+    fn expression_type() -> Type {
+        Type::Bool
     }
 
-    fn expression_output(&self, output: ExpressionData) -> Option<Self> {
-        match output {
-            ExpressionData::Bool(value) => Some(value.into()),
-            _ => None,
-        }
+    fn expression_input(&self) -> Result<Value, String> {
+        Ok(Value::Bool(self.get()))
+    }
+
+    fn expression_output(&self, output: Value) -> Option<Self> {
+        output.boolean().ok().map(Self::from)
     }
 }
 

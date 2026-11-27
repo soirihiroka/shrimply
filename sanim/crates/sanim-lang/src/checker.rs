@@ -51,8 +51,39 @@ pub fn check(
     type_budget: &std::cell::Cell<usize>,
     limits: &crate::Limits,
 ) -> Result<Checked, Diagnostic> {
+    check_module(source, module, imports, root, type_budget, limits, None)
+}
+
+pub(crate) fn check_expression(
+    source: &str,
+    module: &Module,
+    type_budget: &std::cell::Cell<usize>,
+    limits: &crate::Limits,
+    interface: &crate::expression::Interface,
+) -> Result<Checked, Diagnostic> {
+    check_module(
+        source,
+        module,
+        &BTreeMap::new(),
+        true,
+        type_budget,
+        limits,
+        Some(interface),
+    )
+}
+
+fn check_module(
+    source: &str,
+    module: &Module,
+    imports: &BTreeMap<String, std::sync::Arc<Checked>>,
+    root: bool,
+    type_budget: &std::cell::Cell<usize>,
+    limits: &crate::Limits,
+    interface: Option<&crate::expression::Interface>,
+) -> Result<Checked, Diagnostic> {
     let mut checker = Checker {
         source,
+        interface,
         type_budget,
         aliases: BTreeMap::new(),
         schemas: BTreeMap::new(),
@@ -78,6 +109,14 @@ pub fn check(
         collects_output: false,
     };
     let mut env = Environment::new();
+    if let Some(interface) = interface {
+        for (name, ty) in &interface.inputs {
+            checker.check_expression_type(ty, Span::default())?;
+            checker.bind_kind(name, BindingKind::Let);
+            checker.insert_environment(&mut env, name.clone(), ty.clone(), Span::default())?;
+        }
+        checker.check_expression_type(&interface.result, Span::default())?;
+    }
     // Type declarations are resolved in declaration order; recursive types are deliberately rejected.
     for statement in &module.statements {
         match &statement.kind {
@@ -241,14 +280,31 @@ pub fn check(
                 )?;
             }
             _ => {
+                if interface.is_some() && entry_returns {
+                    return Err(checker.error(
+                        "S112",
+                        "unreachable statement after return",
+                        statement.span,
+                    ));
+                }
                 entry_returns |= checker.block(
                     std::slice::from_ref(statement),
                     &mut env,
-                    None,
+                    interface.map(|interface| &interface.result),
                     &BTreeMap::new(),
                 )?;
             }
         }
+    }
+    if interface.is_some() && !entry_returns {
+        return Err(checker.error(
+            "S110",
+            "expression must return a value on every path",
+            module
+                .statements
+                .last()
+                .map_or(Span::default(), |statement| statement.span),
+        ));
     }
     // Reject all direct/indirect recursion and propagate scheduling effects.
     fn visit(
@@ -376,7 +432,9 @@ pub fn check(
         )
         .collect();
     Ok(Checked {
-        output_type: (entry_returns || checker.collects_output).then_some(Type::Animation),
+        output_type: interface
+            .map(|interface| interface.result.clone())
+            .or_else(|| (entry_returns || checker.collects_output).then_some(Type::Animation)),
         dynamic_exports,
         function_clauses,
         anonymous_functions: checker.anonymous_functions,
@@ -402,6 +460,7 @@ struct BindingInfo {
 }
 struct Checker<'a> {
     source: &'a str,
+    interface: Option<&'a crate::expression::Interface>,
     type_budget: &'a std::cell::Cell<usize>,
     aliases: BTreeMap<String, Alias>,
     schemas: BTreeMap<String, Type>,
@@ -429,6 +488,18 @@ struct Checker<'a> {
 impl Checker<'_> {
     fn error(&self, code: &str, message: impl Into<String>, span: Span) -> Diagnostic {
         Diagnostic::new(code, message, self.source, span)
+    }
+    fn builtin(&self, name: &str) -> Option<&prelude::Builtin> {
+        match self.interface {
+            Some(interface) => interface.builtin(name),
+            None => prelude::builtin(name),
+        }
+    }
+    fn check_expression_type(&self, ty: &Type, span: Span) -> Result<(), Diagnostic> {
+        if self.interface.is_some() && !crate::expression::allows_type(ty) {
+            return Err(self.error("S141", format!("{ty} is unavailable in expressions"), span));
+        }
+        Ok(())
     }
     fn call_mutates(&self, expr: &Expr, env: &Environment) -> bool {
         let ExprKind::Call { callee, args, .. } = &expr.kind else {
@@ -503,7 +574,11 @@ impl Checker<'_> {
         checked
     }
     fn fresh(&self, name: &str, env: &Environment, span: Span) -> Result<(), Diagnostic> {
-        if prelude::protected(name) {
+        if prelude::protected(name)
+            || self
+                .interface
+                .is_some_and(|interface| interface.functions.contains_key(name))
+        {
             return Err(self.error("S101",format!("'{name}' is a protected Sanim name and cannot be redefined, including in parameters. Choose a different name, for example '{}_value'.",name.to_ascii_lowercase()),span));
         }
         if env.contains_key(name)
@@ -689,6 +764,7 @@ impl Checker<'_> {
         if nested {
             return Err(self.error("S106","containers hold value snapshots; place sig around the entire value type, such as sig List<Number>, rather than inside a container",span));
         }
+        self.check_expression_type(&ty, span)?;
         Ok(ty)
     }
     fn resolve_inner(
@@ -928,6 +1004,13 @@ impl Checker<'_> {
                     annotation,
                     value,
                 } => {
+                    if self.interface.is_some() && *kind == BindingKind::Sig {
+                        return Err(self.error(
+                            "S141",
+                            "signals are unavailable in expressions",
+                            statement.span,
+                        ));
+                    }
                     self.fresh(name, env, statement.span)?;
                     let expected = annotation
                         .as_ref()
@@ -1055,8 +1138,12 @@ impl Checker<'_> {
                     } else {
                         expected
                     };
-                    let ty = self.expression(expr, env, Some(expected), variables)?;
-                    self.expect(expected, &ty, expr.span)?;
+                    if let Some(expr) = expr {
+                        let ty = self.expression(expr, env, Some(expected), variables)?;
+                        self.expect(expected, &ty, expr.span)?;
+                    } else {
+                        self.expect(expected, &Type::Unit, statement.span)?;
+                    }
                     returned = true;
                 }
                 StatementKind::If { condition, yes, no } => {
@@ -1189,6 +1276,7 @@ impl Checker<'_> {
         variables: &BTreeMap<String, Type>,
     ) -> Result<Type, Diagnostic> {
         let mut actual = self.expression_inner(expr, env, expected, variables)?;
+        self.check_expression_type(&actual, expr.span)?;
         self.check_call_capabilities(expr, env)?;
         if !actual.signatures().is_empty() || actual.contains_animation() {
             let ty = self.copy_type(&actual, expr.span)?;
@@ -1258,6 +1346,13 @@ impl Checker<'_> {
                 Ok(Type::Function(signature))
             }
             ExprKind::Reflect { value, options } => {
+                if self.interface.is_some() {
+                    return Err(self.error(
+                        "S141",
+                        "reflection is unavailable in expressions",
+                        expr.span,
+                    ));
+                }
                 let actual = self.expression(value, env, expected, variables)?;
                 let ty = expected
                     .filter(|ty| {
@@ -1563,7 +1658,7 @@ impl Checker<'_> {
             return Err(self.error("S111","indirect function calls are forbidden; call a declared function or imported module function directly so the compiler can verify the call graph",callee.span));
         }
         if let ExprKind::Name(name) = &callee.kind
-            && prelude::builtin(name).is_some()
+            && self.builtin(name).is_some()
         {
             return self.native(expr, name, args, env, expected, variables);
         }

@@ -1407,11 +1407,11 @@ impl qobject::InspectorBackend {
     }
 
     pub fn expression_diagnostic_debounce(&self) -> i32 {
-        shrimply_inspector_core::rhai_editor::DIAGNOSTIC_DEBOUNCE_MILLISECONDS
+        shrimply_inspector_core::expression_editor::DIAGNOSTIC_DEBOUNCE_MILLISECONDS
     }
 
     pub fn expression_completion_debounce(&self) -> i32 {
-        shrimply_inspector_core::rhai_editor::COMPLETION_DEBOUNCE_MILLISECONDS
+        shrimply_inspector_core::expression_editor::COMPLETION_DEBOUNCE_MILLISECONDS
     }
 
     pub fn control_expression_completion(
@@ -1428,45 +1428,47 @@ impl qobject::InspectorBackend {
         };
         let value = match control.kind {
             ControlKind::LayeredBoolean => {
-                shrimply_inspector_core::rhai_editor::ExpressionValue::Bool
+                shrimply_inspector_core::expression_editor::ExpressionValue::Bool
             }
             ControlKind::LayeredSelector => {
-                shrimply_inspector_core::rhai_editor::ExpressionValue::Step
+                shrimply_inspector_core::expression_editor::ExpressionValue::Step
             }
-            ControlKind::LayeredText => shrimply_inspector_core::rhai_editor::ExpressionValue::Text,
+            ControlKind::LayeredText => {
+                shrimply_inspector_core::expression_editor::ExpressionValue::Text
+            }
             ControlKind::LayeredDrawing => {
-                shrimply_inspector_core::rhai_editor::ExpressionValue::Drawing
+                shrimply_inspector_core::expression_editor::ExpressionValue::Drawing
             }
             ControlKind::LayeredVector2 => {
-                shrimply_inspector_core::rhai_editor::ExpressionValue::Vec2
+                shrimply_inspector_core::expression_editor::ExpressionValue::Vec2
             }
             ControlKind::LayeredVector3 => {
-                shrimply_inspector_core::rhai_editor::ExpressionValue::Vec3
+                shrimply_inspector_core::expression_editor::ExpressionValue::Vec3
             }
             ControlKind::LayeredColor => {
-                shrimply_inspector_core::rhai_editor::ExpressionValue::Color
+                shrimply_inspector_core::expression_editor::ExpressionValue::Color
             }
-            _ => shrimply_inspector_core::rhai_editor::ExpressionValue::Scalar,
+            _ => shrimply_inspector_core::expression_editor::ExpressionValue::Scalar,
         };
         let source = source.to_string();
         let utf16_cursor = usize::try_from(cursor).unwrap_or_default();
-        let cursor = shrimply_inspector_core::rhai_editor::utf16_offset_to_char_offset(
+        let cursor = shrimply_inspector_core::expression_editor::utf16_offset_to_char_offset(
             &source,
             utf16_cursor,
         );
         let completion = if automatic {
-            shrimply_inspector_core::rhai_editor::automatic_completion(&source, value, cursor)
+            shrimply_inspector_core::expression_editor::automatic_completion(&source, value, cursor)
         } else {
-            shrimply_inspector_core::rhai_editor::completion(&source, value, cursor)
+            shrimply_inspector_core::expression_editor::completion(&source, value, cursor)
         };
         let Some(completion) = completion else {
             return QStringList::default();
         };
-        let start = shrimply_inspector_core::rhai_editor::char_offset_to_utf16_offset(
+        let start = shrimply_inspector_core::expression_editor::char_offset_to_utf16_offset(
             &source,
             completion.start,
         );
-        let end = shrimply_inspector_core::rhai_editor::char_offset_to_utf16_offset(
+        let end = shrimply_inspector_core::expression_editor::char_offset_to_utf16_offset(
             &source,
             completion.end,
         );

@@ -4,8 +4,14 @@ Language Reference
 Syntax basics
 -------------
 
-* Blocks use braces ``{ ... }``; indentation is cosmetic. Statements end with a
-  newline or semicolon.
+* Blocks use braces ``{ ... }``. Indentation is cosmetic. End a statement
+  with a semicolon or a newline where the next token cannot continue it.
+  A new line starting with ``(`` or ``[`` can continue a call or index
+  expression. Use a semicolon to start a separate statement there.
+* Keep a return value on the same line as ``return``, or open a parenthesis
+  on that line for a multiline value. A bare return produces ``Unit``.
+* Conditions can use ``if ready { ... }`` or ``if (ready) { ... }``.
+  Chain branches with ``else if``.
 * Comments begin with ``#`` outside strings and run to the end of the line.
   (Hex colors must be quoted: ``Color("#3584e4")``.)
 * Named arguments and record values use ``=`` (``wait(duration=1s)``,

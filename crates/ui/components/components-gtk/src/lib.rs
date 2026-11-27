@@ -5,6 +5,7 @@ pub mod canvas {
     pub use shrimply_components_skia::canvas::*;
     pub use shrimply_surface_gl_skia::TimelineRenderer;
 }
+pub mod about;
 pub mod cursor;
 pub mod desktop_open;
 pub mod export_feedback;

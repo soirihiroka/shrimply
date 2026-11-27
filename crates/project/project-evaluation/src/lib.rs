@@ -7,7 +7,7 @@ use glam::Vec2;
 use glam::Vec3;
 use uuid::Uuid;
 
-pub use expressions::TransformExpressionCache;
+pub use expressions::{ExpressionDiagnostic, TransformExpressionCache, expression_symbols};
 pub use keyframes::{color_keyframes_value, scalar_keyframes_value, vec2_keyframes_value};
 pub use shrimply_lip_sync::{FrameAudioAnalysis, FrameMouthMixer, MouthShape, MouthValue};
 use shrimply_math_core::Fraction;

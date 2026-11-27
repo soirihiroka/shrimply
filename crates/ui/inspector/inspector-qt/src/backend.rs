@@ -1019,7 +1019,7 @@ pub struct InspectorBackendRust {
     resolved_transform: Option<shrimply_project_document::project::ResolvedTransform>,
     transform_live: Option<shrimply_inspector_core::transform::TransformLivePresentation>,
     analysis_controls: HashMap<AnalysisControlKey, CachedAnalysisControl>,
-    expression_diagnostic_cache: shrimply_inspector_core::rhai_editor::DiagnosticCache,
+    expression_diagnostic_cache: shrimply_inspector_core::expression_editor::DiagnosticCache,
     pub(crate) graph_edit: shrimply_inspector_core::InspectorGraphEdit,
     pub(crate) graph_edit_row: Option<(usize, usize, usize)>,
 }

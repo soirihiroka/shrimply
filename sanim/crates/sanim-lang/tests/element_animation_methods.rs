@@ -90,7 +90,7 @@ fn every_animation_is_element_owned_with_safe_property_defaults() {
 
 #[test]
 fn batch_receivers_share_the_same_parallel_plan() {
-    let source = "let a=Box(width=20pt,height=20pt)\nlet b=Box(width=20pt,height=20pt)\n<Animation>{[a,b].fade_in(1s,\"linear\")}{wait(500ms)}</Animation>\n[a,b].fade_out()";
+    let source = "let a=Box(width=20pt,height=20pt)\nlet b=Box(width=20pt,height=20pt)\n<Animation>{[a,b].fade_in(1s,\"linear\")}{wait(500ms)}</Animation>;\n[a,b].fade_out()";
     let prepared = run(source);
     assert_eq!(prepared.animation.duration, Fraction::new(13u64, 10u64));
     assert_eq!(

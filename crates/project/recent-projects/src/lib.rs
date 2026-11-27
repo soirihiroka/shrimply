@@ -12,7 +12,7 @@ pub struct RecentProject {
     #[serde(default)]
     pub tags: Vec<String>,
     pub path: PathBuf,
-    opened_at: u64,
+    pub opened_at: u64,
 }
 
 pub fn load() -> Result<Vec<RecentProject>, String> {

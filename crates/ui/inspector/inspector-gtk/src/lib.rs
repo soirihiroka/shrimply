@@ -7,10 +7,10 @@ mod info;
 mod item;
 mod keyframe_graph;
 pub(crate) use shrimply_inspector_core::keyframe_model;
+mod expression_editor;
 mod list;
 mod progress;
 mod project;
-mod rhai_editor;
 mod section;
 
 pub use shrimply_inspector_core::INSPECTOR_MIN_WIDTH;

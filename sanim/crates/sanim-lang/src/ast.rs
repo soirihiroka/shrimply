@@ -61,7 +61,7 @@ pub enum StatementKind {
         alias: String,
     },
     Expr(Expr),
-    Return(Expr),
+    Return(Option<Expr>),
     If {
         condition: Expr,
         yes: Vec<Statement>,
@@ -317,7 +317,8 @@ impl Statement {
             StatementKind::Bind { value, .. }
             | StatementKind::Assign { value, .. }
             | StatementKind::Expr(value)
-            | StatementKind::Return(value) => value.visit_mode(visitor, definitions, nested),
+            | StatementKind::Return(Some(value)) => value.visit_mode(visitor, definitions, nested),
+            StatementKind::Return(None) => {}
             StatementKind::If { condition, yes, no } => {
                 condition.visit_mode(visitor, definitions, nested);
                 for statement in yes.iter().chain(no) {

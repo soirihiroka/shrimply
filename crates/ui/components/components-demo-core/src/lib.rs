@@ -1,4 +1,8 @@
-use rhai::{Engine, Scope};
+use sanim_lang::{
+    Limits,
+    core::{Number, Type, Unit, Value, math},
+    expression::{CheckedExpression, Interface},
+};
 use shrimply_keyframe_graph_skia::{
     FrameGraphComponents, FrameGraphState, KeyframeGraph, KeyframePoint, RawSegment,
 };
@@ -35,11 +39,36 @@ fn demo_modifier_state() -> ModifierState {
 }
 
 pub fn expression_output(source: &str) -> String {
-    let mut engine = Engine::new();
-    engine.set_max_call_levels(16).set_max_operations(10_000);
-    let mut scope = Scope::new();
-    scope.push("value", EXPRESSION_INPUT);
-    match engine.eval_with_scope::<f64>(&mut scope, source) {
+    let number = Type::Numeric(Unit::Number);
+    let result = CheckedExpression::check(
+        "demo expression",
+        source,
+        Interface::new(number.clone()).input("value", number),
+        Limits {
+            max_operations: 10_000,
+            max_call_depth: 16,
+            ..Limits::default()
+        },
+    )
+    .map_err(|error| error.to_string())
+    .and_then(|program| {
+        let value = Value::Number(Number {
+            value: math::from_f64(EXPRESSION_INPUT)?,
+            unit: Unit::Number,
+        });
+        let inputs = program
+            .inputs()
+            .map(|name| (name.to_owned(), value.clone()))
+            .collect();
+        program
+            .evaluate(inputs, &|name, _| {
+                Err(format!("unknown host function '{name}'"))
+            })
+            .map_err(|error| error.to_string())?
+            .number()
+            .and_then(|number| math::to_f64(number.value))
+    });
+    match result {
         Ok(value) => format!("Output · {value:.1}"),
         Err(error) => format!("Error · {error}"),
     }

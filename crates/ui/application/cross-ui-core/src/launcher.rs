@@ -1,6 +1,7 @@
 use shrimply_math_core::Fraction;
 use shrimply_project_document::project;
 pub use shrimply_project_service::catalog::{ProjectEntry, list as load_projects, local_projects};
+pub use shrimply_editing_runtime::attached::restart_local_service;
 use shrimply_project_types::CanvasSize;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
@@ -144,6 +145,18 @@ pub fn project_settings_from_values(
 pub fn project_servers() -> Vec<String> {
     let store = shrimply_editor_state::preferences::open_with_defaults();
     shrimply_editor_state::preferences::snapshot(&store).project_server_urls
+}
+
+pub fn project_access_label(project: &ProjectEntry) -> Option<String> {
+    let date = glib::DateTime::from_unix_local(project.opened_at?).ok()?.format("%x %X").ok()?;
+    Some(shrimply_i18n::text_args("Last opened %{date}", &[("date", date.to_string())]))
+}
+
+pub fn delete_project(project: &ProjectEntry) -> Result<(), String> {
+    if project.remote.is_none() && let Some(path) = &project.path {
+        shrimply_editing_runtime::attached::stop_local_service(path)?;
+    }
+    project.delete()
 }
 
 pub fn update_project_servers(previous: Option<&str>, value: Option<&str>) -> Result<(), String> {

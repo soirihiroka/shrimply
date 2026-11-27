@@ -103,71 +103,19 @@ pub(crate) fn evaluate(
             )
         })
         .count() as u64;
-    let mut runtime = Runtime {
+    let mut runtime = Runtime::new(
         loaded,
         snapshot,
-        overrides,
         limits,
-        values,
-        assets,
-        databases,
-        font_keys: crate::cache::FontCache::new(limits.max_cache_bytes, limits.max_cache_entries),
-        expression_plans: sanim_core::cache::Cache::new(
-            limits.max_cache_bytes,
-            limits.max_cache_entries,
-        ),
         statistics,
-        progress,
-        completed_statements: 0,
-        total_statements,
-        globals: imbl::OrdMap::new(),
-        reactive: reactive::Store::default(),
-        signal_frames: Vec::new(),
-        signal_observations: Vec::new(),
-        active_calls: Vec::new(),
-        named_constructor: None,
-        list_edit: None,
-        instance_paths: loaded
-            .iter()
-            .map(|module| (module.id.clone(), reactive::instance_paths(&module.ast)))
-            .collect(),
-        functions: BTreeMap::new(),
-        closures: imbl::OrdMap::new(),
-        anonymous_definitions: imbl::OrdMap::new(),
-        next_closure: 0,
-        constructors: BTreeMap::new(),
-        reflected: imbl::Vector::new(),
-        used_overrides: imbl::OrdSet::new(),
-        animation: Animation::for_viewport(viewport),
-        cursor: Fraction::from(0),
-        assertions: imbl::Vector::new(),
-        checks: imbl::Vector::new(),
-        module: String::new(),
-        identity: vec![],
-        depth: 0,
-        root_active: false,
-        preparation,
-        measure_only,
-        signal_return: None,
-        type_bindings: Arc::default(),
-        hotspots: imbl::OrdMap::new(),
-        performance: Vec::new(),
-        retained_bytes: limits.data.max_bytes,
-        retained_items: limits.data.max_values,
-        retained_frames: imbl::OrdSet::new(),
-        retained_resources: sanim_core::value_budget::Budget::default(),
-        logical_operations: 0,
-        logical_native_work: 0,
-        used_functions: imbl::OrdMap::new(),
-        used_resources: imbl::OrdMap::new(),
-        input_versions: imbl::OrdMap::new(),
-        element_sources: imbl::OrdMap::new(),
-        source_calls: imbl::Vector::new(),
-        source_ids: imbl::OrdMap::new(),
-        root_statement: 0,
-        outputs: imbl::Vector::new(),
-        entry_returned: false,
-    };
+        (values, assets, databases),
+        (Animation::for_viewport(viewport), progress),
+        None,
+    );
+    runtime.overrides = overrides;
+    runtime.preparation = preparation;
+    runtime.measure_only = measure_only;
+    runtime.total_statements = total_statements;
     for module in loaded {
         runtime.module = module.id.clone();
         runtime.root_active = loaded.last().is_some_and(|v| v.id == module.id);
@@ -183,76 +131,7 @@ pub(crate) fn evaluate(
             }
             env.insert(alias.clone(), Binding::Module(id.clone()));
         }
-        for (name, ty) in &module.checked.schemas {
-            if name.contains('.') {
-                continue;
-            }
-            match ty {
-                Type::Record(_) => {
-                    let key = format!("{}::{name}", module.id);
-                    runtime.constructors.insert(key.clone(), ty.clone());
-                    env.insert(name.clone(), Value::Function(key).into());
-                }
-                Type::Enum { variants, .. } => {
-                    let mut fields = Values::new();
-                    for (tag, types) in variants {
-                        if types.is_empty() {
-                            fields.insert(
-                                tag.clone(),
-                                Value::Variant {
-                                    ty: ty.clone().into(),
-                                    tag: tag.clone(),
-                                    fields: vec![].into(),
-                                },
-                            );
-                        } else {
-                            let key = format!("{}::{name}.{tag}", module.id);
-                            runtime.constructors.insert(key.clone(), ty.clone());
-                            fields.insert(tag.clone(), Value::Function(key));
-                        }
-                    }
-                    env.insert(name.clone(), Value::Record(fields).into());
-                }
-                _ => {}
-            }
-        }
-        for statement in &module.ast.statements {
-            if let StatementKind::Function { name, .. } = &statement.kind {
-                let key = format!("{}::{name}", module.id);
-                let group = runtime.functions.entry(key.clone()).or_insert_with(|| {
-                    Arc::new(FunctionGroup {
-                        clauses: Vec::new(),
-                        fingerprint: String::new(),
-                        captures: None,
-                        types: runtime.type_bindings.clone(),
-                    })
-                });
-                let clause = module
-                    .checked
-                    .function_clauses
-                    .get(&statement.span.start)
-                    .copied()
-                    .expect("checked function clause");
-                Arc::make_mut(group)
-                    .clauses
-                    .push(Arc::new(Function::from_statement(
-                        module.id.clone(),
-                        statement,
-                        clause,
-                    )));
-                env.insert(name.clone(), Value::Function(key).into());
-            }
-        }
-        for group in runtime.functions.values_mut().filter(|group| {
-            group
-                .clauses
-                .first()
-                .is_some_and(|function| function.module == module.id)
-        }) {
-            let group = Arc::make_mut(group);
-            group.fingerprint =
-                digest(&serde_json::to_vec(&group.clauses).expect("serializable function clauses"));
-        }
+        runtime.install_bindings(ModuleBindings::new(module, true), &mut env);
         runtime.globals.insert(module.id.clone(), env.clone());
         let restored = if runtime.root_active {
             let restored = states.begin(&mut runtime, &mut env, module);
@@ -468,6 +347,7 @@ pub(crate) fn evaluate(
 
 pub(crate) struct Runtime<'a, 's> {
     loaded: &'a [Loaded],
+    host: Option<crate::expression::Host<'a>>,
     snapshot: &'a mut Snapshot<'s>,
     overrides: &'a BTreeMap<String, Value>,
     limits: &'a Limits,
@@ -527,7 +407,276 @@ pub(crate) struct Runtime<'a, 's> {
     entry_returned: bool,
 }
 
-impl Runtime<'_, '_> {
+pub(crate) struct ModuleBindings {
+    env: Env,
+    constructors: BTreeMap<String, Type>,
+    functions: BTreeMap<String, Arc<FunctionGroup>>,
+}
+
+impl ModuleBindings {
+    pub(crate) fn new(module: &Loaded, memoize: bool) -> Self {
+        let mut env = Env::new();
+        let mut constructors = BTreeMap::new();
+        let mut functions = BTreeMap::new();
+        for (name, ty) in &module.checked.schemas {
+            if name.contains('.') {
+                continue;
+            }
+            match ty {
+                Type::Record(_) => {
+                    let key = format!("{}::{name}", module.id);
+                    constructors.insert(key.clone(), ty.clone());
+                    env.insert(name.clone(), Value::Function(key).into());
+                }
+                Type::Enum { variants, .. } => {
+                    let mut fields = Values::new();
+                    for (tag, types) in variants {
+                        if types.is_empty() {
+                            fields.insert(
+                                tag.clone(),
+                                Value::Variant {
+                                    ty: ty.clone().into(),
+                                    tag: tag.clone(),
+                                    fields: vec![].into(),
+                                },
+                            );
+                        } else {
+                            let key = format!("{}::{name}.{tag}", module.id);
+                            constructors.insert(key.clone(), ty.clone());
+                            fields.insert(tag.clone(), Value::Function(key));
+                        }
+                    }
+                    env.insert(name.clone(), Value::Record(fields).into());
+                }
+                _ => {}
+            }
+        }
+        for statement in &module.ast.statements {
+            if let StatementKind::Function { name, .. } = &statement.kind {
+                let key = format!("{}::{name}", module.id);
+                let group = functions.entry(key.clone()).or_insert_with(|| {
+                    Arc::new(FunctionGroup {
+                        clauses: Vec::new(),
+                        fingerprint: String::new(),
+                        captures: None,
+                        types: TypeBindings::default(),
+                    })
+                });
+                let clause = module
+                    .checked
+                    .function_clauses
+                    .get(&statement.span.start)
+                    .copied()
+                    .expect("checked function clause");
+                Arc::make_mut(group)
+                    .clauses
+                    .push(Arc::new(Function::from_statement(
+                        module.id.clone(),
+                        statement,
+                        clause,
+                    )));
+                env.insert(name.clone(), Value::Function(key).into());
+            }
+        }
+        if memoize {
+            for group in functions.values_mut() {
+                let group = Arc::make_mut(group);
+                group.fingerprint = digest(
+                    &serde_json::to_vec(&group.clauses).expect("serializable function clauses"),
+                );
+            }
+        }
+
+        Self {
+            env,
+            constructors,
+            functions,
+        }
+    }
+}
+
+pub(crate) fn evaluate_expression(
+    expression: &crate::expression::CheckedExpression,
+    inputs: crate::expression::Bindings,
+    call: &crate::expression::HostCall<'_>,
+) -> Result<Value, Diagnostic> {
+    let files = crate::MemorySources::default();
+    let mut snapshot = Snapshot {
+        provider: &files,
+        reads: BTreeMap::new(),
+        hashes: Default::default(),
+    };
+    let mut values = crate::cache::ValueCache::default();
+    let mut assets = crate::cache::ValueCache::default();
+    let mut databases = sanim_data::sqlite::Databases::default();
+    let mut statistics = Statistics::default();
+    let progress = Reporter::new(None, "");
+    static EMPTY_ANIMATION: std::sync::LazyLock<Animation> =
+        std::sync::LazyLock::new(Animation::default);
+    let module = &expression.module;
+    let mut runtime = Runtime::new(
+        std::slice::from_ref(module),
+        &mut snapshot,
+        &expression.limits,
+        &mut statistics,
+        (&mut values, &mut assets, &mut databases),
+        (EMPTY_ANIMATION.clone(), &progress),
+        Some(crate::expression::Host {
+            interface: &expression.interface,
+            call,
+        }),
+    );
+    runtime.module.clone_from(&module.id);
+    runtime.root_active = true;
+    let mut env = expression.bindings.env.clone();
+    runtime
+        .constructors
+        .clone_from(&expression.bindings.constructors);
+    runtime.functions.clone_from(&expression.bindings.functions);
+    if inputs.len() != expression.interface.inputs.len() {
+        return Err(runtime.error(
+            "S140",
+            "expression input names do not match its interface",
+            Span::default(),
+        ));
+    }
+    for (name, value) in inputs {
+        let ty = expression.interface.inputs.get(&name).ok_or_else(|| {
+            runtime.error(
+                "S140",
+                format!("unknown expression input '{name}'"),
+                Span::default(),
+            )
+        })?;
+        runtime.retain_binding_value(&value, Span::default())?;
+        sanim_core::validate_value(ty, &value).map_err(|error| {
+            runtime.error("S140", format!("input '{name}': {error}"), Span::default())
+        })?;
+        env.insert(name, value.into());
+    }
+    if !runtime.functions.is_empty() {
+        runtime.globals.insert(module.id.clone(), env.clone());
+    }
+    for statement in module
+        .ast
+        .statements
+        .iter()
+        .filter(|statement| state::executable(statement))
+    {
+        if let Some(value) = runtime.block(std::slice::from_ref(statement), &mut env)? {
+            runtime.retain_binding_value(&value, statement.span)?;
+            return runtime.typed_value(&value, &expression.interface.result, statement.span);
+        }
+        if !runtime.functions.is_empty() {
+            runtime.globals.insert(module.id.clone(), env.clone());
+        }
+    }
+    Err(runtime.error("S110", "expression must return a value", Span::default()))
+}
+
+impl<'a, 's> Runtime<'a, 's> {
+    fn new(
+        loaded: &'a [Loaded],
+        snapshot: &'a mut Snapshot<'s>,
+        limits: &'a Limits,
+        statistics: &'a mut Statistics,
+        (values, assets, databases): (
+            &'a mut crate::cache::ValueCache,
+            &'a mut crate::cache::ValueCache,
+            &'a mut sanim_data::sqlite::Databases,
+        ),
+        (animation, progress): (Animation, &'a Reporter),
+        host: Option<crate::expression::Host<'a>>,
+    ) -> Self {
+        static EMPTY_OVERRIDES: std::sync::OnceLock<BTreeMap<String, Value>> =
+            std::sync::OnceLock::new();
+        let instance_paths = if host.is_some() {
+            BTreeMap::new()
+        } else {
+            loaded
+                .iter()
+                .map(|module| (module.id.clone(), reactive::instance_paths(&module.ast)))
+                .collect()
+        };
+        Self {
+            loaded,
+            host,
+            snapshot,
+            overrides: EMPTY_OVERRIDES.get_or_init(BTreeMap::new),
+            limits,
+            values,
+            assets,
+            databases,
+            font_keys: crate::cache::FontCache::new(
+                limits.max_cache_bytes,
+                limits.max_cache_entries,
+            ),
+            expression_plans: sanim_core::cache::Cache::new(
+                limits.max_cache_bytes,
+                limits.max_cache_entries,
+            ),
+            statistics,
+            progress,
+            completed_statements: 0,
+            total_statements: 0,
+            globals: imbl::OrdMap::new(),
+            reactive: reactive::Store::default(),
+            signal_frames: Vec::new(),
+            signal_observations: Vec::new(),
+            active_calls: Vec::new(),
+            named_constructor: None,
+            list_edit: None,
+            instance_paths,
+            functions: BTreeMap::new(),
+            closures: imbl::OrdMap::new(),
+            anonymous_definitions: imbl::OrdMap::new(),
+            next_closure: 0,
+            constructors: BTreeMap::new(),
+            reflected: imbl::Vector::new(),
+            used_overrides: imbl::OrdSet::new(),
+            animation,
+            cursor: Fraction::from(0),
+            assertions: imbl::Vector::new(),
+            checks: imbl::Vector::new(),
+            module: String::new(),
+            identity: vec![],
+            depth: 0,
+            root_active: false,
+            preparation: crate::Preparation::Full,
+            measure_only: false,
+            signal_return: None,
+            type_bindings: Arc::default(),
+            hotspots: imbl::OrdMap::new(),
+            performance: Vec::new(),
+            retained_bytes: limits.data.max_bytes,
+            retained_items: limits.data.max_values,
+            retained_frames: imbl::OrdSet::new(),
+            retained_resources: sanim_core::value_budget::Budget::default(),
+            logical_operations: 0,
+            logical_native_work: 0,
+            used_functions: imbl::OrdMap::new(),
+            used_resources: imbl::OrdMap::new(),
+            input_versions: imbl::OrdMap::new(),
+            element_sources: imbl::OrdMap::new(),
+            source_calls: imbl::Vector::new(),
+            source_ids: imbl::OrdMap::new(),
+            root_statement: 0,
+            outputs: imbl::Vector::new(),
+            entry_returned: false,
+        }
+    }
+    fn install_bindings(&mut self, bindings: ModuleBindings, env: &mut Env) {
+        self.constructors.extend(bindings.constructors);
+        self.functions.extend(bindings.functions);
+        env.extend(bindings.env);
+    }
+    fn builtin(&self, name: &str) -> Option<&prelude::Builtin> {
+        match &self.host {
+            Some(host) => host.interface.builtin(name),
+            None => prelude::builtin(name),
+        }
+    }
+
     fn report_evaluation(&self, span: Option<Span>) {
         if !self.progress.enabled() {
             return;
@@ -663,6 +812,9 @@ impl Runtime<'_, '_> {
                     }
                 }
                 StatementKind::Return(expr) => {
+                    let Some(expr) = expr else {
+                        return Ok(Some(Value::Unit));
+                    };
                     return if let Some(ty) = self.signal_return.clone() {
                         let value = self.capture_signal(expr, env, &ty)?;
                         self.retain_binding_value(&value, expr.span)?;
@@ -791,25 +943,24 @@ impl Runtime<'_, '_> {
             let value = self.expression_inner(expr, env)?;
             return self.contextual_template(value, expr.span);
         }
-        let cache_started = Instant::now();
-        let animation_result = self
-            .loaded
-            .iter()
-            .find(|module| module.id == self.module)
-            .and_then(|module| {
-                module
-                    .checked
-                    .result_types
-                    .get(&(expr.span.start, expr.span.end))
-            })
-            .is_some_and(Type::contains_animation);
-        let key = if !animation_result
-            && self.limits.max_cache_entries > 0
+        let key = if self.limits.max_cache_entries > 0
             && self.limits.max_cache_bytes > 0
+            && !self
+                .loaded
+                .iter()
+                .find(|module| module.id == self.module)
+                .and_then(|module| {
+                    module
+                        .checked
+                        .result_types
+                        .get(&(expr.span.start, expr.span.end))
+                })
+                .is_some_and(Type::contains_animation)
         {
+            let cache_started = Instant::now();
             let plan = self.expression_plan(expr)?;
             // Resolving reactive reads remains execution work; never hide them behind a value hit.
-            if let Some(fingerprint) = &plan.fingerprint
+            let key = if let Some(fingerprint) = &plan.fingerprint
                 && !plan
                     .names
                     .iter()
@@ -854,17 +1005,18 @@ impl Runtime<'_, '_> {
                 ))
             } else {
                 None
-            }
+            };
+            self.statistics.cache_key_micros = self.statistics.cache_key_micros.saturating_add(
+                cache_started
+                    .elapsed()
+                    .as_micros()
+                    .try_into()
+                    .unwrap_or(u64::MAX),
+            );
+            key
         } else {
             None
         };
-        self.statistics.cache_key_micros = self.statistics.cache_key_micros.saturating_add(
-            cache_started
-                .elapsed()
-                .as_micros()
-                .try_into()
-                .unwrap_or(u64::MAX),
-        );
         if let Some(key) = &key
             && let Some(entry) = self.values.get_entry(key)
         {
@@ -1270,7 +1422,7 @@ impl Runtime<'_, '_> {
                 }
                 let mut receiver = None;
                 let native = match &callee.kind {
-                    ExprKind::Name(name) if prelude::builtin(name).is_some() => Some(name.clone()),
+                    ExprKind::Name(name) if self.builtin(name).is_some() => Some(name.clone()),
                     ExprKind::Member(base, _)
                         if self.checked_native_method(callee.span).is_some() =>
                     {

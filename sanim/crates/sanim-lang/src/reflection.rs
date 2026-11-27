@@ -63,7 +63,7 @@ pub(crate) fn identities(
                 }
                 reject_block(source, body)?;
             }
-            StatementKind::Return(value) => reject(source, value, PLACEMENT)?,
+            StatementKind::Return(Some(value)) => reject(source, value, PLACEMENT)?,
             _ => {}
         }
     }

@@ -268,7 +268,7 @@ pub(super) fn control(control: &InspectorControl, item: &str, id: &str) -> Value
             next["editor"] = json!("expression");
             next["op"] = json!("inspector");
             let mut inline = editor(control, next, true);
-            inline["height"] = json!(shrimply_inspector_core::rhai_editor::EDITOR_HEIGHT);
+            inline["height"] = json!(shrimply_inspector_core::expression_editor::EDITOR_HEIGHT);
             let mut finish = command("expression_finish");
             finish["op"] = json!("inspector");
             inline["finish"] = finish;

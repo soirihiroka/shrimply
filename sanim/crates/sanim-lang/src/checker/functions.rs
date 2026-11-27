@@ -94,6 +94,17 @@ impl Checker<'_> {
         else {
             unreachable!("function declaration")
         };
+        if self.interface.is_some()
+            && signature
+                .capabilities
+                .contains(sanim_core::FnCapability::Sig)
+        {
+            return Err(self.error(
+                "S141",
+                "signals are unavailable in expressions",
+                statement.span,
+            ));
+        }
         let previous = self.function.replace(name.clone());
         let previous_capabilities = self.function_capabilities.replace(signature.capabilities);
         let checked = (|| {
@@ -239,7 +250,7 @@ pub(super) fn check_signal_purity(
                     value,
                     ..
                 } => check_signal_capture(checker, value, env)?,
-                StatementKind::Return(value) if live_return => {
+                StatementKind::Return(Some(value)) if live_return => {
                     check_signal_capture(checker, value, env)?
                 }
                 StatementKind::Function {

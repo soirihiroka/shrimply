@@ -48,9 +48,9 @@ let bottom_right = <Panel caption="Normal distribution families" position={[24%,
             position={[-108pt, 86pt]} font_size={10pt} gap={14pt} swatch_width={12pt} />
     ]} />
 let title = <Label position={[0%, -44%]} font_size={27pt} fill="light1">Native plots. Adwaita colors.</Label>
-let subtitle = <Label position={[0%, -36%]} font_size={13pt} fill="light4">Typed data • shared scales • bounded statistics • cached vector paths</Label>
+let subtitle = <Label position={[0%, -36%]} font_size={13pt} fill="light4">Typed data • shared scales • bounded statistics • cached vector paths</Label>;
 
-[title,subtitle].fade_in(duration=300ms)
+[title,subtitle].fade_in(duration=300ms);
 [top_left,top_right,bottom_left,bottom_right].create(duration=1s, ease="smooth")
-wait(2s)
+wait(2s);
 [top_left,top_right,bottom_left,bottom_right,title,subtitle].fade_out(duration=400ms)

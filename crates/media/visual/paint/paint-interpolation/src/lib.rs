@@ -1,10 +1,11 @@
-use std::collections::BTreeMap;
+use std::sync::{Arc, LazyLock};
 
 use glam::Vec2;
 use serde::{Deserialize, Serialize};
 use shrimply_timeline_value::{
-    ExpressionData, ExpressionInput, Interpolation, Time, TimelineExpressionValue,
-    TimelineKeyframe, TimelineValueType,
+    Interpolation, Time, TimelineExpressionValue, TimelineKeyframe, TimelineValueType,
+    expression::{Fraction, List, ListLength, Number, Type, Unit, Value},
+    expression_f32, expression_number,
 };
 use uuid::Uuid;
 
@@ -97,188 +98,187 @@ impl TimelineValueType for PaintDrawing {
     }
 }
 
-impl TimelineExpressionValue for PaintDrawing {
-    fn expression_input(&self) -> ExpressionInput {
-        ExpressionInput::new(drawing_data(self))
-    }
+const NUMBER: Type = Type::Numeric(Unit::Number);
 
-    fn expression_output(&self, output: ExpressionData) -> Option<Self> {
-        drawing_from_data(output, self)
-    }
+fn record_type<const N: usize>(fields: [(&str, Type); N]) -> Type {
+    Type::Record(
+        fields
+            .into_iter()
+            .map(|(name, ty)| (name.to_owned(), ty))
+            .collect(),
+    )
 }
 
-fn drawing_data(drawing: &PaintDrawing) -> ExpressionData {
-    ExpressionData::Object(BTreeMap::from([
-        (
-            "strokes".into(),
-            ExpressionData::Array(
-                drawing
-                    .strokes
-                    .iter()
-                    .map(|stroke| {
-                        ExpressionData::Object(BTreeMap::from([
-                            (
-                                "points".into(),
-                                ExpressionData::Array(
-                                    stroke
-                                        .points
-                                        .iter()
-                                        .map(|point| {
-                                            ExpressionData::Object(BTreeMap::from([
-                                                ("position".into(), vec2_data(point.position)),
-                                                (
-                                                    "pressure".into(),
-                                                    point.pressure.map_or(
-                                                        ExpressionData::Unit,
-                                                        ExpressionData::Number,
-                                                    ),
-                                                ),
-                                            ]))
-                                        })
-                                        .collect(),
-                                ),
-                            ),
-                            (
-                                "width_scale".into(),
-                                ExpressionData::Number(stroke.width_scale),
-                            ),
-                            (
-                                "color_index".into(),
-                                ExpressionData::Integer(stroke.color_index as i64),
-                            ),
-                        ]))
-                    })
-                    .collect(),
-            ),
-        ),
-        (
-            "fills".into(),
-            ExpressionData::Array(
-                drawing
-                    .fills
-                    .iter()
-                    .map(|fill| {
-                        ExpressionData::Object(BTreeMap::from([
-                            ("seed".into(), vec2_data(fill.seed)),
-                            (
-                                "loops".into(),
-                                ExpressionData::Array(
-                                    fill.loops
-                                        .iter()
-                                        .map(|boundary| {
-                                            ExpressionData::Array(
-                                                boundary.iter().copied().map(vec2_data).collect(),
-                                            )
-                                        })
-                                        .collect(),
-                                ),
-                            ),
-                            (
-                                "color_index".into(),
-                                ExpressionData::Integer(fill.color_index as i64),
-                            ),
-                        ]))
-                    })
-                    .collect(),
-            ),
-        ),
-    ]))
+fn list_type(element: Type) -> Type {
+    Type::List(Box::new(element), ListLength::Unknown)
 }
 
-fn drawing_from_data(output: ExpressionData, base: &PaintDrawing) -> Option<PaintDrawing> {
-    let ExpressionData::Object(mut output) = output else {
-        return None;
-    };
-    let ExpressionData::Array(strokes) = output.remove("strokes")? else {
-        return None;
-    };
-    let ExpressionData::Array(fills) = output.remove("fills")? else {
-        return None;
-    };
-    if strokes.len() != base.strokes.len() || fills.len() != base.fills.len() {
-        return None;
-    }
-    let mut drawing = base.clone();
-    for (output, stroke) in strokes.into_iter().zip(&mut drawing.strokes) {
-        let ExpressionData::Object(mut output) = output else {
-            return None;
-        };
-        let ExpressionData::Array(points) = output.remove("points")? else {
-            return None;
-        };
-        if points.len() != stroke.points.len() {
-            return None;
-        }
-        stroke.width_scale = number(output.remove("width_scale")?)?.max(0.0);
-        stroke.color_index = index(output.remove("color_index")?)?;
-        for (output, point) in points.into_iter().zip(&mut stroke.points) {
-            let ExpressionData::Object(mut output) = output else {
-                return None;
-            };
-            point.position = vec2_from_data(output.remove("position")?)?;
-            point.pressure = match output.remove("pressure")? {
-                ExpressionData::Unit => None,
-                value => Some(number(value)?.clamp(0.0, 1.0)),
-            };
-        }
-    }
-    for (output, fill) in fills.into_iter().zip(&mut drawing.fills) {
-        let ExpressionData::Object(mut output) = output else {
-            return None;
-        };
-        fill.seed = vec2_from_data(output.remove("seed")?)?;
-        fill.color_index = index(output.remove("color_index")?)?;
-        let ExpressionData::Array(loops) = output.remove("loops")? else {
-            return None;
-        };
-        if loops.len() != fill.loops.len() {
-            return None;
-        }
-        for (output, boundary) in loops.into_iter().zip(&mut fill.loops) {
-            let ExpressionData::Array(points) = output else {
-                return None;
-            };
-            if points.len() != boundary.len() {
-                return None;
-            }
-            for (output, point) in points.into_iter().zip(boundary) {
-                *point = vec2_from_data(output)?;
-            }
-        }
-    }
-    Some(drawing)
-}
-
-fn vec2_data(value: Vec2) -> ExpressionData {
-    ExpressionData::Array(vec![
-        ExpressionData::Number(value.x),
-        ExpressionData::Number(value.y),
+static POINT: LazyLock<Type> = LazyLock::new(|| {
+    record_type([
+        ("position", Vec2::expression_type()),
+        ("pressure", Type::Option(Box::new(NUMBER))),
     ])
-}
+});
 
-fn vec2_from_data(value: ExpressionData) -> Option<Vec2> {
-    let ExpressionData::Array(values) = value else {
-        return None;
-    };
-    let [x, y] = values.as_slice() else {
-        return None;
-    };
-    Some(Vec2::new(number(x.clone())?, number(y.clone())?)).filter(|value| value.is_finite())
-}
+static STROKE: LazyLock<Type> = LazyLock::new(|| {
+    record_type([
+        ("points", list_type(POINT.clone())),
+        ("width_scale", NUMBER),
+        ("color_index", NUMBER),
+    ])
+});
 
-fn number(value: ExpressionData) -> Option<f32> {
-    match value {
-        ExpressionData::Number(value) => value.is_finite().then_some(value),
-        ExpressionData::Integer(value) => Some(value as f32),
-        _ => None,
+static FILL: LazyLock<Type> = LazyLock::new(|| {
+    record_type([
+        ("seed", Vec2::expression_type()),
+        ("loops", list_type(list_type(Vec2::expression_type()))),
+        ("color_index", NUMBER),
+    ])
+});
+
+impl TimelineExpressionValue for PaintDrawing {
+    fn expression_type() -> Type {
+        record_type([
+            ("strokes", list_type(STROKE.clone())),
+            ("fills", list_type(FILL.clone())),
+        ])
+    }
+
+    fn expression_input(&self) -> Result<Value, String> {
+        let strokes = expression_list(
+            &STROKE,
+            self.strokes.iter().map(|stroke| {
+                let points = expression_list(
+                    &POINT,
+                    stroke.points.iter().map(|point| {
+                        let pressure = point
+                            .pressure
+                            .map(expression_number)
+                            .transpose()?
+                            .map_or(Value::None, |value| Value::Some(Arc::new(value)));
+                        Ok(record([
+                            ("position", point.position.expression_input()?),
+                            ("pressure", pressure),
+                        ]))
+                    }),
+                )?;
+                Ok(record([
+                    ("points", points),
+                    ("width_scale", expression_number(stroke.width_scale)?),
+                    ("color_index", expression_index(stroke.color_index)),
+                ]))
+            }),
+        )?;
+        let boundary_type = Vec2::expression_type();
+        let loops_type = list_type(boundary_type.clone());
+        let fills = expression_list(
+            &FILL,
+            self.fills.iter().map(|fill| {
+                let loops = expression_list(
+                    &loops_type,
+                    fill.loops.iter().map(|boundary| {
+                        expression_list(
+                            &boundary_type,
+                            boundary
+                                .iter()
+                                .map(TimelineExpressionValue::expression_input),
+                        )
+                    }),
+                )?;
+                Ok(record([
+                    ("seed", fill.seed.expression_input()?),
+                    ("loops", loops),
+                    ("color_index", expression_index(fill.color_index)),
+                ]))
+            }),
+        )?;
+        Ok(record([("strokes", strokes), ("fills", fills)]))
+    }
+
+    fn expression_output(&self, output: Value) -> Option<Self> {
+        let Value::Record(output) = output else {
+            return None;
+        };
+        let strokes = output.get("strokes")?.list().ok()?;
+        let fills = output.get("fills")?.list().ok()?;
+        if strokes.len() != self.strokes.len() || fills.len() != self.fills.len() {
+            return None;
+        }
+        let mut drawing = self.clone();
+        for (output, stroke) in strokes.iter().zip(&mut drawing.strokes) {
+            let Value::Record(output) = output else {
+                return None;
+            };
+            let points = output.get("points")?.list().ok()?;
+            if points.len() != stroke.points.len() {
+                return None;
+            }
+            stroke.width_scale = expression_f32(output.get("width_scale")?)?.max(0.0);
+            stroke.color_index = index(output.get("color_index")?)?;
+            for (output, point) in points.iter().zip(&mut stroke.points) {
+                let Value::Record(output) = output else {
+                    return None;
+                };
+                point.position = Vec2::ZERO.expression_output(output.get("position")?.clone())?;
+                point.pressure = match output.get("pressure")? {
+                    Value::None => None,
+                    Value::Some(value) => Some(expression_f32(value)?.clamp(0.0, 1.0)),
+                    _ => return None,
+                };
+            }
+        }
+        for (output, fill) in fills.iter().zip(&mut drawing.fills) {
+            let Value::Record(output) = output else {
+                return None;
+            };
+            fill.seed = Vec2::ZERO.expression_output(output.get("seed")?.clone())?;
+            fill.color_index = index(output.get("color_index")?)?;
+            let loops = output.get("loops")?.list().ok()?;
+            if loops.len() != fill.loops.len() {
+                return None;
+            }
+            for (output, boundary) in loops.iter().zip(&mut fill.loops) {
+                let points = output.list().ok()?;
+                if points.len() != boundary.len() {
+                    return None;
+                }
+                for (output, point) in points.iter().zip(boundary) {
+                    *point = Vec2::ZERO.expression_output(output.clone())?;
+                }
+            }
+        }
+        Some(drawing)
     }
 }
 
-fn index(value: ExpressionData) -> Option<usize> {
-    match value {
-        ExpressionData::Integer(value) => usize::try_from(value).ok(),
-        _ => None,
-    }
+fn record<const N: usize>(fields: [(&str, Value); N]) -> Value {
+    Value::Record(
+        fields
+            .into_iter()
+            .map(|(name, value)| (name.to_owned(), value))
+            .collect(),
+    )
+}
+
+fn expression_list(
+    element: &Type,
+    values: impl Iterator<Item = Result<Value, String>>,
+) -> Result<Value, String> {
+    Ok(Value::List(List::typed(
+        element.clone(),
+        values.collect::<Result<Vec<_>, _>>()?,
+    )))
+}
+
+fn expression_index(index: usize) -> Value {
+    Value::Number(Number {
+        value: Fraction::from(index as u64),
+        unit: Unit::Number,
+    })
+}
+
+fn index(value: &Value) -> Option<usize> {
+    value.number().ok()?.usize().ok()
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -363,6 +363,23 @@ mod tests {
             &[left, PaintDrawing::keyframe(Time::from_fraction(2, 1), to)],
             Time::from_fraction(1, 1),
         )
+    }
+
+    #[test]
+    fn expression_round_trips_and_rejects_topology_changes() {
+        let drawing = PaintDrawing {
+            strokes: vec![stroke(&[(0.0, 0.0), (2.0, 0.0)])],
+            fills: vec![PaintFill::new(Vec2::ZERO, vec![vec![Vec2::X]], 0)],
+        };
+        let input = drawing.expression_input().unwrap();
+        shrimply_timeline_value::expression::validate_value(
+            &PaintDrawing::expression_type(),
+            &input,
+        )
+        .unwrap();
+        assert_eq!(drawing.expression_output(input).unwrap(), drawing);
+        let empty = PaintDrawing::default().expression_input().unwrap();
+        assert!(drawing.expression_output(empty).is_none());
     }
 
     #[test]

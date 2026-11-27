@@ -32,6 +32,6 @@ let subtitle = <Label position={[0%,-38%]} font_size={13pt} fill="light4">Seeded
 let first = <Card title="Warped fractal noise" detail="Independent seed, scale and octaves" texture={stone} position={[-25%,-13%]}/>
 let second = <Card title="Procedural marble" detail="Reusable fields + OKLCH color ramps" texture={marble} position={[25%,-13%]}/>
 let third = <Card title="Alpha + transforms" detail="Feathered mask, rotation, source-over composition" texture={composite} position={[-25%,26%]}/>
-let fourth = <Card title="Pillow-style editing" detail="Crop · Lanczos resize · hue · contrast · saturation" texture={edited} position={[25%,26%]}/>
+let fourth = <Card title="Pillow-style editing" detail="Crop · Lanczos resize · hue · contrast · saturation" texture={edited} position={[25%,26%]}/>;
 [title, subtitle, first, second, third, fourth].fade_in(duration = 400ms)
 wait(3s)

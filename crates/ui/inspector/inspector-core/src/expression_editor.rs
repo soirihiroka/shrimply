@@ -6,12 +6,6 @@ pub const DIAGNOSTIC_DEBOUNCE_MILLISECONDS: i32 = 250;
 pub const COMPLETION_DEBOUNCE_MILLISECONDS: i32 = 75;
 pub const MINIMUM_COMPLETION_PREFIX_LENGTH: usize = 2;
 
-const STATIC_WORDS: &str = "\
-time t local_t value duration fps canvas_width canvas_height \
-media_width media_height source_width source_height seed \
-sin cos tan random shake vol Fraction abs int sqrt pow clamp lerp \
-rgb rgba gray graya hsv hsva oklab oklaba";
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ExpressionValue {
     Bool,
@@ -24,12 +18,7 @@ pub enum ExpressionValue {
     Drawing,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ExpressionDiagnostic {
-    pub message: String,
-    pub line: Option<usize>,
-    pub column: Option<usize>,
-}
+pub use shrimply_project_evaluation::ExpressionDiagnostic;
 
 #[derive(Default)]
 pub struct DiagnosticCache {
@@ -51,19 +40,12 @@ impl DiagnosticCache {
 }
 
 pub fn syntax_diagnostic(source: &str) -> Option<ExpressionDiagnostic> {
-    shrimply_project_evaluation::TransformExpressionCache::syntax_diagnostic(source).map(
-        |diagnostic| ExpressionDiagnostic {
-            message: diagnostic.message,
-            line: diagnostic.line,
-            column: diagnostic.column,
-        },
-    )
+    shrimply_project_evaluation::TransformExpressionCache::syntax_diagnostic(source)
 }
 
 pub fn completion_words(value: ExpressionValue) -> Vec<&'static str> {
-    let mut words: Vec<_> = STATIC_WORDS.split_whitespace().collect();
+    let mut words: Vec<_> = shrimply_project_evaluation::expression_symbols().collect();
     match value {
-        ExpressionValue::Bool => words.extend(["true", "false"]),
         ExpressionValue::Vec2 => words.extend(["x", "y"]),
         ExpressionValue::Vec3 => words.extend(["x", "y", "z"]),
         ExpressionValue::Color => words.extend(["r", "g", "b", "a"]),
@@ -77,7 +59,8 @@ pub fn completion_words(value: ExpressionValue) -> Vec<&'static str> {
             "width_scale",
             "color_index",
         ]),
-        ExpressionValue::Scalar | ExpressionValue::Step | ExpressionValue::Text => {}
+        ExpressionValue::Scalar => words.push("x"),
+        ExpressionValue::Bool | ExpressionValue::Step | ExpressionValue::Text => {}
     }
     words
 }
@@ -192,45 +175,41 @@ fn byte_index_for_char_offset(source: &str, offset: usize) -> Option<usize> {
 }
 
 fn code_at_cursor(source: &str, cursor: usize) -> bool {
-    #[derive(Clone, Copy)]
-    enum Context {
-        Code,
-        LineComment,
-        BlockComment,
-        String(char),
-    }
-
     let Some(end) = byte_index_for_char_offset(source, cursor) else {
         return false;
     };
-    let mut context = Context::Code;
-    let mut escaped = false;
-    let mut characters = source[..end].chars().peekable();
-    while let Some(character) = characters.next() {
-        context = match context {
-            Context::Code if character == '/' && characters.peek() == Some(&'/') => {
-                characters.next();
-                Context::LineComment
+    let mut remaining = &source.as_bytes()[..end];
+    while let Some((&byte, rest)) = remaining.split_first() {
+        if byte == b'#' {
+            let Some(line) = rest.iter().position(|byte| matches!(byte, b'\r' | b'\n')) else {
+                return false;
+            };
+            remaining = &rest[line..];
+        } else if matches!(byte, b'"' | b'\'') {
+            let width = if rest.starts_with(&[byte, byte]) {
+                3
+            } else {
+                1
+            };
+            let delimiter = &remaining[..width];
+            remaining = &remaining[width..];
+            loop {
+                if remaining.starts_with(delimiter) {
+                    remaining = &remaining[width..];
+                    break;
+                }
+                match remaining {
+                    [b'\\', _, rest @ ..] => remaining = rest,
+                    [b'\r' | b'\n', ..] if width == 1 => break,
+                    [_, rest @ ..] => remaining = rest,
+                    [] => return false,
+                }
             }
-            Context::Code if character == '/' && characters.peek() == Some(&'*') => {
-                characters.next();
-                Context::BlockComment
-            }
-            Context::Code if matches!(character, '\'' | '"' | '`') => Context::String(character),
-            Context::LineComment if character == '\n' => Context::Code,
-            Context::BlockComment if character == '*' && characters.peek() == Some(&'/') => {
-                characters.next();
-                Context::Code
-            }
-            Context::String(quote) if character == quote && !escaped => Context::Code,
-            context => context,
-        };
-        escaped = matches!(context, Context::String(_)) && character == '\\' && !escaped;
-        if character != '\\' {
-            escaped = false;
+        } else {
+            remaining = rest;
         }
     }
-    matches!(context, Context::Code)
+    true
 }
 
 fn identifiers(source: &str) -> impl Iterator<Item = &str> {

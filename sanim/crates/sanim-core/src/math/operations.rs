@@ -274,6 +274,20 @@ pub fn binary(op: &str, a: Value, b: Value) -> Result<Value, String> {
         return crate::dataframe::Series::binary(op, a, b)
             .map(|series| Value::Series(std::sync::Arc::new(series)));
     }
+    if matches!(op, "+" | "-" | "*" | "/" | "%" | "**")
+        && let (Ok(x), Ok(y)) = (a.number(), b.number())
+    {
+        let result = x.binary(op, y)?;
+        return Ok(
+            if result.unit == Unit::Number
+                && (matches!(a, Value::Fraction(_)) || matches!(b, Value::Fraction(_)))
+            {
+                Value::Fraction(result.value)
+            } else {
+                Value::Number(result)
+            },
+        );
+    }
     let ty = match binary_type(op, &a.ty(), &b.ty()) {
         Ok(ty) => ty,
         // The checker proves union comparability. Different concrete alternatives
@@ -309,14 +323,6 @@ pub fn binary(op: &str, a: Value, b: Value) -> Result<Value, String> {
     }
     if matches!(op, "and" | "or") {
         return Ok(b);
-    }
-    if let (Ok(x), Ok(y)) = (a.number(), b.number()) {
-        let n = x.binary(op, y)?;
-        return Ok(if ty == Type::Fraction {
-            Value::Fraction(n.value)
-        } else {
-            Value::Number(n)
-        });
     }
     match (a, b) {
         (Value::String(a), Value::String(b)) => Ok(Value::String(format!("{a}{b}").into())),

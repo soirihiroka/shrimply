@@ -970,25 +970,27 @@ fn counter_text(
 
 fn counter_expression(counter: CounterGenerator) -> String {
     let position = if counter.direction == CounterDirection::Down {
-        format!("{} - int(time * fps)", counter.length - 1)
+        format!("{} - frame_index(time, fps)", counter.length - 1)
     } else {
-        "int(time * fps)".to_owned()
+        "frame_index(time, fps)".to_owned()
     };
     let drop_frame = counter.drop_frame;
     let value = match counter.style {
-        CounterStyle::Frames => "`${frame}`".to_owned(),
+        CounterStyle::Frames => "str(frame)".to_owned(),
         CounterStyle::Timecode => format!("timecode(frame, fps, {drop_frame})"),
-        CounterStyle::Clock => format!(
-            "let parts = timecode(frame, fps, {drop_frame}).split(\":\");\n`${{parts[0]}}:${{parts[1]}}:${{parts[2].sub_string(0, 2)}}`"
-        ),
-        CounterStyle::Seconds => format!(
-            "let parts = timecode(frame, fps, {drop_frame}).split(\":\");\nparts[2].sub_string(0, 2)"
-        ),
-        CounterStyle::SecondsPlusOne => format!(
-            "let parts = timecode(frame, fps, {drop_frame}).split(\":\");\n`${{parse_int(parts[2].sub_string(0, 2)) + 1}}`"
-        ),
+        style => {
+            let text = match style {
+                CounterStyle::Clock => {
+                    r#""{parts.hours:02d}:{parts.minutes:02d}:{parts.seconds:02d}""#
+                }
+                CounterStyle::Seconds => "str(parts.seconds)",
+                CounterStyle::SecondsPlusOne => "str(parts.seconds + 1)",
+                _ => unreachable!(),
+            };
+            format!("let parts = timecode_parts(frame, fps, {drop_frame})\n{text}")
+        }
     };
-    format!("let frame = {position};\n{value}")
+    format!("let frame = {position}\n{value}")
 }
 
 fn sequence_by_uuid(root: &Element, uuid: Uuid) -> Option<&Element> {
@@ -1087,4 +1089,77 @@ fn positive_u32(value: Option<&str>, name: &str) -> Result<u32, Box<dyn Error + 
 
 fn invalid(message: impl Into<String>) -> Box<dyn Error + Send + Sync> {
     Box::new(io::Error::new(io::ErrorKind::InvalidData, message.into()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sanim_lang::{
+        Limits,
+        core::{Number, Type, Unit, Value},
+        expression::{Bindings, CheckedExpression, Interface},
+    };
+
+    #[test]
+    fn generated_sanim_counters_match_the_importers_initial_formatting() {
+        let fps = Fraction::new(30_000_u64, 1_001_u64);
+        for direction in [CounterDirection::Up, CounterDirection::Down] {
+            for style in [
+                CounterStyle::Frames,
+                CounterStyle::Timecode,
+                CounterStyle::Clock,
+                CounterStyle::Seconds,
+                CounterStyle::SecondsPlusOne,
+            ] {
+                let counter = CounterGenerator {
+                    direction,
+                    style,
+                    length: 3601,
+                    sound: CounterSound::Silent,
+                    drop_frame: true,
+                    clock_background: false,
+                };
+                let source = counter_expression(counter);
+                let expression = CheckedExpression::check(
+                    "Kdenlive counter",
+                    &source,
+                    Interface::new(Type::String)
+                        .input("time", Type::Numeric(Unit::Duration))
+                        .input("fps", Type::Numeric(Unit::Rate)),
+                    Limits::default(),
+                )
+                .unwrap();
+                for source_frame in [0, 1, 1_799, 1_800, 3_600] {
+                    let values = Bindings::from(vec![
+                        (
+                            "time".to_owned(),
+                            Value::Number(Number {
+                                value: Fraction::from(source_frame) / fps,
+                                unit: Unit::Duration,
+                            }),
+                        ),
+                        (
+                            "fps".to_owned(),
+                            Value::Number(Number {
+                                value: fps,
+                                unit: Unit::Rate,
+                            }),
+                        ),
+                    ]);
+                    let expected = counter_text(
+                        counter,
+                        counter_position(counter, source_frame).unwrap(),
+                        fps,
+                    )
+                    .unwrap();
+                    let values = expression
+                        .inputs()
+                        .map(|name| (name.to_owned(), values[name].clone()))
+                        .collect();
+                    let output = expression.evaluate(values, &|_, _| unreachable!()).unwrap();
+                    assert_eq!(output.string().unwrap(), expected);
+                }
+            }
+        }
+    }
 }

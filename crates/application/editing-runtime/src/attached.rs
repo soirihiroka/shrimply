@@ -28,6 +28,7 @@ pub use version::{MatchVersion, VersionMismatch, VersionPrompt};
 
 const UPDATE_INTERVAL: Duration = Duration::from_millis(100);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(8);
+const OPEN_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Debug)]
 pub enum OpenError {
@@ -88,10 +89,24 @@ pub fn load(path: &Path) -> Result<Project, String> {
     )
 }
 
+#[cfg(not(target_os = "android"))]
+pub fn stop_local_service(path: &Path) -> Result<(), String> {
+    if let Some(owner) = project::project_lock_owner(path)? {
+        MatchVersion::RestartService(owner).apply(path)?;
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "android"))]
+pub fn restart_local_service(path: &Path) -> Result<(), String> {
+    stop_local_service(path)?;
+    Bridge::connect_or_launch(path).and_then(Bridge::version).map(|_| ()).map_err(|error| error.to_string())
+}
+
 pub fn load_snapshot(path: &Path, bridge: Bridge) -> Result<Project, String> {
     let mut snapshot: LiveSnapshot = serde_json::from_value(
         bridge
-            .request_with_timeout(BridgeCommand::Snapshot, REQUEST_TIMEOUT)
+            .request_with_timeout(BridgeCommand::Snapshot, OPEN_TIMEOUT)
             .map_err(|error| error.to_string())?,
     )
     .map_err(|error| error.to_string())?;

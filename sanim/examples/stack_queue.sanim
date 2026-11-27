@@ -28,7 +28,7 @@ let queue_rule = caption("First in, first out", [25%, 15%], 19pt, Color("light2"
 let labels = Box(children=[heading, subtitle, stack_heading, queue_heading, stack_rule, queue_rule],width=100%,height=100%)
 let arrivals = caption("PUSH / ENQUEUE: 1, 2, 3", [0%, 31%], 22pt, Color("light2"))
 let departures = caption("POP from the right. DEQUEUE from the left.", [0%, 31%], 22pt, Color("light2"))
-let result = caption("Stack: 3, 2, 1       Queue: 1, 2, 3", [0%, 31%], 24pt, Color("light1"))
+let result = caption("Stack: 3, 2, 1       Queue: 1, 2, 3", [0%, 31%], 24pt, Color("light1"));
 
 [labels, arrivals].fade_in(duration=400ms)
 
@@ -60,5 +60,5 @@ repeat 3 {
 }
 assert(len(planned_stack) == 0 and len(planned_queue) == 0)
 Animation(children=[departures.fade_out(duration=300ms), result.fade_in(duration=300ms)])
-wait(1.5s)
+wait(1.5s);
 [labels, result].fade_out(duration=400ms)

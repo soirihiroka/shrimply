@@ -118,7 +118,7 @@ Available chart elements:
    let measured = [-2, -1.5, -1, -0.4, 0, 0.2, 0.7, 1, 1.7, 2]
    let bars = <Histogram values={measured} bins={16} normalization="density" x_scale={xs} y_scale={ys}/>
    let estimate = <DensityPlot values={measured} bandwidth={0.5} x_scale={xs} y_scale={ys} fill="orange3"/>
-   let model = <NormalCurve mean={0} std_dev={1} x_scale={xs} y_scale={ys} shade={false}/>
+   let model = <NormalCurve mean={0} std_dev={1} x_scale={xs} y_scale={ys} shade={false}/>;
    [bars, estimate, model].create(duration=1s)
    wait(2s)
 

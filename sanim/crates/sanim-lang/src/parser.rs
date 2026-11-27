@@ -387,7 +387,7 @@ impl Parser<'_> {
                 self.advance(count);
                 continue;
             }
-            if self.line_break() && self.delimiters.iter().any(|c| matches!(c, b'(' | b'[')) {
+            if self.line_break() && matches!(self.delimiters.last(), Some(b'(' | b'[')) {
                 self.consume_line();
                 continue;
             }
@@ -473,6 +473,7 @@ impl Parser<'_> {
         true
     }
     fn expect(&mut self, text: &str) -> Result<(), Diagnostic> {
+        self.skip_lines();
         if text == ">" && self.rest().starts_with('>') {
             self.charge();
             self.highlight(self.offset, self.offset + 1, "punctuation");
@@ -731,7 +732,7 @@ impl Parser<'_> {
             conversion,
         })
     }
-    fn newline(&mut self) -> Result<(), Diagnostic> {
+    fn end_statement(&mut self) -> Result<(), Diagnostic> {
         if self.eat(";") || self.is("}") || self.eof() {
             return Ok(());
         }
@@ -786,13 +787,19 @@ impl Parser<'_> {
     }
     fn block(&mut self) -> Result<Vec<Statement>, Diagnostic> {
         self.expect("{")?;
-        self.depth += 1;
-        if self.depth > 64 {
+        self.nested_block(|parser| parser.statements(true))
+    }
+    fn nested_block<T>(
+        &mut self,
+        parse: impl FnOnce(&mut Self) -> Result<T, Diagnostic>,
+    ) -> Result<T, Diagnostic> {
+        if self.depth >= 64 {
             return Err(self.error("block nesting limit exceeded"));
         }
-        let out = self.statements(true);
+        self.depth += 1;
+        let result = parse(self);
         self.depth -= 1;
-        out
+        result
     }
     fn generics(&mut self, scope: Span) -> Result<Vec<GenericParameter<TypeExpr>>, Diagnostic> {
         let mut names = vec![];
@@ -1002,6 +1009,7 @@ impl Parser<'_> {
         };
         let kind = if let Some(kind) = binding {
             let name = self.declared_name(&mut name_span)?;
+            self.skip_lines();
             let annotation = if self.eat(":") {
                 Some(self.ty()?)
             } else {
@@ -1009,7 +1017,7 @@ impl Parser<'_> {
             };
             self.expect("=")?;
             let value = self.expr(0)?;
-            self.newline()?;
+            self.end_statement()?;
             StatementKind::Bind {
                 kind,
                 name,
@@ -1021,7 +1029,7 @@ impl Parser<'_> {
             let generics = self.generics(span)?;
             self.expect("=")?;
             let ty = self.ty()?;
-            self.newline()?;
+            self.end_statement()?;
             StatementKind::Alias { name, generics, ty }
         } else if self.eat(Keyword::Enum.text()) {
             let name = self.declared_name(&mut name_span)?;
@@ -1068,7 +1076,7 @@ impl Parser<'_> {
                     break;
                 }
             }
-            self.newline()?;
+            self.end_statement()?;
             StatementKind::Enum { name, variants }
         } else if self.is(Keyword::Fn.text()) && {
             let mark = self.mark();
@@ -1086,18 +1094,27 @@ impl Parser<'_> {
             let path = self.string()?;
             self.expect(Keyword::As.text())?;
             let alias = self.declared_name(&mut name_span)?;
-            self.newline()?;
+            self.end_statement()?;
             StatementKind::Import { path, alias }
         } else if self.eat(Keyword::Return.text()) {
-            let value = self.expr(0)?;
-            self.newline()?;
+            let value = if self.line_break() || self.eof() || self.is(";") || self.is("}") {
+                None
+            } else {
+                Some(self.expr(0)?)
+            };
+            self.end_statement()?;
             StatementKind::Return(value)
         } else if self.eat(Keyword::If.text()) {
             let condition = self.expr(0)?;
             let yes = self.block()?;
             self.skip_lines();
             let no = if self.eat(Keyword::Else.text()) {
-                self.block()?
+                self.skip_lines();
+                if self.is(Keyword::If.text()) {
+                    vec![self.nested_block(Self::statement)?]
+                } else {
+                    self.block()?
+                }
             } else {
                 vec![]
             };
@@ -1169,6 +1186,13 @@ impl Parser<'_> {
                     span,
                 ));
             }
+            if self.line_break() {
+                let saved = self.mark();
+                self.skip_lines();
+                if !self.is("=") {
+                    self.restore(saved);
+                }
+            }
             let kind = if self.eat("=") {
                 let ExprKind::Name(name) = value.kind else {
                     return Err(Diagnostic::new(
@@ -1189,7 +1213,7 @@ impl Parser<'_> {
             } else {
                 StatementKind::Expr(value)
             };
-            self.newline()?;
+            self.end_statement()?;
             kind
         };
         let mut span = span;
@@ -1210,6 +1234,7 @@ impl Parser<'_> {
         })
     }
     fn ty(&mut self) -> Result<TypeExpr, Diagnostic> {
+        self.skip_lines();
         self.type_expression(0)
     }
     fn type_expression(&mut self, minimum: u8) -> Result<TypeExpr, Diagnostic> {
@@ -1392,6 +1417,7 @@ impl Parser<'_> {
         if self.depth > 96 {
             return Err(self.error("expression nesting limit exceeded"));
         }
+        self.skip_lines();
         let span = self.span();
         let left = if self.is("-") || self.is("+") || self.is(Keyword::Not.text()) || self.is("!") {
             let op = ["-", "+", Keyword::Not.text(), "!"]
@@ -1415,6 +1441,60 @@ impl Parser<'_> {
         self.depth -= 1;
         result
     }
+    fn binary_operator(&self) -> (&'static str, u8) {
+        let op = [
+            Keyword::Or.text(),
+            Keyword::And.text(),
+            "==",
+            "!=",
+            "<=",
+            ">=",
+            "<",
+            ">",
+            "+",
+            "-",
+            "**",
+            "*",
+            "/",
+            "%",
+        ]
+        .into_iter()
+        .find(|op| self.is(op))
+        .unwrap_or("");
+        let precedence = match op {
+            "or" => 1,
+            "and" => 2,
+            "==" | "!=" => 3,
+            "<" | ">" | "<=" | ">=" => 4,
+            "+" | "-" => 5,
+            "*" | "/" | "%" => 6,
+            "**" => 7,
+            _ => 0,
+        };
+        (op, precedence)
+    }
+    fn starts_markup(&self) -> bool {
+        let Some(after_open) = self.rest().strip_prefix('<') else {
+            return false;
+        };
+        let len = after_open
+            .bytes()
+            .take_while(|c| c.is_ascii_alphanumeric() || *c == b'_')
+            .count();
+        let tag = &after_open[..len];
+        let is_tag = |builtin: &crate::prelude::Builtin| {
+            matches!(
+                builtin.result,
+                sanim_core::Type::Element | sanim_core::Type::Animation
+            )
+        };
+        crate::prelude::builtin(tag).is_some_and(is_tag)
+            || (self.markup.is_some()
+                && after_open.len() == len
+                && crate::prelude::builtins()
+                    .iter()
+                    .any(|builtin| is_tag(builtin) && builtin.name.starts_with(tag)))
+    }
     fn expr_tail(&mut self, mut left: Expr, min: u8, span: Span) -> Result<Expr, Diagnostic> {
         let mut steps = 0usize;
         loop {
@@ -1424,7 +1504,21 @@ impl Parser<'_> {
                     "expression has too many chained operations; split it into let bindings",
                 ));
             }
+            if self.line_break() {
+                let saved = self.mark();
+                self.skip_lines();
+                if self.starts_markup()
+                    || !(self.is(".")
+                        || self.is("[")
+                        || self.is("(")
+                        || self.binary_operator().1 > 0)
+                {
+                    self.restore(saved);
+                    break;
+                }
+            }
             if self.eat(".") {
+                self.skip_lines();
                 let member = self.name()?;
                 left = Expr {
                     cache_id: crate::ast::next_expr_identity(),
@@ -1495,35 +1589,7 @@ impl Parser<'_> {
                 };
                 continue;
             }
-            let op = [
-                Keyword::Or.text(),
-                Keyword::And.text(),
-                "==",
-                "!=",
-                "<=",
-                ">=",
-                "<",
-                ">",
-                "+",
-                "-",
-                "**",
-                "*",
-                "/",
-                "%",
-            ]
-            .into_iter()
-            .find(|op| self.is(op))
-            .unwrap_or("");
-            let precedence = match op {
-                "or" => 1,
-                "and" => 2,
-                "==" | "!=" => 3,
-                "<" | ">" | "<=" | ">=" => 4,
-                "+" | "-" => 5,
-                "*" | "/" | "%" => 6,
-                "**" => 7,
-                _ => 0,
-            };
+            let (op, precedence) = self.binary_operator();
             if precedence == 0 || precedence < min {
                 break;
             }

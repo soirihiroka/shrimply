@@ -9,6 +9,7 @@ pub mod caption;
 pub mod comment;
 pub mod document;
 mod edit_transaction;
+pub mod expression_editor;
 pub mod file_selection;
 pub mod font_cache;
 pub mod font_selector;
@@ -27,7 +28,6 @@ pub mod model_catalog;
 pub mod paint;
 pub mod project;
 mod refresh;
-pub mod rhai_editor;
 #[path = "video/sanim_parameters.rs"]
 pub mod sanim_parameters;
 pub mod scene_3d;

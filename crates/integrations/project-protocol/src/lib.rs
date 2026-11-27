@@ -36,6 +36,8 @@ impl ServerVersion {
 pub struct ProjectSummary {
     pub id: Uuid,
     pub name: String,
+    #[serde(default)]
+    pub opened_at: Option<i64>,
 }
 
 #[derive(Serialize, Deserialize)]

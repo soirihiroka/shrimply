@@ -29,7 +29,7 @@ let title = <Label position={[0%, -38%]} font_size={30pt}>Measured speedups</Lab
 let subtitle = <Label position={[0%, -29%]} font_size={16pt} fill="light4">
     {len(values)} improved measurements · {len(summary)} algorithm groups
 </Label>
-Animation(children=[distribution])
+Animation(children=[distribution]);
 [title, subtitle].fade_in(duration=400ms)
-wait(2s)
+wait(2s);
 [title, subtitle, distribution].fade_out(duration=400ms)

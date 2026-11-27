@@ -23,7 +23,7 @@ use hyper_util::rt::TokioIo;
 use ring::hmac;
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
-use tokio::{net::TcpListener, sync::Semaphore};
+use tokio::{net::TcpListener, sync::{RwLock, Semaphore}};
 use uuid::Uuid;
 
 use crate::media::BlobStore;
@@ -39,6 +39,7 @@ const MAX_DOCUMENT_BYTES: usize = 64 * 1024 * 1024;
 struct Authority {
     store: Mutex<Store>,
     blobs: Arc<BlobStore>,
+    media_lifecycle: Arc<RwLock<()>>,
     signing_key: hmac::Key,
     password: hmac::Tag,
     session: hmac::Tag,
@@ -72,6 +73,7 @@ pub async fn serve(
     let authority = Arc::new(Authority {
         store: Mutex::new(store),
         blobs,
+        media_lifecycle: Arc::new(RwLock::new(())),
         signing_key,
         password: password_tag,
         session,
@@ -189,6 +191,16 @@ async fn dispatch(
             let version = transact(authority, move |store| store.get(id)).await?;
             Ok(json(StatusCode::OK, version))
         }
+        (&Method::DELETE, "") => {
+            let guard = authority.media_lifecycle.clone().write_owned().await;
+            let blobs = authority.blobs.clone();
+            transact(authority, move |store| {
+                let _guard = guard;
+                store.delete(id)?;
+                blobs.remove_project(id)
+            }).await?;
+            Ok(json(StatusCode::OK, true))
+        }
         (&Method::GET, path) if path.starts_with("operations/") => {
             let operation = Uuid::parse_str(path.trim_start_matches("operations/"))
                 .map_err(|_| Failure::Missing)?;
@@ -237,7 +249,9 @@ async fn media(
     project: Uuid,
     digest: String,
 ) -> Result<Response<Body>, Failure> {
-    transact(authority.clone(), move |store| store.exists(project)).await?;
+    if request.method() != Method::PATCH {
+        transact(authority.clone(), move |store| store.exists(project)).await?;
+    }
     if let Some(progress) = digest.strip_suffix("/upload")
         && request.method() == Method::GET
     {
@@ -272,7 +286,10 @@ async fn media(
             let offset = number("upload-offset")?;
             let length = number("upload-length")?;
             let bytes = read_body(request, UPLOAD_CHUNK_BYTES).await?;
+            let guard = authority.media_lifecycle.clone().read_owned().await;
+            transact(authority.clone(), move |store| store.exists(project)).await?;
             let receipt = tokio::task::spawn_blocking(move || {
+                let _guard = guard;
                 authority
                     .blobs
                     .append(project, &digest, offset, length, &bytes)

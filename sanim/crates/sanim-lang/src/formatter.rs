@@ -49,6 +49,7 @@ enum Kind {
     Close(u8),
     Comma,
     Colon,
+    Semicolon,
     Dot,
     Binary,
     Unary,
@@ -168,10 +169,7 @@ impl Sink {
                 | "&" | "and" | "or",
                 _,
             ) => Kind::Binary,
-            (";", _) => {
-                self.state.force_line = true;
-                return;
-            }
+            (";", _) => Kind::Semicolon,
             _ => Kind::Word,
         };
         self.emit(text, kind);
@@ -196,7 +194,12 @@ impl Sink {
             self.state.source_lines = 0;
         }
         let space = match kind {
-            Kind::Close(_) | Kind::Comma | Kind::Colon | Kind::Dot | Kind::Open(b'<') => false,
+            Kind::Close(_)
+            | Kind::Comma
+            | Kind::Colon
+            | Kind::Semicolon
+            | Kind::Dot
+            | Kind::Open(b'<') => false,
             Kind::Open(b'(') => {
                 matches!(
                     previous,
@@ -255,7 +258,7 @@ impl Sink {
         if let Kind::Open(delimiter) = kind {
             self.state.delimiters.push(delimiter);
         }
-        if kind == Kind::Open(b'{') {
+        if matches!(kind, Kind::Open(b'{') | Kind::Semicolon) {
             self.state.force_line = true;
         }
         if kind == Kind::Comma

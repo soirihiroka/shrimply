@@ -85,5 +85,5 @@ Next steps
 * :doc:`media` — import files, create layers, and record screen/microphone.
 * :doc:`modifiers` — animate with keyframes, apply video/audio effects, and add
   transitions.
-* :doc:`expressions` — drive individual clip properties with Rhai expressions.
+* :doc:`expressions` — drive individual clip properties with Sanim expressions.
 * :doc:`export` — render video, GIF, or captions.

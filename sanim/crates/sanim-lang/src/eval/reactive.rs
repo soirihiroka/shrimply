@@ -657,7 +657,8 @@ pub(super) fn instance_paths(module: &Module) -> BTreeMap<usize, String> {
                 StatementKind::Bind { value, .. }
                 | StatementKind::Assign { value, .. }
                 | StatementKind::Expr(value)
-                | StatementKind::Return(value) => expression(value, &path, out),
+                | StatementKind::Return(Some(value)) => expression(value, &path, out),
+                StatementKind::Return(None) => {}
                 StatementKind::Function { name, .. } => {
                     function(statement, &format!("fn.{name}"), out);
                 }

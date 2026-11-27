@@ -14,9 +14,24 @@ pub struct ProjectEntry {
     pub tags: Vec<String>,
     pub path: Option<PathBuf>,
     pub remote: Option<ProjectLink>,
+    #[serde(default)]
+    pub opened_at: Option<i64>,
 }
 
 impl ProjectEntry {
+    pub fn delete(&self) -> Result<(), String> {
+        if let Some(link) = &self.remote {
+            return ProjectClient::configured(&link.server)?
+                .delete(link.project_id).map_err(|error| error.to_string());
+        }
+        let path = self.path.as_deref().ok_or("Project file is missing")?;
+        use shrimply_project_document::project::{acquire_project_lock, release_project_lock};
+        acquire_project_lock(path).map_err(|error| format!("Could not acquire the project for deletion: {error:?}"))?;
+        let result = std::fs::remove_file(path).map_err(|error| error.to_string());
+        release_project_lock(path);
+        result
+    }
+
     pub fn open(&self, directory: Option<&Path>) -> Result<PathBuf, String> {
         if let Some(path) = &self.path {
             return Ok(path.clone());
@@ -88,6 +103,7 @@ pub fn local_projects() -> Result<Vec<ProjectEntry>, String> {
             tags: local.tags,
             path: Some(local.path),
             remote,
+            opened_at: i64::try_from(local.opened_at).ok(),
         };
         if entry
             .remote
@@ -122,38 +138,38 @@ pub fn list() -> Result<Vec<ProjectEntry>, String> {
                         })
                         .inspect_err(
                             |error| tracing::warn!(%server, %error, "Could not list projects"),
-                        )
-                        .unwrap_or_default();
-                    projects.into_iter().map(move |project| {
-                        (
-                            ProjectLink {
-                                server: server.clone(),
-                                project_id: project.id,
-                            },
-                            project.name,
-                        )
-                    })
+                        );
+                    (server, projects)
                 })
             })
             .collect::<Vec<_>>()
             .into_iter()
-            .flat_map(|task| task.join().expect("project listing worker panicked"))
+            .map(|task| task.join().expect("project listing worker panicked"))
             .collect::<Vec<_>>()
     });
-    let mut discovered = Vec::new();
-    for (link, name) in remote {
-        if let Some(&index) = cached.get(&link) {
-            projects[index].name = name;
-        } else {
-            discovered.push(ProjectEntry {
-                name,
-                tags: Vec::new(),
-                path: None,
-                remote: Some(link),
-            });
+    let mut available = HashSet::new();
+    let mut listed = HashSet::new();
+    for (server, entries) in remote {
+        let Ok(entries) = entries else { continue };
+        for entry in entries {
+            let link = ProjectLink { server: server.clone(), project_id: entry.id };
+            listed.insert(link.clone());
+            if let Some(&index) = cached.get(&link) {
+                projects[index].name = entry.name;
+                projects[index].opened_at = projects[index].opened_at.max(entry.opened_at);
+            } else {
+                projects.push(ProjectEntry {
+                    name: entry.name,
+                    tags: Vec::new(),
+                    path: None,
+                    remote: Some(link),
+                    opened_at: entry.opened_at,
+                });
+            }
         }
+        available.insert(server);
     }
-    discovered.sort_by_cached_key(|project| project.name.to_lowercase());
-    projects.extend(discovered);
+    projects.retain(|entry| entry.remote.as_ref().is_none_or(|link| !available.contains(&link.server) || listed.contains(link)));
+    projects.sort_by_cached_key(|entry| (std::cmp::Reverse(entry.opened_at), entry.name.to_lowercase()));
     Ok(projects)
 }

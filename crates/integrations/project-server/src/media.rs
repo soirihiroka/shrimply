@@ -44,6 +44,14 @@ impl BlobStore {
         Ok(self.directory.join(project.to_string()).join(digest))
     }
 
+    pub(super) fn remove_project(&self, project: Uuid) -> Result<(), Failure> {
+        match fs::remove_dir_all(self.directory.join(project.to_string())) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(storage(error)),
+        }
+    }
+
     pub(super) fn is_complete(&self, project: Uuid, digest: &str) -> Result<bool, Failure> {
         Ok(file_length(&self.blob(project, digest)?)?.is_some())
     }

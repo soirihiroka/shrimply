@@ -7,8 +7,8 @@ Lip sync
 Using mouth shapes in expressions
 ---------------------------------
 
-``mouth()`` uses the master mix at the current time. ``mouth(1)`` uses audio
-track 1. ``mouth(0, 2)`` uses those tracks.
+``mouth()`` uses the master mix at the current time. ``mouth([1])`` uses audio
+track 1. ``mouth([0, 2])`` uses those tracks.
 
 The result is one of these shapes:
 
@@ -71,19 +71,15 @@ shapes that can improve animation when the character artwork supports them.
 
 Expressions can branch on the result:
 
-.. code-block:: rust
+.. code-block:: sanim
 
-   switch mouth() {
-       "A" => 0,
-       "B" => 1,
-       "C" => 2,
-       "D" => 3,
-       "E" => 4,
-       "F" => 5,
-       "G" => 6,
-       "H" => 7,
-       "X" => 8,
+   let shape = mouth()
+   if shape == "A" {
+       return 0
+   } else if shape == "B" {
+       return 1
    }
+   2
 
 While a preview is still analyzing, ``mouth()`` reports that it is loading.
 Export waits until analysis finishes.

@@ -4,10 +4,8 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-hashbrown.workspace = true
 glam.workspace = true
-num-traits.workspace = true
-rhai.workspace = true
+sanim-lang.workspace = true
 shrimply-3dgs-core = { workspace = true }
 shrimply-profiling = { workspace = true }
 shrimply-property-model = { workspace = true }

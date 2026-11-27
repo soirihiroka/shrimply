@@ -2,7 +2,7 @@ use adw::prelude::*;
 use gtk::{gio, glib};
 use shrimply_components_gtk::project_settings::ProjectSettingsSelector;
 use shrimply_components_gtk::tr;
-use shrimply_components_gtk::ui::{SingleLineTextInput, control_row, dropdown};
+use shrimply_components_gtk::ui::{SingleLineTextInput, adaptive_menu, control_row, dropdown, menu_action};
 use shrimply_cross_ui_core::launcher::{self, Launcher, ProjectLocation};
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
@@ -101,6 +101,13 @@ fn build_ui(app: &adw::Application) {
     let toolbar = adw::ToolbarView::new();
     let header = adw::HeaderBar::new();
     header.set_show_start_title_buttons(false);
+    let menu = gio::Menu::new();
+    for (label, action) in [("Preferences", "win.preferences"), ("Project Servers", "win.project-servers"), ("About Shrimply", "win.about")] {
+        menu.append(Some(tr!(label).as_ref()), Some(action));
+    }
+    let menu_button = gtk::MenuButton::builder().icon_name("open-menu-symbolic")
+        .tooltip_text(tr!("Main Menu").as_ref()).menu_model(&menu).has_frame(false).build();
+    header.pack_end(&menu_button);
     toolbar.add_top_bar(&header);
     toolbar.set_content(Some(&projects));
     let projects = adw::NavigationPage::builder()
@@ -113,13 +120,11 @@ fn build_ui(app: &adw::Application) {
     create.add_css_class("pill");
     let open = gtk::Button::with_label(tr!("Open Project").as_ref());
     open.add_css_class("pill");
-    let servers = gtk::Button::with_label(tr!("Project Servers").as_ref());
     let actions = gtk::Box::new(gtk::Orientation::Vertical, 12);
     actions.set_halign(gtk::Align::Center);
     actions.set_valign(gtk::Align::Center);
     actions.append(&create);
     actions.append(&open);
-    actions.append(&servers);
     let toolbar = adw::ToolbarView::new();
     let header = adw::HeaderBar::new();
     header.set_show_end_title_buttons(false);
@@ -143,6 +148,7 @@ fn build_ui(app: &adw::Application) {
         .default_height(DEFAULT_HEIGHT)
         .content(&split)
         .build();
+    adaptive_menu(&menu_button, "win", &window);
 
     let model = Rc::new(RefCell::new(Launcher::default()));
     let rebuild = {
@@ -166,7 +172,7 @@ fn build_ui(app: &adw::Application) {
     };
     let reload = {
         let (model, rebuild, window, hint) =
-            (model.clone(), rebuild.clone(), window.clone(), hint.clone());
+            (model.clone(), rebuild.clone(), window.downgrade(), hint.clone());
         move || {
             let (model, rebuild, window) = (model.clone(), rebuild.clone(), window.clone());
             hint.set_label(tr!("Loading Projects").as_ref());
@@ -179,7 +185,9 @@ fn build_ui(app: &adw::Application) {
                 match result {
                     Ok(true) => rebuild(),
                     Ok(false) => (),
-                    Err(error) => show_error(&window, "Could not load projects", &error),
+                    Err(error) => if let Some(window) = window.upgrade() {
+                        show_error(&window, "Could not load projects", &error);
+                    },
                 }
             });
         }
@@ -224,14 +232,76 @@ fn build_ui(app: &adw::Application) {
         Err(error) => show_error(&window, "Could not load projects", &error),
     }
     reload();
-    servers.connect_clicked({
-        let window = window.clone();
-        move |_| {
+    window.add_action(&menu_action("project-servers", None, {
+        let window = window.downgrade();
+        let reload = reload.clone();
+        move || {
+            let window = window.upgrade()?;
             let reload = reload.clone();
             shrimply_preferences_gtk::page::show_project_servers(&window)
                 .connect_closed(move |_| reload());
+            None
         }
-    });
+    }));
+    window.add_action(&menu_action("preferences", None, {
+        let window = window.downgrade();
+        move || {
+            shrimply_preferences_gtk::page::show_preferences_dialog(&window.upgrade()?, shrimply_preferences_gtk::store::open_with_defaults());
+            None
+        }
+    }));
+    window.add_action(&menu_action("about", None, {
+        let window = window.downgrade();
+        move || {
+            shrimply_components_gtk::about::show(&window.upgrade()?, env!("CARGO_PKG_VERSION"));
+            None
+        }
+    }));
+    for name in ["info", "show", "restart", "delete"] {
+        let action = gio::SimpleAction::new(name, Some(glib::VariantTy::UINT32));
+        let (window, model, reload) = (window.downgrade(), model.clone(), reload.clone());
+        action.connect_activate(move |_, value| {
+            let Some((window, index)) = window.upgrade().zip(value.and_then(|value| value.get::<u32>())) else { return; };
+            let Some(project) = model.borrow().project(index as usize).cloned() else { return; };
+            let reload = reload.clone();
+            glib::spawn_future_local(async move {
+                match name {
+                    "info" => {
+                        let location = project.remote.as_ref().map(|link| link.server.clone())
+                            .or_else(|| project.path.as_ref().map(|path| path.display().to_string())).unwrap_or_default();
+                        let details = [Some(location), launcher::project_access_label(&project)].into_iter().flatten().collect::<Vec<_>>().join("\n");
+                        show_error(&window, &project.name, &details);
+                    }
+                    "show" => {
+                        if let Some(path) = project.path && let Err(error) = shrimply_components_gtk::desktop_open::show_path_in_folder(&window, &path) {
+                            show_error(&window, "Could not show project in Files", &error);
+                        }
+                    }
+                    "restart" => {
+                        if let Some(path) = project.path && let Err(error) = gio::spawn_blocking(move || launcher::restart_local_service(&path)).await.expect("restart worker") {
+                            show_error(&window, "Could not restart the project service", &error);
+                        }
+                    }
+                    "delete" => {
+                        let message = if project.remote.is_some() { "Delete this project from the server for everyone?" } else { "Permanently delete this project file?" };
+                        let dialog = adw::AlertDialog::new(Some(&project.name), Some(tr!(message).as_ref()));
+                        dialog.add_response("cancel", tr!("Cancel").as_ref());
+                        dialog.add_response("delete", tr!("Delete Project").as_ref());
+                        dialog.set_response_appearance("delete", adw::ResponseAppearance::Destructive);
+                        dialog.set_close_response("cancel");
+                        if dialog.choose_future(Some(&window)).await == "delete" {
+                            if let Err(error) = gio::spawn_blocking(move || launcher::delete_project(&project)).await.expect("delete worker") {
+                                show_error(&window, "Could not delete project", &error);
+                            }
+                            reload();
+                        }
+                    }
+                    _ => unreachable!(),
+                }
+            });
+        });
+        window.add_action(&action);
+    }
     window.present();
 }
 
@@ -249,9 +319,25 @@ fn append_projects(list: &gtk::ListBox, model: &Launcher, start: usize) {
             "folder-symbolic"
         });
         row.add_prefix(&icon);
-        if let Some(remote) = &project.remote {
-            row.set_subtitle(&remote.server);
+        let subtitle = [launcher::project_access_label(project), project.remote.as_ref().map(|remote| remote.server.clone())]
+            .into_iter().flatten().collect::<Vec<_>>().join(" · ");
+        row.set_subtitle(&subtitle);
+        let menu = gio::Menu::new();
+        for (visible, label, action) in [
+            (true, "Project Information", "win.info"),
+            (project.path.is_some(), "Show in Files", "win.show"),
+            (project.path.is_some(), "Restart Local Service", "win.restart"),
+            (true, "Delete Project…", "win.delete"),
+        ] {
+            if visible {
+                let item = gio::MenuItem::new(Some(tr!(label).as_ref()), None);
+                item.set_action_and_target_value(Some(action), Some(&(index as u32).to_variant()));
+                menu.append_item(&item);
+            }
         }
+        row.add_suffix(&gtk::MenuButton::builder().icon_name("view-more-symbolic")
+            .tooltip_text(tr!("Project options").as_ref()).menu_model(&menu).has_frame(false)
+            .valign(gtk::Align::Center).build());
         list.append(&row);
     }
 }

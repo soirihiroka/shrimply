@@ -68,8 +68,9 @@ impl Session {
     fn update_presence(
         &mut self,
         presence: impl IntoIterator<Item = Presence>,
-    ) -> Result<Vec<Presence>, Failure> {
+    ) -> Result<bool, Failure> {
         let now = Instant::now();
+        let mut joined = false;
         self.participants
             .retain(|_, (updated, _)| now.duration_since(*updated) < PRESENCE_TTL);
         for presence in presence {
@@ -78,13 +79,9 @@ impl Session {
                     "presence name must be between 1 and 128 bytes".into(),
                 ));
             }
-            self.participants.insert(presence.id, (now, presence));
+            joined |= self.participants.insert(presence.id, (now, presence)).is_none();
         }
-        Ok(self
-            .participants
-            .values()
-            .map(|(_, presence)| presence.clone())
-            .collect())
+        Ok(joined)
     }
 }
 
@@ -108,7 +105,8 @@ impl Store {
                  id TEXT PRIMARY KEY,
                  revision INTEGER NOT NULL,
                  document BLOB NOT NULL,
-                 name TEXT NOT NULL
+                 name TEXT NOT NULL,
+                 opened_at INTEGER
              );
              CREATE TABLE IF NOT EXISTS operation_receipts (
                  project TEXT NOT NULL REFERENCES projects(id),
@@ -118,6 +116,12 @@ impl Store {
                  PRIMARY KEY (project, operation)
              );",
         )?;
+        if !connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM pragma_table_info('projects') WHERE name = 'opened_at')",
+            [], |row| row.get::<_, bool>(0),
+        )? {
+            connection.execute("ALTER TABLE projects ADD COLUMN opened_at INTEGER", [])?;
+        }
         if !connection.query_row(
             "SELECT EXISTS(SELECT 1 FROM pragma_table_info('projects') WHERE name = 'name')",
             [],
@@ -187,15 +191,16 @@ impl Store {
     pub(super) fn list(&self) -> Result<Vec<ProjectSummary>, Failure> {
         let mut statement = self
             .connection
-            .prepare("SELECT id, name FROM projects ORDER BY name COLLATE NOCASE, id")?;
+            .prepare("SELECT id, name, opened_at FROM projects ORDER BY opened_at DESC, name COLLATE NOCASE, id")?;
         let rows = statement.query_map([], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get(2)?))
         })?;
         rows.map(|row| {
-            let (id, name) = row?;
+            let (id, name, opened_at) = row?;
             Ok(ProjectSummary {
                 id: Uuid::parse_str(&id).map_err(|error| Failure::Storage(error.to_string()))?,
                 name: if name.trim().is_empty() { id } else { name },
+                opened_at,
             })
         })
         .collect()
@@ -208,7 +213,7 @@ impl Store {
     ) -> Result<ProjectVersion<Value>, Failure> {
         let bytes = encode(&project)?;
         let created = self.connection.execute(
-            "INSERT INTO projects (id, revision, document, name) VALUES (?1, 0, ?2, ?3) ON CONFLICT(id) DO NOTHING",
+            "INSERT INTO projects (id, revision, document, name, opened_at) VALUES (?1, 0, ?2, ?3, unixepoch()) ON CONFLICT(id) DO NOTHING",
             params![id.to_string(), bytes, project_name(&project)],
         )?;
         if created == 0 {
@@ -225,7 +230,24 @@ impl Store {
     }
 
     pub(super) fn get(&mut self, id: Uuid) -> Result<ProjectVersion<Value>, Failure> {
-        Ok(self.session(id)?.version())
+        let version = self.session(id)?.version();
+        self.record_access(id)?;
+        Ok(version)
+    }
+
+    fn record_access(&self, id: Uuid) -> Result<(), Failure> {
+        self.connection.execute("UPDATE projects SET opened_at = unixepoch() WHERE id = ?1", [id.to_string()])?;
+        Ok(())
+    }
+
+    pub(super) fn delete(&mut self, id: Uuid) -> Result<(), Failure> {
+        let key = id.to_string();
+        let transaction = self.connection.transaction()?;
+        transaction.execute("DELETE FROM operation_receipts WHERE project = ?1", [&key])?;
+        transaction.execute("DELETE FROM projects WHERE id = ?1", [&key])?;
+        transaction.commit()?;
+        self.sessions.remove(&id);
+        Ok(())
     }
 
     pub(super) fn sync(
@@ -235,11 +257,15 @@ impl Store {
         presence: impl IntoIterator<Item = Presence>,
     ) -> Result<SyncResponse<Value, Presence>, Failure> {
         let session = self.session(id)?;
-        let participants = session.update_presence(presence)?;
-        Ok(SyncResponse {
+        let joined = session.update_presence(presence)?;
+        let response = SyncResponse {
             version: (revision != session.revision).then(|| session.version()),
-            participants,
-        })
+            participants: session.participants.values().map(|(_, presence)| presence.clone()).collect(),
+        };
+        if joined {
+            self.record_access(id)?;
+        }
+        Ok(response)
     }
 
     fn operation(&self, id: Uuid, operation: Uuid) -> Result<Option<(u64, Vec<u8>)>, Failure> {

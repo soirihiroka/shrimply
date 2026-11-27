@@ -12,6 +12,7 @@ mod code_view;
 mod colors;
 pub mod dataframe;
 mod eval;
+pub mod expression;
 #[cfg(all(test, feature = "native-text"))]
 mod font_tests;
 pub mod formatter;

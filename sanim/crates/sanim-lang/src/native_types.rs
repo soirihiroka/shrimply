@@ -123,3 +123,12 @@ pub(crate) fn math(builtin: &Builtin, actuals: &[Type]) -> Result<Type, String> 
         },
     )
 }
+
+pub(crate) fn lerp(_builtin: &Builtin, actuals: &[Type]) -> Result<Type, String> {
+    use sanim_core::math::operations::binary_type;
+    let [a, b, progress] = actuals else {
+        unreachable!("registered lerp arguments")
+    };
+    let delta = binary_type("-", b, a)?;
+    binary_type("+", a, &binary_type("*", &delta, progress)?)
+}

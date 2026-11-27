@@ -4,8 +4,8 @@ use sourceview5::prelude::*;
 
 const CODE_EDITOR_HEIGHT: i32 = 180;
 const INDENT_WIDTH: u32 = 4;
-const RHAI_LANGUAGE: &str = include_str!("rhai.lang");
-static RHAI_LANGUAGE_DIR: OnceLock<String> = OnceLock::new();
+const SANIM_LANGUAGE: &str = include_str!("sanim.lang");
+static SANIM_LANGUAGE_DIR: OnceLock<String> = OnceLock::new();
 
 pub fn code_editor(
     value: &str,
@@ -49,8 +49,8 @@ pub fn code_editor(
 
 pub fn configure_code_language(buffer: &sourceview5::Buffer, language: &str) {
     let manager = sourceview5::LanguageManager::new();
-    if language == "rhai" {
-        let path = rhai_language_dir();
+    if language == "sanim" {
+        let path = sanim_language_dir();
         let mut paths: Vec<String> = manager
             .search_path()
             .into_iter()
@@ -66,22 +66,22 @@ pub fn configure_code_language(buffer: &sourceview5::Buffer, language: &str) {
     buffer.set_highlight_syntax(true);
 }
 
-fn rhai_language_dir() -> &'static str {
-    RHAI_LANGUAGE_DIR.get_or_init(|| {
+fn sanim_language_dir() -> &'static str {
+    SANIM_LANGUAGE_DIR.get_or_init(|| {
         let dir = std::env::temp_dir().join("shrimply-gtksourceview");
-        write_rhai_language(&dir)
-            .unwrap_or_else(|error| panic!("could not install Rhai syntax definition: {error}"));
+        write_sanim_language(&dir)
+            .unwrap_or_else(|error| panic!("could not install Sanim syntax definition: {error}"));
         dir.into_os_string()
             .into_string()
-            .expect("Rhai syntax definition path must be valid UTF-8")
+            .expect("Sanim syntax definition path must be valid UTF-8")
     })
 }
 
-fn write_rhai_language(dir: &Path) -> Result<(), std::io::Error> {
+fn write_sanim_language(dir: &Path) -> Result<(), std::io::Error> {
     fs::create_dir_all(dir)?;
-    let path = dir.join("rhai.lang");
-    if fs::read_to_string(&path).ok().as_deref() != Some(RHAI_LANGUAGE) {
-        fs::write(path, RHAI_LANGUAGE)?;
+    let path = dir.join("sanim.lang");
+    if fs::read_to_string(&path).ok().as_deref() != Some(SANIM_LANGUAGE) {
+        fs::write(path, SANIM_LANGUAGE)?;
     }
     Ok(())
 }

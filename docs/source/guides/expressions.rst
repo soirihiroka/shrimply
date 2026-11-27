@@ -7,153 +7,92 @@ Property Expressions
    from-after-effects
    lip-sync
 
-An expression is a small `Rhai <https://rhai.rs/book/language/>`__ script
-attached to a single clip property in the inspector. (For full programmatic
-scenes and motion graphics, see :doc:`Sanim <../sanim/index>`.)
+Use the code button beside a property to drive it with :doc:`Sanim <../sanim/language>`.
+The expression receives the property's normal or keyframed ``value`` and runs
+at the current clip time. The final expression supplies the new value.
 
-Enable an expression with the code button beside the property. The current
-value, keyframed or not, is available as ``value``. The last value in the
-script is the result.
+.. code-block:: sanim
 
-For example, this makes a number pulse over time:
+   value * (0.75 + 0.25 * sin(time / 1s * 6))
 
-.. code-block:: rust
+Use ``return`` when a script branches. Parentheses around conditions are optional.
 
-   value * (0.75 + 0.25 * sin(time * 6))
+.. code-block:: sanim
 
-See also :doc:`from-after-effects` to translate common After Effects
-expressions, and :doc:`lip-sync` to drive mouth shapes from project audio.
+   if time < 1s {
+       return value
+   } else if time < 2s {
+       return value * 2
+   }
+   value * 3
+
+Property expressions support math, lists, typed functions and local variables.
+Scene construction, animation scheduling, resource reads, imports and signals
+are available when writing :doc:`Sanim scenes <../sanim/index>`.
 
 Property values
 ---------------
 
-The available components and required result depend on the property:
+* Numbers expose ``value`` and ``x``.
+* 2D and 3D vectors expose ``value`` as a fixed-size numeric list and provide
+  ``x``, ``y``, and, for 3D, ``z``. Return a list of the same size.
+* Colors expose a ``Color`` and the channels ``r``, ``g``, ``b``, and ``a`` in
+  the range 0 to 1. Return a Sanim color, such as
+  ``Rgb(r, g, b, alpha=0.5)`` or ``Hsv(120deg, 0.8, 1)``.
+* Booleans and text return ``Bool`` and ``String``. For a discrete choice,
+  return its option key as a string.
 
-.. list-table::
-   :header-rows: 1
-   :widths: 25 35 40
+Add a vector directly to an animated position:
 
-   * - Property
-     - Inputs
-     - Result
-   * - Number
-     - ``value`` or ``x``
-     - A number
-   * - 2D vector
-     - ``x``, ``y``
-     - ``[x, y]``
-   * - 3D vector
-     - ``x``, ``y``, ``z``
-     - ``[x, y, z]``
-   * - Color
-     - ``r``, ``g``, ``b``, ``a`` and ``value``
-     - A color helper or an array of up to four channels
-   * - Boolean
-     - ``value``
-     - ``true`` or ``false``
-   * - Text
-     - ``value``
-     - A string
-   * - Discrete choice
-     - ``value``
-     - A valid option name as a string
+.. code-block:: sanim
 
-Here is a 2D position that moves up and down:
+   value + [0, sin(time / 1s * 4) * 20]
 
-.. code-block:: rust
+Project values and time
+-----------------------
 
-   [x, y + sin(time * 4) * 20]
+* ``time``, ``t``, and ``local_t`` represent the clip's expression time.
+  These aliases and ``duration`` use Sanim's exact ``Duration`` type.
+  Divide by ``1s`` for a dimensionless number of seconds.
+* ``fps`` is the effective frame rate and uses the exact ``Rate`` type.
+  Multiplying a duration by this rate gives a frame count.
+* ``canvas_width`` and ``canvas_height`` describe the project canvas.
+  ``media_width`` and ``media_height`` describe the source or fall back to the
+  canvas dimensions. ``source_width`` and ``source_height`` are aliases.
+* ``seed`` is a deterministic integer for the current item and time.
 
-Project values
+``frame_index(time, fps)`` returns the index of the containing frame.
+``timecode(frame, fps, drop_frame=false)`` formats a nonnegative frame as
+SMPTE timecode. ``timecode_parts`` takes the same arguments and returns
+``hours``, ``minutes``, ``seconds``, and ``frames``.
+
+.. code-block:: sanim
+
+   timecode(frame_index(time, fps), fps, drop_frame=true)
+
+Math and audio
 --------------
 
-``time``, ``t``, ``local_t``
-   Time within the current item, in seconds. These names are aliases.
+``sin``, ``cos``, and ``tan`` take a number in radians or an angle such as
+``45deg``. ``lerp(a, b, progress)`` interpolates numbers or matching numeric
+lists. Use ``trunc`` to discard the fractional part of a number.
 
-``duration``
-   Duration of the current item, in seconds.
+``random()`` gives a deterministic sample from -1 up to 1. ``shake()``
+gives smooth noise at the current time. Pass a dimensionless phase to
+control its rate and separate seeds for independent motion:
 
-``fps``
-   Project frame rate.
+.. code-block:: sanim
 
-``canvas_width``, ``canvas_height``
-   Project canvas dimensions.
+   let phase = time / 1s * 8
+   value + [shake(phase, 0), shake(phase, 1)] * 12
 
-``media_width``, ``media_height``
-   Source-media dimensions, or the canvas dimensions when they are not
-   available. ``source_width`` and ``source_height`` are aliases.
-
-``seed``
-   A stable integer seed for this item at this time.
-
-Functions
----------
-
-Math
-~~~~
-
-``sin()``, ``cos()``, and ``tan()`` use the current item time. Pass a value to
-use a different input: ``sin(value)``, ``cos(value)``, or ``tan(value)``.
-
-The other math helpers are ``sqrt(value)``, ``pow(value, power)``,
-``clamp(value, low, high)``, ``lerp(a, b, progress)``, ``abs(value)``, and
-``int(value)``.
-
-``random()`` returns a deterministic random value. ``shake()`` returns smooth
-noise based on time; use ``shake(phase)`` to control its speed and
-``shake(phase, seed)`` to create independent motion:
-
-.. code-block:: rust
-
-   [
-     x + shake(time * 8, 0) * 12,
-     y + shake(time * 8, 1) * 12
-   ]
-
-Timecode
-~~~~~~~~
-
-``timecode(frame, frame_rate, drop_frame)`` formats a nonnegative frame number
-as SMPTE ``HH:MM:SS:FF`` text. Pass ``true`` for drop-frame numbering; standard
-29.97 and 59.94 fps rates use ``;`` before the frame field and skip the
-appropriate frame numbers.
-
-For example, this displays the current project frame as timecode:
-
-.. code-block:: rust
-
-   timecode(int(time * fps), fps, false)
-
-Color
-~~~~~
-
-Use ``rgb(r, g, b)``, ``rgba(r, g, b, a)``, ``gray(luminance)``, or
-``graya(luminance, alpha)`` with channels from ``0`` to ``1``.
-
-``hsv(hue, saturation, value)`` and ``hsva(hue, saturation, value, alpha)``
-use hue in degrees and other channels from ``0`` to ``1``. ``oklab(l, a, b)``
-and ``oklaba(l, a, b, alpha)`` are also available.
-
-For example, this cycles through hues:
-
-.. code-block:: rust
-
-   hsv(time * 60, 1, 1)
-
-Audio and lip sync
-~~~~~~~~~~~~~~~~~~
-
-``vol()`` returns the current peak amplitude of the complete audio mix from
-``0`` to ``1``. Pass zero-based audio-track indices to select tracks, such as
-``vol(0)`` or ``vol(0, 2)``.
-
-``mouth()`` returns the current lip-sync mouth shape. It accepts the same
-optional track indices. See :doc:`lip-sync` for the available shapes and an
-example.
+``vol()`` returns the current peak amplitude of the full audio mix, from
+0 to 1. ``vol([0, 2])`` selects zero-based audio tracks. ``mouth()`` and
+``mouth([0, 2])`` use the same selection rules. See :doc:`lip-sync`.
 
 Errors
 ------
 
-The editor highlights syntax errors and can show an expression's output or
-error. If an expression is empty, disabled, fails, or returns the wrong type,
-Shrimply keeps the normal or keyframed property value instead.
+When an expression is empty, disabled, fails, or returns the wrong type,
+Shrimply uses the normal or keyframed value. Existing Rhai source stays
+editable and can be rewritten in Sanim using the patterns in this guide.

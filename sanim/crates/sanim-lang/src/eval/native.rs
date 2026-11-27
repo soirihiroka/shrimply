@@ -9,7 +9,30 @@ impl Runtime<'_, '_> {
         span: Span,
     ) -> Result<Value, Diagnostic> {
         self.list_edit = None;
+        if let Some(host) = &self.host
+            && let Some(builtin) = host.interface.functions.get(name)
+        {
+            let params = builtin
+                .parameters
+                .iter()
+                .map(|parameter| parameter.name.to_owned())
+                .collect::<Vec<_>>();
+            let value = (host.call)(name, &order_values(&arguments, &params))
+                .map_err(|message| self.error("S305", message, span))?;
+            let expected = builtin.result.clone();
+            self.retain_binding_value(&value, span)?;
+            sanim_core::validate_value(&expected, &value)
+                .map_err(|message| self.error("S140", message, span))?;
+            return self.typed_value(&value, &expected, span);
+        }
         let builtin = prelude::builtin(name).expect("checked builtin");
+        if self.host.is_some() && !crate::expression::allows_builtin(builtin) {
+            return Err(self.error(
+                "S141",
+                format!("'{name}' is unavailable in expressions"),
+                span,
+            ));
+        }
         let duration = Fraction::from(0);
         let easing = Easing::default();
         let mut value = self.native_inner(builtin, arguments, duration, easing, span)?;

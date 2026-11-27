@@ -264,9 +264,13 @@ impl Bridge {
         encoded.push(b'\n');
         stream.write_all(&encoded).map_err(transport)?;
         let mut line = String::new();
-        BufReader::new(stream)
-            .read_line(&mut line)
-            .map_err(transport)?;
+        BufReader::new(stream).read_line(&mut line).map_err(|error| {
+            if matches!(error.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) {
+                BridgeError::Transport(format!("The project session did not respond within {} seconds. Try opening it again.", timeout.as_secs()))
+            } else {
+                transport(error)
+            }
+        })?;
         let response: BridgeResponse = serde_json::from_str(&line).map_err(|error| {
             BridgeError::Transport(format!("invalid project session response: {error}"))
         })?;

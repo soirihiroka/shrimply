@@ -504,7 +504,7 @@ impl Runtime<'_, '_> {
                         match &statement.kind {
                             StatementKind::Bind{kind:BindingKind::Let|BindingKind::Mut,name,value,..}=>{let node=self.lower_expression(value,&scope,&inputs,depth+1)?;inputs.insert(name.clone(),node);},
                             StatementKind::Assign{name,value} if inputs.contains_key(name)=>{let node=self.lower_expression(value,&scope,&inputs,depth+1)?;inputs.insert(name.clone(),node);},
-                            StatementKind::Return(value)=>return self.lower_expression(value,&scope,&inputs,depth+1),
+                            StatementKind::Return(Some(value))=>return self.lower_expression(value,&scope,&inputs,depth+1),
                             _=>return Err(self.error("S140","retained animated helpers require straight-line pure arithmetic and return; snapshot branching/data work with let or express it as signal arithmetic",statement.span)),
                         }
                     }

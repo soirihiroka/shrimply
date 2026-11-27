@@ -163,7 +163,7 @@ fn parent_child_parallel_writes_are_independent_of_argument_order() {
     for targets in ["[group,child]", "[child,group]"] {
         let prepared = prepare(&format!(
             r#"let child=Box(id="child", width=2*(32pt), height=2*(32pt), radius="full", fill=Color("light1"), x_align=Align.Center, y_align=Align.Center)
-let group=Box(id="group",children=[child])
+let group=Box(id="group",children=[child]);
 ({targets}).fade_in(duration=1s,ease="linear")"#
         ))
         .unwrap();

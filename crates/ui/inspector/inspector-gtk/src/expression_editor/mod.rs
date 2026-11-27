@@ -6,8 +6,8 @@ use gtk::glib::{self, SourceId};
 use shrimply_math_color::Color;
 use sourceview5::prelude::*;
 
-pub(crate) use shrimply_inspector_core::rhai_editor::ExpressionValue;
-use shrimply_inspector_core::rhai_editor::{
+pub(crate) use shrimply_inspector_core::expression_editor::ExpressionValue;
+use shrimply_inspector_core::expression_editor::{
     self, DIAGNOSTIC_DEBOUNCE_MILLISECONDS, DiagnosticCache, EDITOR_HEIGHT, INDENT_WIDTH,
 };
 
@@ -20,13 +20,13 @@ pub(crate) fn editor(
     update: impl Fn(String) + 'static,
 ) -> gtk::Widget {
     let buffer = sourceview5::Buffer::new(None);
-    set_rhai_language(&buffer);
+    set_sanim_language(&buffer);
     set_style_scheme(&buffer);
     buffer.set_text(source.as_deref().unwrap_or_default());
 
     let error_color = ERROR_COLOR.into();
     let diagnostic_tag = gtk::TextTag::builder()
-        .name("rhai-error")
+        .name("sanim-error")
         .foreground_rgba(&error_color)
         .underline(gtk::pango::Underline::Error)
         .underline_rgba(&error_color)
@@ -507,7 +507,7 @@ fn completion_words(value: ExpressionValue) -> (sourceview5::CompletionWords, so
         .priority(10)
         .build();
     let seed = sourceview5::Buffer::new(None);
-    seed.set_text(&rhai_editor::completion_words(value).join(" "));
+    seed.set_text(&expression_editor::completion_words(value).join(" "));
     words.register(&seed);
     (words, seed)
 }
@@ -580,15 +580,15 @@ fn current_completion(
     buffer: &sourceview5::Buffer,
     value: ExpressionValue,
     automatic: bool,
-) -> Option<rhai_editor::Completion> {
+) -> Option<expression_editor::Completion> {
     let cursor = buffer.cursor_position();
     let offset = usize::try_from(cursor).ok()?;
     let (start, end) = buffer.bounds();
     let source = buffer.text(&start, &end, true).to_string();
     if automatic {
-        rhai_editor::automatic_completion(&source, value, offset)
+        expression_editor::automatic_completion(&source, value, offset)
     } else {
-        rhai_editor::completion(&source, value, offset)
+        expression_editor::completion(&source, value, offset)
     }
 }
 
@@ -672,8 +672,8 @@ fn set_diagnostic_label(label: &gtk::Label, message: Option<&str>) {
     }
 }
 
-fn set_rhai_language(buffer: &sourceview5::Buffer) {
-    shrimply_components_gtk::ui::configure_code_language(buffer, "rhai");
+fn set_sanim_language(buffer: &sourceview5::Buffer) {
+    shrimply_components_gtk::ui::configure_code_language(buffer, "sanim");
 }
 
 fn set_style_scheme(buffer: &sourceview5::Buffer) {

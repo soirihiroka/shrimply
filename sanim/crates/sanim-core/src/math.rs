@@ -329,6 +329,14 @@ pub fn finite(value: &Fraction) -> bool {
     matches!(value, Fraction::Rational(..))
 }
 
+pub fn integer_i64(value: Fraction) -> Option<i64> {
+    let (numerator, denominator) = shrimply_math_core::fraction_ratio_i128(value)?;
+    if numerator.checked_rem(denominator)? != 0 {
+        return None;
+    }
+    i64::try_from(numerator / denominator).ok()
+}
+
 pub fn to_f64(value: Fraction) -> Result<f64, String> {
     value
         .to_f64()

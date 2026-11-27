@@ -14,8 +14,21 @@ impl Checker<'_> {
         let ExprKind::Call { types, .. } = &expr.kind else {
             unreachable!()
         };
-        let builtin = prelude::builtin(name)
+        let host_builtin = self
+            .interface
+            .and_then(|interface| interface.functions.get(name))
+            .cloned();
+        let builtin = host_builtin
+            .as_ref()
+            .or_else(|| prelude::builtin(name))
             .ok_or_else(|| self.error("S120", format!("unknown function '{name}'"), expr.span))?;
+        if self.interface.is_some() && !crate::expression::allows_builtin(builtin) {
+            return Err(self.error(
+                "S141",
+                format!("'{name}' is unavailable in expressions"),
+                expr.span,
+            ));
+        }
         if matches!(builtin.execute, prelude::Execution::CellAnimation) {
             let parameters = builtin
                 .parameters

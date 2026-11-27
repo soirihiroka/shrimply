@@ -184,6 +184,10 @@ impl ProjectClient {
         response(self.request(Method::GET, Some(id), &[]).send()).and_then(decode_version)
     }
 
+    pub fn delete(&self, id: Uuid) -> Result<(), RequestError> {
+        response::<bool>(self.request(Method::DELETE, Some(id), &[]).send()).map(|_| ())
+    }
+
     pub(super) fn publish(
         &self,
         id: Uuid,

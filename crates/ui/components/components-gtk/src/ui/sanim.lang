@@ -1,11 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<language id="rhai" name="Rhai" version="2.0" _section="Source">
+<language id="sanim" name="Sanim" version="2.0" _section="Source">
   <metadata>
-    <property name="mimetypes">text/x-rhai</property>
-    <property name="globs">*.rhai</property>
-    <property name="line-comment-start">//</property>
-    <property name="block-comment-start">/*</property>
-    <property name="block-comment-end">*/</property>
+    <property name="mimetypes">text/x-sanim</property>
+    <property name="globs">*.sanim</property>
+    <property name="line-comment-start">#</property>
   </metadata>
 
   <styles>
@@ -20,36 +18,19 @@
 
   <definitions>
     <context id="line-comment" style-ref="comment" end-at-line-end="true">
-      <start>//</start>
+      <start>#</start>
     </context>
 
-    <context id="block-comment" style-ref="comment">
-      <start>/\*</start>
-      <end>\*/</end>
+    <context id="multiline-string" style-ref="string">
+      <start>"""|'''</start>
+      <end>\%{0@start}</end>
+      <include><context ref="escape"/></include>
     </context>
 
     <context id="string" style-ref="string" end-at-line-end="true">
-      <start>"</start>
-      <end>"</end>
-      <include>
-        <context ref="escape"/>
-      </include>
-    </context>
-
-    <context id="character" style-ref="string" end-at-line-end="true">
-      <start>'</start>
-      <end>'</end>
-      <include>
-        <context ref="escape"/>
-      </include>
-    </context>
-
-    <context id="interpolated-string" style-ref="string">
-      <start>`</start>
-      <end>`</end>
-      <include>
-        <context ref="escape"/>
-      </include>
+      <start>"|'</start>
+      <end>\%{0@start}</end>
+      <include><context ref="escape"/></include>
     </context>
 
     <context id="escape" style-ref="def:special-char">
@@ -59,56 +40,66 @@
     <context id="number" style-ref="number">
       <match extended="true">
         (?&lt;![A-Za-z0-9_])
-        [0-9]+(\.[0-9]+)?
-        ([eE][+-]?[0-9]+)?
+        [0-9][0-9_]*(\.[0-9][0-9_]*)?
+        (?:fps|ms|s|m|deg|pt|px|%)?
         (?![A-Za-z0-9_])
       </match>
     </context>
 
     <context id="keywords" style-ref="keyword">
-      <keyword>break</keyword>
-      <keyword>const</keyword>
-      <keyword>continue</keyword>
-      <keyword>else</keyword>
-      <keyword>export</keyword>
-      <keyword>false</keyword>
-      <keyword>fn</keyword>
-      <keyword>for</keyword>
-      <keyword>if</keyword>
-      <keyword>in</keyword>
       <keyword>let</keyword>
-      <keyword>loop</keyword>
+      <keyword>mut</keyword>
+      <keyword>sig</keyword>
+      <keyword>reflect</keyword>
+      <keyword>ref</keyword>
+      <keyword>fn</keyword>
+      <keyword>type</keyword>
+      <keyword>enum</keyword>
+      <keyword>import</keyword>
+      <keyword>as</keyword>
+      <keyword>if</keyword>
+      <keyword>else</keyword>
+      <keyword>for</keyword>
+      <keyword>in</keyword>
       <keyword>return</keyword>
-      <keyword>true</keyword>
-      <keyword>while</keyword>
+      <keyword>match</keyword>
+      <keyword>case</keyword>
+      <keyword>and</keyword>
+      <keyword>or</keyword>
+      <keyword>not</keyword>
+      <keyword>repeat</keyword>
     </context>
 
     <context id="booleans" style-ref="boolean">
       <keyword>true</keyword>
       <keyword>false</keyword>
+      <keyword>None</keyword>
     </context>
 
     <context id="functions" style-ref="function">
       <keyword>Fraction</keyword>
+      <keyword>Color</keyword>
+      <keyword>Rgb</keyword>
+      <keyword>Hsv</keyword>
+      <keyword>Hsl</keyword>
+      <keyword>Oklab</keyword>
+      <keyword>Oklch</keyword>
       <keyword>abs</keyword>
       <keyword>clamp</keyword>
       <keyword>cos</keyword>
-      <keyword>int</keyword>
+      <keyword>frame_index</keyword>
       <keyword>lerp</keyword>
-      <keyword>gray</keyword>
-      <keyword>graya</keyword>
-      <keyword>hsv</keyword>
-      <keyword>hsva</keyword>
-      <keyword>oklab</keyword>
-      <keyword>oklaba</keyword>
+      <keyword>mouth</keyword>
       <keyword>pow</keyword>
       <keyword>random</keyword>
-      <keyword>rgb</keyword>
-      <keyword>rgba</keyword>
       <keyword>shake</keyword>
       <keyword>sin</keyword>
       <keyword>sqrt</keyword>
+      <keyword>str</keyword>
       <keyword>tan</keyword>
+      <keyword>timecode</keyword>
+      <keyword>timecode_parts</keyword>
+      <keyword>trunc</keyword>
       <keyword>vol</keyword>
     </context>
 
@@ -135,13 +126,11 @@
       <keyword>z</keyword>
     </context>
 
-    <context id="rhai">
+    <context id="sanim">
       <include>
         <context ref="line-comment"/>
-        <context ref="block-comment"/>
+        <context ref="multiline-string"/>
         <context ref="string"/>
-        <context ref="character"/>
-        <context ref="interpolated-string"/>
         <context ref="number"/>
         <context ref="booleans"/>
         <context ref="keywords"/>

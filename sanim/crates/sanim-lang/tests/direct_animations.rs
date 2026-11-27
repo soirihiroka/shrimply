@@ -52,7 +52,7 @@ fn animation_methods_return_plans_with_a_bounded_default() {
 
 #[test]
 fn multiple_targets_share_one_call_interval_and_sequential_calls_advance() {
-    let source = "let first=Box(width=2*(32pt), height=2*(32pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nlet second=Box(width=64pt, height=64pt, fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\n[first,second].fade_in(duration=400ms, ease=\"linear\")\n[first,second].fade_out(duration=200ms, ease=\"linear\")";
+    let source = "let first=Box(width=2*(32pt), height=2*(32pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nlet second=Box(width=64pt, height=64pt, fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center);\n[first,second].fade_in(duration=400ms, ease=\"linear\");\n[first,second].fade_out(duration=200ms, ease=\"linear\")";
     let prepared = prepare(source);
     assert_eq!(prepared.animation.duration, Fraction::new(3u64, 5u64));
     for id in ["first", "second"] {
@@ -140,7 +140,7 @@ fn empty_targets_and_overlapping_property_writers_fail_with_reasons() {
             "target list is empty",
         ),
         (
-            "let marker=Box(width=2*(32pt), height=2*(32pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\n[marker,marker].fade_in()",
+            "let marker=Box(width=2*(32pt), height=2*(32pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center);\n[marker,marker].fade_in()",
             "writers",
         ),
         (

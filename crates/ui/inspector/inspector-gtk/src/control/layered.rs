@@ -389,9 +389,9 @@ fn scalar_expression(
         context,
         "native scalar expression",
         move |refresh| {
-            crate::rhai_editor::editor(
+            crate::expression_editor::editor(
                 Some(source_control.layered.expression_source.clone()),
-                crate::rhai_editor::ExpressionValue::Scalar,
+                crate::expression_editor::ExpressionValue::Scalar,
                 move |source| {
                     report(controller.set_control_expression_source(
                         &target,
