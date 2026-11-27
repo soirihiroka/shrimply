@@ -208,7 +208,7 @@ and SQLite database path.
 
 .. code-block:: console
 
-   $ target/debug/shrimply-project-server 127.0.0.1:8080 projects.sqlite
+   $ target/debug/shrimply-project-server 127.0.0.1:8788 projects.sqlite
 
 Use an HTTPS reverse proxy to reach the server over a network. The token
 grants access to the server's projects. Use a separate server instance if

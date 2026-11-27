@@ -53,11 +53,12 @@ jobs:
         run: |
           expected="$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["workspace"]["package"]["version"])')"
           test "$(docker run --rm shrimply-project-server:ci --version)" = "shrimply-project-server ${expected}"
+          port=8788
           docker run --detach --name project-server-smoke \
-            --env SHRIMPLY_PROJECT_SERVER_TOKEN --publish 127.0.0.1::8080/tcp \
+            --env SHRIMPLY_PROJECT_SERVER_TOKEN --publish "127.0.0.1::${port}/tcp" \
             shrimply-project-server:ci
           trap 'docker logs project-server-smoke; docker rm --force project-server-smoke' EXIT
-          endpoint="http://$(docker port project-server-smoke 8080/tcp)/v1"
+          endpoint="http://$(docker port project-server-smoke "${port}/tcp")/v1"
           curl --fail --silent --show-error --max-time 3 --retry 20 --retry-connrefused --retry-delay 1 \
             --header "Authorization: Bearer ${SHRIMPLY_PROJECT_SERVER_TOKEN}" "${endpoint}" \
             | python3 -c 'import json, sys; info = json.load(sys.stdin); assert info["protocol"] == 2 and info["version"] == sys.argv[1]' "${expected}"
