@@ -2,7 +2,7 @@ use adw::prelude::*;
 use gtk::{gio, glib};
 use shrimply_components_gtk::project_settings::ProjectSettingsSelector;
 use shrimply_components_gtk::tr;
-use shrimply_components_gtk::ui::{SingleLineTextInput, control_row};
+use shrimply_components_gtk::ui::{SingleLineTextInput, control_row, dropdown};
 use shrimply_cross_ui_core::launcher::{self, Launcher};
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
@@ -300,7 +300,16 @@ fn open_remote(
 fn show_create_project(window: &adw::ApplicationWindow, app: &adw::Application) {
     let selector = ProjectSettingsSelector::new();
     let name = SingleLineTextInput::builder(tr!("Untitled Project").as_ref()).build();
+    let servers = launcher::project_servers();
+    let destination = dropdown(
+        0,
+        std::iter::once("Local".to_owned())
+            .chain(servers.iter().cloned())
+            .enumerate(),
+        |_| {},
+    );
     let content = gtk::Box::new(gtk::Orientation::Vertical, 12);
+    content.append(&control_row("Location", &destination));
     content.append(&control_row("Project Name", &name));
     let tags = Rc::new(RefCell::new(Vec::new()));
     content.append(&shrimply_components_gtk::ui::tag_editor(Vec::new(), {
@@ -309,17 +318,6 @@ fn show_create_project(window: &adw::ApplicationWindow, app: &adw::Application) 
     }));
     let names = adw::PreferencesGroup::new();
     names.add(&content);
-    let servers = shrimply_cross_ui_core::launcher::project_servers();
-    let destinations = gtk::StringList::new(&[tr!("Local").as_ref()]);
-    for server in &servers {
-        destinations.append(server);
-    }
-    let destination = adw::ComboRow::builder()
-        .title(tr!("Location").as_ref())
-        .model(&destinations)
-        .build();
-    shrimply_components_gtk::ui::adaptive_choice(&destination);
-    names.add(&destination);
     let create = adw::ButtonRow::builder()
         .title(tr!("Create Project").as_ref())
         .build();
