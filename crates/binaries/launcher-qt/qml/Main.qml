@@ -15,7 +15,7 @@ ApplicationWindow {
     visible: true
     title: backend.text("Shrimply")
 
-    readonly property int sidebarWidth: 330
+    readonly property int sidebarWidth: 200
     readonly property int pageMargin: 12
 
     LauncherBackend {
@@ -45,8 +45,31 @@ ApplicationWindow {
         anchors.fill: parent
         spacing: 0
 
-        Pane {
+        ColumnLayout {
             Layout.preferredWidth: window.sidebarWidth
+            Layout.fillHeight: true
+            Layout.margins: window.pageMargin
+            Item { Layout.fillHeight: true }
+            Button {
+                Layout.alignment: Qt.AlignHCenter
+                text: backend.text("Create Project")
+                highlighted: true
+                onClicked: createDialog.open()
+            }
+            Button {
+                Layout.alignment: Qt.AlignHCenter
+                text: backend.text("Open Project")
+                onClicked: backend.chooseProject()
+            }
+            Button {
+                Layout.alignment: Qt.AlignHCenter
+                text: backend.text("Project Servers")
+                onClicked: projectServersDialog.open()
+            }
+            Item { Layout.fillHeight: true }
+        }
+        Pane {
+            Layout.fillWidth: true
             Layout.fillHeight: true
             ColumnLayout {
                 anchors.fill: parent
@@ -90,29 +113,6 @@ ApplicationWindow {
                     }
                 }
             }
-        }
-        ColumnLayout {
-            Layout.fillWidth: true
-            Layout.fillHeight: true
-            Layout.margins: window.pageMargin
-            Item { Layout.fillHeight: true }
-            Button {
-                Layout.alignment: Qt.AlignHCenter
-                text: backend.text("Create Project")
-                highlighted: true
-                onClicked: createDialog.open()
-            }
-            Button {
-                Layout.alignment: Qt.AlignHCenter
-                text: backend.text("Open Project")
-                onClicked: backend.chooseProject()
-            }
-            Button {
-                Layout.alignment: Qt.AlignHCenter
-                text: backend.text("Project Servers")
-                onClicked: projectServersDialog.open()
-            }
-            Item { Layout.fillHeight: true }
         }
     }
 

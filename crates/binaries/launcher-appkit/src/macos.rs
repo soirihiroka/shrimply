@@ -25,7 +25,7 @@ use std::path::{Path, PathBuf};
 
 const WINDOW_SIZE: NSSize = NSSize::new(760.0, 560.0);
 const MINIMUM_WINDOW_SIZE: NSSize = NSSize::new(560.0, 420.0);
-const SIDEBAR_WIDTH: f64 = 330.0;
+const SIDEBAR_WIDTH: f64 = 200.0;
 const CONTENT_MARGIN: f64 = 12.0;
 const TITLEBAR_HEIGHT: f64 = 52.0;
 const SEARCH_HEIGHT: f64 = 32.0;
@@ -157,53 +157,57 @@ define_class!(
                 };
                 button.setFrame(NSRect::new(
                     NSPoint::new(
-                        (WINDOW_SIZE.width + SIDEBAR_WIDTH - SIDEBAR_BUTTON_WIDTH) / 2.0,
+                        (SIDEBAR_WIDTH - SIDEBAR_BUTTON_WIDTH) / 2.0,
                         WINDOW_SIZE.height - TITLEBAR_HEIGHT
                             - (index + 1) as f64 * (CONTENT_MARGIN + SIDEBAR_BUTTON_HEIGHT),
                     ),
                     NSSize::new(SIDEBAR_BUTTON_WIDTH, SIDEBAR_BUTTON_HEIGHT),
                 ));
-                button.setAutoresizingMask(NSAutoresizingMaskOptions::ViewMinYMargin
-                    | NSAutoresizingMaskOptions::ViewMinXMargin | NSAutoresizingMaskOptions::ViewMaxXMargin);
+                button.setAutoresizingMask(NSAutoresizingMaskOptions::ViewMinYMargin);
                 button.setControlSize(NSControlSize::Regular);
                 button.setBezelStyle(NSBezelStyle::Push);
                 if index == 0 {
                     button.setKeyEquivalent(ns_string!("\r"));
                 }
-                content.addSubview(&button);
+                sidebar_content.addSubview(&button);
             }
             content.addSubview(sidebar);
 
-            let width = SIDEBAR_WIDTH - CONTENT_MARGIN * 2.0;
+            let x = SIDEBAR_WIDTH + CONTENT_MARGIN;
+            let width = WINDOW_SIZE.width - x - CONTENT_MARGIN;
             let title = NSTextField::labelWithString(ns_string!("Projects"), mtm);
             title.setFont(Some(&NSFont::titleBarFontOfSize(0.0)));
             title.sizeToFit();
-            title.setFrameOrigin(NSPoint::new(CONTENT_MARGIN,
+            title.setFrameOrigin(NSPoint::new(x,
                 WINDOW_SIZE.height - (TITLEBAR_HEIGHT + title.frame().size.height) / 2.0));
             title.setAutoresizingMask(NSAutoresizingMaskOptions::ViewMinYMargin);
-            sidebar_content.addSubview(&title);
+            content.addSubview(&title);
 
             let search = NSSearchField::initWithFrame(NSSearchField::alloc(mtm), NSRect::new(
-                NSPoint::new(CONTENT_MARGIN, WINDOW_SIZE.height - TITLEBAR_HEIGHT - SEARCH_HEIGHT),
+                NSPoint::new(x, WINDOW_SIZE.height - TITLEBAR_HEIGHT - SEARCH_HEIGHT),
                 NSSize::new(width, SEARCH_HEIGHT),
             ));
             search.setPlaceholderString(Some(ns_string!("Search Projects")));
             search.setContinuous(true);
-            search.setAutoresizingMask(NSAutoresizingMaskOptions::ViewMinYMargin);
+            search.setAutoresizingMask(NSAutoresizingMaskOptions::ViewMinYMargin
+                | NSAutoresizingMaskOptions::ViewWidthSizable);
             unsafe {
                 search.setTarget(Some(self));
                 search.setAction(Some(sel!(searchChanged:)));
             }
-            sidebar_content.addSubview(&search);
+            content.addSubview(&search);
 
-            let frame = NSRect::new(NSPoint::new(CONTENT_MARGIN, CONTENT_MARGIN), NSSize::new(
+            let frame = NSRect::new(NSPoint::new(x, CONTENT_MARGIN), NSSize::new(
                 width, WINDOW_SIZE.height - TITLEBAR_HEIGHT - SEARCH_HEIGHT - CONTENT_MARGIN * 2.0,
             ));
             let scroll = NSScrollView::initWithFrame(NSScrollView::alloc(mtm), frame);
             scroll.setDrawsBackground(false);
             scroll.setHasVerticalScroller(true);
-            scroll.setAutoresizingMask(NSAutoresizingMaskOptions::ViewHeightSizable);
-            let table = NSTableView::initWithFrame(NSTableView::alloc(mtm), frame);
+            scroll.setAutoresizingMask(NSAutoresizingMaskOptions::ViewHeightSizable
+                | NSAutoresizingMaskOptions::ViewWidthSizable);
+            let table = NSTableView::initWithFrame(NSTableView::alloc(mtm),
+                NSRect::new(NSPoint::new(0.0, 0.0), frame.size));
+            table.setAutoresizingMask(NSAutoresizingMaskOptions::ViewWidthSizable);
             table.setBackgroundColor(&NSColor::clearColor());
             table.setHeaderView(None);
             table.setRowHeight(44.0);
@@ -215,7 +219,7 @@ define_class!(
                 table.setDelegate(Some(ProtocolObject::from_ref(self)));
             }
             scroll.setDocumentView(Some(&table));
-            sidebar_content.addSubview(&scroll);
+            content.addSubview(&scroll);
             self.ivars().projects.set(table).expect("project list must only be created once");
 
             window.setContentView(Some(root_glass));

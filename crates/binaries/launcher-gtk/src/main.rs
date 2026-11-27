@@ -100,10 +100,10 @@ fn build_ui(app: &adw::Application) {
     projects.append(&scroller);
     let toolbar = adw::ToolbarView::new();
     let header = adw::HeaderBar::new();
-    header.set_show_end_title_buttons(false);
+    header.set_show_start_title_buttons(false);
     toolbar.add_top_bar(&header);
     toolbar.set_content(Some(&projects));
-    let sidebar = adw::NavigationPage::builder()
+    let projects = adw::NavigationPage::builder()
         .title(tr!("Projects").as_ref())
         .child(&toolbar)
         .build();
@@ -122,18 +122,18 @@ fn build_ui(app: &adw::Application) {
     actions.append(&servers);
     let toolbar = adw::ToolbarView::new();
     let header = adw::HeaderBar::new();
-    header.set_show_start_title_buttons(false);
+    header.set_show_end_title_buttons(false);
     toolbar.add_top_bar(&header);
     toolbar.set_content(Some(&actions));
-    let content = adw::NavigationPage::builder()
+    let actions = adw::NavigationPage::builder()
         .title(tr!("Shrimply").as_ref())
         .child(&toolbar)
         .build();
     let split = adw::NavigationSplitView::builder()
-        .sidebar(&sidebar)
-        .content(&content)
-        .min_sidebar_width(300.0)
-        .max_sidebar_width(460.0)
+        .sidebar(&actions)
+        .content(&projects)
+        .min_sidebar_width(200.0)
+        .max_sidebar_width(200.0)
         .sidebar_width_unit(adw::LengthUnit::Px)
         .build();
     let window = adw::ApplicationWindow::builder()

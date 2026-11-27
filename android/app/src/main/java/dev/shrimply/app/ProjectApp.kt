@@ -518,8 +518,8 @@ private fun Launcher(projects: List<JSONObject>, enabled: Boolean, create: () ->
     }
     BoxWithConstraints(Modifier.fillMaxSize()) {
         if (maxWidth >= ExpandedWidth) Row(Modifier.fillMaxSize()) {
-            Column(Modifier.width(330.dp).fillMaxHeight().background(MaterialTheme.colorScheme.surfaceContainerLow)) { list() }
-            Column(Modifier.weight(1f).fillMaxHeight(), horizontalAlignment = Alignment.CenterHorizontally) { actions() }
+            Column(Modifier.width(330.dp).fillMaxHeight(), horizontalAlignment = Alignment.CenterHorizontally) { actions() }
+            Column(Modifier.weight(1f).fillMaxHeight().background(MaterialTheme.colorScheme.surfaceContainerLow)) { list() }
         } else Column(Modifier.fillMaxSize()) {
             actions()
             list()
