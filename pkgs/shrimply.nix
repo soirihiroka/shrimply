@@ -179,8 +179,6 @@ rustPlatform.buildRustPackage {
 
     install -Dm755 target/release/shrimply "$out/bin/shrimply"
     install -Dm755 target/release/shrimply-editor "$out/bin/shrimply-editor"
-    install -Dm644 target/release/res/lip-sync/pocketsphinx-ci.model \
-      "$out/share/shrimply/lip-sync/pocketsphinx-ci.model"
     install -Dm644 vendor/pocketsphinx/LICENSE \
       "$out/share/licenses/shrimply/PocketSphinx-code.txt"
     install -Dm644 vendor/pocketsphinx/MODEL-LICENSE \

@@ -88,7 +88,7 @@ jobs:
 
       - name: Save Flatpak application cache
         id: save-application-cache
-        if: ${{ success() && steps.setup.outputs.application-hit != 'true' }}
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' && steps.setup.outputs.application-hit != 'true' }}
         uses: actions/cache/save@v6
         with:
           path: ${{ env.FLATPAK_STATE_DIR }}/ccache/cargo-target

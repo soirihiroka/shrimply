@@ -66,7 +66,9 @@ pub struct Analyzer {
 
 impl Analyzer {
     pub fn new() -> Result<Self, String> {
-        Self::load(&shrimply_pocketsphinx::model_path()?)
+        Ok(Self {
+            model: Model::load_default()?,
+        })
     }
 
     pub fn load(model_path: &Path) -> Result<Self, String> {

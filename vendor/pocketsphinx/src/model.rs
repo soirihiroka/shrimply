@@ -1,5 +1,4 @@
 use sha2::{Digest, Sha256};
-use std::{fs, path::Path};
 
 pub(crate) const PHONE_COUNT: usize = 46;
 pub(crate) const SENONE_COUNT: usize = 138;
@@ -29,9 +28,7 @@ pub(crate) struct AcousticModel {
 }
 
 impl AcousticModel {
-    pub fn load(path: &Path) -> Result<Self, String> {
-        let bytes = fs::read(path)
-            .map_err(|error| format!("cannot read model {}: {error}", path.display()))?;
+    pub fn parse(bytes: &[u8]) -> Result<Self, String> {
         if bytes.len() < MAGIC.len() + CHECKSUM_LENGTH {
             return Err("truncated compact model".to_owned());
         }

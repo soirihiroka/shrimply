@@ -79,13 +79,7 @@ fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-env-changed=SHRIMPLY_POCKETSPHINX_CACHE");
     let out = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR is set by Cargo"));
-    let profile = out
-        .ancestors()
-        .nth(3)
-        .expect("standard Cargo OUT_DIR layout");
-    let target = profile
-        .parent()
-        .expect("Cargo profile directory has a parent");
+    let target = out.ancestors().nth(4).expect("Cargo build cache directory");
     let cache = env::var_os("SHRIMPLY_POCKETSPHINX_CACHE")
         .map(PathBuf::from)
         .unwrap_or_else(|| target.join("pocketsphinx-cache").join(REVISION));
@@ -105,14 +99,8 @@ fn main() {
         fs::rename(&temporary, &cached_model).expect("publish compact model");
     }
 
-    let resource_dir = profile.join("res/lip-sync");
-    fs::create_dir_all(&resource_dir).expect("create profile resource directory");
-    let staged = resource_dir.join("pocketsphinx-ci.model");
-    fs::copy(&cached_model, &staged).expect("stage compact PocketSphinx model");
-    println!(
-        "cargo:rustc-env=SHRIMPLY_BUILD_POCKETSPHINX_MODEL={}",
-        staged.display()
-    );
+    fs::copy(cached_model, out.join("pocketsphinx-ci.model"))
+        .expect("stage compact PocketSphinx model");
 }
 
 fn fetch(source: &Source, destination: &Path) {

@@ -126,8 +126,6 @@ APPKIT_ICON_DIR := $(CARGO_TARGET_DIR)/macos-icon
 APPKIT_APP := $(CARGO_TARGET_DIR)/debug/Shrimply.app
 APPKIT_DEPLOYMENT_TARGET ?= 15.0
 RSVG_CONVERT ?= rsvg-convert
-LIP_SYNC_MODEL := $(CARGO_TARGET_DIR)/release/res/lip-sync/pocketsphinx-ci.model
-LIP_SYNC_RESOURCE_DIR := $(DATADIR)/shrimply/lip-sync
 LIP_SYNC_LICENSE_DIR := $(DATADIR)/licenses/shrimply
 MANIM_WORKER_RESOURCE_DIR := $(PREFIX)/share/shrimply/crates/media/visual/manim/manim-bridge/python
 MANIM_SOURCE_RESOURCE_DIR := $(PREFIX)/share/shrimply/external/manim
@@ -408,7 +406,6 @@ install: release
 ifneq ($(FFMPEG_PREFIX),$(abspath $(DESTDIR)$(PREFIX)))
 	sh packaging/linux/install-ffmpeg.sh "$(FFMPEG_PREFIX)" "$(DESTDIR)$(BINDIR)" "$(DESTDIR)$(PREFIX)/lib/shrimply/ffmpeg" "$(BIN_NAME)" "$(EDITOR_BIN_NAME)"
 endif
-	$(INSTALL) -Dm644 $(LIP_SYNC_MODEL) "$(DESTDIR)$(LIP_SYNC_RESOURCE_DIR)/pocketsphinx-ci.model"
 	$(INSTALL) -Dm644 vendor/pocketsphinx/LICENSE "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/PocketSphinx-code.txt"
 	$(INSTALL) -Dm644 vendor/pocketsphinx/MODEL-LICENSE "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/PocketSphinx-model.txt"
 	$(INSTALL) -Dm644 vendor/rhubarb-lip-sync/LICENSE "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/Rhubarb-Lip-Sync.txt"
@@ -428,7 +425,6 @@ uninstall:
 	rm -f "$(DESTDIR)$(BINDIR)/shrimply-ffmpeg"
 	rm -f "$(DESTDIR)$(BINDIR)/$(BIN_NAME)"
 	rm -f "$(DESTDIR)$(BINDIR)/$(EDITOR_BIN_NAME)"
-	rm -rf "$(DESTDIR)$(LIP_SYNC_RESOURCE_DIR)"
 	rm -f "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/PocketSphinx-code.txt"
 	rm -f "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/PocketSphinx-model.txt"
 	rm -f "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/Rhubarb-Lip-Sync.txt"

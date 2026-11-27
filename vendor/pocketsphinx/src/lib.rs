@@ -1,14 +1,13 @@
 //! The small, fixed English all-phone recognizer used by Shrimply.
 //!
 //! This is a clean Rust implementation of the PocketSphinx acoustic path.  It
-//! deliberately supports only the 16 kHz CI model staged by this crate's build
-//! script; it is not a general PocketSphinx binding.
+//! deliberately supports only the embedded 16 kHz CI model format.
 
 mod decoder;
 mod frontend;
 mod model;
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 pub const SAMPLE_RATE: u32 = 16_000;
 
@@ -122,8 +121,21 @@ pub struct PhoneSegment {
 pub struct Model(model::AcousticModel);
 
 impl Model {
+    pub fn load_default() -> Result<Self, String> {
+        if let Some(path) = std::env::var_os("SHRIMPLY_LIP_SYNC_MODEL") {
+            return Self::load(Path::new(&path));
+        }
+        model::AcousticModel::parse(include_bytes!(concat!(
+            env!("OUT_DIR"),
+            "/pocketsphinx-ci.model"
+        )))
+        .map(Self)
+    }
+
     pub fn load(path: &Path) -> Result<Self, String> {
-        model::AcousticModel::load(path).map(Self)
+        let bytes = std::fs::read(path)
+            .map_err(|error| format!("cannot read model {}: {error}", path.display()))?;
+        model::AcousticModel::parse(&bytes).map(Self)
     }
 
     /// Recognize one mono, 16 kHz signed-PCM utterance.
@@ -134,39 +146,4 @@ impl Model {
         let features = frontend::extract(samples, &self.0.lda)?;
         decoder::decode(&self.0, &features)
     }
-}
-
-/// Find the build-staged acoustic model.
-pub fn model_path() -> Result<PathBuf, String> {
-    if let Some(path) = std::env::var_os("SHRIMPLY_LIP_SYNC_MODEL") {
-        let path = PathBuf::from(path);
-        if path.is_file() {
-            return Ok(path);
-        }
-        return Err(format!(
-            "SHRIMPLY_LIP_SYNC_MODEL does not name a file: {}",
-            path.display()
-        ));
-    }
-
-    if let Some(path) = option_env!("SHRIMPLY_BUILD_POCKETSPHINX_MODEL") {
-        let path = PathBuf::from(path);
-        if path.is_file() {
-            return Ok(path);
-        }
-    }
-
-    let executable =
-        std::env::current_exe().map_err(|error| format!("cannot locate executable: {error}"))?;
-    let directory = executable
-        .parent()
-        .ok_or("executable has no parent directory")?;
-    std::iter::once(directory.join("res/lip-sync/pocketsphinx-ci.model"))
-        .chain(
-            directory
-                .ancestors()
-                .map(|prefix| prefix.join("share/shrimply/lip-sync/pocketsphinx-ci.model")),
-        )
-        .find(|path| path.is_file())
-        .ok_or_else(|| "PocketSphinx model not found; set SHRIMPLY_LIP_SYNC_MODEL".to_owned())
 }
