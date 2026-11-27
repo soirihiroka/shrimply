@@ -53,4 +53,4 @@
   - Read it at task start and before editing shared files (create it locally if absent; never commit it).
   - Append dated task ownership, progress, requests, and replies.
   - Preserve other agents' entries and check pending requests before finishing.
-- Before you stop, you must spawn a review agent to ensure the code has no duplicated paths or logic: zoom out to the big picture, identify new ways to unify things, and see what existing code can now be removed as a result of the unified structure.
+- If you have edited files, bBefore you stop, you must spawn a review agent to ensure the code has no duplicated paths or logic: zoom out to the big picture, identify new ways to unify things, and see what existing code can now be removed as a result of the unified structure.
