@@ -67,19 +67,6 @@ runs:
         "ffmpeg=$ffmpeg" | Out-File -Append -Encoding utf8 $env:GITHUB_OUTPUT
         "key=ffmpeg-$ffmpeg-$env:ImageOS-$env:ImageVersion-msvc-$env:VCToolsVersion-sdk-$sdk-x64-vcpkg-$vcpkg" | Out-File -Append -Encoding utf8 $env:GITHUB_OUTPUT
 
-    - name: Install host tools
-      shell: powershell
-      run: |
-        $packages = @()
-        if (!(Get-Command make.exe -ErrorAction SilentlyContinue)) { $packages += "make" }
-        if (!(Get-Command rg.exe -ErrorAction SilentlyContinue)) { $packages += "ripgrep" }
-        if ($packages.Count -gt 0) {
-          choco install @packages --yes --no-progress
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-        }
-        Get-Command make.exe -ErrorAction Stop
-        Get-Command rg.exe -ErrorAction Stop
-
     - name: Install uv
       uses: astral-sh/setup-uv@v7
       with:
