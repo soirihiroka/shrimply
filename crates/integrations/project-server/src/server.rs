@@ -121,7 +121,7 @@ async fn dispatch(
         .get(header::AUTHORIZATION)
         .map_or(&[][..], header::HeaderValue::as_bytes);
     let login = request.method() == Method::POST && path == "/v1/login";
-    let _attempt = if login {
+    let attempt = if login {
         match authority.login_attempts.try_acquire() {
             Ok(attempt) => Some(attempt),
             Err(_) => {
@@ -167,6 +167,7 @@ async fn dispatch(
         );
         return Ok(response);
     }
+    drop(attempt);
     if request.method() == Method::GET && path == "/v1/projects" {
         let projects = transact(authority, |store| store.list()).await?;
         return Ok(json(StatusCode::OK, projects));
