@@ -212,11 +212,13 @@ impl Editor {
                     alert.addButtonWithTitle(&NSString::from_str(action.label()));
                 }
                 match alert.runModal() {
-                    NSAlertSecondButtonReturn => {
+                    response if response == NSAlertSecondButtonReturn => {
                         forced.push(prompt.mismatch);
                         self.prepare_project(forced, None);
                     }
-                    NSAlertThirdButtonReturn => self.prepare_project(forced, prompt.action),
+                    response if response == NSAlertThirdButtonReturn => {
+                        self.prepare_project(forced, prompt.action);
+                    }
                     _ => self.stop_loading(Ok(false)),
                 }
             }
