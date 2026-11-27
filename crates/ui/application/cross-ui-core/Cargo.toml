@@ -23,7 +23,6 @@ shrimply-project-document = { workspace = true, default-features = true }
 shrimply-project-service.workspace = true
 shrimply-project-types = { workspace = true }
 shrimply-editor-state = { workspace = true, features = ["audio"] }
-shrimply-recent-projects = { workspace = true }
 shrimply-resource-pipeline.workspace = true
 shrimply-timeline-edit = { workspace = true }
 tracing.workspace = true

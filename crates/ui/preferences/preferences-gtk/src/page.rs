@@ -3,7 +3,7 @@ use adw::prelude::*;
 use shrimply_components_gtk::tr;
 use shrimply_components_gtk::ui::ColorPicker;
 
-pub fn show_project_servers(window: &adw::ApplicationWindow) {
+pub fn show_project_servers(window: &adw::ApplicationWindow) -> adw::PreferencesDialog {
     let page = adw::PreferencesPage::new();
     page.add(&server::project_server_group(
         preferences_store::open_with_defaults(),
@@ -14,6 +14,7 @@ pub fn show_project_servers(window: &adw::ApplicationWindow) {
         .build();
     dialog.add(&page);
     dialog.present(Some(window.upcast_ref::<gtk::Widget>()));
+    dialog
 }
 
 pub fn show_preferences_dialog(

@@ -31,6 +31,7 @@ shrimply-player-core.workspace = true
 shrimply-cross-ui-theme.workspace = true
 shrimply-project-document = { workspace = true, features = ["editor"] }
 shrimply-recent-projects.workspace = true
+shrimply-project-service.workspace = true
 shrimply-path-core.workspace = true
 shrimply-preferences-core.workspace = true
 shrimply-asset.workspace = true
@@ -48,7 +49,6 @@ skia-safe = { workspace = true, features = ["vulkan", "ganesh"] }
 
 [target.'cfg(target_os = "android")'.dependencies]
 shrimply-editing-runtime.workspace = true
-shrimply-project-service.workspace = true
 shrimply-export-core.workspace = true
 shrimply-caption-export-core.workspace = true
 shrimply-fonts = { workspace = true, features = ["fontconfig"] }

@@ -14,6 +14,8 @@ shrimply-path-core.workspace = true
 shrimply-preferences-core.workspace = true
 shrimply-project-document.workspace = true
 shrimply-project-protocol.workspace = true
+shrimply-recent-projects.workspace = true
+tracing.workspace = true
 shrimply-resource-pipeline.workspace = true
 tempfile.workspace = true
 uuid = { workspace = true, features = ["serde", "v4"] }

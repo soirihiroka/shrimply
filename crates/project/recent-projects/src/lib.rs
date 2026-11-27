@@ -1,11 +1,10 @@
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const KEY: &str = "recent_projects";
-const LIMIT: usize = 50;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct RecentProject {
@@ -13,55 +12,14 @@ pub struct RecentProject {
     #[serde(default)]
     pub tags: Vec<String>,
     pub path: PathBuf,
-    #[serde(skip)]
-    pub modified_at: Option<i64>,
     opened_at: u64,
 }
 
 pub fn load() -> Result<Vec<RecentProject>, String> {
-    let conn = open()?;
-    let value = conn
-        .query_row(
-            "SELECT value FROM key_values WHERE key = ?1",
-            [KEY],
-            |row| row.get::<_, String>(0),
-        )
-        .optional()
-        .map_err(|error| format!("could not read recent projects: {error}"))?;
-    let mut projects: Vec<RecentProject> = value
-        .as_deref()
-        .map(serde_json::from_str)
-        .transpose()
-        .inspect_err(|error| tracing::warn!("Could not parse recent projects: {error}"))
-        .unwrap_or_default()
-        .unwrap_or_default();
-    let previous_len = projects.len();
-    projects.retain_mut(|project: &mut RecentProject| {
-        let Ok(metadata) = project.path.metadata() else {
-            return false;
-        };
-        if !metadata.is_file() {
-            return false;
-        }
-        project.modified_at = modified_timestamp(&metadata);
-        true
-    });
+    let mut projects = load_from(&open()?)?;
+    projects.retain(|project| project.path.is_file());
     projects.sort_by_key(|project| std::cmp::Reverse(project.opened_at));
-    projects.truncate(LIMIT);
-    if projects.len() != previous_len {
-        store(&conn, &projects)?;
-    }
     Ok(projects)
-}
-
-/// Filesystem modification time, independent of when history last opened it.
-pub fn modified_at(path: &Path) -> Option<i64> {
-    modified_timestamp(&path.metadata().ok()?)
-}
-
-fn modified_timestamp(metadata: &fs::Metadata) -> Option<i64> {
-    let elapsed = metadata.modified().ok()?.duration_since(UNIX_EPOCH).ok()?;
-    i64::try_from(elapsed.as_secs()).ok()
 }
 
 pub fn settings_db_path() -> PathBuf {
@@ -69,8 +27,11 @@ pub fn settings_db_path() -> PathBuf {
 }
 
 pub fn touch(path: &Path, name: &str, tags: &[String]) -> Result<(), String> {
-    let conn = open()?;
-    let mut projects = load_from(&conn)?;
+    let mut conn = open()?;
+    let transaction = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|error| error.to_string())?;
+    let mut projects = load_from(&transaction)?;
     let path = absolute_path(path);
     projects.retain(|project| project.path != path);
     projects.insert(
@@ -78,7 +39,6 @@ pub fn touch(path: &Path, name: &str, tags: &[String]) -> Result<(), String> {
         RecentProject {
             name: name.to_string(),
             tags: tags.to_vec(),
-            modified_at: None,
             path,
             opened_at: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
@@ -86,23 +46,8 @@ pub fn touch(path: &Path, name: &str, tags: &[String]) -> Result<(), String> {
                 .as_secs(),
         },
     );
-    projects.truncate(LIMIT);
-    store(&conn, &projects)
-}
-
-pub fn remove(path: &Path) -> Result<(), String> {
-    let conn = open()?;
-    let path = absolute_path(path);
-    let mut projects = load_from(&conn)?;
-    projects.retain(|project| project.path != path);
-    store(&conn, &projects)
-}
-
-pub fn clear() -> Result<(), String> {
-    open()?
-        .execute("DELETE FROM key_values WHERE key = ?1", [KEY])
-        .map(|_| ())
-        .map_err(|error| format!("could not clear recent projects: {error}"))
+    store(&transaction, &projects)?;
+    transaction.commit().map_err(|error| error.to_string())
 }
 
 fn open() -> Result<Connection, String> {

@@ -12,7 +12,6 @@ pub enum EffectRole {
     Window,
     Sidebar,
     Card,
-    RecentProject,
     Controls,
 }
 
@@ -33,10 +32,7 @@ impl EffectView {
         // Typed class lookup (including downcasting) would panic on macOS 15.
         let effect = if AnyClass::get(c"NSGlassEffectView").is_some() {
             let view = NSGlassEffectView::initWithFrame(NSGlassEffectView::alloc(mtm), frame);
-            view.setStyle(match role {
-                EffectRole::RecentProject => NSGlassEffectViewStyle::Clear,
-                _ => NSGlassEffectViewStyle::Regular,
-            });
+            view.setStyle(NSGlassEffectViewStyle::Regular);
             if matches!(role, EffectRole::Window) {
                 view.setTintColor(Some(&NSColor::windowBackgroundColor()));
             }
@@ -52,7 +48,7 @@ impl EffectView {
                     NSVisualEffectMaterial::Sidebar,
                     NSVisualEffectBlendingMode::BehindWindow,
                 ),
-                EffectRole::Card | EffectRole::RecentProject => (
+                EffectRole::Card => (
                     NSVisualEffectMaterial::Popover,
                     NSVisualEffectBlendingMode::WithinWindow,
                 ),

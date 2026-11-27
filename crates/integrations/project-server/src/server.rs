@@ -90,6 +90,10 @@ async fn dispatch(
     if request.method() == Method::GET && path == "/v1" {
         return Ok(json(StatusCode::OK, serde_json::json!({"protocol":2})));
     }
+    if request.method() == Method::GET && path == "/v1/projects" {
+        let projects = transact(authority, |store| store.list()).await?;
+        return Ok(json(StatusCode::OK, projects));
+    }
     let relative = path.strip_prefix("/v1/projects/").ok_or(Failure::Missing)?;
     let (id, action) = relative.split_once('/').unwrap_or((relative, ""));
     let id = Uuid::parse_str(id).map_err(|_| Failure::Missing)?;

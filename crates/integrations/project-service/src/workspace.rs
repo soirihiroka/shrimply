@@ -20,38 +20,10 @@ use crate::{
     SyncRequest,
 };
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct ProjectLink {
     pub server: String,
     pub project_id: Uuid,
-}
-
-impl ProjectLink {
-    pub fn from_url(url: &str, servers: &[String]) -> Result<Self, String> {
-        let (server, id) = url
-            .trim()
-            .rsplit_once("/v1/projects/")
-            .ok_or("Enter a Shrimply project link")?;
-        let server = shrimply_preferences_core::normalize_project_server_url(server)?;
-        if !servers.contains(&server) {
-            return Err(format!(
-                "Add {server} in Project Servers before opening its project link"
-            ));
-        }
-        let project_id = Uuid::parse_str(id).map_err(|_| "The project link has an invalid ID")?;
-        Ok(Self { server, project_id })
-    }
-}
-
-impl std::fmt::Display for ProjectLink {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            formatter,
-            "{}/v1/projects/{}",
-            self.server.trim_end_matches('/'),
-            self.project_id
-        )
-    }
 }
 
 pub struct WorkspaceUpdate {
@@ -114,7 +86,7 @@ impl SharedWorkspace {
                 .to_string_lossy()
                 .into_owned(),
             link: ProjectLink {
-                server: link.0,
+                server: link.0.trim_end_matches('/').to_owned(),
                 project_id: Uuid::parse_str(&link.1).map_err(text)?,
             },
         }))
@@ -125,6 +97,7 @@ impl SharedWorkspace {
         server: &str,
         initial: &Project,
     ) -> Result<(Self, Arc<Project>), String> {
+        let server = server.trim_end_matches('/');
         Self::check_destination(project_file)?;
         let client = ProjectClient::configured(server)?;
         let workspace = match Self::open(project_file)? {
@@ -154,6 +127,7 @@ impl SharedWorkspace {
         server: &str,
         project_id: Uuid,
     ) -> Result<(Self, Arc<Project>), String> {
+        let server = server.trim_end_matches('/');
         Self::check_destination(project_file)?;
         let client = ProjectClient::configured(server)?;
         let version = client.get(project_id).map_err(text)?;

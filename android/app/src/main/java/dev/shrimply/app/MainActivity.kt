@@ -97,7 +97,6 @@ class MainActivity : ComponentActivity() {
                 LaunchedEffect(timeline.identity, project) {
                     if (project != null) {
                         timeline.request("open", "path" to project)
-                        timeline.request("remove_recent", "path" to project)
                         if (intent.getBooleanExtra("debug_playback_capture", false)) {
                             window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
                             try {

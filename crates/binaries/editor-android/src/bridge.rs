@@ -182,9 +182,6 @@ fn run_project(
         runtime
             .request(&json!({"op":"open","path":path}))
             .expect("open actual benchmark project");
-        runtime
-            .request(&json!({"op":"remove_recent","path":path}))
-            .expect("keep benchmark out of project history");
     }
     let mut viewport = crate::input::Viewport::default();
     let mut graph_viewports = std::collections::BTreeMap::<usize, crate::input::Viewport>::new();
@@ -1443,6 +1440,29 @@ pub extern "system" fn Java_dev_shrimply_app_NativeTimeline_create<'caller>(
                 benchmark_submitted,
                 project_thread: Some(project_thread),
             })) as jlong)
+        })
+        .resolve::<ThrowRuntimeExAndDefault>()
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_shrimply_app_NativeTimeline_listProjects<'caller>(
+    mut unowned: EnvUnowned<'caller>,
+    _this: JObject<'caller>,
+    include_remote: jboolean,
+) -> JString<'caller> {
+    unowned
+        .with_env(|env| -> jni::errors::Result<JString<'caller>> {
+            use shrimply_project_service::catalog;
+            let result = if include_remote {
+                catalog::list()
+            } else {
+                catalog::local_projects()
+            };
+            let payload = match result {
+                Ok(projects) => json!({ "projects": projects }),
+                Err(error) => json!({ "error": error }),
+            };
+            env.new_string(payload.to_string())
         })
         .resolve::<ThrowRuntimeExAndDefault>()
 }

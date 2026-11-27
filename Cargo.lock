@@ -6339,7 +6339,6 @@ dependencies = [
  "shrimply-project-service",
  "shrimply-project-types",
  "shrimply-property-transfer",
- "shrimply-recent-projects",
  "shrimply-resource-pipeline",
  "shrimply-timeline-edit",
  "shrimply-trust-core",
@@ -6617,7 +6616,6 @@ dependencies = [
  "shrimply-process-reporting",
  "shrimply-project-document",
  "shrimply-property-transfer",
- "shrimply-recent-projects",
  "shrimply-timeline-edit",
  "shrimply-timeline-gtk",
  "shrimply-transcription",
@@ -6652,7 +6650,6 @@ dependencies = [
  "shrimply-preview-runtime-cuda",
  "shrimply-process-reporting",
  "shrimply-project-document",
- "shrimply-recent-projects",
  "shrimply-trust-core",
  "shrimply-visual-cuda",
  "tracing",
@@ -7118,7 +7115,6 @@ dependencies = [
  "shrimply-math-core",
  "shrimply-process-reporting",
  "shrimply-project-types",
- "shrimply-recent-projects",
  "tracing",
 ]
 
@@ -7941,6 +7937,7 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
+ "rmp-serde",
  "rusqlite",
  "serde",
  "serde_json",
@@ -7965,8 +7962,10 @@ dependencies = [
  "shrimply-preferences-core",
  "shrimply-project-document",
  "shrimply-project-protocol",
+ "shrimply-recent-projects",
  "shrimply-resource-pipeline",
  "tempfile",
+ "tracing",
  "uuid",
 ]
 

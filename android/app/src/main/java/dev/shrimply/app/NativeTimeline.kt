@@ -33,6 +33,7 @@ internal object NativeTimeline {
     external fun initialize(application: android.content.Context, config: String, cache: String, fonts: String, videoEncoderNames: String)
     external fun throughput(path: String, scene: String, frames: Int): String
     external fun create(stress: Boolean, benchmark: Boolean, files: ProjectFiles, listener: TimelineListener): Long
+    external fun listProjects(includeRemote: Boolean): String
     external fun request(handle: Long, request: String, descriptor: Int): String
     external fun surface(handle: Long, role: Int, surface: Surface?, width: Int, height: Int, density: Float, visible: Boolean)
     external fun visible(handle: Long, role: Int, visible: Boolean)

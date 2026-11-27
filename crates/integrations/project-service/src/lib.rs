@@ -1,4 +1,5 @@
 mod cache;
+pub mod catalog;
 mod client;
 mod workspace;
 

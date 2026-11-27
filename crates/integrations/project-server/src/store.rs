@@ -10,7 +10,8 @@ use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use shrimply_project_protocol::{
-    LEGACY_CHECKPOINT_FIELD, ProjectVersion, PublishRequest, SyncResponse, valid_digest,
+    LEGACY_CHECKPOINT_FIELD, ProjectSummary, ProjectVersion, PublishRequest, SyncResponse,
+    valid_digest,
 };
 use uuid::Uuid;
 
@@ -95,14 +96,15 @@ pub(super) struct Store {
 
 impl Store {
     pub(super) fn open(path: &Path, blobs: Arc<BlobStore>) -> Result<Self, Failure> {
-        let connection = Connection::open(path)?;
+        let mut connection = Connection::open(path)?;
         connection.execute_batch(
             "PRAGMA journal_mode=WAL;
              PRAGMA foreign_keys=ON;
              CREATE TABLE IF NOT EXISTS projects (
                  id TEXT PRIMARY KEY,
                  revision INTEGER NOT NULL,
-                 document BLOB NOT NULL
+                 document BLOB NOT NULL,
+                 name TEXT NOT NULL
              );
              CREATE TABLE IF NOT EXISTS operation_receipts (
                  project TEXT NOT NULL REFERENCES projects(id),
@@ -112,11 +114,68 @@ impl Store {
                  PRIMARY KEY (project, operation)
              );",
         )?;
+        if !connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM pragma_table_info('projects') WHERE name = 'name')",
+            [],
+            |row| row.get::<_, bool>(0),
+        )? {
+            let transaction = connection.transaction()?;
+            transaction.execute(
+                "ALTER TABLE projects ADD COLUMN name TEXT NOT NULL DEFAULT ''",
+                [],
+            )?;
+            let names = {
+                #[derive(Deserialize)]
+                struct Name {
+                    name: String,
+                }
+
+                let mut statement = transaction.prepare("SELECT id, document FROM projects")?;
+                statement
+                    .query_map([], |row| {
+                        let document: Vec<u8> = row.get(1)?;
+                        let name = if let Some(payload) = document.strip_prefix(LEGACY_HEADER) {
+                            rmp_serde::from_slice::<Name>(payload).ok()
+                        } else {
+                            serde_json::from_slice::<Name>(&document).ok()
+                        };
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            name.map_or(String::new(), |name| name.name),
+                        ))
+                    })?
+                    .collect::<Result<Vec<_>, _>>()?
+            };
+            for (id, name) in names {
+                transaction.execute(
+                    "UPDATE projects SET name = ?1 WHERE id = ?2",
+                    params![name, id],
+                )?;
+            }
+            transaction.commit()?;
+        }
         Ok(Self {
             connection,
             sessions: BTreeMap::new(),
             blobs,
         })
+    }
+
+    pub(super) fn list(&self) -> Result<Vec<ProjectSummary>, Failure> {
+        let mut statement = self
+            .connection
+            .prepare("SELECT id, name FROM projects ORDER BY name COLLATE NOCASE, id")?;
+        let rows = statement.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+        rows.map(|row| {
+            let (id, name) = row?;
+            Ok(ProjectSummary {
+                id: Uuid::parse_str(&id).map_err(|error| Failure::Storage(error.to_string()))?,
+                name: if name.trim().is_empty() { id } else { name },
+            })
+        })
+        .collect()
     }
 
     pub(super) fn create(
@@ -126,8 +185,8 @@ impl Store {
     ) -> Result<ProjectVersion<Value>, Failure> {
         let bytes = encode(&project)?;
         let created = self.connection.execute(
-            "INSERT INTO projects VALUES (?1, 0, ?2) ON CONFLICT(id) DO NOTHING",
-            params![id.to_string(), bytes],
+            "INSERT INTO projects (id, revision, document, name) VALUES (?1, 0, ?2, ?3) ON CONFLICT(id) DO NOTHING",
+            params![id.to_string(), bytes, project_name(&project)],
         )?;
         if created == 0 {
             return Err(Failure::Conflict(self.session(id)?.revision));
@@ -214,8 +273,8 @@ impl Store {
             .ok_or_else(|| Failure::Storage("project revision exhausted".into()))?;
         let transaction = self.connection.transaction()?;
         let changed = transaction.execute(
-            "UPDATE projects SET revision = ?1, document = ?2 WHERE id = ?3 AND revision = ?4",
-            params![revision, bytes, key, previous_revision],
+            "UPDATE projects SET revision = ?1, document = ?2, name = ?3 WHERE id = ?4 AND revision = ?5",
+            params![revision, bytes, project_name(&request.project), key, previous_revision],
         )?;
         if changed != 1 {
             transaction.rollback()?;
@@ -271,6 +330,13 @@ fn encode(project: &Value) -> Result<Vec<u8>, Failure> {
         ));
     }
     serde_json::to_vec(project).map_err(|error| Failure::BadRequest(error.to_string()))
+}
+
+fn project_name(project: &Value) -> &str {
+    project
+        .get("name")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
 }
 
 fn from_disk_revision(value: i64) -> Result<u64, Failure> {

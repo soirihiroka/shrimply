@@ -265,6 +265,9 @@ fn execute(path: &str, leaf: &ArgMatches, root: &ArgMatches) -> Result<Value, St
             project::create_new_project_file(&path, &project)?;
             (project, json!({"kind":"local"}))
         };
+        if let Err(error) = shrimply_project_service::catalog::register(&path, &project) {
+            eprintln!("Could not register project: {error}");
+        }
         return Ok(
             json!({"success":true,"command":path_string(definition),"project":path,"result":{"created":true,"location":location,"content_revision":preview::revision(&project)?}}),
         );

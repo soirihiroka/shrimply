@@ -214,10 +214,9 @@ Use an HTTPS reverse proxy to reach the server over a network. The token
 grants access to the server's projects. Use a separate server instance if
 different groups should have different access.
 
-In the launcher, add the endpoint under :guilabel:`Project Servers`, then
-choose it under :guilabel:`Location` when creating the project. The project
-link is in its recent entry's :guilabel:`Info` menu. Collaborators add the
-same endpoint and paste the link into :guilabel:`Open Shared Project`.
+Add the endpoint under :guilabel:`Project Servers` to browse its projects
+in the launcher's :guilabel:`Projects` list. Choose the server under
+:guilabel:`Location` when creating a project.
 
 The CLI accepts a server URL when creating or joining a project. The
 creation result contains the shared project ID.

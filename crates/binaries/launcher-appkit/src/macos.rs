@@ -1,5 +1,4 @@
 mod create_project;
-mod recents;
 
 use block2::StackBlock;
 use objc2::rc::Retained;
@@ -8,37 +7,35 @@ use objc2::{DefinedClass, MainThreadOnly, Message, define_class, msg_send, sel};
 use objc2_app_kit::{
     NSAlert, NSAlertFirstButtonReturn, NSAlertSecondButtonReturn, NSAlertThirdButtonReturn,
     NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate, NSAutoresizingMaskOptions,
-    NSBackingStoreType, NSBezelStyle, NSButton, NSColor, NSControlSize, NSFont, NSImage, NSMenu,
-    NSMenuItem, NSModalResponseOK, NSOpenPanel, NSOpenSavePanelDelegate, NSPasteboard,
-    NSPasteboardTypeString, NSSavePanel, NSSearchField, NSTextField, NSTitlebarSeparatorStyle,
-    NSToolbar, NSView, NSWindow, NSWindowDelegate, NSWindowStyleMask, NSWindowTitleVisibility,
-    NSWindowToolbarStyle, NSWorkspace,
+    NSBackingStoreType, NSBezelStyle, NSButton, NSCellImagePosition, NSColor, NSControlSize,
+    NSControlTextEditingDelegate, NSFont, NSImage, NSMenu, NSMenuItem, NSModalResponseOK,
+    NSOpenPanel, NSOpenSavePanelDelegate, NSSavePanel, NSScrollView, NSSearchField, NSTableColumn,
+    NSTableView, NSTableViewDataSource, NSTableViewDelegate, NSTextAlignment, NSTextField,
+    NSTitlebarSeparatorStyle, NSToolbar, NSView, NSWindow, NSWindowDelegate, NSWindowStyleMask,
+    NSWindowTitleVisibility, NSWindowToolbarStyle,
 };
 use objc2_foundation::{
-    MainThreadMarker, NSArray, NSNotification, NSObject, NSObjectProtocol, NSPoint, NSProcessInfo,
-    NSRect, NSSize, NSString, NSTimer, NSURL, ns_string,
+    MainThreadMarker, NSNotification, NSObject, NSObjectProtocol, NSPoint, NSProcessInfo, NSRect,
+    NSSize, NSString, NSTimer, NSURL, ns_string,
 };
 use shrimply_components_appkit::{EffectRole, EffectView};
-use shrimply_cross_ui_core::launcher;
-use shrimply_recent_projects::{self as recent_projects, RecentProject};
+use shrimply_cross_ui_core::launcher::{self, Launcher};
 use std::cell::{OnceCell, RefCell};
 use std::path::{Path, PathBuf};
 
 const WINDOW_SIZE: NSSize = NSSize::new(760.0, 560.0);
 const MINIMUM_WINDOW_SIZE: NSSize = NSSize::new(560.0, 420.0);
-const SIDEBAR_WIDTH: f64 = 200.0;
+const SIDEBAR_WIDTH: f64 = 330.0;
 const CONTENT_MARGIN: f64 = 12.0;
 const TITLEBAR_HEIGHT: f64 = 52.0;
 const SEARCH_HEIGHT: f64 = 32.0;
-const CLEAR_BUTTON_WIDTH: f64 = 36.0;
 const SIDEBAR_BUTTON_WIDTH: f64 = 160.0;
 const SIDEBAR_BUTTON_HEIGHT: f64 = 32.0;
 
 struct DelegateIvars {
     window: OnceCell<Retained<NSWindow>>,
-    search: OnceCell<Retained<NSSearchField>>,
-    recent_list: OnceCell<recents::List>,
-    recent_projects: RefCell<Vec<RecentProject>>,
+    projects: OnceCell<Retained<NSTableView>>,
+    model: RefCell<Launcher>,
 }
 
 define_class!(
@@ -151,7 +148,6 @@ define_class!(
             for (index, (label, action)) in [
                 ("Create Project", sel!(createProject:)),
                 ("Open Project", sel!(openProject:)),
-                ("Open Shared Project", sel!(openSharedProject:)),
                 ("Project Servers", sel!(projectServers:)),
             ].into_iter().enumerate() {
                 let button = unsafe {
@@ -161,107 +157,66 @@ define_class!(
                 };
                 button.setFrame(NSRect::new(
                     NSPoint::new(
-                        (SIDEBAR_WIDTH - SIDEBAR_BUTTON_WIDTH) / 2.0,
+                        (WINDOW_SIZE.width + SIDEBAR_WIDTH - SIDEBAR_BUTTON_WIDTH) / 2.0,
                         WINDOW_SIZE.height - TITLEBAR_HEIGHT
                             - (index + 1) as f64 * (CONTENT_MARGIN + SIDEBAR_BUTTON_HEIGHT),
                     ),
                     NSSize::new(SIDEBAR_BUTTON_WIDTH, SIDEBAR_BUTTON_HEIGHT),
                 ));
-                button.setAutoresizingMask(NSAutoresizingMaskOptions::ViewMinYMargin);
+                button.setAutoresizingMask(NSAutoresizingMaskOptions::ViewMinYMargin
+                    | NSAutoresizingMaskOptions::ViewMinXMargin | NSAutoresizingMaskOptions::ViewMaxXMargin);
                 button.setControlSize(NSControlSize::Regular);
                 button.setBezelStyle(NSBezelStyle::Push);
                 if index == 0 {
                     button.setKeyEquivalent(ns_string!("\r"));
                 }
-                sidebar_content.addSubview(&button);
+                content.addSubview(&button);
             }
             content.addSubview(sidebar);
 
-            let right_origin = SIDEBAR_WIDTH + CONTENT_MARGIN;
-            let right_width = WINDOW_SIZE.width - right_origin - CONTENT_MARGIN;
-            let title = NSTextField::labelWithString(ns_string!("Shrimply"), mtm);
+            let width = SIDEBAR_WIDTH - CONTENT_MARGIN * 2.0;
+            let title = NSTextField::labelWithString(ns_string!("Projects"), mtm);
             title.setFont(Some(&NSFont::titleBarFontOfSize(0.0)));
             title.sizeToFit();
-            let title_size = title.frame().size;
-            title.setFrameOrigin(NSPoint::new(
-                right_origin,
-                WINDOW_SIZE.height - (TITLEBAR_HEIGHT + title_size.height) / 2.0,
-            ));
+            title.setFrameOrigin(NSPoint::new(CONTENT_MARGIN,
+                WINDOW_SIZE.height - (TITLEBAR_HEIGHT + title.frame().size.height) / 2.0));
             title.setAutoresizingMask(NSAutoresizingMaskOptions::ViewMinYMargin);
-            content.addSubview(&title);
+            sidebar_content.addSubview(&title);
 
-            let search = NSSearchField::initWithFrame(
-                NSSearchField::alloc(mtm),
-                NSRect::new(
-                    NSPoint::new(
-                        right_origin,
-                        WINDOW_SIZE.height - TITLEBAR_HEIGHT - SEARCH_HEIGHT - CONTENT_MARGIN,
-                    ),
-                    NSSize::new(right_width - CLEAR_BUTTON_WIDTH - 8.0, SEARCH_HEIGHT),
-                ),
-            );
-            search.setPlaceholderString(Some(ns_string!("Search history")));
+            let search = NSSearchField::initWithFrame(NSSearchField::alloc(mtm), NSRect::new(
+                NSPoint::new(CONTENT_MARGIN, WINDOW_SIZE.height - TITLEBAR_HEIGHT - SEARCH_HEIGHT),
+                NSSize::new(width, SEARCH_HEIGHT),
+            ));
+            search.setPlaceholderString(Some(ns_string!("Search Projects")));
             search.setContinuous(true);
+            search.setAutoresizingMask(NSAutoresizingMaskOptions::ViewMinYMargin);
             unsafe {
                 search.setTarget(Some(self));
                 search.setAction(Some(sel!(searchChanged:)));
             }
-            search.setAutoresizingMask(
-                NSAutoresizingMaskOptions::ViewWidthSizable
-                    | NSAutoresizingMaskOptions::ViewMinYMargin,
-            );
-            content.addSubview(&search);
+            sidebar_content.addSubview(&search);
 
-            let trash_image = NSImage::imageWithSystemSymbolName_accessibilityDescription(
-                ns_string!("trash"),
-                Some(ns_string!("Clear recent projects")),
-            )
-            .expect("macOS must provide the trash system symbol");
-            let clear = unsafe {
-                NSButton::buttonWithImage_target_action(
-                    &trash_image,
-                    Some(self),
-                    Some(sel!(clearHistory:)),
-                    mtm,
-                )
-            };
-            clear.setFrame(NSRect::new(
-                NSPoint::new(
-                    WINDOW_SIZE.width - CONTENT_MARGIN - CLEAR_BUTTON_WIDTH,
-                    WINDOW_SIZE.height - TITLEBAR_HEIGHT - SEARCH_HEIGHT - CONTENT_MARGIN,
-                ),
-                NSSize::new(CLEAR_BUTTON_WIDTH, SEARCH_HEIGHT),
+            let frame = NSRect::new(NSPoint::new(CONTENT_MARGIN, CONTENT_MARGIN), NSSize::new(
+                width, WINDOW_SIZE.height - TITLEBAR_HEIGHT - SEARCH_HEIGHT - CONTENT_MARGIN * 2.0,
             ));
-            clear.setAutoresizingMask(
-                NSAutoresizingMaskOptions::ViewMinXMargin
-                    | NSAutoresizingMaskOptions::ViewMinYMargin,
-            );
-            clear.setBezelStyle(NSBezelStyle::Glass);
-            clear.setToolTip(Some(ns_string!("Clear recent projects")));
-            content.addSubview(&clear);
-
-            let recent_list = recents::List::new(
-                NSRect::new(
-                    NSPoint::new(right_origin, CONTENT_MARGIN),
-                    NSSize::new(
-                        right_width,
-                        WINDOW_SIZE.height
-                            - TITLEBAR_HEIGHT
-                            - SEARCH_HEIGHT
-                            - CONTENT_MARGIN * 3.0,
-                    ),
-                ),
-                mtm,
-            );
-            content.addSubview(recent_list.view());
-            self.ivars()
-                .search
-                .set(search)
-                .unwrap_or_else(|_| panic!("search field must only be created once"));
-            self.ivars()
-                .recent_list
-                .set(recent_list)
-                .unwrap_or_else(|_| panic!("recent list must only be created once"));
+            let scroll = NSScrollView::initWithFrame(NSScrollView::alloc(mtm), frame);
+            scroll.setDrawsBackground(false);
+            scroll.setHasVerticalScroller(true);
+            scroll.setAutoresizingMask(NSAutoresizingMaskOptions::ViewHeightSizable);
+            let table = NSTableView::initWithFrame(NSTableView::alloc(mtm), frame);
+            table.setBackgroundColor(&NSColor::clearColor());
+            table.setHeaderView(None);
+            table.setRowHeight(44.0);
+            let column = NSTableColumn::initWithIdentifier(NSTableColumn::alloc(mtm), ns_string!("project"));
+            column.setWidth(width);
+            table.addTableColumn(&column);
+            unsafe {
+                table.setDataSource(Some(ProtocolObject::from_ref(self)));
+                table.setDelegate(Some(ProtocolObject::from_ref(self)));
+            }
+            scroll.setDocumentView(Some(&table));
+            sidebar_content.addSubview(&scroll);
+            self.ivars().projects.set(table).expect("project list must only be created once");
 
             window.setContentView(Some(root_glass));
             window.makeKeyAndOrderFront(None);
@@ -270,20 +225,17 @@ define_class!(
                 .window
                 .set(window)
                 .expect("window must only be created once");
-            self.refresh_recents("");
+            if let Ok(projects) = launcher::local_projects() {
+                self.ivars().model.borrow_mut().set_projects(projects);
+                self.ivars().projects.get().expect("project list").reloadData();
+            }
+            self.reload_projects();
 
             app.activate();
         }
     }
 
     unsafe impl NSWindowDelegate for Delegate {
-        #[unsafe(method(windowDidResize:))]
-        fn window_did_resize(&self, _notification: &NSNotification) {
-            if self.ivars().search.get().is_some() && self.ivars().recent_list.get().is_some() {
-                self.refresh_current_search();
-            }
-        }
-
         #[unsafe(method(windowWillClose:))]
         fn window_will_close(&self, _notification: &NSNotification) {
             NSApplication::sharedApplication(self.mtm()).terminate(None);
@@ -301,72 +253,53 @@ define_class!(
         }
     }
 
+    unsafe impl NSTableViewDataSource for Delegate {
+        #[unsafe(method(numberOfRowsInTableView:))]
+        fn project_count(&self, _table: &NSTableView) -> isize {
+            self.ivars().model.borrow().project_count() as isize
+        }
+    }
+
+    unsafe impl NSControlTextEditingDelegate for Delegate {}
+
+    unsafe impl NSTableViewDelegate for Delegate {
+        #[unsafe(method(tableView:viewForTableColumn:row:))]
+        fn project_row(&self, _table: &NSTableView, _column: Option<&NSTableColumn>, row: isize) -> Option<Retained<NSView>> {
+            let model = self.ivars().model.borrow();
+            let project = model.project(usize::try_from(row).ok()?)?;
+            let button = unsafe {
+                NSButton::buttonWithTitle_target_action(
+                    &NSString::from_str(&project.name), Some(self), Some(sel!(openListedProject:)), self.mtm(),
+                )
+            };
+            let symbol = if let Some(remote) = &project.remote {
+                button.setToolTip(Some(&NSString::from_str(&remote.server)));
+                ns_string!("externaldrive.connected.to.line.below")
+            } else {
+                ns_string!("folder")
+            };
+            let icon = NSImage::imageWithSystemSymbolName_accessibilityDescription(symbol, None);
+            button.setImage(icon.as_deref());
+            button.setImagePosition(NSCellImagePosition::ImageLeading);
+            button.setAlignment(NSTextAlignment::Left);
+            button.setBordered(false);
+            button.setTag(row);
+            Some(button.into_super().into_super())
+        }
+    }
+
     impl Delegate {
         #[unsafe(method(searchChanged:))]
         fn search_changed(&self, sender: &NSSearchField) {
-            self.refresh_recents(&sender.stringValue().to_string());
+            self.ivars().model.borrow_mut().set_search(&sender.stringValue().to_string());
+            self.ivars().projects.get().expect("project list").reloadData();
         }
 
-        #[unsafe(method(clearHistory:))]
-        fn clear_history(&self, _sender: &NSButton) {
-            launcher::clear_recent_projects()
-                .unwrap_or_else(|error| panic!("could not clear recent projects: {error}"));
-            self.refresh_current_search();
-        }
-
-        #[unsafe(method(openRecent:))]
-        fn open_recent(&self, sender: &NSButton) {
-            let project = self.recent_project(sender.tag());
-            self.open_in_editor(&project.path);
-        }
-
-        #[unsafe(method(recentInfo:))]
-        fn recent_info(&self, sender: &NSMenuItem) {
-            let project = self.recent_project(sender.tag());
-            let last_edited = launcher::last_edited(&project.path)
-                .unwrap_or_else(|| "Unavailable".to_string());
-            let alert = NSAlert::new(self.mtm());
-            alert.setMessageText(&NSString::from_str(&project.name));
-            alert.setInformativeText(&NSString::from_str(&format!(
-                "Last Edited\n{last_edited}\n\nFile Location\n{}",
-                project.path.display()
-            )));
-            alert.addButtonWithTitle(ns_string!("OK"));
-            let link = launcher::shared_project_link(&project.path).ok().flatten();
-            if link.is_some() {
-                alert.addButtonWithTitle(ns_string!("Copy Project Link"));
+        #[unsafe(method(openListedProject:))]
+        fn open_listed_project(&self, sender: &NSButton) {
+            if let Some(project) = self.ivars().model.borrow().project(sender.tag() as usize).cloned() {
+                self.open_remote("Could not open project", move || project.open(None));
             }
-            let completion = StackBlock::new({
-                let mtm = self.mtm();
-                move |response| NSApplication::sharedApplication(mtm).stopModalWithCode(response)
-            });
-            alert.beginSheetModalForWindow_completionHandler(
-                self.ivars().window.get().expect("launcher window must exist"),
-                Some(&completion),
-            );
-            if alert.runModal() == NSAlertSecondButtonReturn
-                && let Some(link) = link
-            {
-                let clipboard = NSPasteboard::generalPasteboard();
-                clipboard.clearContents();
-                clipboard.setString_forType(&NSString::from_str(&link), unsafe { NSPasteboardTypeString });
-            }
-        }
-
-        #[unsafe(method(showRecentInFinder:))]
-        fn show_recent_in_finder(&self, sender: &NSMenuItem) {
-            let project = self.recent_project(sender.tag());
-            let url = NSURL::fileURLWithPath(&NSString::from_str(&project.path.to_string_lossy()));
-            NSWorkspace::sharedWorkspace()
-                .activateFileViewerSelectingURLs(&NSArray::from_retained_slice(&[url]));
-        }
-
-        #[unsafe(method(removeRecent:))]
-        fn remove_recent(&self, sender: &NSMenuItem) {
-            let project = self.recent_project(sender.tag());
-            launcher::remove_recent_project(&project.path)
-                .unwrap_or_else(|error| panic!("could not remove recent project: {error}"));
-            self.refresh_current_search();
         }
 
         #[unsafe(method(createProject:))]
@@ -377,7 +310,7 @@ define_class!(
             };
             if let Some(server) = request.server {
                 self.open_remote("Could not create project", move || {
-                    launcher::create_shared_project(
+                    launcher::create_remote_project(
                         &server, &request.name, request.canvas_size, request.fps, &[],
                     )
                 });
@@ -412,17 +345,7 @@ define_class!(
                     return;
                 }
             };
-            recent_projects::touch(&path, &request.name, &[])
-                .unwrap_or_else(|error| panic!("could not update recent projects: {error}"));
-            self.refresh_current_search();
             self.open_in_editor(&path);
-        }
-
-        #[unsafe(method(openSharedProject:))]
-        fn open_shared_project(&self, _sender: &NSButton) {
-            if let Some(link) = self.prompt_remote("Open Shared Project", "Project Link", "") {
-                self.open_remote("Could not open project", move || launcher::open_shared_project(&link));
-            }
         }
 
         #[unsafe(method(projectServers:))]
@@ -458,7 +381,7 @@ define_class!(
                             .map(|url| launcher::update_project_servers(Some(current), Some(&url)))
                     }),
                     value if value == NSAlertThirdButtonReturn => selected.map(|current| launcher::update_project_servers(Some(current), None)),
-                    _ => return,
+                    _ => { self.reload_projects(); return; },
                 };
                 if let Some(Err(error)) = result {
                     self.show_error("Could not update project server", &error);
@@ -580,6 +503,38 @@ impl Delegate {
         heading: &'static str,
         operation: impl FnOnce() -> Result<PathBuf, String> + Send + 'static,
     ) {
+        self.project_task(operation, move |delegate, result| match result {
+            Ok(path) => delegate.open_in_editor(&path),
+            Err(error) => delegate.show_error(heading, &error),
+        });
+    }
+
+    fn reload_projects(&self) {
+        let load = self.ivars().model.borrow_mut().begin_project_load();
+        self.project_task(launcher::load_projects, move |delegate, projects| {
+            let result = delegate
+                .ivars()
+                .model
+                .borrow_mut()
+                .finish_project_load(load, projects);
+            match result {
+                Ok(true) => delegate
+                    .ivars()
+                    .projects
+                    .get()
+                    .expect("project list")
+                    .reloadData(),
+                Ok(false) => (),
+                Err(error) => delegate.show_error("Could not load projects", &error),
+            }
+        });
+    }
+
+    fn project_task<T: Send + 'static>(
+        &self,
+        operation: impl FnOnce() -> Result<T, String> + Send + 'static,
+        finish: impl Fn(&Self, Result<T, String>) + 'static,
+    ) {
         let (send, receive) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
             let _ = send.send(operation());
@@ -594,10 +549,7 @@ impl Delegate {
                 }
             };
             unsafe { timer.as_ref() }.invalidate();
-            match result {
-                Ok(path) => delegate.open_in_editor(&path),
-                Err(error) => delegate.show_error(heading, &error),
-            }
+            finish(&delegate, result);
         });
         let _ = unsafe { NSTimer::scheduledTimerWithTimeInterval_repeats_block(0.1, true, &poll) };
     }
@@ -612,43 +564,10 @@ impl Delegate {
     fn new(mtm: MainThreadMarker) -> Retained<Self> {
         let this = Self::alloc(mtm).set_ivars(DelegateIvars {
             window: OnceCell::new(),
-            search: OnceCell::new(),
-            recent_list: OnceCell::new(),
-            recent_projects: RefCell::new(Vec::new()),
+            projects: OnceCell::new(),
+            model: RefCell::new(Launcher::default()),
         });
         unsafe { msg_send![super(this), init] }
-    }
-
-    fn refresh_current_search(&self) {
-        let query = self
-            .ivars()
-            .search
-            .get()
-            .expect("search field must exist")
-            .stringValue()
-            .to_string();
-        self.refresh_recents(&query);
-    }
-
-    fn refresh_recents(&self, query: &str) {
-        let projects = self
-            .ivars()
-            .recent_list
-            .get()
-            .expect("recent list must exist")
-            .refresh(self, query, self.mtm())
-            .unwrap_or_else(|error| panic!("could not load recent projects: {error}"));
-        *self.ivars().recent_projects.borrow_mut() = projects;
-    }
-
-    fn recent_project(&self, tag: isize) -> RecentProject {
-        let index = usize::try_from(tag).expect("recent project index must be valid");
-        self.ivars()
-            .recent_projects
-            .borrow()
-            .get(index)
-            .cloned()
-            .expect("recent project must exist")
     }
 }
 

@@ -1,7 +1,5 @@
 package dev.shrimply.app
 
-import android.content.ClipData
-import android.content.ClipboardManager
 import android.content.Intent
 import androidx.activity.compose.LocalActivity
 import android.view.WindowInsets
@@ -16,10 +14,11 @@ import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -80,7 +79,8 @@ internal fun ProjectApp(timeline: TimelineSession, files: ProjectFiles, caption:
         List(values.length()) { values.getString(it) }
     }.orEmpty()
     var showServers by rememberSaveable { mutableStateOf(false) }
-    var showSharedLink by rememberSaveable { mutableStateOf(false) }
+    var projects by remember { mutableStateOf<List<JSONObject>>(emptyList()) }
+    var catalogRevision by remember { mutableIntStateOf(0) }
     var projectServer by rememberSaveable { mutableStateOf("") }
     var create by rememberSaveable { mutableStateOf(false) }
     var name by rememberSaveable { mutableStateOf("") }
@@ -118,6 +118,20 @@ internal fun ProjectApp(timeline: TimelineSession, files: ProjectFiles, caption:
             finally { if (blocking) { busy = false; progress = "" } }
         } }
     }
+    LaunchedEffect(project == null, servers, catalogRevision) {
+        if (project != null) return@LaunchedEffect
+        try {
+            for (includeRemote in if (servers.isEmpty()) listOf(false) else listOf(false, true)) {
+                val response = withContext(Dispatchers.IO) { JSONObject(NativeTimeline.listProjects(includeRemote)) }
+                check(!response.has("error")) { response.getString("error") }
+                projects = response.getJSONArray("projects").objects()
+            }
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (failure: Exception) {
+            error = failure.message
+        }
+    }
     fun command(operation: String, arguments: Array<out Pair<String, Any>>) = action(blocking = false) {
         val result = timeline.request(operation, *arguments)
         if (result.has("show_in_files")) files.showInFiles(result.getString("show_in_files"))
@@ -144,7 +158,7 @@ internal fun ProjectApp(timeline: TimelineSession, files: ProjectFiles, caption:
     val exportFolder = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         if (uri != null && project != null) action {
             val path = project.getString("path")
-            if (project.isNull("shared_link")) {
+            if (!project.optBoolean("remote")) {
                 timeline.request("export", "project_path" to path)
                 files.exportTree(path, uri) { file -> scope.launch { progress = file } }
             } else {
@@ -280,12 +294,16 @@ internal fun ProjectApp(timeline: TimelineSession, files: ProjectFiles, caption:
     val workspace: @Composable (Boolean) -> Unit = { renderOnly -> workspaceState.SaveableStateProvider(workspaceKey) {
     Box(Modifier.fillMaxSize().then(if (project == null) Modifier.safeDrawingPadding() else Modifier).then(if (renderOnly) Modifier.clearAndSetSemantics {}.focusProperties { canFocus = false } else Modifier)) {
         if (project == null) {
-            Launcher(status, !renderOnly && !busy && schema.has("defaults"), { useSettings(schema.getJSONObject("defaults")); projectServer = ""; create = true },
+            Launcher(projects, !renderOnly && !busy && schema.has("defaults"),
+                { useSettings(schema.getJSONObject("defaults")); projectServer = ""; create = true },
                 { choicesBottomSheet = NativeLayout.menuUsesBottomSheet(menuInputSource.value); openFolder.launch(null) },
-                { showSharedLink = true }, { showServers = true }, ::open,
-                { action { timeline.request("clear_recents") } },
-                command = { command -> action { timeline.request(command) } },
-                showInFiles = { path -> action { files.showInFiles(path) } })
+                { showServers = true },
+                { entry ->
+                    if (!entry.isNull("path")) open(entry.getString("path"))
+                    else action {
+                        timeline.request("open_remote", "directory" to files.projectDirectory().absolutePath, "project" to entry)
+                    }
+                })
         } else {
             Editor(timeline, files, project, playback, status, !renderOnly && !busy,
                 onError = { error = it },
@@ -336,21 +354,9 @@ internal fun ProjectApp(timeline: TimelineSession, files: ProjectFiles, caption:
     if (showServers) ProjectServersDialog(servers, busy, { showServers = false }) { update, complete ->
         action {
             timeline.request(update)
+            catalogRevision++
             complete()
         }
-    }
-    if (showSharedLink) {
-        var link by rememberSaveable { mutableStateOf("") }
-        AlertDialog(modifier = Modifier.imePadding(), onDismissRequest = { if (!busy) showSharedLink = false },
-            title = { Text(tr("Open Shared Project")) },
-            text = { OutlinedTextField(link, { link = it }, label = { Text(tr("Project link")) }, singleLine = true, enabled = !busy) },
-            confirmButton = { TextButton(enabled = !busy && link.isNotBlank(), onClick = {
-                action {
-                    timeline.request("open_shared", "directory" to files.projectDirectory().absolutePath, "link" to link)
-                    showSharedLink = false
-                }
-            }) { Text(tr("Open")) } },
-            dismissButton = { TextButton(enabled = !busy, onClick = { showSharedLink = false }) { Text(tr("Cancel")) } })
     }
     if (create && schema.has("frame_rates")) AlertDialog(
         modifier = Modifier.imePadding(),
@@ -451,81 +457,52 @@ private fun targetArguments(saved: String): Array<Pair<String, Any>> {
 }
 
 @Composable
-private fun Launcher(status: JSONObject, enabled: Boolean, create: () -> Unit, open: () -> Unit,
-    openShared: () -> Unit, projectServers: () -> Unit, recent: (String) -> Unit, clear: () -> Unit,
-    command: (JSONObject) -> Unit, showInFiles: (String) -> Unit) {
+private fun Launcher(projects: List<JSONObject>, enabled: Boolean, create: () -> Unit, open: () -> Unit,
+    projectServers: () -> Unit, select: (JSONObject) -> Unit) {
     var search by rememberSaveable { mutableStateOf("") }
-    var info by remember { mutableStateOf<JSONObject?>(null) }
-    BoxWithConstraints(Modifier.fillMaxSize()) {
-        val expanded = maxWidth >= ExpandedWidth
-        Row(Modifier.fillMaxSize()) {
-            if (expanded) Column(Modifier.width(200.dp).fillMaxHeight().background(MaterialTheme.colorScheme.surfaceContainerLow)) {
-                Button(onClick = create, enabled = enabled, modifier = Modifier.padding(12.dp).fillMaxWidth()) { Text(tr("Create Project")) }
-                OutlinedButton(onClick = open, enabled = enabled, modifier = Modifier.padding(horizontal = 12.dp).fillMaxWidth()) { Text(tr("Open Project")) }
-                TextButton(onClick = openShared, enabled = enabled, modifier = Modifier.fillMaxWidth()) { Text(tr("Open Shared Project")) }
-                TextButton(onClick = projectServers, enabled = enabled, modifier = Modifier.fillMaxWidth()) { Text(tr("Project Servers")) }
+    val actions: @Composable () -> Unit = {
+        Row(Modifier.padding(12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(onClick = create, enabled = enabled) { Text(tr("Create Project")) }
+            OutlinedButton(onClick = open, enabled = enabled) { Text(tr("Open Project")) }
+        }
+        TextButton(onClick = projectServers, enabled = enabled) { Text(tr("Project Servers")) }
+    }
+    val list: @Composable () -> Unit = {
+        Text(tr("Projects"), Modifier.padding(12.dp), style = MaterialTheme.typography.titleMedium)
+        OutlinedTextField(search, { search = it }, label = { Text(tr("Search Projects")) },
+            singleLine = true, modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp))
+        val query = search.trim()
+        val visible = remember(projects, query) { projects.filter { project ->
+            sequenceOf(project.getString("name"), project.optString("path"),
+                project.optJSONObject("remote")?.optString("server").orEmpty(),
+                project.getJSONArray("tags").toString()).any { it.contains(query, ignoreCase = true) }
+        } }
+        if (visible.isEmpty()) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text(tr(if (query.isEmpty()) "No Projects" else "No Matching Projects"))
             }
-            Column(Modifier.weight(1f).fillMaxHeight()) {
-                if (expanded) {
-                    Text(tr("History"), Modifier.padding(20.dp), style = MaterialTheme.typography.titleMedium)
-                    HorizontalDivider()
-                }
-                if (!expanded) Row(Modifier.padding(12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Button(onClick = create, enabled = enabled, modifier = Modifier.weight(1f)) { Text(tr("Create Project")) }
-                    OutlinedButton(onClick = open, enabled = enabled, modifier = Modifier.weight(1f)) { Text(tr("Open Project")) }
-                }
-                if (!expanded) Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    TextButton(onClick = openShared, enabled = enabled, modifier = Modifier.weight(1f)) { Text(tr("Open Shared Project")) }
-                    TextButton(onClick = projectServers, enabled = enabled, modifier = Modifier.weight(1f)) { Text(tr("Project Servers")) }
-                }
-                Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    OutlinedTextField(search, { search = it }, label = { Text(tr("Search history")) }, singleLine = true, modifier = Modifier.weight(1f))
-                    IconButton(onClick = clear, enabled = enabled) {
-                        Icon(iconVector("user-trash-symbolic"), tr("Clear History"), Modifier.size(16.dp))
-                    }
-                }
-                val recents = status.optJSONArray("recents")
-                val visible = (0 until (recents?.length() ?: 0)).map { recents!!.getJSONObject(it) }
-                    .filter { project -> search.isBlank() || sequenceOf(project.getString("name"), project.getString("path"),
-                        project.getJSONArray("tags").toString()).any { it.contains(search, ignoreCase = true) } }
-                if (visible.isEmpty()) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text(tr("No Recent Projects"), style = MaterialTheme.typography.titleLarge) }
-                else Column(Modifier.verticalScroll(rememberScrollState())) {
-                    visible.forEach { project -> key(project.getString("path")) { ListItem(
-                        headlineContent = { Text(project.getString("name")) },
-                        supportingContent = { Text(project.getString("last_edited"), maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                        trailingContent = {
-                            AdaptiveMenuButton(enabled, icon = { Icon(iconVector("view-more-symbolic"), project.getString("menu_label"), Modifier.size(16.dp)) }) { dismiss ->
-                                project.getJSONArray("menu").objects().forEach { item ->
-                                    DropdownMenuItem(text = { Text(item.getString("label")) },
-                                        leadingIcon = { Icon(iconVector(item.getString("icon")), null, Modifier.size(16.dp)) }, onClick = {
-                                        dismiss()
-                                        when (item.getString("service")) {
-                                            "info" -> info = item.getJSONObject("info")
-                                            "show_in_files" -> showInFiles(item.getString("path"))
-                                            "remove_recent" -> command(item.getJSONObject("command"))
-                                            else -> error("Unknown recent project service")
-                                        }
-                                    })
-                                }
-                            }
-                        }, modifier = Modifier.clickable(enabled = enabled) { recent(project.getString("path")) }) }
-                    }
-                }
+        } else LazyColumn(Modifier.fillMaxSize()) {
+            items(visible) { project ->
+                val server = project.optJSONObject("remote")?.getString("server")
+                ListItem(headlineContent = { Text(project.getString("name")) },
+                    leadingContent = {
+                        Icon(iconVector(if (server == null) "folder-open-symbolic" else "folder-remote-symbolic"),
+                            null, Modifier.size(16.dp))
+                    },
+                    supportingContent = server?.let { value -> { Text(value, maxLines = 1, overflow = TextOverflow.Ellipsis) } },
+                    modifier = Modifier.clickable(enabled = enabled) { select(project) })
             }
         }
     }
-    info?.let { details -> AlertDialog(onDismissRequest = { info = null }, title = { Text(details.getString("title")) },
-        text = { SelectionContainer { Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            details.getJSONArray("fields").objects().forEach { field -> Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text(field.getString("label"), style = MaterialTheme.typography.labelMedium)
-                    Text(field.getString("value"))
-                }
-                field.optJSONObject("action")?.let { action -> IconButton(onClick = { showInFiles(action.getString("path")) }) {
-                    Icon(iconVector(action.getString("icon")), action.getString("label"), Modifier.size(16.dp))
-                } }
-            } }
-        } } }, confirmButton = { TextButton(onClick = { info = null }) { Text(details.getString("close_label")) } }) }
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        if (maxWidth >= ExpandedWidth) Row(Modifier.fillMaxSize()) {
+            Column(Modifier.width(330.dp).fillMaxHeight().background(MaterialTheme.colorScheme.surfaceContainerLow)) { list() }
+            Column(Modifier.weight(1f).fillMaxHeight(), horizontalAlignment = Alignment.CenterHorizontally) { actions() }
+        } else Column(Modifier.fillMaxSize()) {
+            actions()
+            list()
+        }
+    }
 }
 
 @Composable
@@ -544,7 +521,6 @@ private fun Editor(timeline: TimelineSession, files: ProjectFiles, project: JSON
     val inspectorState = rememberSaveableStateHolder()
     val paneDividerSize = remember { NativeLayout.panelDividerWidth().dp }
     val window = checkNotNull(LocalActivity.current).window
-    val clipboard = LocalContext.current.getSystemService(ClipboardManager::class.java)
     BackHandler(fullscreen && !renderOnly) { fullscreen = false }
     DisposableEffect(window, fullscreen, renderOnly) {
         val immersive = fullscreen && !renderOnly
@@ -625,16 +601,6 @@ private fun Editor(timeline: TimelineSession, files: ProjectFiles, project: JSON
                             Icon(iconVector(menu.getString("icon")), menu.getString("label"), Modifier.size(16.dp))
                         }) { dismiss ->
                             ProjectMenuItems(menu, dismiss, activateProjectMenu)
-                            if (!project.isNull("shared_link")) {
-                                val linkLabel = tr("Project link")
-                                DropdownMenuItem(
-                                    text = { Text(tr("Copy Project Link")) },
-                                    leadingIcon = { Icon(iconVector("edit-copy-symbolic"), null, Modifier.size(16.dp)) },
-                                    onClick = {
-                                        dismiss()
-                                        clipboard.setPrimaryClip(ClipData.newPlainText(linkLabel, project.getString("shared_link")))
-                                    })
-                            }
                             if (!syncError.isNullOrEmpty()) {
                                 HorizontalDivider()
                                 Text(syncError, Modifier.padding(12.dp), color = MaterialTheme.colorScheme.error,

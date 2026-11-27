@@ -21,8 +21,8 @@ use shrimply_resource_pipeline::fingerprint::Writer;
 
 use crate::{MediaCache, MediaReader, ProjectVersion, SyncRequest, SyncResponse};
 use shrimply_project_protocol::{
-    ErrorResponse, LEGACY_CHECKPOINT_FIELD, MediaBlob, ProjectVersionReceipt, PublishRequest,
-    UPLOAD_CHUNK_BYTES, UploadReceipt, valid_digest,
+    ErrorResponse, LEGACY_CHECKPOINT_FIELD, MediaBlob, ProjectSummary, ProjectVersionReceipt,
+    PublishRequest, UPLOAD_CHUNK_BYTES, UploadReceipt, valid_digest,
 };
 
 #[derive(Debug)]
@@ -140,11 +140,20 @@ impl ProjectClient {
         project.clear_view_state();
         project.ensure_ids();
         project.validate().map_err(RequestError::InvalidProject)?;
-        response(self.request(Method::POST, id, &[]).json(&project).send()).and_then(decode_version)
+        response(
+            self.request(Method::POST, Some(id), &[])
+                .json(&project)
+                .send(),
+        )
+        .and_then(decode_version)
+    }
+
+    pub fn list_projects(&self) -> Result<Vec<ProjectSummary>, RequestError> {
+        response(self.request(Method::GET, None, &[]).send())
     }
 
     pub fn get(&self, id: Uuid) -> Result<ProjectVersion, RequestError> {
-        response(self.request(Method::GET, id, &[]).send()).and_then(decode_version)
+        response(self.request(Method::GET, Some(id), &[]).send()).and_then(decode_version)
     }
 
     pub(super) fn publish(
@@ -153,7 +162,7 @@ impl ProjectClient {
         request: &PublishRequest<&Project>,
     ) -> Result<ProjectVersionReceipt, RequestError> {
         response(
-            self.request(Method::POST, id, &["snapshots"])
+            self.request(Method::POST, Some(id), &["snapshots"])
                 .json(request)
                 .send(),
         )
@@ -166,7 +175,7 @@ impl ProjectClient {
     ) -> Result<Option<ProjectVersionReceipt>, RequestError> {
         let operation = operation.to_string();
         let reply = self
-            .request(Method::GET, id, &["operations", &operation])
+            .request(Method::GET, Some(id), &["operations", &operation])
             .send()
             .map_err(RequestError::Transport)?;
         if reply.status() == reqwest::StatusCode::NOT_FOUND {
@@ -181,7 +190,7 @@ impl ProjectClient {
         request: &SyncRequest,
     ) -> Result<SyncResponse, RequestError> {
         let reply: shrimply_project_protocol::SyncResponse<Value, crate::Presence> = response(
-            self.request(Method::POST, id, &["sync"])
+            self.request(Method::POST, Some(id), &["sync"])
                 .json(request)
                 .send(),
         )?;
@@ -196,7 +205,7 @@ impl ProjectClient {
             return Err(invalid_media("invalid media identifier"));
         }
         let response = self
-            .request(Method::HEAD, id, &["blobs", digest])
+            .request(Method::HEAD, Some(id), &["blobs", digest])
             .send()
             .map_err(RequestError::Transport)?;
         let etag = format!("\"{digest}\"");
@@ -263,7 +272,7 @@ impl ProjectClient {
         let length = blob.length;
         let segments = ["blobs", &blob.digest];
         let mut progress: UploadReceipt = response(
-            self.request(Method::GET, id, &["blobs", &blob.digest, "upload"])
+            self.request(Method::GET, Some(id), &["blobs", &blob.digest, "upload"])
                 .send(),
         )?;
         while !progress.complete {
@@ -282,7 +291,7 @@ impl ProjectClient {
             let mut bytes = vec![0; chunk];
             file.read_exact(&mut bytes).map_err(RequestError::Media)?;
             progress = response(
-                self.request(Method::PATCH, id, &segments)
+                self.request(Method::PATCH, Some(id), &segments)
                     .header("Upload-Offset", offset)
                     .header("Upload-Length", length)
                     .body(bytes)
@@ -316,7 +325,7 @@ impl ProjectClient {
             .filter(|end| *end < blob.length && length <= UPLOAD_CHUNK_BYTES)
             .ok_or_else(|| invalid_media("invalid media byte range"))?;
         let response = self
-            .request(Method::GET, id, &["blobs", &blob.digest])
+            .request(Method::GET, Some(id), &["blobs", &blob.digest])
             .header(header::RANGE, format!("bytes={offset}-{end}"))
             .send()
             .map_err(RequestError::Transport)?;
@@ -351,13 +360,18 @@ impl ProjectClient {
         Ok(bytes)
     }
 
-    fn request(&self, method: Method, id: Uuid, action: &[&str]) -> RequestBuilder {
+    fn request(&self, method: Method, id: Option<Uuid>, action: &[&str]) -> RequestBuilder {
         let mut url = self.base.clone();
-        url.path_segments_mut()
-            .expect("project server URL has a path")
-            .pop_if_empty()
-            .extend(["v1", "projects", &id.to_string()])
-            .extend(action.iter().copied());
+        {
+            let mut path = url
+                .path_segments_mut()
+                .expect("project server URL has a path");
+            path.pop_if_empty().extend(["v1", "projects"]);
+            if let Some(id) = id {
+                path.push(&id.to_string());
+            }
+            path.extend(action.iter().copied());
+        }
         self.client.request(method, url).bearer_auth(&self.token)
     }
 }

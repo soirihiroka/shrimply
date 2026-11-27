@@ -1,9 +1,9 @@
 use adw::prelude::*;
 use gtk::{gio, glib};
-use shrimply_components_gtk::presentation::{self, RecentProjectAction};
 use shrimply_components_gtk::project_settings::ProjectSettingsSelector;
 use shrimply_components_gtk::tr;
 use shrimply_components_gtk::ui::{SingleLineTextInput, control_row};
+use shrimply_cross_ui_core::launcher::{self, Launcher};
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -13,9 +13,7 @@ use std::time::Duration;
 
 const DEFAULT_WIDTH: i32 = 760;
 const DEFAULT_HEIGHT: i32 = 560;
-const RECENT_ROW_HEIGHT: i32 = 64;
-const PROJECT_INFO_WIDTH: i32 = 500;
-const PROJECT_PATH_LINES: i32 = 3;
+const PROJECT_PAGE_SIZE: usize = 40;
 const CREATE_PROJECT_WIDTH: i32 = 520;
 
 fn main() -> glib::ExitCode {
@@ -79,104 +77,65 @@ fn main() -> glib::ExitCode {
 fn build_ui(app: &adw::Application) {
     shrimply_components_gtk::icons::register_bundled();
 
-    let left_header = adw::HeaderBar::new();
-    left_header.set_show_end_title_buttons(false);
-    left_header.set_title_widget(Some(&gtk::Box::new(gtk::Orientation::Horizontal, 0)));
-    let right_header = adw::HeaderBar::new();
-    right_header.set_show_start_title_buttons(false);
-    let app_title = gtk::Label::builder()
-        .label(tr!("Shrimply").as_ref())
-        .css_classes(["title"])
-        .build();
-    right_header.set_title_widget(Some(&app_title));
-    let new_button = gtk::Button::builder()
-        .label(tr!("Create Project").as_ref())
-        .css_classes(["suggested-action", "pill"])
-        .width_request(160)
-        .build();
-    let open_button = gtk::Button::builder()
-        .label(tr!("Open Project").as_ref())
-        .css_classes(["pill"])
-        .width_request(160)
-        .build();
-    let shared_button = gtk::Button::builder()
-        .label(tr!("Open Shared Project").as_ref())
-        .css_classes(["pill"])
-        .halign(gtk::Align::Center)
-        .width_request(160)
-        .build();
-    let servers_button = gtk::Button::builder()
-        .label(tr!("Project Servers").as_ref())
-        .css_classes(["pill"])
-        .halign(gtk::Align::Center)
-        .width_request(160)
-        .build();
-    let actions = gtk::Box::new(gtk::Orientation::Vertical, 12);
-    actions.set_margin_top(12);
-    actions.set_margin_start(12);
-    actions.set_margin_end(12);
-    actions.set_valign(gtk::Align::Start);
-    new_button.set_halign(gtk::Align::Center);
-    open_button.set_halign(gtk::Align::Center);
-    actions.append(&new_button);
-    actions.append(&open_button);
-    actions.append(&shared_button);
-    actions.append(&servers_button);
-    let sidebar_toolbar = adw::ToolbarView::new();
-    sidebar_toolbar.add_top_bar(&left_header);
-    sidebar_toolbar.set_content(Some(&actions));
-    let sidebar = adw::NavigationPage::builder()
-        .title(tr!("Shrimply").as_ref())
-        .child(&sidebar_toolbar)
-        .build();
-
     let search = gtk::SearchEntry::builder()
-        .placeholder_text(tr!("Search history").as_ref())
-        .hexpand(true)
+        .placeholder_text(tr!("Search Projects").as_ref())
         .build();
-    let clear_history = gtk::Button::builder()
-        .icon_name("user-trash-symbolic")
-        .tooltip_text(tr!("Clear History").as_ref())
-        .valign(gtk::Align::Center)
-        .css_classes(["flat"])
+    let list = gtk::ListBox::builder()
+        .selection_mode(gtk::SelectionMode::None)
+        .activate_on_single_click(true)
+        .css_classes(["boxed-list"])
         .build();
-    let search_controls = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-    search_controls.set_margin_top(12);
-    search_controls.set_margin_bottom(12);
-    search_controls.set_margin_start(12);
-    search_controls.set_margin_end(12);
-    search_controls.append(&search);
-    search_controls.append(&clear_history);
-    let recent_area = gtk::Box::new(gtk::Orientation::Vertical, 8);
-    recent_area.set_vexpand(true);
-    recent_area.set_margin_bottom(12);
-    recent_area.set_margin_start(12);
-    recent_area.set_margin_end(12);
-    let recent_scroller = gtk::ScrolledWindow::builder()
+    let hint = gtk::Label::new(Some(tr!("No Projects").as_ref()));
+    list.set_placeholder(Some(&hint));
+    let scroller = gtk::ScrolledWindow::builder()
         .hscrollbar_policy(gtk::PolicyType::Never)
         .vexpand(true)
-        .child(&recent_area)
+        .child(&list)
         .build();
-    let history = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    history.set_hexpand(true);
-    history.append(&search_controls);
-    history.append(&recent_scroller);
-    let history_toolbar = adw::ToolbarView::new();
-    history_toolbar.add_top_bar(&right_header);
-    history_toolbar.set_content(Some(&history));
-    let history_page = adw::NavigationPage::builder()
-        .title(tr!("History").as_ref())
-        .child(&history_toolbar)
+    let projects = gtk::Box::new(gtk::Orientation::Vertical, 12);
+    projects.set_margin_start(12);
+    projects.set_margin_end(12);
+    projects.set_margin_bottom(12);
+    projects.append(&search);
+    projects.append(&scroller);
+    let toolbar = adw::ToolbarView::new();
+    let header = adw::HeaderBar::new();
+    header.set_show_end_title_buttons(false);
+    toolbar.add_top_bar(&header);
+    toolbar.set_content(Some(&projects));
+    let sidebar = adw::NavigationPage::builder()
+        .title(tr!("Projects").as_ref())
+        .child(&toolbar)
+        .build();
+
+    let create = gtk::Button::with_label(tr!("Create Project").as_ref());
+    create.add_css_class("suggested-action");
+    create.add_css_class("pill");
+    let open = gtk::Button::with_label(tr!("Open Project").as_ref());
+    open.add_css_class("pill");
+    let servers = gtk::Button::with_label(tr!("Project Servers").as_ref());
+    let actions = gtk::Box::new(gtk::Orientation::Vertical, 12);
+    actions.set_halign(gtk::Align::Center);
+    actions.set_valign(gtk::Align::Center);
+    actions.append(&create);
+    actions.append(&open);
+    actions.append(&servers);
+    let toolbar = adw::ToolbarView::new();
+    let header = adw::HeaderBar::new();
+    header.set_show_start_title_buttons(false);
+    toolbar.add_top_bar(&header);
+    toolbar.set_content(Some(&actions));
+    let content = adw::NavigationPage::builder()
+        .title(tr!("Shrimply").as_ref())
+        .child(&toolbar)
         .build();
     let split = adw::NavigationSplitView::builder()
         .sidebar(&sidebar)
-        .content(&history_page)
-        .min_sidebar_width(200.0)
-        .max_sidebar_width(200.0)
+        .content(&content)
+        .min_sidebar_width(300.0)
+        .max_sidebar_width(460.0)
         .sidebar_width_unit(adw::LengthUnit::Px)
-        .collapsed(false)
         .build();
-
     let window = adw::ApplicationWindow::builder()
         .application(app)
         .title(tr!("Shrimply").as_ref())
@@ -185,295 +144,116 @@ fn build_ui(app: &adw::Application) {
         .content(&split)
         .build();
 
-    refresh_recents(&recent_area, &search, &window, app);
-    search.connect_search_changed({
-        let recent_area = recent_area.clone();
-        let window = window.clone();
-        let app = app.clone();
-        move |search| refresh_recents(&recent_area, search, &window, &app)
-    });
-    clear_history.connect_clicked({
-        let recent_area = recent_area.clone();
-        let search = search.clone();
-        let window = window.clone();
-        let app = app.clone();
-        move |_| {
-            if let Err(error) = shrimply_cross_ui_core::launcher::clear_recent_projects() {
-                show_error(&window, "Could not clear recent projects", &error);
+    let model = Rc::new(RefCell::new(Launcher::default()));
+    let rebuild = {
+        let (list, search, hint, model) =
+            (list.clone(), search.clone(), hint.clone(), model.clone());
+        move || {
+            model.borrow_mut().set_search(&search.text());
+            while let Some(row) = list.row_at_index(0) {
+                list.remove(&row);
             }
-            refresh_recents(&recent_area, &search, &window, &app);
-        }
-    });
-    new_button.connect_clicked({
-        let window = window.clone();
-        let app = app.clone();
-        move |_| show_create_project(&window, &app)
-    });
-    open_button.connect_clicked({
-        let window = window.clone();
-        let app = app.clone();
-        move |_| show_open_project(&window, &app)
-    });
-    shared_button.connect_clicked({
-        let window = window.clone();
-        let app = app.clone();
-        move |_| show_open_shared_project(&window, &app)
-    });
-    servers_button.connect_clicked({
-        let window = window.clone();
-        move |_| shrimply_preferences_gtk::page::show_project_servers(&window)
-    });
-    window.present();
-}
-
-fn refresh_recents(
-    area: &gtk::Box,
-    search: &gtk::SearchEntry,
-    window: &adw::ApplicationWindow,
-    app: &adw::Application,
-) {
-    while let Some(child) = area.first_child() {
-        area.remove(&child);
-    }
-
-    let projects = match shrimply_cross_ui_core::launcher::load_recent_projects(&search.text()) {
-        Ok(projects) => projects,
-        Err(error) => {
-            tracing::warn!("Could not load recent projects: {error}");
-            Vec::new()
-        }
-    };
-    if projects.is_empty() {
-        let empty = adw::StatusPage::builder()
-            .icon_name("document-open-recent-symbolic")
-            .title(
+            hint.set_label(
                 tr!(if search.text().trim().is_empty() {
-                    "No Recent Projects"
+                    "No Projects"
                 } else {
                     "No Matching Projects"
                 })
                 .as_ref(),
-            )
-            .vexpand(true)
-            .build();
-        area.append(&empty);
-        return;
-    }
-
-    for recent in projects {
-        let last_edited = shrimply_cross_ui_core::launcher::recent_last_edited(&recent);
-        let last_edited_subtitle = presentation::recent_project_subtitle(last_edited.as_deref());
-        let details = gtk::Box::builder()
-            .orientation(gtk::Orientation::Vertical)
-            .spacing(4)
-            .hexpand(true)
-            .valign(gtk::Align::Center)
-            .build();
-        details.append(
-            &gtk::Label::builder()
-                .label(&recent.name)
-                .xalign(0.0)
-                .ellipsize(gtk::pango::EllipsizeMode::End)
-                .build(),
-        );
-        if !recent.tags.is_empty() {
-            let tags = adw::WrapBox::builder()
-                .child_spacing(6)
-                .line_spacing(6)
-                .build();
-            for tag in &recent.tags {
-                tags.append(&shrimply_components_gtk::ui::tag_pill(tag, false));
-            }
-            details.prepend(&tags);
+            );
+            append_projects(&list, &model.borrow(), 0);
         }
-        details.append(
-            &gtk::Label::builder()
-                .label(&last_edited_subtitle)
-                .xalign(0.0)
-                .css_classes(["dim-label", "caption"])
-                .ellipsize(gtk::pango::EllipsizeMode::End)
-                .build(),
-        );
-        let content = gtk::Box::builder()
-            .orientation(gtk::Orientation::Horizontal)
-            .spacing(12)
-            .margin_top(12)
-            .margin_bottom(12)
-            .margin_start(12)
-            .margin_end(12)
+    };
+    let reload = {
+        let (model, rebuild, window, hint) =
+            (model.clone(), rebuild.clone(), window.clone(), hint.clone());
+        move || {
+            let (model, rebuild, window) = (model.clone(), rebuild.clone(), window.clone());
+            hint.set_label(tr!("Loading Projects").as_ref());
+            let load = model.borrow_mut().begin_project_load();
+            glib::spawn_future_local(async move {
+                let projects = gio::spawn_blocking(launcher::load_projects)
+                    .await
+                    .expect("project catalog worker");
+                let result = model.borrow_mut().finish_project_load(load, projects);
+                match result {
+                    Ok(true) => rebuild(),
+                    Ok(false) => (),
+                    Err(error) => show_error(&window, "Could not load projects", &error),
+                }
+            });
+        }
+    };
+    search.connect_search_changed(move |_| rebuild());
+    scroller.connect_edge_reached({
+        let (list, model) = (list.clone(), model.clone());
+        move |_, edge| {
+            if edge == gtk::PositionType::Bottom {
+                append_projects(
+                    &list,
+                    &model.borrow(),
+                    list.observe_children().n_items() as usize,
+                );
+            }
+        }
+    });
+    list.connect_row_activated({
+        let model = model.clone();
+        let (window, app) = (window.clone(), app.clone());
+        move |_, row| {
+            if let Some(entry) = model.borrow().project(row.index() as usize).cloned() {
+                open_remote(&window, &app, "Could not open project", move || {
+                    entry.open(None)
+                });
+            }
+        }
+    });
+    create.connect_clicked({
+        let (window, app) = (window.clone(), app.clone());
+        move |_| show_create_project(&window, &app)
+    });
+    open.connect_clicked({
+        let (window, app) = (window.clone(), app.clone());
+        move |_| show_open_project(&window, &app)
+    });
+    match launcher::local_projects() {
+        Ok(projects) => {
+            model.borrow_mut().set_projects(projects);
+            append_projects(&list, &model.borrow(), 0);
+        }
+        Err(error) => show_error(&window, "Could not load projects", &error),
+    }
+    reload();
+    servers.connect_clicked({
+        let window = window.clone();
+        move |_| {
+            let reload = reload.clone();
+            shrimply_preferences_gtk::page::show_project_servers(&window)
+                .connect_closed(move |_| reload());
+        }
+    });
+    window.present();
+}
+
+fn append_projects(list: &gtk::ListBox, model: &Launcher, start: usize) {
+    for index in start..model.project_count().min(start + PROJECT_PAGE_SIZE) {
+        let project = model.project(index).expect("visible project");
+        let row = adw::ActionRow::builder()
+            .title(&project.name)
+            .use_markup(false)
+            .activatable(true)
             .build();
-        let shared = shrimply_cross_ui_core::launcher::is_shared_project(&recent.path);
-        let location = gtk::Image::from_icon_name(if shared {
+        let icon = gtk::Image::from_icon_name(if project.remote.is_some() {
             "folder-remote-symbolic"
         } else {
             "folder-symbolic"
         });
-        let location_label = tr!(if shared {
-            "Remote Project"
-        } else {
-            "Local Project"
-        });
-        location.set_tooltip_text(Some(location_label.as_ref()));
-        location.set_valign(gtk::Align::Center);
-        content.append(&location);
-        content.append(&details);
-        let row = adw::PreferencesRow::builder()
-            .title(&recent.name)
-            .use_markup(false)
-            .child(&content)
-            .activatable(true)
-            .height_request(RECENT_ROW_HEIGHT)
-            .build();
-        let menu = gtk::MenuButton::builder()
-            .icon_name("view-more-symbolic")
-            .tooltip_text(tr!(presentation::RECENT_PROJECT_MENU_LABEL).as_ref())
-            .valign(gtk::Align::Center)
-            .has_frame(false)
-            .build();
-        let model = gio::Menu::new();
-        model.append(
-            Some(&RecentProjectAction::Info.label()),
-            Some("recent.info"),
-        );
-        model.append(
-            Some(&RecentProjectAction::ShowInFiles.label()),
-            Some("recent.show"),
-        );
-        model.append(
-            Some(&RecentProjectAction::Delete.label()),
-            Some("recent.delete"),
-        );
-        let actions = gio::SimpleActionGroup::new();
-        menu.set_menu_model(Some(&model));
-        menu.insert_action_group("recent", Some(&actions));
-        shrimply_components_gtk::ui::adaptive_menu(&menu, "recent", &actions);
-        content.append(&menu);
-        let card = gtk::ListBox::builder()
-            .selection_mode(gtk::SelectionMode::None)
-            .activate_on_single_click(true)
-            .css_classes(["boxed-list"])
-            .build();
-        card.append(&row);
-        card.connect_row_activated({
-            let path = recent.path.clone();
-            let window = window.clone();
-            let app = app.clone();
-            move |_, _| open_in_editor(&window, &app, &path)
-        });
-        actions.add_action(&shrimply_components_gtk::ui::menu_action("info", None, {
-            let name = recent.name.clone();
-            let path = recent.path.clone();
-            let window = window.downgrade();
-            move || {
-                let window = window.upgrade()?;
-                show_project_info(&window, &name, &path, last_edited.as_deref());
-                None
-            }
-        }));
-        actions.add_action(&shrimply_components_gtk::ui::menu_action("show", None, {
-            let path = recent.path.clone();
-            let window = window.downgrade();
-            move || {
-                let window = window.upgrade()?;
-                if let Err(error) = shrimply_components_gtk::desktop_open::show_path_in_folder(
-                    window.upcast_ref(),
-                    path.clone(),
-                ) {
-                    show_error(&window, "Could not show project file", &error);
-                }
-                None
-            }
-        }));
-        actions.add_action(&shrimply_components_gtk::ui::menu_action("delete", None, {
-            let path = recent.path;
-            let area = area.downgrade();
-            let search = search.downgrade();
-            let window = window.downgrade();
-            let app = app.downgrade();
-            move || {
-                let (Some(area), Some(search), Some(window), Some(app)) = (
-                    area.upgrade(),
-                    search.upgrade(),
-                    window.upgrade(),
-                    app.upgrade(),
-                ) else {
-                    return None;
-                };
-                if let Err(error) = shrimply_cross_ui_core::launcher::remove_recent_project(&path) {
-                    show_error(&window, "Could not remove recent project", &error);
-                }
-                refresh_recents(&area, &search, &window, &app);
-                None
-            }
-        }));
-        area.append(&card);
-    }
-}
-
-fn show_project_info(
-    window: &adw::ApplicationWindow,
-    name: &str,
-    path: &Path,
-    last_edited: Option<&str>,
-) {
-    let info = presentation::recent_project_info(name, &path.to_string_lossy(), last_edited);
-    let details = adw::PreferencesGroup::new();
-    for field in info.fields {
-        let row = adw::ActionRow::builder()
-            .title(&field.label)
-            .subtitle(&field.value)
-            .build();
-        if let Some(action) = field.action {
-            row.set_subtitle_lines(PROJECT_PATH_LINES);
-            let show_in_files = gtk::Button::builder()
-                .icon_name(action.icon())
-                .tooltip_text(action.label())
-                .valign(gtk::Align::Center)
-                .css_classes(["flat"])
-                .build();
-            show_in_files.connect_clicked({
-                let path = path.to_path_buf();
-                let window = window.clone();
-                move |button| {
-                    if let Err(error) = shrimply_components_gtk::desktop_open::show_path_in_folder(
-                        button.upcast_ref(),
-                        path.clone(),
-                    ) {
-                        show_error(&window, "Could not show project file", &error);
-                    }
-                }
-            });
-            row.add_suffix(&show_in_files);
-            row.set_activatable_widget(Some(&show_in_files));
+        row.add_prefix(&icon);
+        if let Some(remote) = &project.remote {
+            row.set_subtitle(&remote.server);
         }
-        details.add(&row);
+        list.append(&row);
     }
-
-    if let Ok(Some(link)) = shrimply_cross_ui_core::launcher::shared_project_link(path) {
-        let row = adw::ActionRow::builder()
-            .title(tr!("Project Link").as_ref())
-            .subtitle(&link)
-            .build();
-        let copy = gtk::Button::builder()
-            .icon_name("edit-copy-symbolic")
-            .tooltip_text(tr!("Copy Project Link").as_ref())
-            .valign(gtk::Align::Center)
-            .build();
-        copy.connect_clicked(move |button| button.clipboard().set_text(&link));
-        row.add_suffix(&copy);
-        row.set_activatable_widget(Some(&copy));
-        details.add(&row);
-    }
-
-    let page = adw::PreferencesPage::new();
-    page.add(&details);
-    let dialog = adw::PreferencesDialog::builder()
-        .title(&info.title)
-        .search_enabled(false)
-        .content_width(PROJECT_INFO_WIDTH)
-        .build();
-    dialog.add(&page);
-    dialog.present(Some(window.upcast_ref::<gtk::Widget>()));
 }
 
 fn show_open_project(window: &adw::ApplicationWindow, app: &adw::Application) {
@@ -490,39 +270,6 @@ fn show_open_project(window: &adw::ApplicationWindow, app: &adw::Application) {
         };
         open_in_editor(&window, &app, &path);
     });
-}
-
-fn show_open_shared_project(window: &adw::ApplicationWindow, app: &adw::Application) {
-    let link = gtk::Entry::builder()
-        .placeholder_text(tr!("Project Link").as_ref())
-        .hexpand(true)
-        .build();
-    let dialog = adw::AlertDialog::builder()
-        .heading(tr!("Open Shared Project").as_ref())
-        .extra_child(&link)
-        .build();
-    dialog.add_response("cancel", tr!("Cancel").as_ref());
-    dialog.add_response("open", tr!("Open Project").as_ref());
-    dialog.set_default_response(Some("open"));
-    dialog.set_close_response("cancel");
-    dialog.set_response_appearance("open", adw::ResponseAppearance::Suggested);
-    let window = window.clone();
-    let app = app.clone();
-    dialog.choose(
-        Some(window.upcast_ref::<gtk::Widget>()),
-        None::<&gio::Cancellable>,
-        {
-            let window = window.clone();
-            move |answer| {
-                if answer == "open" {
-                    let link = link.text().to_string();
-                    open_remote(&window, &app, "Could not open project", move || {
-                        shrimply_cross_ui_core::launcher::open_shared_project(&link)
-                    });
-                }
-            }
-        },
-    );
 }
 
 fn open_remote(
@@ -613,7 +360,7 @@ fn show_create_project(window: &adw::ApplicationWindow, app: &adw::Application) 
             {
                 dialog.close();
                 open_remote(&window, &app, "Could not create project", move || {
-                    shrimply_cross_ui_core::launcher::create_shared_project(
+                    shrimply_cross_ui_core::launcher::create_remote_project(
                         &server,
                         &project_name,
                         canvas_size,

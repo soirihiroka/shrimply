@@ -10,7 +10,7 @@ use shrimply_project_document::{
     creation::{NewProject, apply_project_settings},
 };
 #[cfg(target_os = "android")]
-use shrimply_project_service::{ProjectClient, ProjectLink, SharedWorkspace};
+use shrimply_project_service::{ProjectClient, SharedWorkspace, catalog::ProjectEntry};
 use shrimply_timeline_edit::project_menu::{self, Action};
 use shrimply_timeline_edit::selection_state;
 use std::{
@@ -27,7 +27,7 @@ pub(crate) struct ProjectBackend {
     #[cfg(target_os = "android")]
     owner: Option<embedded::Lease>,
     #[cfg(target_os = "android")]
-    shared_link: Option<String>,
+    remote: bool,
     path: Option<PathBuf>,
     watcher: Option<watch::Watch>,
     mirror_root: Option<String>,
@@ -40,7 +40,6 @@ pub(crate) struct ProjectBackend {
     active: bool,
     pub revision: u64,
     view_dirty: bool,
-    recents: Vec<Value>,
     pub preferences: shrimply_preferences_core::SharedPreferences,
 }
 impl ProjectBackend {
@@ -56,7 +55,7 @@ impl ProjectBackend {
             #[cfg(target_os = "android")]
             owner: None,
             #[cfg(target_os = "android")]
-            shared_link: None,
+            remote: false,
             path: None,
             watcher: None,
             mirror_root: None,
@@ -69,7 +68,6 @@ impl ProjectBackend {
             active: true,
             revision: 0,
             view_dirty: false,
-            recents: recent_presentations()?,
             preferences: shrimply_preferences_core::open_with_defaults(),
         })
     }
@@ -112,7 +110,6 @@ impl ProjectBackend {
         let operation = operation(request)?;
         match operation {
             "status" => {}
-            "recents" => self.recents = recent_presentations()?,
             "create" => {
                 if self.project.is_some() {
                     return Err("close the current project before creating another project".into());
@@ -152,45 +149,30 @@ impl ProjectBackend {
                     }
                     Ok(())
                 })?;
-                self.touch_recent()?;
+                self.register_project()?;
             }
             "open" => self.open(
                 Path::new(string(request, "path")?),
                 request["mirror_root"].as_str().map(Path::new),
             )?,
             #[cfg(target_os = "android")]
-            "open_shared" => {
+            "open_remote" => {
                 if self.project.is_some() {
                     return Err("close the current project before opening another project".into());
                 }
-                let settings = shrimply_preferences_core::snapshot(&self.preferences);
-                let link =
-                    ProjectLink::from_url(string(request, "link")?, &settings.project_server_urls)?;
-                let directory = Path::new(string(request, "directory")?);
-                let mut existing = None;
-                for recent in &self.recents {
-                    let Some(path) = recent["path"].as_str().map(Path::new) else {
-                        continue;
-                    };
-                    if path.starts_with(directory)
-                        && path.is_file()
-                        && SharedWorkspace::open(path)?
-                            .is_some_and(|workspace| workspace.link() == &link)
-                    {
-                        existing = Some(path.to_path_buf());
-                        break;
-                    }
+                let entry: ProjectEntry = serde_json::from_value(request["project"].clone())
+                    .map_err(|error| error.to_string())?;
+                let link = entry
+                    .remote
+                    .as_ref()
+                    .ok_or("project has no remote location")?;
+                if !shrimply_preferences_core::snapshot(&self.preferences)
+                    .project_server_urls
+                    .contains(&link.server)
+                {
+                    return Err("Choose a server from Project Servers".into());
                 }
-                let path = if let Some(path) = existing {
-                    path
-                } else {
-                    let path = SharedWorkspace::managed_path_in(
-                        directory,
-                        &format!("{}.shrimp", link.project_id),
-                    )?;
-                    SharedWorkspace::join(&path, &link.server, link.project_id)?;
-                    path
-                };
+                let path = entry.open(Some(Path::new(string(request, "directory")?)))?;
                 self.open(&path, None)?;
             }
             #[cfg(target_os = "android")]
@@ -226,7 +208,7 @@ impl ProjectBackend {
             "export" => {
                 self.save()?;
                 #[cfg(target_os = "android")]
-                if self.shared_link.is_some() {
+                if self.remote {
                     let path = Path::new(string(request, "path")?);
                     let canonical = attached::load(self.path().expect("open project"))?;
                     attached::save_copy(path, &canonical)?;
@@ -325,14 +307,6 @@ impl ProjectBackend {
                     .ok_or("frame is outside the exact timeline range")?;
                 let duration = self.required()?.duration();
                 self.cursor(position.min(duration));
-            }
-            "remove_recent" => {
-                shrimply_recent_projects::remove(Path::new(string(request, "path")?))?;
-                self.recents = recent_presentations()?;
-            }
-            "clear_recents" => {
-                shrimply_recent_projects::clear()?;
-                self.recents.clear();
             }
             "import_file" => return self.import_file(request, None),
             "reload" => {
@@ -489,7 +463,7 @@ impl ProjectBackend {
             self.path = Some(path);
             self.observe_saved()?;
             self.watch()?;
-            self.touch_recent()
+            self.register_project()
         }
     }
 
@@ -522,13 +496,12 @@ impl ProjectBackend {
         }
         #[cfg(target_os = "android")]
         let project = {
-            let shared_link =
-                SharedWorkspace::open(&path)?.map(|workspace| workspace.link().to_string());
+            let remote = SharedWorkspace::open(&path)?.is_some();
             let owner = embedded::Lease::open(&path)?;
             let project = attached::load(&path)?;
             attached::activate(&path, &project);
             self.owner = Some(owner);
-            self.shared_link = shared_link;
+            self.remote = remote;
             project
         };
         #[cfg(not(target_os = "android"))]
@@ -548,7 +521,7 @@ impl ProjectBackend {
         if let Err(error) = self
             .observe_saved()
             .and_then(|_| self.watch())
-            .and_then(|_| self.touch_recent())
+            .and_then(|_| self.register_project())
         {
             self.close()?;
             return Err(error);
@@ -586,7 +559,7 @@ impl ProjectBackend {
         #[cfg(target_os = "android")]
         {
             self.owner = None;
-            self.shared_link = None;
+            self.remote = false;
         }
         #[cfg(not(target_os = "android"))]
         document::release_project_lock(self.path.as_ref().expect("open project has a path"));
@@ -597,7 +570,6 @@ impl ProjectBackend {
         self.error = None;
         self.view_dirty = false;
         self.revision += 1;
-        self.recents = recent_presentations()?;
         Ok(())
     }
 
@@ -615,16 +587,12 @@ impl ProjectBackend {
         Ok(())
     }
 
-    fn touch_recent(&mut self) -> Result<(), String> {
+    fn register_project(&self) -> Result<(), String> {
         let project = self.required()?;
-        shrimply_recent_projects::touch(
+        shrimply_project_service::catalog::register(
             self.path.as_ref().expect("open path"),
-            &project.name,
-            &project.tags,
-        )?;
-        drop(project);
-        self.recents = recent_presentations()?;
-        Ok(())
+            &project,
+        )
     }
 
     fn watch(&mut self) -> Result<(), String> {
@@ -701,7 +669,7 @@ impl ProjectBackend {
         self.fingerprint = Some(loaded_fingerprint);
         self.error = None;
         self.revision += 1;
-        self.touch_recent()?;
+        self.register_project()?;
         Ok(true)
     }
 
@@ -722,11 +690,11 @@ impl ProjectBackend {
     pub fn snapshot(&self) -> Result<Value, String> {
         document::poll_commit_status();
         #[cfg(target_os = "android")]
-        let shared_link = self.shared_link.as_deref();
+        let remote = self.remote;
         #[cfg(not(target_os = "android"))]
-        let shared_link: Option<&str> = None;
+        let remote = false;
         let project = self.project().map(|project| json!({
-            "path":self.path, "shared_link":shared_link, "name":project.name, "tags":project.tags,
+            "path":self.path, "remote":remote, "name":project.name, "tags":project.tags,
             "canvas_width":project.canvas_size.width, "canvas_height":project.canvas_size.height,
             "fps":project.fps.to_string(), "duration_frames":project.duration().as_frame_ceil(project.fps),
             "cursor_frame":project.cursor_position.unwrap_or(Time::ZERO).as_frame(project.fps),
@@ -748,7 +716,7 @@ impl ProjectBackend {
         });
         Ok(json!({"project":project,"project_menu":menu,
             "project_servers":shrimply_preferences_core::snapshot(&self.preferences).project_server_urls,
-            "save_state":state,"save_error":save_error,"watch_error":self.error,"revision":self.revision,"recents":self.recents}))
+            "save_state":state,"save_error":save_error,"watch_error":self.error,"revision":self.revision}))
     }
 
     pub fn stage_picked_file(
@@ -934,37 +902,6 @@ pub(super) fn remux_confirmation() -> Value {
     let prompt = shrimply_timeline_skia::external_content::remux_prompt();
     json!({"confirmation": {"title": prompt.title, "body": prompt.body,
         "confirm_label": prompt.confirm, "cancel_label": prompt.cancel}})
-}
-
-/// Native date formatting and filesystem metadata are refreshed with history,
-/// never from the editor's per-frame status/preview publication path.
-fn recent_presentations() -> Result<Vec<Value>, String> {
-    use shrimply_components_core::presentation::{
-        RecentProjectAction, recent_project_info, recent_project_subtitle,
-    };
-    #[cfg(target_os = "android")]
-    let format_date = crate::localization::format_date;
-    #[cfg(not(target_os = "android"))]
-    let format_date: fn(i64) -> Option<String> = |_| None;
-    shrimply_recent_projects::load()?.into_iter().map(|recent| {
-        let date = recent.modified_at.and_then(format_date);
-        let info = recent_project_info(&recent.name,&recent.path.to_string_lossy(),date.as_deref());
-        let info = json!({"title":info.title,"close_label":info.close_label,"fields":info.fields.into_iter().map(|field|json!({"label":field.label,"value":field.value,"action":field.action.map(|action|json!({"label":action.label(),"icon":action.icon(),"service":action.service(),"path":recent.path}))})).collect::<Vec<_>>()});
-        let menu = RecentProjectAction::ALL.into_iter().map(|action| {
-            let mut item = json!({"label":action.label(),"icon":action.icon(),"service":action.service()});
-            match action {
-                RecentProjectAction::Info => item["info"] = info.clone(),
-                RecentProjectAction::ShowInFiles => item["path"] = json!(recent.path),
-                RecentProjectAction::Delete => item["command"] = json!({"op":"remove_recent","path":recent.path}),
-            }
-            item
-        }).collect::<Vec<_>>();
-        let mut item = serde_json::to_value(&recent).map_err(|error|error.to_string())?;
-        item["last_edited"] = json!(recent_project_subtitle(date.as_deref()));
-        item["menu_label"] = json!(shrimply_i18n::text(shrimply_components_core::presentation::RECENT_PROJECT_MENU_LABEL));
-        item["menu"] = json!(menu);
-        Ok(item)
-    }).collect()
 }
 
 impl Drop for ProjectBackend {

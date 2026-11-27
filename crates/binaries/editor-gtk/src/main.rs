@@ -581,11 +581,7 @@ fn handle_load_event(
             suggested_name,
         } => choose_project_destination(app, window, loader, title, suggested_name),
         LoadEvent::ImportWarnings(warnings) => show_import_warnings(app, window, loader, warnings),
-        LoadEvent::Ready { path, project } => {
-            if let Err(error) = shrimply_recent_projects::touch(&path, &project.name, &project.tags)
-            {
-                tracing::warn!(%error, "could not update recent projects");
-            }
+        LoadEvent::Ready { project, .. } => {
             ffmpeg::init().expect("FFmpeg should initialize");
             ffmpeg::util::log::set_level(ffmpeg::util::log::Level::Error);
             build_ui(window, *project);

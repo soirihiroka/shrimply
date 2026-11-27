@@ -1156,12 +1156,7 @@ impl qobject::EditorBackend {
             LoadEvent::ImportWarnings(warnings) => self
                 .as_mut()
                 .request_warnings(QString::from(warnings.join("\n"))),
-            LoadEvent::Ready { path, project } => {
-                if let Err(error) =
-                    shrimply_recent_projects::touch(&path, &project.name, &project.tags)
-                {
-                    tracing::warn!(%error, "could not update recent projects");
-                }
+            LoadEvent::Ready { project, .. } => {
                 ffmpeg_next::init().expect("FFmpeg should initialize");
                 ffmpeg_next::util::log::set_level(ffmpeg_next::util::log::Level::Error);
                 let session = EditorSession::new(*project)

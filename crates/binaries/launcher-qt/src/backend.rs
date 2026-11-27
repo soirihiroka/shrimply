@@ -23,7 +23,7 @@ pub mod qobject {
     extern "RustQt" {
         #[qobject]
         #[qml_element]
-        #[qproperty(i32, recent_count, cxx_name = "recentCount")]
+        #[qproperty(QStringList, projects)]
         #[qproperty(i32, preset_count, cxx_name = "presetCount")]
         #[qproperty(i32, frame_rate_count, cxx_name = "frameRateCount")]
         type LauncherBackend = super::LauncherBackendRust;
@@ -32,24 +32,8 @@ pub mod qobject {
         fn text(self: &LauncherBackend, key: &QString) -> QString;
 
         #[qinvokable]
-        #[cxx_name = "recentName"]
-        fn recent_name(self: &LauncherBackend, index: i32) -> QString;
-
-        #[qinvokable]
-        #[cxx_name = "recentPath"]
-        fn recent_path(self: &LauncherBackend, index: i32) -> QString;
-
-        #[qinvokable]
-        #[cxx_name = "recentLastEdited"]
-        fn recent_last_edited(self: &LauncherBackend, index: i32) -> QString;
-
-        #[qinvokable]
-        #[cxx_name = "recentProjectLink"]
-        fn recent_project_link(self: &LauncherBackend, index: i32) -> QString;
-
-        #[qinvokable]
-        #[cxx_name = "recentIsRemote"]
-        fn recent_is_remote(self: &LauncherBackend, index: i32) -> bool;
+        #[cxx_name = "projectIsRemote"]
+        fn project_is_remote(self: &LauncherBackend, index: i32) -> bool;
 
         #[qinvokable]
         #[cxx_name = "projectServers"]
@@ -64,12 +48,8 @@ pub mod qobject {
         ) -> bool;
 
         #[qinvokable]
-        #[cxx_name = "openSharedProject"]
-        fn open_shared_project(self: Pin<&mut LauncherBackend>, link: &QString);
-
-        #[qinvokable]
-        #[cxx_name = "createSharedProject"]
-        fn create_shared_project(
+        #[cxx_name = "createRemoteProject"]
+        fn create_remote_project(
             self: Pin<&mut LauncherBackend>,
             server: &QString,
             name: &QString,
@@ -95,20 +75,8 @@ pub mod qobject {
         fn set_search(self: Pin<&mut LauncherBackend>, query: &QString);
 
         #[qinvokable]
-        #[cxx_name = "clearHistory"]
-        fn clear_history(self: Pin<&mut LauncherBackend>);
-
-        #[qinvokable]
-        #[cxx_name = "removeRecent"]
-        fn remove_recent(self: Pin<&mut LauncherBackend>, index: i32);
-
-        #[qinvokable]
-        #[cxx_name = "showRecent"]
-        fn show_recent(self: Pin<&mut LauncherBackend>, index: i32);
-
-        #[qinvokable]
-        #[cxx_name = "openRecent"]
-        fn open_recent(self: Pin<&mut LauncherBackend>, index: i32);
+        #[cxx_name = "openListedProject"]
+        fn open_listed_project(self: Pin<&mut LauncherBackend>, index: i32);
 
         #[qinvokable]
         #[cxx_name = "openProject"]
@@ -157,9 +125,6 @@ pub mod qobject {
         #[cxx_name = "editorFinished"]
         fn editor_finished(self: Pin<&mut LauncherBackend>);
 
-        #[qsignal]
-        #[cxx_name = "openDirectory"]
-        fn open_directory(self: Pin<&mut LauncherBackend>, url: QUrl, after_reveal: bool);
     }
 
     impl cxx_qt::Initialize for LauncherBackend {}
@@ -167,7 +132,7 @@ pub mod qobject {
 }
 
 pub struct LauncherBackendRust {
-    recent_count: i32,
+    projects: QStringList,
     preset_count: i32,
     frame_rate_count: i32,
     core: Launcher,
@@ -176,7 +141,7 @@ pub struct LauncherBackendRust {
 impl Default for LauncherBackendRust {
     fn default() -> Self {
         Self {
-            recent_count: 0,
+            projects: QStringList::default(),
             preset_count: count(shrimply_cross_ui_core::launcher::preset_labels().len()),
             frame_rate_count: count(shrimply_cross_ui_core::launcher::frame_rate_labels().len()),
             core: Launcher::default(),
@@ -192,16 +157,11 @@ impl cxx_qt::Initialize for qobject::LauncherBackend {
         self.as_mut().set_frame_rate_count(count(
             shrimply_cross_ui_core::launcher::frame_rate_labels().len(),
         ));
-        self.as_mut().reload_recents();
-        tracing::info!(
-            recent_count = self.recent_count(),
-            preset_count = self.preset_count(),
-            frame_rate_count = self.frame_rate_count(),
-            first_recent = %self.recent_name(0),
-            first_preset = %self.preset_label(0),
-            first_frame_rate = %self.frame_rate_label(0),
-            "Qt launcher models initialized"
-        );
+        if let Ok(projects) = launcher::local_projects() {
+            self.as_mut().rust_mut().core.set_projects(projects);
+            self.as_mut().update_projects();
+        }
+        self.reload_projects();
     }
 }
 
@@ -210,41 +170,10 @@ impl qobject::LauncherBackend {
         shrimply_i18n_qt::text(&key.to_string())
     }
 
-    pub fn recent_name(&self, index: i32) -> QString {
-        let name = index_of(index)
-            .and_then(|index| self.core.recent_name(index))
-            .map(QString::from)
-            .unwrap_or_default();
-        tracing::debug!(index, name = %name, "Qt recent name requested");
-        name
-    }
-
-    pub fn recent_path(&self, index: i32) -> QString {
+    pub fn project_is_remote(&self, index: i32) -> bool {
         index_of(index)
-            .and_then(|index| self.core.recent_path(index))
-            .map(|path| QString::from(path.to_string_lossy().as_ref()))
-            .unwrap_or_default()
-    }
-
-    pub fn recent_last_edited(&self, index: i32) -> QString {
-        index_of(index)
-            .and_then(|index| self.core.recent_last_edited(index))
-            .map(|date| shrimply_i18n_qt::text_args("Last edited %{date}", &[("date", date)]))
-            .unwrap_or_else(|| shrimply_i18n_qt::text("Last edited time unavailable"))
-    }
-
-    pub fn recent_project_link(&self, index: i32) -> QString {
-        index_of(index)
-            .and_then(|index| self.core.recent_path(index))
-            .and_then(|path| launcher::shared_project_link(path).ok().flatten())
-            .map(QString::from)
-            .unwrap_or_default()
-    }
-
-    pub fn recent_is_remote(&self, index: i32) -> bool {
-        index_of(index)
-            .and_then(|index| self.core.recent_path(index))
-            .is_some_and(launcher::is_shared_project)
+            .and_then(|index| self.core.project(index))
+            .is_some_and(|project| project.remote.is_some())
     }
 
     pub fn project_servers(&self, include_local: bool) -> QStringList {
@@ -262,7 +191,10 @@ impl qobject::LauncherBackend {
             (!previous.is_empty()).then_some(previous.as_str()),
             (!url.is_empty()).then_some(url.as_str()),
         ) {
-            Ok(()) => true,
+            Ok(()) => {
+                self.reload_projects();
+                true
+            }
             Err(error) => {
                 self.emit_error("Could not update project server", &error);
                 false
@@ -270,14 +202,7 @@ impl qobject::LauncherBackend {
         }
     }
 
-    pub fn open_shared_project(self: Pin<&mut Self>, link: &QString) {
-        let link = link.to_string();
-        self.open_remote("Could not open project", move || {
-            launcher::open_shared_project(&link)
-        });
-    }
-
-    pub fn create_shared_project(
+    pub fn create_remote_project(
         self: Pin<&mut Self>,
         server: &QString,
         name: &QString,
@@ -290,7 +215,7 @@ impl qobject::LauncherBackend {
         self.open_remote("Could not create project", move || {
             let (canvas, fps) =
                 launcher::project_settings_from_values(width, height, frame_rate_index)?;
-            launcher::create_shared_project(&server, &name, canvas, fps, &[])
+            launcher::create_remote_project(&server, &name, canvas, fps, &[])
         });
     }
 
@@ -339,48 +264,17 @@ impl qobject::LauncherBackend {
     }
 
     pub fn set_search(mut self: Pin<&mut Self>, query: &QString) {
-        let result = self.as_mut().rust_mut().core.set_search(query.to_string());
-        self.finish_core_action(result, "Could not load recent projects");
+        self.as_mut().rust_mut().core.set_search(&query.to_string());
+        self.update_projects();
     }
 
-    pub fn clear_history(mut self: Pin<&mut Self>) {
-        let result = self.as_mut().rust_mut().core.clear_history();
-        self.finish_core_action(result, "Could not clear recent projects");
-    }
-
-    pub fn remove_recent(mut self: Pin<&mut Self>, index: i32) {
-        let Some(index) = index_of(index) else {
-            return;
-        };
-        let result = self.as_mut().rust_mut().core.remove_recent(index);
-        self.finish_core_action(result, "Could not remove recent project");
-    }
-
-    pub fn show_recent(self: Pin<&mut Self>, index: i32) {
-        let Some(index) = index_of(index) else {
-            return;
-        };
-        match self.core.desktop_action(index) {
-            Ok(shrimply_cross_ui_core::desktop_open::Action::Open(path)) => {
-                self.open_directory(local_url(&path), false);
-            }
-            Ok(shrimply_cross_ui_core::desktop_open::Action::FocusRevealed(path)) => {
-                self.open_directory(local_url(&path), true);
-            }
-            Err(error) => self.emit_error("Could not show project file", &error),
+    pub fn open_listed_project(self: Pin<&mut Self>, index: i32) {
+        if let Some(project) = index_of(index)
+            .and_then(|index| self.core.project(index))
+            .cloned()
+        {
+            self.open_remote("Could not open project", move || project.open(None));
         }
-    }
-
-    pub fn open_recent(self: Pin<&mut Self>, index: i32) {
-        let Some(index) = index_of(index) else {
-            return;
-        };
-        let editor = self
-            .core
-            .recent_path(index)
-            .ok_or_else(|| "Recent project does not exist.".to_string())
-            .and_then(shrimply_cross_ui_core::launcher::launch_qt_editor);
-        self.start_editor(editor);
     }
 
     pub fn open_project(self: Pin<&mut Self>, url: &QUrl) {
@@ -473,17 +367,37 @@ impl qobject::LauncherBackend {
         self.start_editor(editor);
     }
 
-    fn reload_recents(mut self: Pin<&mut Self>) {
-        let result = self.as_mut().rust_mut().core.reload();
-        self.finish_core_action(result, "Could not load recent projects");
+    fn reload_projects(mut self: Pin<&mut Self>) {
+        let load = self.as_mut().rust_mut().core.begin_project_load();
+        let qt_thread = self.qt_thread();
+        std::thread::spawn(move || {
+            let projects = launcher::load_projects();
+            let _ = qt_thread.queue(move |mut backend| {
+                let result = backend
+                    .as_mut()
+                    .rust_mut()
+                    .core
+                    .finish_project_load(load, projects);
+                match result {
+                    Ok(true) => backend.update_projects(),
+                    Ok(false) => (),
+                    Err(error) => backend.emit_error("Could not load projects", &error),
+                }
+            });
+        });
     }
 
-    fn finish_core_action(mut self: Pin<&mut Self>, result: Result<(), String>, heading: &str) {
-        if let Err(error) = result {
-            self.as_mut().emit_error(heading, &error);
-        }
-        let count = i32::try_from(self.core.recent_count()).unwrap_or(i32::MAX);
-        self.set_recent_count(count);
+    fn update_projects(self: Pin<&mut Self>) {
+        let projects = (0..self.core.project_count())
+            .filter_map(|index| self.core.project(index))
+            .map(|project| {
+                QString::from(match &project.remote {
+                    Some(remote) => format!("{}\n{}", project.name, remote.server),
+                    None => project.name.clone(),
+                })
+            })
+            .collect();
+        self.set_projects(projects);
     }
 
     fn emit_error(mut self: Pin<&mut Self>, heading: &str, body: &str) {

@@ -1,7 +1,7 @@
 use shrimply_math_core::Fraction;
 use shrimply_project_document::project;
+pub use shrimply_project_service::catalog::{ProjectEntry, list as load_projects, local_projects};
 use shrimply_project_types::CanvasSize;
-use shrimply_recent_projects::{self as recent_projects, RecentProject};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
 
@@ -55,100 +55,51 @@ pub fn check_nvidia_gpu() -> Result<(), String> {
 #[derive(Default)]
 pub struct Launcher {
     query: String,
-    recents: Vec<RecentProject>,
+    projects: Vec<ProjectEntry>,
+    visible: Vec<usize>,
+    project_load: u64,
 }
 
 impl Launcher {
-    pub fn reload(&mut self) -> Result<(), String> {
-        self.recents = load_recent_projects(&self.query)?;
-        Ok(())
+    pub fn set_projects(&mut self, projects: Vec<ProjectEntry>) {
+        self.projects = projects;
+        self.set_search(&self.query.clone());
     }
 
-    pub fn set_search(&mut self, query: String) -> Result<(), String> {
-        self.query = query;
-        self.reload()
+    pub fn begin_project_load(&mut self) -> u64 {
+        self.project_load += 1;
+        self.project_load
     }
 
-    pub fn clear_history(&mut self) -> Result<(), String> {
-        clear_recent_projects()?;
-        self.reload()
+    pub fn finish_project_load(
+        &mut self,
+        load: u64,
+        projects: Result<Vec<ProjectEntry>, String>,
+    ) -> Result<bool, String> {
+        if load != self.project_load {
+            return Ok(false);
+        }
+        self.set_projects(projects?);
+        Ok(true)
     }
 
-    pub fn remove_recent(&mut self, index: usize) -> Result<(), String> {
-        let Some(path) = self.recents.get(index).map(|recent| recent.path.clone()) else {
-            return Ok(());
-        };
-        remove_recent_project(&path)?;
-        self.reload()
+    pub fn set_search(&mut self, query: &str) {
+        self.query = query.trim().to_lowercase();
+        self.visible = self
+            .projects
+            .iter()
+            .enumerate()
+            .filter_map(|(index, project)| project.matches(&self.query).then_some(index))
+            .collect();
     }
 
-    pub fn recent_count(&self) -> usize {
-        self.recents.len()
+    pub fn project_count(&self) -> usize {
+        self.visible.len()
     }
 
-    pub fn recent_name(&self, index: usize) -> Option<&str> {
-        self.recents.get(index).map(|recent| recent.name.as_str())
+    pub fn project(&self, index: usize) -> Option<&ProjectEntry> {
+        self.visible.get(index).map(|index| &self.projects[*index])
     }
-
-    pub fn recent_path(&self, index: usize) -> Option<&Path> {
-        self.recents.get(index).map(|recent| recent.path.as_path())
-    }
-
-    pub fn recent_last_edited(&self, index: usize) -> Option<String> {
-        self.recents.get(index).and_then(recent_last_edited)
-    }
-
-    pub fn desktop_action(&self, index: usize) -> Result<crate::desktop_open::Action, String> {
-        let path = self
-            .recent_path(index)
-            .ok_or_else(|| "Recent project does not exist.".to_string())?;
-        crate::desktop_open::prepare(path, None)
-    }
-
-    pub fn launch_recent(&self, index: usize) -> Result<Child, String> {
-        let path = self
-            .recent_path(index)
-            .ok_or_else(|| "Recent project does not exist.".to_string())?;
-        launch_editor(path)
-    }
-}
-
-pub fn load_recent_projects(query: &str) -> Result<Vec<RecentProject>, String> {
-    let projects = recent_projects::load()?;
-    let stored_count = projects.len();
-    let query = query.trim().to_lowercase();
-    let projects = projects
-        .into_iter()
-        .filter(|project| {
-            query.is_empty()
-                || project.name.to_lowercase().contains(&query)
-                || project
-                    .tags
-                    .iter()
-                    .any(|tag| tag.to_lowercase().contains(&query))
-                || project
-                    .path
-                    .to_string_lossy()
-                    .to_lowercase()
-                    .contains(&query)
-        })
-        .collect::<Vec<_>>();
-    tracing::info!(
-        database = %recent_projects::settings_db_path().display(),
-        stored_count,
-        visible_count = projects.len(),
-        query,
-        "launcher history loaded"
-    );
-    Ok(projects)
-}
-
-pub fn clear_recent_projects() -> Result<(), String> {
-    recent_projects::clear()
-}
-
-pub fn remove_recent_project(path: &Path) -> Result<(), String> {
-    recent_projects::remove(path)
 }
 
 pub fn create_project(
@@ -198,7 +149,7 @@ pub fn update_project_servers(previous: Option<&str>, value: Option<&str>) -> Re
     shrimply_editor_state::preferences::update_project_server(&store, previous, value)
 }
 
-pub fn create_shared_project(
+pub fn create_remote_project(
     server: &str,
     name: &str,
     canvas_size: CanvasSize,
@@ -210,20 +161,6 @@ pub fn create_shared_project(
     let path =
         shrimply_project_service::SharedWorkspace::managed_path(&default_project_filename(name))?;
     shrimply_project_service::SharedWorkspace::create(&path, server, &project)?;
-    Ok(path)
-}
-
-pub fn shared_project_link(path: &Path) -> Result<Option<String>, String> {
-    Ok(shrimply_project_service::SharedWorkspace::open(path)?
-        .map(|workspace| workspace.link().to_string()))
-}
-
-pub fn open_shared_project(url: &str) -> Result<PathBuf, String> {
-    use shrimply_project_service::{ProjectLink, SharedWorkspace};
-    let link = ProjectLink::from_url(url, &project_servers())?;
-    let path = SharedWorkspace::managed_path(&format!("{}.shrimp", link.project_id))?;
-    let (_, document) = SharedWorkspace::join(&path, &link.server, link.project_id)?;
-    recent_projects::touch(&path, &document.name, &document.tags)?;
     Ok(path)
 }
 
@@ -240,26 +177,6 @@ pub fn default_project_path(directory: &Path, name: &str) -> PathBuf {
     directory.join(default_project_filename(name))
 }
 
-pub fn last_edited(path: &Path) -> Option<String> {
-    recent_projects::modified_at(path).and_then(format_modified)
-}
-
-pub fn recent_last_edited(recent: &RecentProject) -> Option<String> {
-    recent.modified_at.and_then(format_modified)
-}
-
-pub fn is_shared_project(path: &Path) -> bool {
-    shrimply_project_service::SharedWorkspace::database(path).is_file()
-}
-
-fn format_modified(seconds: i64) -> Option<String> {
-    glib::DateTime::from_unix_local(seconds)
-        .ok()
-        .and_then(|date| date.format("%x %X").ok())
-        .map(|date| date.to_string())
-}
-
-#[cfg(target_os = "macos")]
 pub fn launch_appkit_editor(path: &Path) -> Result<Child, String> {
     if !path.is_file() {
         return Err(format!("Project does not exist: {}", path.display()));

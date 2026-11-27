@@ -182,8 +182,12 @@ fn start_session(
     preferences: SharedPreferences,
 ) -> Result<Server, String> {
     let context = glib::MainContext::new();
+    let path = shrimply_project_document::project::active_project_path();
+    if let Err(error) = shrimply_project_service::catalog::register(&path, &project.borrow()) {
+        tracing::warn!(%error, "Could not register project");
+    }
     let remote = remote::Session::open(
-        &shrimply_project_document::project::active_project_path(),
+        &path,
         project.clone(),
         player_state.clone(),
         selection_state.clone(),

@@ -15,10 +15,8 @@ ApplicationWindow {
     visible: true
     title: backend.text("Shrimply")
 
-    readonly property int sidebarWidth: 200
+    readonly property int sidebarWidth: 330
     readonly property int pageMargin: 12
-    readonly property int revealFocusDelay: 120
-    property url pendingDirectory
 
     LauncherBackend {
         id: backend
@@ -41,21 +39,6 @@ ApplicationWindow {
             Qt.quit()
         }
 
-        function onOpenDirectory(url, afterReveal) {
-            if (afterReveal) {
-                window.pendingDirectory = url
-                revealTimer.restart()
-            } else {
-                Qt.openUrlExternally(url)
-            }
-        }
-    }
-
-    Timer {
-        id: revealTimer
-        interval: window.revealFocusDelay
-        repeat: false
-        onTriggered: Qt.openUrlExternally(window.pendingDirectory)
     }
 
     RowLayout {
@@ -64,168 +47,72 @@ ApplicationWindow {
 
         Pane {
             Layout.preferredWidth: window.sidebarWidth
-            Layout.minimumWidth: window.sidebarWidth
-            Layout.maximumWidth: window.sidebarWidth
             Layout.fillHeight: true
-
             ColumnLayout {
                 anchors.fill: parent
-                spacing: 12
-
-                Button {
-                    Layout.fillWidth: true
-                    text: backend.text("Create Project")
-                    highlighted: true
-                    onClicked: createDialog.open()
+                Label {
+                    text: backend.text("Projects")
+                    font.bold: true
                 }
-
-                Button {
+                TextField {
+                    id: search
                     Layout.fillWidth: true
-                    text: backend.text("Open Project")
-                    onClicked: backend.chooseProject()
+                    placeholderText: backend.text("Search Projects")
+                    selectByMouse: true
+                    onTextChanged: backend.setSearch(text)
                 }
-
-                Button {
-                    Layout.fillWidth: true
-                    text: backend.text("Open Shared Project")
-                    onClicked: openSharedDialog.open()
-                }
-
-                Button {
-                    Layout.fillWidth: true
-                    text: backend.text("Project Servers")
-                    onClicked: projectServersDialog.open()
-                }
-
                 Item {
+                    Layout.fillWidth: true
                     Layout.fillHeight: true
+                    ListView {
+                        id: projects
+                        anchors.fill: parent
+                        clip: true
+                        model: backend.projects
+                        delegate: ItemDelegate {
+                            required property string modelData
+                            required property int index
+                            width: projects.width
+                            text: modelData
+                            icon.source: backend.projectIsRemote(index)
+                                ? "qrc:/shrimply/icons/folder-remote-symbolic.svg"
+                                : "qrc:/shrimply/icons/folder-open-symbolic.svg"
+                            icon.width: 16
+                            icon.height: 16
+                            onClicked: backend.openListedProject(index)
+                        }
+                        ScrollBar.vertical: ScrollBar {}
+                    }
+                    Label {
+                        anchors.centerIn: parent
+                        visible: projects.count === 0
+                        text: backend.text(search.text.trim().length ? "No Matching Projects" : "No Projects")
+                    }
                 }
             }
         }
-
         ColumnLayout {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            spacing: 0
-
-            ToolBar {
-                Layout.fillWidth: true
-
-                RowLayout {
-                    anchors.fill: parent
-                    anchors.margins: 6
-                    spacing: 6
-
-                    TextField {
-                        id: search
-                        Layout.fillWidth: true
-                        placeholderText: backend.text("Search history")
-                        selectByMouse: true
-                        onTextChanged: backend.setSearch(text)
-                    }
-
-                    ToolButton {
-                        icon.source: "qrc:/shrimply/icons/user-trash-symbolic.svg"
-                        text: backend.text("Clear History")
-                        display: AbstractButton.IconOnly
-                        ToolTip.visible: hovered
-                        ToolTip.text: text
-                        onClicked: backend.clearHistory()
-                    }
-                }
+            Layout.margins: window.pageMargin
+            Item { Layout.fillHeight: true }
+            Button {
+                Layout.alignment: Qt.AlignHCenter
+                text: backend.text("Create Project")
+                highlighted: true
+                onClicked: createDialog.open()
             }
-
-            Item {
-                Layout.fillWidth: true
-                Layout.fillHeight: true
-                Layout.margins: window.pageMargin
-
-                ListView {
-                    id: recentList
-                    anchors.fill: parent
-                    spacing: 8
-                    clip: true
-                    model: backend.recentCount
-                    visible: count > 0
-
-                    delegate: ItemDelegate {
-                        id: recentDelegate
-                        required property int index
-                        width: recentList.width
-                        height: 64
-                        rightPadding: optionsButton.width + 12
-                        text: index >= 0 && index < backend.recentCount
-                            ? backend.recentName(index) + "\n" + backend.recentLastEdited(index)
-                            : ""
-                        icon.name: backend.recentIsRemote(index) ? "folder-remote" : "folder"
-                        icon.source: backend.recentIsRemote(index)
-                            ? "qrc:/shrimply/icons/folder-remote-symbolic.svg"
-                            : "qrc:/shrimply/icons/folder-open-symbolic.svg"
-                        icon.width: 16
-                        icon.height: 16
-                        onClicked: backend.openRecent(index)
-
-                        ToolButton {
-                            id: optionsButton
-                            anchors.right: parent.right
-                            anchors.verticalCenter: parent.verticalCenter
-                            icon.source: "qrc:/shrimply/icons/view-more-symbolic.svg"
-                            text: backend.text("Project options")
-                            display: AbstractButton.IconOnly
-                            ToolTip.visible: hovered
-                            ToolTip.text: text
-                            MenuInput { id: optionsInput }
-                            Item { id: optionsAnchor; y: parent.height; width: 1; height: 1 }
-                            onClicked: options.presentForInput(optionsAnchor, optionsInput.takeTouch())
-
-                            AdaptiveMenu {
-                                id: options
-                                pointerPopupType: Popup.Native
-
-                                MenuItem {
-                                    text: backend.text("Info")
-                                    onTriggered: {
-                                        infoDialog.recentIndex = recentDelegate.index
-                                        infoDialog.open()
-                                    }
-                                }
-
-                                MenuItem {
-                                    text: backend.text("Show in Files")
-                                    onTriggered: backend.showRecent(recentDelegate.index)
-                                }
-
-                                MenuItem {
-                                    text: backend.text("Delete")
-                                    onTriggered: backend.removeRecent(recentDelegate.index)
-                                }
-                            }
-                        }
-                    }
-
-                    ScrollBar.vertical: ScrollBar {}
-                }
-
-                ColumnLayout {
-                    anchors.centerIn: parent
-                    visible: backend.recentCount === 0
-
-                    ToolButton {
-                        Layout.alignment: Qt.AlignHCenter
-                        icon.source: "qrc:/shrimply/icons/document-open-recent-symbolic.svg"
-                        display: AbstractButton.IconOnly
-                        enabled: false
-                    }
-
-                    Label {
-                        Layout.alignment: Qt.AlignHCenter
-                        text: search.text.trim().length === 0
-                            ? backend.text("No Recent Projects")
-                            : backend.text("No Matching Projects")
-                        font.bold: true
-                    }
-                }
+            Button {
+                Layout.alignment: Qt.AlignHCenter
+                text: backend.text("Open Project")
+                onClicked: backend.chooseProject()
             }
+            Button {
+                Layout.alignment: Qt.AlignHCenter
+                text: backend.text("Project Servers")
+                onClicked: projectServersDialog.open()
+            }
+            Item { Layout.fillHeight: true }
         }
     }
 
@@ -240,87 +127,6 @@ ApplicationWindow {
             id: errorBody
             width: parent.width
             wrapMode: Text.Wrap
-        }
-    }
-
-    Dialog {
-        id: infoDialog
-        property int recentIndex: -1
-        anchors.centerIn: parent
-        width: Math.min(500, window.width - 48)
-        modal: true
-        title: infoDialog.recentIndex >= 0
-            && infoDialog.recentIndex < backend.recentCount
-            ? backend.recentName(infoDialog.recentIndex) : ""
-        standardButtons: Dialog.Close
-
-        ColumnLayout {
-            width: parent.width
-            spacing: 14
-
-            Label {
-                text: backend.text("Last Edited")
-                font.bold: true
-            }
-
-            Label {
-                Layout.fillWidth: true
-                text: infoDialog.recentIndex >= 0
-                    && infoDialog.recentIndex < backend.recentCount
-                    ? backend.recentLastEdited(infoDialog.recentIndex)
-                    : backend.text("Unavailable")
-            }
-
-            Label {
-                text: backend.text("File Location")
-                font.bold: true
-            }
-
-            RowLayout {
-                Layout.fillWidth: true
-
-                Label {
-                    Layout.fillWidth: true
-                    text: infoDialog.recentIndex >= 0
-                        && infoDialog.recentIndex < backend.recentCount
-                        ? backend.recentPath(infoDialog.recentIndex) : ""
-                    wrapMode: Text.WrapAnywhere
-                }
-
-                ToolButton {
-                    icon.source: "qrc:/shrimply/icons/folder-open-symbolic.svg"
-                    text: backend.text("Show in Files")
-                    display: AbstractButton.IconOnly
-                    ToolTip.visible: hovered
-                    ToolTip.text: text
-                    onClicked: backend.showRecent(infoDialog.recentIndex)
-                }
-            }
-            TextField {
-                Layout.fillWidth: true
-                text: backend.recentProjectLink(infoDialog.recentIndex)
-                visible: text.length > 0
-                readOnly: true
-                selectByMouse: true
-                Accessible.name: backend.text("Project Link")
-            }
-        }
-    }
-
-    Dialog {
-        id: openSharedDialog
-        anchors.centerIn: parent
-        width: Math.min(500, window.width - 48)
-        title: backend.text("Open Shared Project")
-        modal: true
-        standardButtons: Dialog.Open | Dialog.Cancel
-        onAccepted: backend.openSharedProject(projectLink.text)
-        onOpened: projectLink.forceActiveFocus()
-
-        TextField {
-            id: projectLink
-            width: parent.width
-            placeholderText: backend.text("Project Link")
         }
     }
 
@@ -522,7 +328,7 @@ ApplicationWindow {
                 onClicked: {
                     createDialog.close()
                     if (projectDestination.currentIndex > 0) {
-                        backend.createSharedProject(
+                        backend.createRemoteProject(
                             projectDestination.currentText, projectName.text.trim(),
                             widthInput.value, heightInput.value, frameRate.currentIndex)
                         return

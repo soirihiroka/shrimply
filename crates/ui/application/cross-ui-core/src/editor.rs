@@ -250,12 +250,11 @@ impl EditorSession {
             let project = self.project.borrow();
             let mut metadata = self.project_metadata.borrow_mut();
             if metadata.0 != project.name || metadata.1 != project.tags {
-                if let Err(error) = shrimply_recent_projects::touch(
+                if let Err(error) = shrimply_project_service::catalog::register(
                     &project::active_project_path(),
-                    &project.name,
-                    &project.tags,
+                    &project,
                 ) {
-                    tracing::warn!(%error, "could not update recent projects");
+                    tracing::warn!(%error, "could not register project");
                 }
                 if metadata.0 != project.name {
                     self.title_dirty.set(true);
@@ -319,8 +318,8 @@ impl EditorSession {
         self.editing.replace(editing);
         player_state::set_collaborators(&self.player_state, Vec::new());
         let project = self.project.borrow();
-        if let Err(error) = shrimply_recent_projects::touch(&path, &project.name, &project.tags) {
-            tracing::warn!(%error, "could not update recent projects");
+        if let Err(error) = shrimply_project_service::catalog::register(&path, &project) {
+            tracing::warn!(%error, "could not register project");
         }
         drop(project);
         player_state::refresh_project(

@@ -41,7 +41,6 @@ shrimply-project-document = { workspace = true, default-features = true }
 shrimply-compute-client = { workspace = true }
 shrimply-editor-state = { workspace = true }
 shrimply-process-reporting = { workspace = true }
-shrimply-recent-projects = { workspace = true }
 shrimply-timeline-edit = { workspace = true }
 shrimply-timeline-gtk = { workspace = true }
 shrimply-transcription = { workspace = true }

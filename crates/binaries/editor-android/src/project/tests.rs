@@ -352,8 +352,7 @@ fn canonical_project_lifecycle_history_and_external_reload() {
     assert_eq!(backend.required().unwrap().video_tracks[0].items.len(), 2);
     assert_eq!(backend.required().unwrap().caption_tracks[0].items.len(), 1);
     assert_eq!(
-        backend.snapshot().unwrap()["recents"]
-            .as_array()
+        shrimply_project_service::catalog::local_projects()
             .unwrap()
             .len(),
         1

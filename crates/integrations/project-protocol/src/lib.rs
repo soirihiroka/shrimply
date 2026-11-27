@@ -9,6 +9,12 @@ use uuid::Uuid;
 pub const UPLOAD_CHUNK_BYTES: usize = 4 * 1024 * 1024;
 pub const LEGACY_CHECKPOINT_FIELD: &str = "$shrimp";
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ProjectSummary {
+    pub id: Uuid,
+    pub name: String,
+}
+
 #[derive(Serialize, Deserialize)]
 pub struct ProjectVersion<T> {
     pub revision: u64,
