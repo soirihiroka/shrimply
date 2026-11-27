@@ -225,7 +225,10 @@ impl qobject::LauncherBackend {
                 return;
             }
             let Some(path) = local_path(&url) else {
-                self.emit_error("Could not create project", "The selected location does not have a local path.");
+                self.emit_error(
+                    "Could not create project",
+                    "The selected location does not have a local path.",
+                );
                 return;
             };
             ProjectLocation::Local(path)

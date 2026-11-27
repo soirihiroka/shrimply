@@ -95,6 +95,7 @@ rustPlatform.buildRustPackage {
 
   inherit src;
   SHRIMPLY_BUILD_GIT_HASH = src.rev or src.dirtyRev or "";
+  SHRIMPLY_BUILD_SOURCE_TIME = toString (src.lastModified or "");
   cargoLock.lockFile = ../Cargo.lock;
 
   nativeBuildInputs = [

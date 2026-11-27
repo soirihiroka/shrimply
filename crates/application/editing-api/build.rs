@@ -9,7 +9,11 @@ fn git(arguments: &[&str]) -> Option<String> {
 }
 
 fn main() {
-    for name in ["SHRIMPLY_BUILD_GIT_HASH", "GITHUB_SHA"] {
+    for name in [
+        "SHRIMPLY_BUILD_GIT_HASH",
+        "SHRIMPLY_BUILD_SOURCE_TIME",
+        "GITHUB_SHA",
+    ] {
         println!("cargo:rerun-if-env-changed={name}");
     }
     for path in [
@@ -39,7 +43,11 @@ fn main() {
             "Build Git hash must be a full commit SHA"
         );
         println!("cargo:rustc-env=SHRIMPLY_BUILD_GIT_HASH={hash}");
-        if let Some(time) = git(&["show", "-s", "--format=%ct", hash]) {
+        let time = env::var("SHRIMPLY_BUILD_SOURCE_TIME")
+            .ok()
+            .filter(|time| time.parse::<u64>().is_ok())
+            .or_else(|| git(&["show", "-s", "--format=%ct", hash]));
+        if let Some(time) = time {
             println!("cargo:rustc-env=SHRIMPLY_BUILD_SOURCE_TIME={time}");
         }
     }

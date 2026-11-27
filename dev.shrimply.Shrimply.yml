@@ -196,6 +196,7 @@ modules:
         CARGO_TARGET_DIR: /run/ccache/cargo-target
         CARGO_UNSTABLE_CHECKSUM_FRESHNESS: "true"
         SHRIMPLY_BUILD_GIT_HASH: '@SHRIMPLY_GIT_HASH@'
+        SHRIMPLY_BUILD_SOURCE_TIME: '@SHRIMPLY_SOURCE_TIME@'
         SHRIMPLY_FFMPEG_PREFIX: /app
         # Link the bundled FFmpeg before the SDK's incompatible version.
         RUSTFLAGS: "-L native=/app/lib -C link-arg=-fuse-ld=lld"
