@@ -6046,6 +6046,7 @@ dependencies = [
  "shrimply-project-document",
  "shrimply-property-model",
  "shrimply-resource-pipeline",
+ "shrimply-rubberband",
  "tempfile",
  "tracing",
  "uuid",
@@ -8139,6 +8140,13 @@ version = "0.1.0"
 dependencies = [
  "earshot",
  "shrimply-pocketsphinx",
+]
+
+[[package]]
+name = "shrimply-rubberband"
+version = "4.0.0"
+dependencies = [
+ "realfft",
 ]
 
 [[package]]

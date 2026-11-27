@@ -37,7 +37,6 @@ runs:
           pkgconf \
           poppler \
           ripgrep \
-          rubberband \
           uv
 
     - name: Restore Rust toolchain

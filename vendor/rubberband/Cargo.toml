@@ -1,0 +1,8 @@
+[package]
+name = "shrimply-rubberband"
+version = "4.0.0"
+edition = "2024"
+license = "GPL-2.0-or-later"
+
+[dependencies]
+realfft.workspace = true

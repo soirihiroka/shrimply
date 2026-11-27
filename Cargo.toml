@@ -143,6 +143,7 @@ members = [
     "crates/gpu/cuda/gpu-cuda-memory",
     "crates/media/visual/visual-frame",
     "vendor/vision",
+    "vendor/rubberband",
     "vendor/pocketsphinx",
     "vendor/rhubarb-lip-sync",
     "crates/ui/3d/3d-control-core",
@@ -390,6 +391,7 @@ objc2-screen-capture-kit = { version = "0.3", default-features = false }
 objc2-vision = "0.3"
 oklab = "1"
 shrimply-vision = { path = "vendor/vision" }
+shrimply-rubberband = { path = "vendor/rubberband" }
 pango = "0.22"
 pangocairo = "0.22"
 pest = "2"
@@ -454,6 +456,15 @@ debug = 0
 # Keep source-derived numerical kernels as optimized as the former native library.
 [profile.dev.package.shrimply-vision]
 opt-level = 2
+
+[profile.dev.package.shrimply-rubberband]
+opt-level = 3
+
+[profile.dev.package.rustfft]
+opt-level = 3
+
+[profile.dev.package.realfft]
+opt-level = 3
 
 [profile.dev.package.shrimply-editor-gtk]
 opt-level = 0

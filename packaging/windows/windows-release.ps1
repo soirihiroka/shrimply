@@ -110,7 +110,7 @@ $env:QMAKE = $qmakePath
 
 & (Join-Path $PSScriptRoot "verify-ffmpeg.ps1") -FfmpegRoot $ffmpegRoot -DevelopmentFilesOnly
 
-& $pkgConfig --exists poppler-glib pango pangocairo rubberband
+& $pkgConfig --exists poppler-glib pango pangocairo
 if ($LASTEXITCODE -ne 0) {
     throw "The isolated dependency tree is missing required application libraries"
 }

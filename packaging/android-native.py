@@ -19,8 +19,6 @@ OGG_VERSION = "1.3.6"
 OGG_SHA256 = "5c8253428e181840cd20d41f3ca16557a9cc04bad4a3d04cce84808677fa1061"
 VORBIS_VERSION = "1.3.7"
 VORBIS_SHA256 = "b33cc4934322bcbf6efcbacf49e3ca01aadbea4114ec9589d1b1e9d20f72954b"
-RUBBERBAND_VERSION = "4.0.0"
-RUBBERBAND_SHA256 = "af050313ee63bc18b35b2e064e5dce05b276aaf6d1aa2b8a82ced1fe2f8028e9"
 PANGO_VERSION = "1.58.2"
 PANGO_SHA256 = "342385b6ca3b7c73455d7c80a13b7dbe4489e00bc3bd4c5bd6ed4dce421e374a"
 WRAPDB_REVISION = "cc81edad31940dce5d9595905529a5899a4319b4"
@@ -42,22 +40,6 @@ ABIS = {
     "arm64-v8a": ("aarch64", "aarch64-linux-android"),
     "x86_64": ("x86_64", "x86_64-linux-android"),
 }
-
-
-def build_rubberband(sources, root, prefix, compiler, toolchain, profile, ndk):
-    identity = hashlib.sha256(Path(__file__).read_bytes() + (RUBBERBAND_SHA256 + profile).encode() + (ndk / "source.properties").read_bytes()).hexdigest()
-    stamp = root / "rubberband.sha256"
-    library = prefix / "lib/librubberband.a"
-    if stamp.exists() and stamp.read_text() == identity and library.is_file():
-        return
-    directory = source(sources, f"rubberband-{RUBBERBAND_VERSION}", f"https://breakfastquay.com/files/releases/rubberband-{RUBBERBAND_VERSION}.tar.bz2", RUBBERBAND_SHA256)
-    output = root / "rubberband.o"
-    # Upstream's supported single compilation unit includes its built-in FFT,
-    # resampler and C API; the editor uses the same LiveShifter interface.
-    subprocess.run([f"{compiler}++", "-std=c++11", "-fPIC", "-g", "-O0" if profile == "debug" else "-O3", "-c", str(directory / "single/RubberBandSingle.cpp"), "-o", str(output)], check=True)
-    library.parent.mkdir(parents=True, exist_ok=True)
-    subprocess.run([str(toolchain / "llvm-ar"), "rcs", str(library), str(output)], check=True)
-    stamp.write_text(identity)
 
 
 def cmake_build(args, root, name, directory, options, required_cache=None):
@@ -208,7 +190,6 @@ def build_media(args, sources, root, compiler):
     capture_patch = Path(__file__).resolve().with_name("ffmpeg-android-capture.patch")
     ffmpeg = ffmpeg_source(sources, hardware_patch, encoder_patch, qp_patch, capture_patch)
     identity = hashlib.sha256(Path(__file__).read_bytes() + ffmpeg.name.encode() + (ndk / "source.properties").read_bytes()).hexdigest()
-    build_rubberband(sources, root, prefix, compiler, toolchain, args.profile, ndk)
     if stamp.exists() and stamp.read_text() == identity and all(
         (prefix / "lib" / name).is_file()
         for name in ("libavcodec.a", "libopus.a", "libmp3lame.a", "libogg.a", "libvorbis.a", "libvorbisenc.a", "libx264.a", "libx265.a")

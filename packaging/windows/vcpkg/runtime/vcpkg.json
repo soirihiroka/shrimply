@@ -27,7 +27,6 @@
       "name": "poppler",
       "default-features": false,
       "features": ["cairo", "glib", "zlib"]
-    },
-    "rubberband"
+    }
   ]
 }

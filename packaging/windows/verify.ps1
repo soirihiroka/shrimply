@@ -27,6 +27,7 @@ $requiredNotices = @(
     "opus.txt",
     "ffmpeg-build-configuration.txt",
     "OpenCV-Vision.txt",
+    "Rubber-Band.txt",
     "GTK-Pango-Color.txt",
     "GTK-Pango-Color-NOTICE.txt"
 )

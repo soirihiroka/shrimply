@@ -160,7 +160,6 @@ FEDORA_PACKAGES := \
 	x264-devel \
 	x265-devel \
 	fdk-aac-devel \
-	rubberband-devel \
 	alsa-lib-devel \
 	gtk4-devel \
 	libadwaita-devel \
@@ -185,7 +184,6 @@ endif
 native-deps sanim-check: linux-ffmpeg
 endif
 native-deps:
-	@$(PKG_CONFIG) --exists rubberband || { echo "Missing Rubber Band development files (pkg-config: rubberband)" >&2; exit 1; }
 	@$(PKG_CONFIG) --exists libpipewire-0.3 || { echo "Missing PipeWire development files (pkg-config: libpipewire-0.3)" >&2; exit 1; }
 	@$(PKG_CONFIG) --exists poppler-glib || { echo "Missing Poppler GLib development files (pkg-config: poppler-glib)" >&2; exit 1; }
 
@@ -194,7 +192,7 @@ windows-native-deps: qt-native-deps
 	@command -v cl.exe >/dev/null 2>&1 || { echo "Missing MSVC compiler (cl.exe)" >&2; exit 1; }
 	@command -v nvcc.exe >/dev/null 2>&1 || { echo "Missing CUDA compiler (nvcc.exe)" >&2; exit 1; }
 	@powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File packaging/windows/verify-ffmpeg.ps1 -FfmpegRoot "$(FFMPEG_DIR)" -DevelopmentFilesOnly
-	@$(PKG_CONFIG) --exists poppler-glib pango pangocairo rubberband || { echo "Missing vcpkg application libraries" >&2; exit 1; }
+	@$(PKG_CONFIG) --exists poppler-glib pango pangocairo || { echo "Missing vcpkg application libraries" >&2; exit 1; }
 
 qt-native-deps:
 	@command -v $(QT_QMAKE) >/dev/null 2>&1 || { echo "Missing Qt 6 qmake ($(QT_QMAKE))" >&2; exit 1; }
@@ -251,6 +249,7 @@ build: appkit-ffmpeg appkit-icon
 	cp packaging/macos/Info.plist "$(APPKIT_APP)/Contents/Info.plist"
 	cp "$(APPKIT_ICON_DIR)/Assets.car" "$(APPKIT_ICON_DIR)/Shrimply.icns" "$(APPKIT_APP)/Contents/Resources/"
 	cp vendor/vision/LICENSE "$(APPKIT_APP)/Contents/Resources/licenses/OpenCV-Vision.txt"
+	cp vendor/rubberband/COPYING "$(APPKIT_APP)/Contents/Resources/licenses/Rubber-Band.txt"
 	cp crates/math/color/src/css/LICENSE "$(APPKIT_APP)/Contents/Resources/licenses/GTK-Pango-Color.txt"
 	cp crates/math/color/src/css/NOTICE "$(APPKIT_APP)/Contents/Resources/licenses/GTK-Pango-Color-NOTICE.txt"
 
@@ -414,6 +413,7 @@ endif
 	$(INSTALL) -Dm644 vendor/pocketsphinx/MODEL-LICENSE "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/PocketSphinx-model.txt"
 	$(INSTALL) -Dm644 vendor/rhubarb-lip-sync/LICENSE "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/Rhubarb-Lip-Sync.txt"
 	$(INSTALL) -Dm644 vendor/vision/LICENSE "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/OpenCV-Vision.txt"
+	$(INSTALL) -Dm644 vendor/rubberband/COPYING "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/Rubber-Band.txt"
 	$(INSTALL) -Dm644 crates/math/color/src/css/LICENSE "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/GTK-Pango-Color.txt"
 	$(INSTALL) -Dm644 crates/math/color/src/css/NOTICE "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/GTK-Pango-Color-NOTICE.txt"
 	sed -e 's|^Exec=.*|Exec="$(BINDIR)/$(BIN_NAME)" %f|' -e 's|^TryExec=.*|TryExec=$(BINDIR)/$(BIN_NAME)|' $(DESKTOP_FILE) | $(INSTALL) -Dm644 /dev/stdin "$(DESTDIR)$(APPLICATIONSDIR)/dev.shrimply.Shrimply.desktop"
@@ -433,6 +433,7 @@ uninstall:
 	rm -f "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/PocketSphinx-model.txt"
 	rm -f "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/Rhubarb-Lip-Sync.txt"
 	rm -f "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/OpenCV-Vision.txt"
+	rm -f "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/Rubber-Band.txt"
 	rm -f "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/GTK-Pango-Color.txt"
 	rm -f "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/GTK-Pango-Color-NOTICE.txt"
 	rm -f "$(DESTDIR)$(APPLICATIONSDIR)/dev.shrimply.Shrimply.desktop"

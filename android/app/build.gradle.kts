@@ -6,6 +6,7 @@ val licenseAssetsDirectory = layout.buildDirectory.dir("generated/licenseAssets"
 val licenseAssets = tasks.register<Sync>("licenseAssets") {
     mapOf(
         "vendor/vision/LICENSE" to "OpenCV-Vision.txt",
+        "vendor/rubberband/COPYING" to "Rubber-Band.txt",
         "crates/math/color/src/css/LICENSE" to "GTK-Pango-Color.txt",
         "crates/math/color/src/css/NOTICE" to "GTK-Pango-Color-NOTICE.txt",
     ).forEach { (source, name) ->

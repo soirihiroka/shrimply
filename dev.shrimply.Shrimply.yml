@@ -73,25 +73,6 @@ modules:
         url: https://github.com/RenderKit/oidn/releases/download/v2.5.1/oidn-2.5.1.x86_64.linux.tar.gz
         sha256: 743c3e2aff8c220d5d70fe6cb970fb3d36f2702d2693c61d1d148e404cf37cd6
 
-  - name: rubberband
-    buildsystem: meson
-    config-opts:
-      - --libdir=lib
-      - -Ddefault_library=shared
-      - -Dfft=builtin
-      - -Dresampler=builtin
-      - -Djni=disabled
-      - -Dladspa=disabled
-      - -Dlv2=disabled
-      - -Dvamp=disabled
-      - -Dcmdline=disabled
-      - -Dtests=disabled
-    sources:
-      - type: git
-        url: https://github.com/breakfastquay/rubberband.git
-        tag: v4.0.0
-        commit: 1d95888bec3ae0a17c0c4af791810d5a63f6bc35
-
   - name: fdk-aac
     buildsystem: cmake-ninja
     config-opts:

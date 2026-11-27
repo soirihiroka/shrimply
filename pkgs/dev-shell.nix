@@ -27,7 +27,6 @@
   python3,
   qt6,
   ripgrep,
-  rubberband,
   rustToolchain,
   shrimply-slang,
   shrimply-oidn,
@@ -75,7 +74,6 @@ mkShell {
     python3
     qtEnv
     ripgrep
-    rubberband
     shrimply-slang
     spirv-tools
     uv

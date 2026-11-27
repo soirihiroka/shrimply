@@ -100,6 +100,14 @@ AUTHORS: Carnegie Mellon University; Alpha Cephei Inc.; CMU Sphinx contributors
 
 ---
 
+COMPONENT: Rubber Band R3 LiveShifter (Rust port)
+SOURCE: https://breakfastquay.com/rubberband/
+VERSION: 4.0.0
+LICENSE: GPL-2.0-or-later; see vendor/rubberband/COPYING
+AUTHOR: Particular Programs Ltd.
+
+---
+
 COMPONENT: Rhubarb Lip Sync mouth-shape documentation images
 SOURCE: https://github.com/DanielSWolf/rhubarb-lip-sync
 VERSION: 9b9573cd21b253c9ba58739bbd1aa0b50b991bff

@@ -1,7 +1,4 @@
-use std::collections::VecDeque;
 use std::f32::consts::FRAC_PI_4;
-use std::ffi::c_void;
-use std::ptr::NonNull;
 
 use fundsp::prelude32::*;
 
@@ -10,6 +7,7 @@ use shrimply_audio_modifiers::{
 };
 use shrimply_project_document::project::{AudioItem, Time};
 use shrimply_property_model::timeline_value::*;
+use shrimply_rubberband::{BLOCK_SIZE as PITCH_BLOCK_SIZE, LiveShifter, Shift, Window};
 
 use super::CHANNELS;
 
@@ -38,7 +36,7 @@ enum EffectState {
     Distortion(DistortionState),
     Rnnoise(Box<RnnoiseState>),
     DeepFilterNet(Box<DeepFilterNetState>),
-    Pitch(PitchState),
+    Pitch(Box<PitchState>),
 }
 
 struct EqualizerState {
@@ -187,9 +185,6 @@ const VOICE_COLOR_TARGET_DBFS: f32 = -18.0;
 const VOICE_COLOR_GAIN_LIMIT_DB: f32 = 6.0;
 const VOICE_COLOR_CEILING_DBFS: f32 = -1.0;
 const VOICE_COLOR_LEVEL_FLOOR: f32 = 1.0e-9;
-const RUBBERBAND_LIVE_WINDOW_MEDIUM: i32 = 0x0010_0000;
-const RUBBERBAND_FORMANT_PRESERVED: i32 = 0x0100_0000;
-const RUBBERBAND_CHANNELS_TOGETHER: i32 = 0x1000_0000;
 
 struct DelayLine {
     samples: Vec<f32>,
@@ -245,14 +240,11 @@ struct DistortionState {
 }
 
 struct PitchState {
-    state: NonNull<c_void>,
-    block_size: usize,
-    start_delay: usize,
-    input: [Vec<f32>; CHANNELS],
-    output: [Vec<f32>; CHANNELS],
-    ready: [VecDeque<f32>; CHANNELS],
-    pending_pitch: f32,
-    pending_formant: f32,
+    shifter: LiveShifter<CHANNELS>,
+    input: [[f32; CHANNELS]; PITCH_BLOCK_SIZE],
+    output: [[f32; CHANNELS]; PITCH_BLOCK_SIZE],
+    input_len: usize,
+    pending: Shift,
 }
 
 impl Processor {
@@ -334,7 +326,7 @@ impl Processor {
                     )),
                 },
                 AudioModifierEffect::Pitch(value) => {
-                    EffectState::Pitch(PitchState::new(sample_rate, value)?)
+                    EffectState::Pitch(Box::new(PitchState::new(sample_rate, value)))
                 }
                 AudioModifierEffect::Cache(_)
                 | AudioModifierEffect::Gain(_)
@@ -359,7 +351,7 @@ impl Processor {
                 EffectState::DeepFilterNet(state) => {
                     state.model.lookahead.saturating_add(1) * state.model.hop_size
                 }
-                EffectState::Pitch(state) => state.start_delay + state.block_size.saturating_sub(1),
+                EffectState::Pitch(_) => latency_frames(state),
                 EffectState::Reverb(state) => state.warmup_frames,
                 EffectState::VoiceColor(state) => state.warmup_frames,
                 EffectState::Echo(state) => state.warmup_frames,
@@ -371,16 +363,7 @@ impl Processor {
     }
 
     pub(super) fn latency_frames(&self) -> usize {
-        self.states
-            .iter()
-            .map(|state| match state {
-                EffectState::Limiter(state) => state.latency_frames,
-                EffectState::Rnnoise(_) => nnnoiseless::DenoiseState::FRAME_SIZE - 1,
-                EffectState::DeepFilterNet(state) => state.latency_frames(),
-                EffectState::Pitch(state) => state.start_delay + state.block_size.saturating_sub(1),
-                _ => 0,
-            })
-            .sum()
+        self.states.iter().map(latency_frames).sum()
     }
 
     pub(super) fn process(
@@ -573,7 +556,7 @@ fn latency_frames(state: &EffectState) -> usize {
         EffectState::Limiter(state) => state.latency_frames,
         EffectState::Rnnoise(_) => nnnoiseless::DenoiseState::FRAME_SIZE - 1,
         EffectState::DeepFilterNet(state) => state.latency_frames(),
-        EffectState::Pitch(state) => state.start_delay + state.block_size.saturating_sub(1),
+        EffectState::Pitch(state) => state.shifter.start_delay() + PITCH_BLOCK_SIZE - 1,
         _ => 0,
     }
 }
@@ -1771,39 +1754,22 @@ fn delayed_sample(samples: &[f32], write: usize, delay_frames: f32) -> f32 {
 }
 
 impl PitchState {
-    fn new(
-        sample_rate: u32,
-        value: &shrimply_audio_modifiers::PitchModifier,
-    ) -> Result<Self, String> {
-        let mut options = match value.quality {
-            PitchQuality::LowLatency => 0,
-            PitchQuality::Balanced => RUBBERBAND_LIVE_WINDOW_MEDIUM,
+    fn new(sample_rate: u32, value: &shrimply_audio_modifiers::PitchModifier) -> Self {
+        let window = match value.quality {
+            PitchQuality::LowLatency => Window::Short,
+            PitchQuality::Balanced => Window::Medium,
         };
-        if value.preserve_formants {
-            options |= RUBBERBAND_FORMANT_PRESERVED;
+        Self {
+            shifter: LiveShifter::new(sample_rate, window, value.link_channels),
+            input: [[0.0; CHANNELS]; PITCH_BLOCK_SIZE],
+            output: [[0.0; CHANNELS]; PITCH_BLOCK_SIZE],
+            input_len: 0,
+            pending: Shift {
+                pitch_scale: 1.0,
+                formant_scale: 0.0,
+                preserve_formants: value.preserve_formants,
+            },
         }
-        if value.link_channels {
-            options |= RUBBERBAND_CHANNELS_TOGETHER;
-        }
-        let state =
-            NonNull::new(unsafe { rubberband_live_new(sample_rate, CHANNELS as u32, options) })
-                .ok_or("could not initialize Rubber Band live pitch shifter")?;
-        let block_size = unsafe { rubberband_live_get_block_size(state.as_ptr()) } as usize;
-        let start_delay = unsafe { rubberband_live_get_start_delay(state.as_ptr()) } as usize;
-        if block_size == 0 {
-            unsafe { rubberband_live_delete(state.as_ptr()) };
-            return Err("Rubber Band returned a zero live block size".to_string());
-        }
-        Ok(Self {
-            state,
-            block_size,
-            start_delay,
-            input: std::array::from_fn(|_| Vec::with_capacity(block_size)),
-            output: std::array::from_fn(|_| vec![0.0; block_size]),
-            ready: std::array::from_fn(|_| VecDeque::with_capacity(block_size * 2)),
-            pending_pitch: 1.0,
-            pending_formant: 0.0,
-        })
     }
 
     fn process(
@@ -1813,65 +1779,29 @@ impl PitchState {
         local_start: Time,
         sample_rate: u32,
     ) {
-        unsafe {
-            rubberband_live_set_formant_option(
-                self.state.as_ptr(),
-                if value.preserve_formants {
-                    RUBBERBAND_FORMANT_PRESERVED
-                } else {
-                    0
-                },
-            );
-        }
-        for (frame, channels) in samples.chunks_exact_mut(CHANNELS).enumerate() {
-            if self.input[0].is_empty() {
-                let semitones = value
-                    .semitones
-                    .value_at(local_time(local_start, frame, sample_rate))
-                    .clamp(-24.0, 24.0);
-                self.pending_pitch = 2.0_f32.powf(semitones / 12.0);
-                self.pending_formant = if value.preserve_formants {
+        self.pending.preserve_formants = value.preserve_formants;
+        let (frames, _) = samples.as_chunks_mut::<CHANNELS>();
+        for (frame, channels) in frames.iter_mut().enumerate() {
+            if self.input_len == 0 {
+                let time = local_time(local_start, frame, sample_rate);
+                let semitones = value.semitones.value_at(time).clamp(-24.0, 24.0);
+                self.pending.pitch_scale = f64::from(2.0_f32.powf(semitones / 12.0));
+                self.pending.formant_scale = if value.preserve_formants {
                     0.0
                 } else {
-                    let formant_semitones = value
-                        .formant_semitones
-                        .value_at(local_time(local_start, frame, sample_rate))
-                        .clamp(-12.0, 12.0);
-                    2.0_f32.powf(formant_semitones / 12.0)
+                    let semitones = value.formant_semitones.value_at(time).clamp(-12.0, 12.0);
+                    f64::from(2.0_f32.powf(semitones / 12.0))
                 };
             }
-            for (channel, sample) in channels.iter().copied().enumerate() {
-                self.input[channel].push(sample);
+            self.input[self.input_len] = *channels;
+            self.input_len += 1;
+            if self.input_len == PITCH_BLOCK_SIZE {
+                self.shifter
+                    .shift(&self.input, &mut self.output, self.pending);
+                self.input_len = 0;
             }
-            if self.input[0].len() == self.block_size {
-                let input = self.input.each_ref().map(|channel| channel.as_ptr());
-                let mut output = self.output.each_mut().map(|channel| channel.as_mut_ptr());
-                unsafe {
-                    rubberband_live_set_pitch_scale(
-                        self.state.as_ptr(),
-                        f64::from(self.pending_pitch),
-                    );
-                    rubberband_live_set_formant_scale(
-                        self.state.as_ptr(),
-                        f64::from(self.pending_formant),
-                    );
-                    rubberband_live_shift(self.state.as_ptr(), input.as_ptr(), output.as_mut_ptr());
-                }
-                for channel in 0..CHANNELS {
-                    self.ready[channel].extend(&self.output[channel]);
-                    self.input[channel].clear();
-                }
-            }
-            for (channel, sample) in channels.iter_mut().enumerate() {
-                *sample = self.ready[channel].pop_front().unwrap_or(0.0);
-            }
+            *channels = self.output[self.input_len];
         }
-    }
-}
-
-impl Drop for PitchState {
-    fn drop(&mut self) {
-        unsafe { rubberband_live_delete(self.state.as_ptr()) };
     }
 }
 
@@ -1888,17 +1818,4 @@ pub(crate) fn db_gain(decibels: f32) -> f32 {
     } else {
         10.0_f32.powf(decibels / 20.0)
     }
-}
-
-#[cfg_attr(target_os = "android", link(name = "rubberband", kind = "static"))]
-#[cfg_attr(not(target_os = "android"), link(name = "rubberband"))]
-unsafe extern "C" {
-    fn rubberband_live_new(sample_rate: u32, channels: u32, options: i32) -> *mut c_void;
-    fn rubberband_live_delete(state: *mut c_void);
-    fn rubberband_live_set_pitch_scale(state: *mut c_void, scale: f64);
-    fn rubberband_live_set_formant_scale(state: *mut c_void, scale: f64);
-    fn rubberband_live_set_formant_option(state: *mut c_void, options: i32);
-    fn rubberband_live_get_start_delay(state: *const c_void) -> u32;
-    fn rubberband_live_get_block_size(state: *mut c_void) -> u32;
-    fn rubberband_live_shift(state: *mut c_void, input: *const *const f32, output: *mut *mut f32);
 }

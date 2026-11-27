@@ -35,7 +35,6 @@
   poppler_gi,
   python3,
   rhubarbSrc,
-  rubberband,
   runCommand,
   rustPlatform,
   shrimply-slang,
@@ -134,7 +133,6 @@ rustPlatform.buildRustPackage {
     openssl
     pipewire
     poppler_gi
-    rubberband
     shrimply-slang
     vulkan-headers
     vulkan-loader
@@ -191,6 +189,8 @@ rustPlatform.buildRustPackage {
       "$out/share/licenses/shrimply/Rhubarb-Lip-Sync.txt"
     install -Dm644 vendor/vision/LICENSE \
       "$out/share/licenses/shrimply/OpenCV-Vision.txt"
+    install -Dm644 vendor/rubberband/COPYING \
+      "$out/share/licenses/shrimply/Rubber-Band.txt"
 
     install -Dm644 assets/icons/dev.shrimply.Shrimply.svg \
       "$out/share/icons/hicolor/scalable/apps/dev.shrimply.Shrimply.svg"

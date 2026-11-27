@@ -30,6 +30,7 @@ shrimply-math-core = { workspace = true }
 shrimply-path-core.workspace = true
 shrimply-project-document = { workspace = true, features = ["editor"] }
 shrimply-resource-pipeline = { workspace = true }
+shrimply-rubberband.workspace = true
 shrimply-compute-client = { workspace = true }
 tempfile.workspace = true
 tracing.workspace = true
