@@ -40,8 +40,12 @@ RUN ln -sf libcuda.so /usr/local/cuda/lib64/stubs/libcuda.so.1
 ENV LD_LIBRARY_PATH=/usr/local/cuda/lib64/stubs:${LD_LIBRARY_PATH}
 ENV LIBRARY_PATH=/usr/local/cuda/lib64/stubs:${LIBRARY_PATH}
 
-RUN make release qt-release
-RUN make install install-qt DESTDIR=/stage PREFIX=/usr
+RUN make install qt-release DESTDIR=/stage PREFIX=/usr && \
+    install -Dm755 target/qt/release/shrimply /stage/usr/libexec/shrimply/qt/shrimply && \
+    install -Dm755 target/qt/release/shrimply-editor /stage/usr/libexec/shrimply/qt/shrimply-editor && \
+    sh packaging/linux/install-ffmpeg.sh target/linux-ffmpeg/install /stage/usr/libexec/shrimply/qt \
+        /stage/usr/lib/shrimply/ffmpeg shrimply shrimply-editor && \
+    install -m644 assets/dev.shrimply.Shrimply.Qt.desktop /stage/usr/share/applications/
 
 # --- Bundle the runtime libraries
 RUN mkdir -p /stage/usr/lib/shrimply && \

@@ -527,7 +527,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "manual benchmark: make sanim-preview-inspector-bench"]
+    #[ignore = "manual benchmark"]
     fn sanim_inspector_geometry_fallback_benchmark() {
         const CLICKS: u32 = 1000;
         for clips in [1, 1000] {

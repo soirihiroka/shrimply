@@ -41,7 +41,7 @@ jobs:
             extra-substituters = https://cache.nixos-cuda.org https://shrimply.cachix.org
             extra-trusted-public-keys = cache.nixos-cuda.org:74DUi4Ye579gUqzH4ziL9IyiJBlDpMRn9MBN8oNan9M= shrimply.cachix.org-1:cAgdyBbGPgJZMWUP4PAQPVENeCYtGT7OPPkocvo+uuA=
       - name: Check shared Rust, GTK, and Qt
-        run: nix develop --accept-flake-config --command make export-check check
+        run: nix develop --accept-flake-config --command make check
 
   macos:
     runs-on: macos-26
@@ -57,7 +57,7 @@ jobs:
           profile: debug
 
       - name: Check AppKit and run Clippy
-        run: make appkit-check fmt source-size-check
+        run: make check
 
       - name: Save macOS check cache
         if: steps.setup.outputs.application-hit != 'true'
@@ -82,7 +82,7 @@ jobs:
           CARGO_BUILD_JOBS: "3"
         run: |
           $env:PATH += ";C:\Program Files\Git\bin;C:\Program Files\Git\usr\bin"
-          make windows-check
+          make check
 
       - name: Upload build diagnostics
         if: always()

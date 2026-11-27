@@ -1,6 +1,4 @@
-RUSTUP ?= rustup
-RUST_TOOLCHAIN ?= $(firstword $(shell $(RUSTUP) show active-toolchain))
-CARGO = $(RUSTUP) run $(RUST_TOOLCHAIN) cargo
+CARGO ?= cargo
 CARGO_TARGET_DIR ?= target
 export CARGO_TARGET_DIR
 WASM_TARGET = wasm32-wasip2
@@ -16,7 +14,7 @@ fmt:
 	$(CARGO) fmt
 
 target:
-	$(RUSTUP) target add $(WASM_TARGET) --toolchain $(RUST_TOOLCHAIN)
+	rustup target add $(WASM_TARGET)
 
 build:
 	CARGO_INCREMENTAL=0 RUSTC_WRAPPER= RUSTFLAGS= CARGO_ENCODED_RUSTFLAGS= $(CARGO) build --locked --release --target $(WASM_TARGET)

@@ -243,7 +243,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "manual benchmark: make android-project-bench"]
+    #[ignore = "manual benchmark"]
     fn disjoint_viewport_lookup_benchmark() {
         const ITEMS: i64 = 65_536;
         const LOOKUPS: usize = 256;

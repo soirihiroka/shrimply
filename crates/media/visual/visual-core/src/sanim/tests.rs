@@ -370,7 +370,7 @@ fn native_sanim_reflection_discovery_prepares_off_playhead_and_stops_without_ui_
 }
 
 #[test]
-#[ignore = "microbenchmark: make sanim-reflection-bench"]
+#[ignore = "manual benchmark"]
 fn native_sanim_reflection_benchmark() {
     use std::hint::black_box;
     let mut script = (0..64)

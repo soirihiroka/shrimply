@@ -8,6 +8,7 @@ import re
 from pathlib import Path
 import shutil
 import subprocess
+import tomllib
 from native_sources import ffmpeg_source, source
 
 OPUS_VERSION = "1.6.1"
@@ -195,6 +196,98 @@ def build_pdf(args, sources, root):
     stamp.write_text(identity)
 
 
+def build_media(args, sources, root, compiler):
+    ndk, toolchain = args.ndk.resolve(), compiler.parent
+    arch, triple = ABIS[args.abi]
+    prefix = root / "install"
+    package_directory = prefix / "lib/pkgconfig"
+    stamp = root / "build.sha256"
+    hardware_patch = Path(__file__).resolve().with_name("ffmpeg-android-hardware.patch")
+    encoder_patch = Path(__file__).resolve().with_name("ffmpeg-android-encoder.patch")
+    qp_patch = Path(__file__).resolve().with_name("ffmpeg-android-qp.patch")
+    capture_patch = Path(__file__).resolve().with_name("ffmpeg-android-capture.patch")
+    ffmpeg = ffmpeg_source(sources, hardware_patch, encoder_patch, qp_patch, capture_patch)
+    identity = hashlib.sha256(Path(__file__).read_bytes() + ffmpeg.name.encode() + (ndk / "source.properties").read_bytes()).hexdigest()
+    build_rubberband(sources, root, prefix, compiler, toolchain, args.profile, ndk)
+    if stamp.exists() and stamp.read_text() == identity and all(
+        (prefix / "lib" / name).is_file()
+        for name in ("libavcodec.a", "libopus.a", "libmp3lame.a", "libogg.a", "libvorbis.a", "libvorbisenc.a", "libx264.a", "libx265.a")
+    ):
+        print(f"Android media dependencies are current: {prefix}", flush=True)
+        return
+    opus = source(sources, f"opus-{OPUS_VERSION}", f"https://downloads.xiph.org/releases/opus/opus-{OPUS_VERSION}.tar.gz", OPUS_SHA256)
+    cmake_build(args, root, "opus", opus, ["-DOPUS_BUILD_TESTING=OFF", "-DOPUS_BUILD_PROGRAMS=OFF"])
+    build_audio_encoders(args, sources, root, compiler)
+    x264_name = f"x264-{X264_REVISION}"
+    x264 = source(sources, x264_name, f"https://code.videolan.org/videolan/x264/-/archive/{X264_REVISION}/{x264_name}.tar.gz", X264_SHA256)
+    x264_build = root / x264_name
+    x264_build.mkdir(exist_ok=True)
+    subprocess.run([str(x264 / "configure"), f"--prefix={prefix}", f"--host={triple}",
+                    f"--cross-prefix={toolchain}/llvm-",
+                    "--enable-static", "--enable-pic", "--disable-cli", "--disable-opencl"],
+                   cwd=x264_build, env=dict(os.environ, CC=str(compiler)), check=True)
+    subprocess.run(["make", f"-j{args.jobs}", "install"], cwd=x264_build, check=True)
+    x265 = source(sources, f"x265-{X265_VERSION}", f"https://codeload.github.com/Multicorewareinc/x265/tar.gz/refs/tags/{X265_VERSION}", X265_SHA256)
+    # x265's assembly rules call Clang without the Android target flags.
+    cmake_build(args, root, "x265-ndk", x265 / "source", ["-DCMAKE_BUILD_TYPE=Release", "-DENABLE_ASSEMBLY=OFF", "-DENABLE_SHARED=OFF", "-DENABLE_CLI=OFF", "-DENABLE_LIBNUMA=OFF", "-DENABLE_PIC=ON"])
+    # The generated .pc file prefixes NDK linker flags with an extra -l.
+    x265_pc = package_directory / "x265.pc"
+    x265_pc.write_text(re.sub(r"^Libs\.private:.*$", "Libs.private: -lc++ -lm -ldl", x265_pc.read_text(), flags=re.M))
+    # FFmpeg keeps its first configure's src symlink. Reusing that tree
+    # across source patches can silently compile the previous source.
+    ffmpeg_build = root / ffmpeg.name
+    ffmpeg_build.mkdir(exist_ok=True)
+    environment = os.environ.copy()
+    environment.update({
+        "PATH": f"{toolchain}{os.pathsep}{environment['PATH']}",
+        "PKG_CONFIG_PATH": str(prefix / "lib/pkgconfig"),
+        "PKG_CONFIG_LIBDIR": str(prefix / "lib/pkgconfig"),
+        "PKG_CONFIG_SYSROOT_DIR": "",
+        "PKG_CONFIG_ALLOW_CROSS": "1",
+    })
+    flags = [
+        str(ffmpeg / "configure"), f"--prefix={prefix}",
+        "--target-os=android", f"--arch={arch}", "--enable-cross-compile",
+        f"--cc={compiler}", f"--cxx={compiler}++", f"--ar={toolchain}/llvm-ar",
+        f"--nm={toolchain}/llvm-nm", f"--ranlib={toolchain}/llvm-ranlib",
+        f"--strip={toolchain}/llvm-strip", "--enable-pic", "--enable-static", "--disable-shared",
+        "--disable-autodetect", "--disable-programs", "--disable-doc", "--disable-stripping",
+        "--enable-mediacodec", "--enable-jni", "--enable-libopus", "--enable-libmp3lame", "--enable-libvorbis", "--enable-debug=2",
+        "--enable-gpl", "--enable-libx264", "--enable-libx265",
+        "--pkg-config-flags=--static",
+        f"--extra-ldflags=-L{prefix}/lib -Wl,-z,max-page-size=16384",
+        f"--extra-cflags=-I{prefix}/include" + (" -O0 -g" if args.profile == "debug" else ""),
+    ]
+    if args.profile == "debug":
+        flags += ["--disable-optimizations"]
+    subprocess.run(flags, cwd=ffmpeg_build, env=environment, check=True)
+    subprocess.run(["make", f"-j{args.jobs}"], cwd=ffmpeg_build, env=environment, check=True)
+    subprocess.run(["make", "install"], cwd=ffmpeg_build, env=environment, check=True)
+    stamp.write_text(identity)
+    print(f"Android media dependencies installed: {prefix}", flush=True)
+
+
+def build_highs(args, sources, root):
+    repository = Path(__file__).resolve().parent.parent
+    with (repository / "Cargo.lock").open("rb") as lock:
+        dependency = next(package for package in tomllib.load(lock)["package"] if package["name"] == "highs-sys")
+    prefix = root / "install"
+    stamp = root / "highs.sha256"
+    identity = hashlib.sha256(Path(__file__).read_bytes() + dependency["checksum"].encode() + (args.ndk / "source.properties").read_bytes()).hexdigest()
+    if stamp.exists() and stamp.read_text() == identity and (prefix / "lib/libhighs.a").is_file():
+        print(f"Android L1 solver is current: {prefix}", flush=True)
+        return
+    name = f"highs-sys-{dependency['version']}"
+    directory = source(sources, name, f"https://static.crates.io/crates/highs-sys/{name}.crate", dependency["checksum"])
+    cmake_build(args, root, "highs", directory / "HiGHS", [
+        "-DBUILD_CXX_EXE=OFF", "-DBUILD_EXAMPLES=OFF", "-DBUILD_TESTING=OFF",
+        "-DFAST_BUILD=ON", "-DZLIB=OFF", "-DCMAKE_INTERPROCEDURAL_OPTIMIZATION=OFF",
+    ])
+    # highs-sys discovers this instead of using its Linux libstdc++ fallback.
+    (prefix / "lib/pkgconfig/highs.pc").write_text(f"prefix={prefix}\nlibdir=${{prefix}}/lib\nincludedir=${{prefix}}/include/highs\nName: highs\nDescription: HiGHS linear programming solver\nVersion: {dependency['version']}\nLibs: -L${{libdir}} -lhighs\nLibs.private: -lc++_shared -lm\nCflags: -I${{includedir}}\n")
+    stamp.write_text(identity)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--ndk", type=Path, required=True)
@@ -202,8 +295,6 @@ def main():
     parser.add_argument("--abi", choices=ABIS, default="arm64-v8a")
     parser.add_argument("--profile", choices=("debug", "release"), default="debug")
     parser.add_argument("--jobs", type=int, default=4)
-    parser.add_argument("--text", action="store_true", help="Build the existing Pango/Cairo text dependencies")
-    parser.add_argument("--pdf", action="store_true", help="Build the existing Poppler PDF dependencies")
     args = parser.parse_args()
     if args.jobs < 1:
         parser.error("--jobs must be positive")
@@ -215,7 +306,7 @@ def main():
     with (root / ".lock").open("w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         toolchain = ndk / "toolchains/llvm/prebuilt/linux-x86_64/bin"
-        arch, triple = ABIS[args.abi]
+        _, triple = ABIS[args.abi]
         compiler = toolchain / f"{triple}{ANDROID_API}-clang"
         if not compiler.is_file():
             raise RuntimeError(f"Android NDK compiler not found: {compiler}")
@@ -225,78 +316,12 @@ def main():
         zlib_header = toolchain.parent / "sysroot/usr/include/zlib.h"
         zlib_version = re.search(r'#define ZLIB_VERSION "([^"]+)"', zlib_header.read_text()).group(1)
         (package_directory / "zlib.pc").write_text(f"Name: zlib\nDescription: Android NDK system zlib\nVersion: {zlib_version}\nLibs: -lz\n")
-        stamp = root / "build.sha256"
-        hardware_patch = Path(__file__).resolve().with_name("ffmpeg-android-hardware.patch")
-        encoder_patch = Path(__file__).resolve().with_name("ffmpeg-android-encoder.patch")
-        qp_patch = Path(__file__).resolve().with_name("ffmpeg-android-qp.patch")
-        capture_patch = Path(__file__).resolve().with_name("ffmpeg-android-capture.patch")
         sources = cache / "sources"
         sources.mkdir(exist_ok=True)
-        if args.text:
-            build_text(args, sources, root, compiler)
-            return
-        if args.pdf:
-            build_pdf(args, sources, root)
-            return
-        ffmpeg = ffmpeg_source(sources, hardware_patch, encoder_patch, qp_patch, capture_patch)
-        identity = hashlib.sha256(Path(__file__).read_bytes() + ffmpeg.name.encode() + (ndk / "source.properties").read_bytes()).hexdigest()
-        build_rubberband(sources, root, prefix, compiler, toolchain, args.profile, ndk)
-        if stamp.exists() and stamp.read_text() == identity and all(
-            (prefix / "lib" / name).is_file()
-            for name in ("libavcodec.a", "libopus.a", "libmp3lame.a", "libogg.a", "libvorbis.a", "libvorbisenc.a", "libx264.a", "libx265.a")
-        ):
-            print(f"Android media dependencies are current: {prefix}", flush=True)
-            return
-        opus = source(sources, f"opus-{OPUS_VERSION}", f"https://downloads.xiph.org/releases/opus/opus-{OPUS_VERSION}.tar.gz", OPUS_SHA256)
-        cmake_build(args, root, "opus", opus, ["-DOPUS_BUILD_TESTING=OFF", "-DOPUS_BUILD_PROGRAMS=OFF"])
-        build_audio_encoders(args, sources, root, compiler)
-        x264_name = f"x264-{X264_REVISION}"
-        x264 = source(sources, x264_name, f"https://code.videolan.org/videolan/x264/-/archive/{X264_REVISION}/{x264_name}.tar.gz", X264_SHA256)
-        x264_build = root / x264_name
-        x264_build.mkdir(exist_ok=True)
-        subprocess.run([str(x264 / "configure"), f"--prefix={prefix}", f"--host={triple}",
-                        f"--cross-prefix={toolchain}/llvm-",
-                        "--enable-static", "--enable-pic", "--disable-cli", "--disable-opencl"],
-                       cwd=x264_build, env=dict(os.environ, CC=str(compiler)), check=True)
-        subprocess.run(["make", f"-j{args.jobs}", "install"], cwd=x264_build, check=True)
-        x265 = source(sources, f"x265-{X265_VERSION}", f"https://codeload.github.com/Multicorewareinc/x265/tar.gz/refs/tags/{X265_VERSION}", X265_SHA256)
-        # x265's assembly rules call Clang without the Android target flags.
-        cmake_build(args, root, "x265-ndk", x265 / "source", ["-DCMAKE_BUILD_TYPE=Release", "-DENABLE_ASSEMBLY=OFF", "-DENABLE_SHARED=OFF", "-DENABLE_CLI=OFF", "-DENABLE_LIBNUMA=OFF", "-DENABLE_PIC=ON"])
-        # The generated .pc file prefixes NDK linker flags with an extra -l.
-        x265_pc = package_directory / "x265.pc"
-        x265_pc.write_text(re.sub(r"^Libs\.private:.*$", "Libs.private: -lc++ -lm -ldl", x265_pc.read_text(), flags=re.M))
-        # FFmpeg keeps its first configure's src symlink. Reusing that tree
-        # across source patches can silently compile the previous source.
-        ffmpeg_build = root / ffmpeg.name
-        ffmpeg_build.mkdir(exist_ok=True)
-        environment = os.environ.copy()
-        environment.update({
-            "PATH": f"{toolchain}{os.pathsep}{environment['PATH']}",
-            "PKG_CONFIG_PATH": str(prefix / "lib/pkgconfig"),
-            "PKG_CONFIG_LIBDIR": str(prefix / "lib/pkgconfig"),
-            "PKG_CONFIG_SYSROOT_DIR": "",
-            "PKG_CONFIG_ALLOW_CROSS": "1",
-        })
-        flags = [
-            str(ffmpeg / "configure"), f"--prefix={prefix}",
-            "--target-os=android", f"--arch={arch}", "--enable-cross-compile",
-            f"--cc={compiler}", f"--cxx={compiler}++", f"--ar={toolchain}/llvm-ar",
-            f"--nm={toolchain}/llvm-nm", f"--ranlib={toolchain}/llvm-ranlib",
-            f"--strip={toolchain}/llvm-strip", "--enable-pic", "--enable-static", "--disable-shared",
-            "--disable-autodetect", "--disable-programs", "--disable-doc", "--disable-stripping",
-            "--enable-mediacodec", "--enable-jni", "--enable-libopus", "--enable-libmp3lame", "--enable-libvorbis", "--enable-debug=2",
-            "--enable-gpl", "--enable-libx264", "--enable-libx265",
-            "--pkg-config-flags=--static",
-            f"--extra-ldflags=-L{prefix}/lib -Wl,-z,max-page-size=16384",
-            f"--extra-cflags=-I{prefix}/include" + (" -O0 -g" if args.profile == "debug" else ""),
-        ]
-        if args.profile == "debug":
-            flags += ["--disable-optimizations"]
-        subprocess.run(flags, cwd=ffmpeg_build, env=environment, check=True)
-        subprocess.run(["make", f"-j{args.jobs}"], cwd=ffmpeg_build, env=environment, check=True)
-        subprocess.run(["make", "install"], cwd=ffmpeg_build, env=environment, check=True)
-        stamp.write_text(identity)
-        print(f"Android media dependencies installed: {prefix}", flush=True)
+        build_media(args, sources, root, compiler)
+        build_text(args, sources, root, compiler)
+        build_highs(args, sources, root)
+        build_pdf(args, sources, root)
 
 
 if __name__ == "__main__":

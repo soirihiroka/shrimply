@@ -17,11 +17,11 @@ VCPKG_INSTALLED_DIR ?= $(WINDOWS_DEPS_ROOT)/installed
 FFMPEG_DIR := $(VCPKG_INSTALLED_DIR)/x64-windows
 endif
 ifeq ($(HOST_OS),Linux)
-CUDA_DEV_TARGETS := dev dev-qt run run-qt build qt-build
+CUDA_DEV_TARGETS := build dev dev-qt qt-build
 else ifeq ($(HOST_OS),Windows_NT)
-CUDA_DEV_TARGETS := windows-build windows-dev
+CUDA_DEV_TARGETS := build dev windows-build windows-dev
 endif
-ifneq ($(filter $(CUDA_DEV_TARGETS),$(MAKECMDGOALS)),)
+ifneq ($(filter $(CUDA_DEV_TARGETS),$(or $(MAKECMDGOALS),$(.DEFAULT_GOAL))),)
 CUDA_NATIVE_TARGET := $(shell uv run --no-project python packaging/cuda-target.py)
 ifeq ($(strip $(CUDA_NATIVE_TARGET)),)
 $(error Could not detect the local CUDA architecture for the development build)
@@ -209,6 +209,7 @@ cuda-target-check:
 		(*) echo "CUDA_IMAGE_FORMAT=$(CUDA_IMAGE_FORMAT) is unsupported; expected cubin or ptx" >&2; exit 1 ;; \
 	esac
 
+ifeq ($(HOST_OS),Linux)
 dev: build
 dev-qt: qt-build
 dev: private DEV_TARGET_DIR = $(CARGO_TARGET_DIR)
@@ -225,6 +226,7 @@ dev dev-qt:
 		echo "Debug trace: $(DEV_LOG)"; \
 	fi; \
 	exit $$status
+endif
 
 APPKIT_FFMPEG := $(abspath $(CARGO_TARGET_DIR)/macos-ffmpeg)
 appkit-ffmpeg:
@@ -240,8 +242,8 @@ appkit-icon:
 		--output-partial-info-plist "$(APPKIT_ICON_DIR)/Info.plist" \
 		--output-format human-readable-text --warnings --notices
 
-dev-mac: appkit-ffmpeg appkit-icon
-	@test "$$(uname -s)" = Darwin || { echo "dev-mac requires macOS" >&2; exit 1; }
+ifeq ($(HOST_OS),Darwin)
+build: appkit-ffmpeg appkit-icon
 	$(APPKIT_BUILD_ENV) $(CARGO) build -p $(APPKIT_LAUNCHER_PACKAGE) -p $(APPKIT_EDITOR_PACKAGE) --bins
 	mkdir -p "$(APPKIT_APP)/Contents/MacOS" "$(APPKIT_APP)/Contents/Resources/licenses"
 	cp $(CARGO_TARGET_DIR)/debug/$(BIN_NAME) "$(APPKIT_APP)/Contents/MacOS/$(BIN_NAME)"
@@ -251,7 +253,12 @@ dev-mac: appkit-ffmpeg appkit-icon
 	cp vendor/vision/LICENSE "$(APPKIT_APP)/Contents/Resources/licenses/OpenCV-Vision.txt"
 	cp crates/math/color/src/css/LICENSE "$(APPKIT_APP)/Contents/Resources/licenses/GTK-Pango-Color.txt"
 	cp crates/math/color/src/css/NOTICE "$(APPKIT_APP)/Contents/Resources/licenses/GTK-Pango-Color-NOTICE.txt"
+
+dev: dev-mac
+dev-mac: build
 	$(HOST_MEDIA_ENV) RUST_LOG=$(RUST_LOG) "$(APPKIT_APP)/Contents/MacOS/$(BIN_NAME)"
+release: appkit-release
+endif
 
 appkit-release: appkit-ffmpeg appkit-icon
 	@test "$$(uname -s)" = Darwin || { echo "AppKit release requires macOS" >&2; exit 1; }
@@ -277,17 +284,17 @@ docs:
 docs-check:
 	uv run --project docs --locked sphinx-build -W --keep-going docs/source docs/build
 
-build: native-deps cuda-target-check
-	$(DEV_BUILD_ENV) $(CARGO) build -p $(EDITOR_PACKAGE) -p $(LAUNCHER_PACKAGE) --bins
-
-release: native-deps cuda-target-check
-	$(BUILD_ENV) $(CARGO) build --release -p $(EDITOR_PACKAGE) -p $(LAUNCHER_PACKAGE) --bins
-
 ifeq ($(HOST_OS),Linux)
+build release: native-deps cuda-target-check
+	$(if $(filter release,$@),$(BUILD_ENV),$(DEV_BUILD_ENV)) $(CARGO) build $(if $(filter release,$@),--release) -p $(EDITOR_PACKAGE) -p $(LAUNCHER_PACKAGE) --bins
+
 check: fmt-check lint sanim-check project-server-check server-python-check manim-python-check docs-check
 else ifeq ($(HOST_OS),Darwin)
 check: appkit-check fmt-check
 else ifeq ($(HOST_OS),Windows_NT)
+build: windows-build
+dev: windows-dev
+release: windows-package
 check: windows-check
 else
 check:
@@ -314,7 +321,7 @@ windows-check: windows-native-deps fmt-check cuda-target-check
 
 ifeq ($(HOST_OS),Windows_NT)
 # GNU Make tracks Windows shell mode globally, so choose it once per invocation.
-ifneq ($(filter windows-package,$(MAKECMDGOALS)),)
+ifneq ($(filter release windows-package,$(MAKECMDGOALS)),)
 SHELL := cmd.exe
 .SHELLFLAGS := /d /c
 else
@@ -391,6 +398,7 @@ endif
 deps-fedora:
 	$(DNF) install $(FEDORA_PACKAGES)
 
+ifeq ($(HOST_OS),Linux)
 install: release
 	sh packaging/linux/install-manim-worker.sh "$(DESTDIR)$(PREFIX)"
 	$(INSTALL) -Dm644 $(APP_ICON) "$(DESTDIR)$(ICONDIR)/dev.shrimply.Shrimply.svg"
@@ -398,10 +406,8 @@ install: release
 	$(INSTALL) -Dm644 $(PROJECT_MIME) "$(DESTDIR)$(MIMEDIR)/packages/dev.shrimply.Shrimply-mime.xml"
 	$(INSTALL) -Dm755 $(CARGO_TARGET_DIR)/release/$(BIN_NAME) "$(DESTDIR)$(BINDIR)/$(BIN_NAME)"
 	$(INSTALL) -Dm755 $(CARGO_TARGET_DIR)/release/$(EDITOR_BIN_NAME) "$(DESTDIR)$(BINDIR)/$(EDITOR_BIN_NAME)"
-ifeq ($(HOST_OS),Linux)
 ifneq ($(FFMPEG_PREFIX),$(abspath $(DESTDIR)$(PREFIX)))
 	sh packaging/linux/install-ffmpeg.sh "$(FFMPEG_PREFIX)" "$(DESTDIR)$(BINDIR)" "$(DESTDIR)$(PREFIX)/lib/shrimply/ffmpeg" "$(BIN_NAME)" "$(EDITOR_BIN_NAME)"
-endif
 endif
 	$(INSTALL) -Dm644 $(LIP_SYNC_MODEL) "$(DESTDIR)$(LIP_SYNC_RESOURCE_DIR)/pocketsphinx-ci.model"
 	$(INSTALL) -Dm644 vendor/pocketsphinx/LICENSE "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/PocketSphinx-code.txt"
@@ -438,6 +444,7 @@ uninstall:
 		if command -v update-desktop-database >/dev/null 2>&1; then update-desktop-database "$(APPLICATIONSDIR)"; fi; \
 		if command -v gtk-update-icon-cache >/dev/null 2>&1; then gtk-update-icon-cache -f -t "$(DATADIR)/icons/hicolor"; fi; \
 	fi
+endif
 
 # Android's native graph intentionally excludes the desktop editor and media backends.
 ANDROID_SDK_ROOT ?= $(HOME)/Android/Sdk
@@ -464,7 +471,7 @@ android-deps:
 	@test "$(ANDROID_PROFILE)" != release -o "$(ANDROID_ABI)" = arm64-v8a || { echo "Android releases require arm64-v8a" >&2; exit 1; }
 	rustup target add $(ANDROID_TARGET)
 	python3 packaging/android-native.py --ndk "$(ANDROID_NDK_HOME)" --cache "$(CARGO_TARGET_DIR)/android-native" --abi $(ANDROID_ABI) --profile $(ANDROID_PROFILE) --jobs $(or $(CARGO_BUILD_JOBS),4)
-	ln -sfn "$(ANDROID_MEDIA_PREFIX)/lib/pkgconfig" "$(ANDROID_MEDIA_PKG_CONFIG)"
+	ln -sfn "$(ANDROID_MEDIA_PREFIX)/lib/pkgconfig" "$(ANDROID_MEDIA_PREFIX)/../pkgconfig-$$(cat '$(ANDROID_MEDIA_PREFIX)/../build.sha256')"
 
 android-native: android-deps
 	$(ANDROID_ENV) $(ANDROID_MEDIA_ENV) PKG_CONFIG_ALL_STATIC=1 $(CARGO) build -p shrimply-editor-android --target $(ANDROID_TARGET) $(if $(filter release,$(ANDROID_PROFILE)),--release)

@@ -9,8 +9,7 @@ ENV PATH="/root/.cargo/bin:${PATH}"
 COPY rust-toolchain.toml ./
 RUN curl -fsSL https://sh.rustup.rs -o /tmp/rustup.sh \
     && sh /tmp/rustup.sh -y --default-toolchain none --profile minimal \
-    && python3 -c 'import tomllib; print(tomllib.load(open("rust-toolchain.toml", "rb"))["toolchain"]["channel"])' > /tmp/shrimply-toolchain \
-    && rustup toolchain install --profile minimal "$(cat /tmp/shrimply-toolchain)" \
+    && rustup toolchain install --no-self-update \
     && rm /tmp/rustup.sh
 
 COPY Cargo.toml Cargo.lock Makefile ./
@@ -33,8 +32,7 @@ manifest.write_text(
     '[workspace.package]' + package_settings
 )
 PY
-RUSTFLAGS="-C target-feature=-crt-static" make project-server-release \
-    RUST_TOOLCHAIN="$(cat /tmp/shrimply-toolchain)" PROJECT_SERVER_LOCK=
+RUSTFLAGS="-C target-feature=-crt-static" make project-server-release PROJECT_SERVER_LOCK=
 python3 - <<'PY'
 import tomllib
 

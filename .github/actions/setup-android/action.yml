@@ -80,7 +80,7 @@ runs:
 
     - name: Build Android native dependencies
       shell: bash
-      run: make android-pdf-deps ANDROID_PROFILE=release ANDROID_SDK_ROOT="${ANDROID_HOME}"
+      run: make android-deps ANDROID_PROFILE=release ANDROID_SDK_ROOT="${ANDROID_HOME}"
 
     - uses: actions/cache/save@v6
       if: steps.android-native-cache.outputs.cache-hit != 'true'

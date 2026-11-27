@@ -6,8 +6,6 @@ param(
     [string]$InstalledDir,
     [string]$Qmake = "qmake.exe",
     [Parameter(Mandatory = $true)]
-    [string]$RustToolchain,
-    [Parameter(Mandatory = $true)]
     [string]$CargoTargetDir,
     [Parameter(Mandatory = $true)]
     [string]$CudaHome,
@@ -117,9 +115,8 @@ if ($LASTEXITCODE -ne 0) {
     throw "The isolated dependency tree is missing required application libraries"
 }
 
-$rustup = (Get-Command rustup.exe -ErrorAction Stop).Source
 function Invoke-Cargo([string[]]$Arguments) {
-    & $rustup run $RustToolchain cargo @Arguments
+    & cargo @Arguments
     if ($LASTEXITCODE -ne 0) {
         throw "cargo $($Arguments -join ' ') failed with exit code $LASTEXITCODE"
     }

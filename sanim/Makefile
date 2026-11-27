@@ -1,6 +1,4 @@
-RUSTUP ?= rustup
-RUST_TOOLCHAIN ?= $(firstword $(shell $(RUSTUP) show active-toolchain))
-CARGO = $(RUSTUP) run $(RUST_TOOLCHAIN) cargo
+CARGO ?= cargo
 ARGS ?=
 
 .PHONY: voxel-check voxel-gpu-check voxel-bench
@@ -95,9 +93,9 @@ check: fmt
 test:
 	$(CARGO) test --workspace --exclude sanim-presenter --no-fail-fast
 fmt:
-	uv run --no-project python ../packaging/format_workspace.py --manifest Cargo.toml -- $(CARGO)
+	$(CARGO) fmt
 fmt-check:
-	uv run --no-project python ../packaging/format_workspace.py --manifest Cargo.toml --check -- $(CARGO)
+	$(CARGO) fmt --check
 bench:
 	$(CARGO) bench -p sanim-lang --bench headless
 frame-cache-bench:

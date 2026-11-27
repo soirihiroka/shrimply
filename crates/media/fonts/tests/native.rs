@@ -125,7 +125,7 @@ fn shaping_new_text_does_not_invalidate_the_font_environment() {
 }
 
 #[test]
-#[ignore = "measured by make font-shaping-bench"]
+#[ignore = "manual benchmark"]
 fn shared_font_shaping_benchmark() {
     use std::{hint::black_box, time::Instant};
     const CALLS: usize = 500;
@@ -203,7 +203,7 @@ fn application_fonts_are_atomic_and_reach_already_running_render_threads() {
 }
 
 #[test]
-#[ignore = "measured by make font-system-bench"]
+#[ignore = "manual benchmark"]
 fn shared_font_epoch_warm_lookup_benchmark() {
     let expected = native::system_font_epoch().unwrap();
     const LOOKUPS: u32 = 100_000;

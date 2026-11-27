@@ -217,8 +217,7 @@ modules:
           export RUSTC_WRAPPER=/run/ccache/sccache CARGO_INCREMENTAL=0
           export SCCACHE_DIR=/run/ccache/rust-cache SCCACHE_CACHE_SIZE=512M
         fi
-        make install PREFIX=/app RUSTUP=/run/host/usr/local/cargo/bin/rustup \
-          CUDA_PTX_TARGET="${CUDA_PTX_TARGET}"
+        make install PREFIX=/app
         if test -x /run/ccache/sccache; then
           /run/ccache/sccache --show-stats
         fi

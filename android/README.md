@@ -34,9 +34,6 @@ is left to the release environment.
 segment checks, and APK ZIP alignment checks for 16 KiB pages. The native linker
 uses `-z max-page-size=16384`; NDK r28 supplies aligned native runtime libraries.
 See [Android's page-size guidance](https://developer.android.com/guide/practices/page-sizes).
-`make android-layout-check` compiles and lints Kotlin without a native build.
-`make android-host-check` type-checks and lints the shared painter and portable
-Vulkan code on the desktop. Run `make check` for the existing desktop checks.
 
 ## Projects and lifecycle
 
@@ -139,7 +136,7 @@ retry. Native dialogs account for keyboard insets and keep their actions visible
 ## Benchmarks and device checks
 
 ```sh
-make android-benchmark-install ANDROID_SERIAL=PHONE_IP:CONNECTION_PORT
+make android-install ANDROID_SERIAL=PHONE_IP:CONNECTION_PORT
 make android-benchmark ANDROID_SERIAL=PHONE_IP:CONNECTION_PORT
 make android-benchmark STRESS=true ANDROID_SERIAL=PHONE_IP:CONNECTION_PORT
 ```
