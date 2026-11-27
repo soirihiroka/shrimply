@@ -1,7 +1,7 @@
 use core::pin::Pin;
 use cxx_qt::{CxxQtType, Threading};
 use cxx_qt_lib::{QString, QStringList, QUrl};
-use shrimply_cross_ui_core::launcher::{self, Launcher};
+use shrimply_cross_ui_core::launcher::{self, Launcher, ProjectLocation};
 use std::path::{Path, PathBuf};
 use std::process::Child;
 
@@ -24,8 +24,6 @@ pub mod qobject {
         #[qobject]
         #[qml_element]
         #[qproperty(QStringList, projects)]
-        #[qproperty(i32, preset_count, cxx_name = "presetCount")]
-        #[qproperty(i32, frame_rate_count, cxx_name = "frameRateCount")]
         type LauncherBackend = super::LauncherBackendRust;
 
         #[qinvokable]
@@ -48,29 +46,6 @@ pub mod qobject {
         ) -> bool;
 
         #[qinvokable]
-        #[cxx_name = "createRemoteProject"]
-        fn create_remote_project(
-            self: Pin<&mut LauncherBackend>,
-            server: &QString,
-            name: &QString,
-            width: i32,
-            height: i32,
-            frame_rate_index: i32,
-        );
-
-        #[qinvokable]
-        #[cxx_name = "presetLabel"]
-        fn preset_label(self: &LauncherBackend, index: i32) -> QString;
-
-        #[qinvokable]
-        #[cxx_name = "frameRateLabel"]
-        fn frame_rate_label(self: &LauncherBackend, index: i32) -> QString;
-
-        #[qinvokable]
-        #[cxx_name = "projectFileFilter"]
-        fn project_file_filter(self: &LauncherBackend) -> QString;
-
-        #[qinvokable]
         #[cxx_name = "setSearch"]
         fn set_search(self: Pin<&mut LauncherBackend>, query: &QString);
 
@@ -87,22 +62,6 @@ pub mod qobject {
         fn choose_project(self: Pin<&mut LauncherBackend>);
 
         #[qinvokable]
-        #[cxx_name = "presetWidth"]
-        fn preset_width(self: &LauncherBackend, index: i32) -> i32;
-
-        #[qinvokable]
-        #[cxx_name = "presetHeight"]
-        fn preset_height(self: &LauncherBackend, index: i32) -> i32;
-
-        #[qinvokable]
-        #[cxx_name = "presetFrameRate"]
-        fn preset_frame_rate(self: &LauncherBackend, index: i32) -> i32;
-
-        #[qinvokable]
-        #[cxx_name = "chooseProjectDestination"]
-        fn choose_project_destination(self: &LauncherBackend, name: &QString) -> QUrl;
-
-        #[qinvokable]
         #[cxx_name = "requestCreateProject"]
         fn request_create_project(
             self: Pin<&mut LauncherBackend>,
@@ -110,7 +69,7 @@ pub mod qobject {
             width: i32,
             height: i32,
             frame_rate_index: i32,
-            url: &QUrl,
+            server: &QString,
         );
 
         #[qsignal]
@@ -131,32 +90,14 @@ pub mod qobject {
     impl cxx_qt::Threading for LauncherBackend {}
 }
 
+#[derive(Default)]
 pub struct LauncherBackendRust {
     projects: QStringList,
-    preset_count: i32,
-    frame_rate_count: i32,
     core: Launcher,
-}
-
-impl Default for LauncherBackendRust {
-    fn default() -> Self {
-        Self {
-            projects: QStringList::default(),
-            preset_count: count(shrimply_cross_ui_core::launcher::preset_labels().len()),
-            frame_rate_count: count(shrimply_cross_ui_core::launcher::frame_rate_labels().len()),
-            core: Launcher::default(),
-        }
-    }
 }
 
 impl cxx_qt::Initialize for qobject::LauncherBackend {
     fn initialize(mut self: Pin<&mut Self>) {
-        self.as_mut().set_preset_count(count(
-            shrimply_cross_ui_core::launcher::preset_labels().len(),
-        ));
-        self.as_mut().set_frame_rate_count(count(
-            shrimply_cross_ui_core::launcher::frame_rate_labels().len(),
-        ));
         if let Ok(projects) = launcher::local_projects() {
             self.as_mut().rust_mut().core.set_projects(projects);
             self.as_mut().update_projects();
@@ -202,24 +143,7 @@ impl qobject::LauncherBackend {
         }
     }
 
-    pub fn create_remote_project(
-        self: Pin<&mut Self>,
-        server: &QString,
-        name: &QString,
-        width: i32,
-        height: i32,
-        frame_rate_index: i32,
-    ) {
-        let server = server.to_string();
-        let name = name.to_string();
-        self.open_remote("Could not create project", move || {
-            let (canvas, fps) =
-                launcher::project_settings_from_values(width, height, frame_rate_index)?;
-            launcher::create_remote_project(&server, &name, canvas, fps, &[])
-        });
-    }
-
-    fn open_remote(
+    fn open_project_async(
         self: Pin<&mut Self>,
         heading: &'static str,
         operation: impl FnOnce() -> Result<PathBuf, String> + Send + 'static,
@@ -234,29 +158,7 @@ impl qobject::LauncherBackend {
         });
     }
 
-    pub fn preset_label(&self, index: i32) -> QString {
-        index_of(index)
-            .and_then(|index| {
-                shrimply_cross_ui_core::launcher::preset_labels()
-                    .get(index)
-                    .copied()
-            })
-            .map(shrimply_i18n_qt::text)
-            .unwrap_or_default()
-    }
-
-    pub fn frame_rate_label(&self, index: i32) -> QString {
-        index_of(index)
-            .and_then(|index| {
-                shrimply_cross_ui_core::launcher::frame_rate_labels()
-                    .get(index)
-                    .copied()
-            })
-            .map(QString::from)
-            .unwrap_or_default()
-    }
-
-    pub fn project_file_filter(&self) -> QString {
+    fn project_file_filter(&self) -> QString {
         let label = shrimply_i18n_qt::text("Shrimply projects").to_string();
         QString::from(shrimply_cross_ui_core::launcher::project_file_name_filter(
             &label,
@@ -273,7 +175,7 @@ impl qobject::LauncherBackend {
             .and_then(|index| self.core.project(index))
             .cloned()
         {
-            self.open_remote("Could not open project", move || project.open(None));
+            self.open_project_async("Could not open project", move || project.open(None));
         }
     }
 
@@ -300,71 +202,40 @@ impl qobject::LauncherBackend {
         }
     }
 
-    pub fn preset_width(&self, index: i32) -> i32 {
-        index_of(index)
-            .map(shrimply_cross_ui_core::launcher::preset_width)
-            .and_then(|width| i32::try_from(width).ok())
-            .unwrap_or_default()
-    }
-
-    pub fn preset_height(&self, index: i32) -> i32 {
-        index_of(index)
-            .map(shrimply_cross_ui_core::launcher::preset_height)
-            .and_then(|height| i32::try_from(height).ok())
-            .unwrap_or_default()
-    }
-
-    pub fn preset_frame_rate(&self, index: i32) -> i32 {
-        index_of(index)
-            .map(shrimply_cross_ui_core::launcher::preset_frame_rate)
-            .and_then(|index| i32::try_from(index).ok())
-            .unwrap_or_default()
-    }
-
-    pub fn choose_project_destination(&self, name: &QString) -> QUrl {
-        let directory = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-        let suggested = local_url(&shrimply_cross_ui_core::launcher::default_project_path(
-            &directory,
-            &name.to_string(),
-        ));
-        shrimply_application_qt::save_file_dialog(
-            &suggested,
-            &shrimply_i18n_qt::text("Create Project"),
-            &self.project_file_filter(),
-            &QString::from("shrimp"),
-        )
-    }
-
     pub fn request_create_project(
         self: Pin<&mut Self>,
         name: &QString,
         width: i32,
         height: i32,
         frame_rate_index: i32,
-        url: &QUrl,
+        server: &QString,
     ) {
-        let Some(path) = local_path(url) else {
-            self.emit_error(
-                "Could not create project",
-                "The selected location does not have a local path.",
+        let name = name.to_string();
+        let server = server.to_string();
+        let location = if server.is_empty() {
+            let directory = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+            let suggested = local_url(&launcher::default_project_path(&directory, &name));
+            let url = shrimply_application_qt::save_file_dialog(
+                &suggested,
+                &shrimply_i18n_qt::text("Create Project"),
+                &self.project_file_filter(),
+                &QString::from("shrimp"),
             );
-            return;
-        };
-        let path = match shrimply_cross_ui_core::launcher::create_project_from_values(
-            path,
-            &name.to_string(),
-            width,
-            height,
-            frame_rate_index,
-        ) {
-            Ok(path) => path,
-            Err(error) => {
-                self.emit_error("Could not create project", &error);
+            if url.is_empty() {
                 return;
             }
+            let Some(path) = local_path(&url) else {
+                self.emit_error("Could not create project", "The selected location does not have a local path.");
+                return;
+            };
+            ProjectLocation::Local(path)
+        } else {
+            ProjectLocation::Remote(server)
         };
-        let editor = shrimply_cross_ui_core::launcher::launch_qt_editor(&path);
-        self.start_editor(editor);
+        self.open_project_async("Could not create project", move || {
+            let settings = launcher::project_settings_from_values(width, height, frame_rate_index)?;
+            launcher::create_project(location, &name, settings, &[])
+        });
     }
 
     fn reload_projects(mut self: Pin<&mut Self>) {
@@ -435,10 +306,6 @@ impl qobject::LauncherBackend {
 
 fn index_of(index: i32) -> Option<usize> {
     usize::try_from(index).ok()
-}
-
-fn count(len: usize) -> i32 {
-    i32::try_from(len).unwrap_or(i32::MAX)
 }
 
 fn local_path(url: &QUrl) -> Option<PathBuf> {

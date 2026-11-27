@@ -19,7 +19,7 @@ use objc2_foundation::{
     NSSize, NSString, NSTimer, NSURL, ns_string,
 };
 use shrimply_components_appkit::{EffectRole, EffectView};
-use shrimply_cross_ui_core::launcher::{self, Launcher};
+use shrimply_cross_ui_core::launcher::{self, Launcher, ProjectLocation};
 use std::cell::{OnceCell, RefCell};
 use std::path::{Path, PathBuf};
 
@@ -310,8 +310,8 @@ define_class!(
             };
             if let Some(server) = request.server {
                 self.open_remote("Could not create project", move || {
-                    launcher::create_remote_project(
-                        &server, &request.name, request.canvas_size, request.fps, &[],
+                    launcher::create_project(
+                        ProjectLocation::Remote(server), &request.name, (request.canvas_size, request.fps), &[],
                     )
                 });
                 return;
@@ -337,7 +337,7 @@ define_class!(
                 .map(|path| PathBuf::from(path.to_string()))
                 .expect("the selected save location must be a file path");
             let path = match launcher::create_project(
-                path, &request.name, request.canvas_size, request.fps, &[],
+                ProjectLocation::Local(path), &request.name, (request.canvas_size, request.fps), &[],
             ) {
                 Ok(path) => path,
                 Err(error) => {

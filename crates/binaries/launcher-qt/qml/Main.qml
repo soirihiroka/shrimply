@@ -211,84 +211,38 @@ ApplicationWindow {
             projectDestination.currentIndex = 0
         }
 
-        contentItem: GridLayout {
-            columns: 2
-            rowSpacing: 12
-            columnSpacing: 12
+        contentItem: ColumnLayout {
+            spacing: 12
 
-            Label { text: backend.text("Location") }
-            AdaptiveComboBox {
-                id: projectDestination
-                Layout.fillWidth: true
-                enabled: count > 1
+            ControlRow {
+                label: "Location"
+                AdaptiveComboBox {
+                    id: projectDestination
+                    enabled: count > 1
+                }
             }
 
-            Label { text: backend.text("Project Name") }
-            TextField {
-                id: projectName
-                Layout.fillWidth: true
-                text: backend.text("Untitled Project")
-                selectByMouse: true
+            ControlRow {
+                label: "Project Name"
+                TextField {
+                    id: projectName
+                    text: backend.text("Untitled Project")
+                    selectByMouse: true
+                }
             }
 
             Label {
-                Layout.columnSpan: 2
                 text: backend.text("Project Settings")
                 font.bold: true
             }
 
-            Label { text: backend.text("Preset") }
-            AdaptiveComboBox {
-                id: preset
+            ProjectSettingsSelector {
+                id: settings
                 Layout.fillWidth: true
-                model: backend.presetCount
-                currentIndex: 3
-                displayText: currentIndex >= 0 ? backend.presetLabel(currentIndex) : ""
-                labelForIndex: function(index) { return backend.presetLabel(index) }
-                onActivated: function(index) {
-                    if (index < backend.presetCount - 1) {
-                        widthInput.value = backend.presetWidth(index)
-                        heightInput.value = backend.presetHeight(index)
-                        frameRate.currentIndex = backend.presetFrameRate(index)
-                    }
-                }
-            }
-
-            Label { text: backend.text("Width") }
-            SpinBox {
-                id: widthInput
-                Layout.fillWidth: true
-                from: 1
-                to: 16384
-                value: 1920
-                editable: true
-                onValueModified: preset.currentIndex = backend.presetCount - 1
-            }
-
-            Label { text: backend.text("Height") }
-            SpinBox {
-                id: heightInput
-                Layout.fillWidth: true
-                from: 1
-                to: 16384
-                value: 1080
-                editable: true
-                onValueModified: preset.currentIndex = backend.presetCount - 1
-            }
-
-            Label { text: backend.text("Frame Rate") }
-            AdaptiveComboBox {
-                id: frameRate
-                Layout.fillWidth: true
-                model: backend.frameRateCount
-                currentIndex: 8
-                displayText: currentIndex >= 0 ? backend.frameRateLabel(currentIndex) : ""
-                labelForIndex: function(index) { return backend.frameRateLabel(index) }
-                onActivated: preset.currentIndex = backend.presetCount - 1
+                creating: true
             }
 
             Button {
-                Layout.columnSpan: 2
                 Layout.alignment: Qt.AlignHCenter
                 Layout.topMargin: 8
                 text: backend.text("Create Project")
@@ -296,22 +250,10 @@ ApplicationWindow {
                 enabled: projectName.text.trim().length > 0
                 onClicked: {
                     createDialog.close()
-                    if (projectDestination.currentIndex > 0) {
-                        backend.createRemoteProject(
-                            projectDestination.currentText, projectName.text.trim(),
-                            widthInput.value, heightInput.value, frameRate.currentIndex)
-                        return
-                    }
-                    const selectedFile = backend.chooseProjectDestination(
-                        projectName.text.trim())
-                    if (selectedFile.toString().length > 0) {
-                        backend.requestCreateProject(
-                            projectName.text.trim(),
-                            widthInput.value,
-                            heightInput.value,
-                            frameRate.currentIndex,
-                            selectedFile)
-                    }
+                    backend.requestCreateProject(
+                        projectName.text.trim(), settings.projectWidth, settings.projectHeight,
+                        settings.frameRate,
+                        projectDestination.currentIndex > 0 ? projectDestination.currentText : "")
                 }
             }
         }

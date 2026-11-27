@@ -3,7 +3,7 @@ use gtk::{gio, glib};
 use shrimply_components_gtk::project_settings::ProjectSettingsSelector;
 use shrimply_components_gtk::tr;
 use shrimply_components_gtk::ui::{SingleLineTextInput, control_row, dropdown};
-use shrimply_cross_ui_core::launcher::{self, Launcher};
+use shrimply_cross_ui_core::launcher::{self, Launcher, ProjectLocation};
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -358,11 +358,10 @@ fn show_create_project(window: &adw::ApplicationWindow, app: &adw::Application) 
             {
                 dialog.close();
                 open_remote(&window, &app, "Could not create project", move || {
-                    shrimply_cross_ui_core::launcher::create_remote_project(
-                        &server,
+                    launcher::create_project(
+                        ProjectLocation::Remote(server),
                         &project_name,
-                        canvas_size,
-                        fps,
+                        (canvas_size, fps),
                         &project_tags,
                     )
                 });
@@ -399,11 +398,10 @@ fn show_create_project(window: &adw::ApplicationWindow, app: &adw::Application) 
                         );
                         return;
                     };
-                    let path = match shrimply_cross_ui_core::launcher::create_project(
-                        path,
+                    let path = match launcher::create_project(
+                        ProjectLocation::Local(path),
                         &project_name,
-                        canvas_size,
-                        fps,
+                        (canvas_size, fps),
                         &project_tags,
                     ) {
                         Ok(path) => path,

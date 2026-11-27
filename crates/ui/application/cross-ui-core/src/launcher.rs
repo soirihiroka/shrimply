@@ -102,25 +102,27 @@ impl Launcher {
     }
 }
 
-pub fn create_project(
-    path: PathBuf,
-    name: &str,
-    canvas_size: CanvasSize,
-    fps: Fraction,
-    tags: &[String],
-) -> Result<PathBuf, String> {
-    project::creation::NewProject::from_settings(name, canvas_size, fps, tags)?.write(path, true)
+pub enum ProjectLocation {
+    Local(PathBuf),
+    Remote(String),
 }
 
-pub fn create_project_from_values(
-    path: PathBuf,
+pub fn create_project(
+    location: ProjectLocation,
     name: &str,
-    width: i32,
-    height: i32,
-    frame_rate_index: i32,
+    (canvas_size, fps): (CanvasSize, Fraction),
+    tags: &[String],
 ) -> Result<PathBuf, String> {
-    let (canvas, fps) = project_settings_from_values(width, height, frame_rate_index)?;
-    create_project(path, name, canvas, fps, &[])
+    let project = project::creation::NewProject::from_settings(name, canvas_size, fps, tags)?;
+    match location {
+        ProjectLocation::Local(path) => project.write(path, true),
+        ProjectLocation::Remote(server) => {
+            use shrimply_project_service::SharedWorkspace;
+            let path = SharedWorkspace::managed_path(&default_project_filename(name))?;
+            SharedWorkspace::create(&path, &server, &project.into_document())?;
+            Ok(path)
+        }
+    }
 }
 
 pub fn project_settings_from_values(
@@ -147,21 +149,6 @@ pub fn project_servers() -> Vec<String> {
 pub fn update_project_servers(previous: Option<&str>, value: Option<&str>) -> Result<(), String> {
     let store = shrimply_editor_state::preferences::open_with_defaults();
     shrimply_editor_state::preferences::update_project_server(&store, previous, value)
-}
-
-pub fn create_remote_project(
-    server: &str,
-    name: &str,
-    canvas_size: CanvasSize,
-    fps: Fraction,
-    tags: &[String],
-) -> Result<PathBuf, String> {
-    let project =
-        project::creation::NewProject::from_settings(name, canvas_size, fps, tags)?.into_document();
-    let path =
-        shrimply_project_service::SharedWorkspace::managed_path(&default_project_filename(name))?;
-    shrimply_project_service::SharedWorkspace::create(&path, server, &project)?;
-    Ok(path)
 }
 
 pub fn default_project_filename(name: &str) -> String {
@@ -217,49 +204,4 @@ fn launch_sibling_editor(path: &Path, binary_name: &str) -> Result<Child, String
 
 pub fn project_file_name_filter(label: &str) -> String {
     format!("{label} ({})", PROJECT_FILE_PATTERNS.join(" "))
-}
-
-pub fn preset_labels() -> Vec<&'static str> {
-    shrimply_project_types::PROJECT_PRESETS
-        .iter()
-        .map(|preset| preset.label)
-        .chain(["Custom"])
-        .collect()
-}
-
-pub fn frame_rate_labels() -> Vec<&'static str> {
-    shrimply_project_types::COMMON_FRAME_RATES
-        .iter()
-        .map(|rate| rate.label)
-        .collect()
-}
-
-pub fn preset_width(index: usize) -> u32 {
-    shrimply_project_types::PROJECT_PRESETS
-        .get(index)
-        .map(|preset| preset.canvas_size.width)
-        .unwrap_or(shrimply_project_types::DEFAULT_CANVAS_SIZE.width)
-}
-
-pub fn preset_height(index: usize) -> u32 {
-    shrimply_project_types::PROJECT_PRESETS
-        .get(index)
-        .map(|preset| preset.canvas_size.height)
-        .unwrap_or(shrimply_project_types::DEFAULT_CANVAS_SIZE.height)
-}
-
-pub fn preset_frame_rate(index: usize) -> usize {
-    shrimply_project_types::PROJECT_PRESETS
-        .get(index)
-        .and_then(|preset| {
-            shrimply_project_types::COMMON_FRAME_RATES
-                .iter()
-                .position(|rate| rate.value == preset.fps)
-        })
-        .unwrap_or_else(|| {
-            shrimply_project_types::COMMON_FRAME_RATES
-                .iter()
-                .position(|rate| rate.value == shrimply_project_types::DEFAULT_PROJECT_FPS)
-                .unwrap_or(0)
-        })
 }

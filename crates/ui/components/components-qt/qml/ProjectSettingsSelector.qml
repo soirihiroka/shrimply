@@ -5,6 +5,10 @@ import QtQuick.Layouts
 
 ColumnLayout {
     id: root
+    property bool creating: false
+    readonly property int projectWidth: backend.width
+    readonly property int projectHeight: backend.height
+    readonly property int frameRate: backend.frameRate
     property int initialWidth: backend.minimumDimension()
     property int initialHeight: backend.minimumDimension()
     property string initialFpsNumerator: "30"
@@ -17,12 +21,24 @@ ColumnLayout {
     spacing: 8
 
     function resetDraft() {
-        if (initialWidth < backend.minimumDimension()
+        if (creating || initialWidth < backend.minimumDimension()
                 || initialHeight < backend.minimumDimension()
                 || initialFpsNumerator.length === 0
                 || initialFpsDenominator.length === 0)
             return
         backend.configure(initialWidth, initialHeight, initialFpsNumerator, initialFpsDenominator)
+    }
+
+    ControlRow {
+        visible: root.creating
+        label: "Preset"
+        AdaptiveComboBox {
+            model: backend.presetCount
+            currentIndex: backend.preset
+            displayText: backend.presetLabel(backend.preset)
+            labelForIndex: function(index) { return backend.presetLabel(index) }
+            onActivated: function(index) { backend.selectPreset(index) }
+        }
     }
 
     onSourceKeyChanged: {
@@ -84,7 +100,7 @@ ColumnLayout {
 
     RowLayout {
         Layout.alignment: Qt.AlignRight
-        visible: backend.changed
+        visible: !root.creating && backend.changed
         Button {
             text: backend.settingsText("discard")
             onClicked: backend.discard()
