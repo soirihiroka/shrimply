@@ -769,11 +769,12 @@ pub fn rgba_to_gif_frame(source: &ffmpeg::frame::Video) -> Result<ffmpeg::frame:
         return Err("FFmpeg did not allocate a GIF palette".to_string());
     }
     let palette = unsafe { std::slice::from_raw_parts_mut(palette, sys::AVPALETTE_SIZE as usize) };
-    for (color, entry) in quantized
-        .palette
-        .into_iter()
-        .zip(palette.chunks_exact_mut(std::mem::size_of::<u32>()))
-    {
+    for (color, entry) in quantized.palette.into_iter().zip(
+        palette
+            .as_chunks_mut::<{ std::mem::size_of::<u32>() }>()
+            .0
+            .iter_mut(),
+    ) {
         entry.copy_from_slice(&color.to_ne_bytes());
     }
     Ok(frame)

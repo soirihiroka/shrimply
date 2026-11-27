@@ -754,7 +754,9 @@ fn validate(
     if name == "video-opacity"
         && captures.iter().any(|frame| {
             frame
-                .chunks_exact(4)
+                .as_chunks::<4>()
+                .0
+                .iter()
                 .any(|pixel| pixel[3].abs_diff(u8::MAX.div_ceil(2)) > 1)
         })
     {
@@ -767,7 +769,11 @@ fn validate(
         "source-obj",
     ]
     .contains(&name)
-        && captures[1].chunks_exact(4).all(|pixel| pixel[3] == 0)
+        && captures[1]
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .all(|pixel| pixel[3] == 0)
     {
         return Err("Source preview is fully transparent".into());
     }
@@ -887,7 +893,12 @@ fn validate(
                 .chunks_exact_mut(stride)
                 .zip(captures[capture].chunks_exact(WIDTH as usize * 4))
             {
-                for (pixel, expected) in row.chunks_exact_mut(4).zip(expected.chunks_exact(4)) {
+                for (pixel, expected) in row
+                    .as_chunks_mut::<4>()
+                    .0
+                    .iter_mut()
+                    .zip(expected.as_chunks::<4>().0.iter())
+                {
                     for channel in 0..3 {
                         pixel[channel] = (u16::from(expected[channel]) * u16::from(expected[3])
                             / u16::from(u8::MAX)) as u8;
@@ -910,8 +921,10 @@ fn validate(
                 .zip(expected.data(0).chunks_exact(expected.stride(0)))
             {
                 for (actual, expected) in row[..WIDTH as usize * 4]
-                    .chunks_exact(4)
-                    .zip(expected.chunks_exact(4))
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .zip(expected.as_chunks::<4>().0.iter())
                 {
                     for channel in 0..3 {
                         difference += u64::from(actual[channel].abs_diff(expected[channel]));

@@ -170,7 +170,7 @@ pub fn decode(values: &[f32], surface: usize) -> Option<Input> {
         let mut phase = 0;
         let mut flags = 0;
         let mut size = glam::Vec2::ZERO;
-        for record in values.chunks_exact(INPUT_STRIDE * 2) {
+        for record in values.as_chunks::<{ INPUT_STRIDE * 2 }>().0 {
             let [
                 kind,
                 x,
@@ -184,10 +184,7 @@ pub fn decode(values: &[f32], surface: usize) -> Option<Input> {
                 time_low,
                 time_high,
                 reserved,
-            ] = *record
-            else {
-                unreachable!()
-            };
+            ] = *record;
             assert!(
                 (36.0..=41.0).contains(&kind) && kind.fract() == 0.0 && reserved == 0.0,
                 "invalid pen event"
@@ -414,7 +411,9 @@ pub fn key_input(key: char, control: bool, shift: bool) -> Option<Input> {
 
 fn touch_changes(values: &[f32], offset: f32) -> Vec<TouchChange> {
     values
-        .chunks_exact(INPUT_STRIDE)
+        .as_chunks::<INPUT_STRIDE>()
+        .0
+        .iter()
         .map(|value| {
             let phase = match value[0] - offset {
                 0.0 => TouchPhase::Begin,

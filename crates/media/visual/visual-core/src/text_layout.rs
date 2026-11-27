@@ -165,8 +165,8 @@ impl ColorGlyphLayout {
         surface
             .with_data(|data| {
                 for row in data.chunks_exact(stride).take(height as usize) {
-                    for pixel in row.chunks_exact(4).take(width as usize) {
-                        let argb = u32::from_ne_bytes(pixel.try_into().expect("ARGB32 pixel"));
+                    for pixel in row.as_chunks::<4>().0.iter().take(width as usize) {
+                        let argb = u32::from_ne_bytes(*pixel);
                         pixels.extend_from_slice(&[
                             (argb >> 16) as u8,
                             (argb >> 8) as u8,

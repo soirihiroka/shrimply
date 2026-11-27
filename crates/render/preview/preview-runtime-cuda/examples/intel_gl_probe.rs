@@ -209,8 +209,10 @@ fn main() -> Result<(), String> {
             };
             if renderer
                 .readback(&composited.output)?
-                .chunks_exact(4)
-                .any(|pixel| pixel != expected)
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .any(|pixel| *pixel != expected)
             {
                 return Err(format!(
                     "Intel compositor specialization mismatch: {blend:?}, motion={motion}, {address:?}"
@@ -250,7 +252,9 @@ fn main() -> Result<(), String> {
         convolution_ready.wait()?;
         if renderer
             .readback(&convolution)?
-            .chunks_exact(size_of::<[f32; 4]>())
+            .as_chunks::<{ size_of::<[f32; 4]>() }>()
+            .0
+            .iter()
             .any(|pixel| pixel != red.as_flattened())
         {
             return Err("Intel convolution argument-buffer mismatch".into());

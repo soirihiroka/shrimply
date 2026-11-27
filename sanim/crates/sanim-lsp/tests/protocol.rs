@@ -897,7 +897,9 @@ fn source_formatting_uses_unsaved_text_preserves_literals_and_utf16_ranges() {
         reply(&responses, 5)["result"]["data"]
             .as_array()
             .unwrap()
-            .chunks_exact(5)
+            .as_chunks::<5>()
+            .0
+            .iter()
             .any(|token| token[3] == 9 && token[2] == 7)
     );
     assert_eq!(
@@ -1055,7 +1057,7 @@ fn multiline_string_tokens_use_the_document_line_index_for_every_line_ending() {
         let (_, replies) = session(&messages);
         let data = reply(&replies, 2)["result"]["data"].as_array().unwrap();
         let (mut line, mut character, mut string_parts) = (0, 0, 0);
-        for token in data.chunks_exact(5) {
+        for token in data.as_chunks::<5>().0 {
             let delta = token[0].as_u64().unwrap() as usize;
             line += delta;
             character = if delta == 0 {
@@ -1105,7 +1107,7 @@ fn template_literals_keep_string_highlighting_and_typed_interpolation_names() {
     let data = reply(&replies, 2)["result"]["data"].as_array().unwrap();
     let (mut line, mut character) = (0usize, 0usize);
     let mut tokens = Vec::new();
-    for token in data.chunks_exact(5) {
+    for token in data.as_chunks::<5>().0 {
         let delta = token[0].as_u64().unwrap() as usize;
         line += delta;
         character = if delta == 0 {

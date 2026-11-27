@@ -383,7 +383,9 @@ fn analyze(
         let samples = renderer.render(&source, start, duration)?;
         mono.extend(
             samples
-                .chunks_exact(2)
+                .as_chunks::<2>()
+                .0
+                .iter()
                 .map(|channels| (channels[0] + channels[1]) * 0.5),
         );
         start = start.saturating_add(duration);

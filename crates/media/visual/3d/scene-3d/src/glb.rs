@@ -228,7 +228,9 @@ fn triangle_tangent(positions: [Vec3; 3], uv: [Vec2; 3], normal: Vec3) -> [f32; 
 fn triangle_indices(mode: Mode, indices: &[u32]) -> Result<Vec<[u32; 3]>, GlbError> {
     let triangles = match mode {
         Mode::Triangles => indices
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .map(|triangle| [triangle[0], triangle[1], triangle[2]])
             .collect(),
         Mode::TriangleStrip => (2..indices.len())
@@ -494,15 +496,21 @@ fn rgba_pixels(image: &ImageData) -> Result<(Vec<Color<u8>>, u32, u32), GlbError
             .for_each(|value| pixels.push(Color::from_rgb(*value, *value, *value))),
         Format::R8G8 => image
             .pixels
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .for_each(|value| pixels.push(Color::new(value[0], value[0], value[0], value[1]))),
         Format::R8G8B8 => image
             .pixels
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .for_each(|value| pixels.push(Color::from_rgb(value[0], value[1], value[2]))),
         Format::R8G8B8A8 => image
             .pixels
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .for_each(|value| pixels.push(Color::new(value[0], value[1], value[2], value[3]))),
         other => return Err(GlbError(format!("unsupported GLB image format {other:?}"))),
     }

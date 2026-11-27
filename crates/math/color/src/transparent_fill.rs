@@ -84,7 +84,7 @@ pub fn transparent_fill_mask(
             continue;
         }
         let seed = quantized_oklab(&rgba[seed_index * 4..]);
-        for (barrier, pixel) in barrier.iter_mut().zip(rgba.chunks_exact(4)) {
+        for (barrier, pixel) in barrier.iter_mut().zip(rgba.as_chunks::<4>().0.iter()) {
             let color = quantized_oklab(pixel);
             let dl = color.l - seed.l;
             let da = color.a - seed.a;

@@ -221,7 +221,12 @@ fn compare(scene: &str, frame: usize, native: &[u8], rust: &[u8], root: &Path) {
         .position(|(native, rust)| native != rust)
         .expect("different Manim frames must contain a mismatched byte");
     let mut difference = Vec::with_capacity(rust.len());
-    for (native, rust) in native.chunks_exact(4).zip(rust.chunks_exact(4)) {
+    for (native, rust) in native
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(rust.as_chunks::<4>().0.iter())
+    {
         let alpha = native[3].abs_diff(rust[3]);
         difference.extend(
             native[..3]

@@ -71,7 +71,7 @@ impl Plan {
             ));
         }
         if self.modifier.color_mode == VectorizeColorMode::BlackAndWhite {
-            for pixel in pixels.chunks_exact_mut(RGBA_CHANNELS) {
+            for pixel in pixels.as_chunks_mut::<RGBA_CHANNELS>().0 {
                 let value = if pixel[3] == 0
                     || shrimply_math_color::Color::<u8>::from([pixel[0], pixel[1], pixel[2]])
                         .rec709_luma()

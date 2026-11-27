@@ -58,7 +58,7 @@ impl RnnoiseState {
             TimelineBase::Const(amount) => Some(amount.clamp(0.0, 1.0)),
             TimelineBase::Keyframes(_) => None,
         };
-        for (frame, channels) in samples.chunks_exact_mut(CHANNELS).enumerate() {
+        for (frame, channels) in samples.as_chunks_mut::<CHANNELS>().0.iter_mut().enumerate() {
             let amount = constant_amount.unwrap_or_else(|| {
                 value
                     .amount
@@ -152,7 +152,7 @@ impl DeepFilterNetState {
             TimelineBase::Const(reduction) => Some(reduction.clamp(0.0, 100.0)),
             TimelineBase::Keyframes(_) => None,
         };
-        for (frame, channels) in samples.chunks_exact_mut(CHANNELS).enumerate() {
+        for (frame, channels) in samples.as_chunks_mut::<CHANNELS>().0.iter_mut().enumerate() {
             if self.pending[0].is_empty() {
                 self.pending_reduction_db = constant_reduction.unwrap_or_else(|| {
                     value

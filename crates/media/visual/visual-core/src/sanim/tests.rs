@@ -690,7 +690,9 @@ wait(1s)
     let frame = recording.rasterize(false).unwrap();
     let pixel = frame
         .rgba
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .position(|pixel| pixel[3] == 255)
         .expect("visible native code glyph");
     let hit = inspection::request(inspection::Request {

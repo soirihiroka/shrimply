@@ -84,8 +84,11 @@ fn upload_optical_flow_frame(
         return Err("NVIDIA optical flow input is not tightly packed".to_string());
     }
     let pixels = bytes
-        .chunks_exact(4)
-        .map(|pixel| u32::from_le_bytes(pixel.try_into().expect("four-byte RGBA pixel")))
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .copied()
+        .map(u32::from_le_bytes)
         .collect::<Vec<_>>();
     let mut output = shrimply_gpu_cuda_memory::global().allocate_buffer(
         stream,

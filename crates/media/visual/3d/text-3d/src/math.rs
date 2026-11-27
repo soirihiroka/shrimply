@@ -7,7 +7,7 @@ pub(crate) fn boundary_contours(
     fill: &VertexBuffers<Point, u32>,
 ) -> Result<Vec<Vec<Point>>, Text3dError> {
     let mut boundary = HashMap::new();
-    for triangle in fill.indices.chunks_exact(3) {
+    for triangle in fill.indices.as_chunks::<3>().0 {
         let mut indices = [triangle[0], triangle[1], triangle[2]];
         let [a, b, c] = indices.map(|index| fill.vertices[index as usize]);
         let area = (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);

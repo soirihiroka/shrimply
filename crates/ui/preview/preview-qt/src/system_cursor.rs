@@ -199,7 +199,12 @@ pub fn grabbing(scale: f32) -> SoftwareCursor {
     );
 
     let mut rgba = Vec::with_capacity(pixel_count * 4);
-    for (black, white) in black.chunks_exact(4).zip(pixels.chunks_exact(4)) {
+    for (black, white) in black
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(pixels.as_chunks::<4>().0.iter())
+    {
         let background = white[0]
             .saturating_sub(black[0])
             .max(white[1].saturating_sub(black[1]))

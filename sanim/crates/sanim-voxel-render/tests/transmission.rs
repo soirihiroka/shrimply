@@ -230,7 +230,7 @@ fn animated_world_space_waves_are_uniform_only_and_preserve_premultiplied_output
     assert_eq!(second.stats.upload_bytes, 0);
     assert_eq!(second.stats.buffer_allocations, 0);
     assert_eq!(first.stats.resident_bytes, second.stats.resident_bytes);
-    for pixel in second.pixels.chunks_exact(4) {
+    for pixel in second.pixels.as_chunks::<4>().0 {
         assert!(pixel[..3].iter().all(|channel| *channel <= pixel[3]));
     }
     assert_eq!(

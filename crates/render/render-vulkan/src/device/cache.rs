@@ -62,10 +62,11 @@ impl super::Device {
                     // Vulkan headers are tightly packed little-endian words, even
                     // on hosts with a different native byte order.
                     let header = data[..HEADER_WORDS * size_of::<u32>()]
-                        .chunks_exact(size_of::<u32>())
-                        .map(|bytes| {
-                            u32::from_le_bytes(bytes.try_into().expect("cache header word"))
-                        })
+                        .as_chunks::<{ size_of::<u32>() }>()
+                        .0
+                        .iter()
+                        .copied()
+                        .map(u32::from_le_bytes)
                         .collect::<Vec<_>>();
                     if header
                         != [

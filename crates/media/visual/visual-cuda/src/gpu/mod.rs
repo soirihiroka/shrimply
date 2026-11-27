@@ -1527,10 +1527,12 @@ impl CudaVideoCompositor {
             .chunks_exact(width)
             .zip(destination.data_mut(0).chunks_exact_mut(stride))
         {
-            for (pixel, destination) in source_row
-                .iter()
-                .zip(destination_row.chunks_exact_mut(std::mem::size_of::<u32>()))
-            {
+            for (pixel, destination) in source_row.iter().zip(
+                destination_row
+                    .as_chunks_mut::<{ std::mem::size_of::<u32>() }>()
+                    .0
+                    .iter_mut(),
+            ) {
                 destination.copy_from_slice(&pixel.to_le_bytes());
             }
         }

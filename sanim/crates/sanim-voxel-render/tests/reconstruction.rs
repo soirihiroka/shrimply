@@ -78,7 +78,9 @@ fn spatial_preserves_flat_colors_alpha_and_reuses_bounded_targets() {
     assert!(
         quarter
             .pixels
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .all(|pixel| pixel[..3].iter().all(|v| *v <= pixel[3]))
     );
     let center = (32 + 32 * 64) * 4;
@@ -231,8 +233,10 @@ fn black_checker_texels_do_not_darken_white_neighbors_or_lose_contrast() {
         let mut whites = 0;
         for (a, b) in raw
             .pixels
-            .chunks_exact(4)
-            .zip(filtered.pixels.chunks_exact(4))
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .zip(filtered.pixels.as_chunks::<4>().0.iter())
         {
             if a[3] == 255 && a[0] > 100 {
                 whites += 1;

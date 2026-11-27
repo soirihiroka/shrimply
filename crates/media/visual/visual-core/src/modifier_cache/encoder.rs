@@ -174,8 +174,10 @@ impl VideoCacheEncoder {
             let destination_row =
                 &mut rgba.data_mut(0)[row * destination_stride..][..source_width * 4];
             for (source, destination) in source_row
-                .chunks_exact(4)
-                .zip(destination_row.chunks_exact_mut(4))
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .zip(destination_row.as_chunks_mut::<4>().0.iter_mut())
             {
                 let alpha = u16::from(source[3]);
                 destination[3] = source[3];

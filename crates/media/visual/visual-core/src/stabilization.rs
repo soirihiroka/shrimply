@@ -603,7 +603,9 @@ impl Cache {
                 return Ok(None);
             }
             let source_transforms = bytes
-                .chunks_exact(36)
+                .as_chunks::<36>()
+                .0
+                .iter()
                 .map(|transform| {
                     glam::Mat3::from_cols_array(&std::array::from_fn(|component| {
                         let start = component * 4;
@@ -632,7 +634,9 @@ impl Cache {
             .chunks_exact(frame_bytes)
             .map(|frame| {
                 frame
-                    .chunks_exact(8)
+                    .as_chunks::<8>()
+                    .0
+                    .iter()
                     .map(|offset| {
                         glam::Vec2::new(
                             f32::from_le_bytes(offset[..4].try_into().expect("MeshFlow x offset")),

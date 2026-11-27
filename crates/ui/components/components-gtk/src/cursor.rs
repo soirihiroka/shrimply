@@ -23,7 +23,7 @@ pub fn software_cursor_from_name(name: &str, display: &gdk::Display) -> Software
     let mut bgra = vec![0; stride * usize::try_from(height).expect("positive cursor height")];
     texture.download(&mut bgra, stride);
     let mut rgba = Vec::with_capacity(bgra.len());
-    for pixel in bgra.chunks_exact(4) {
+    for pixel in bgra.as_chunks::<4>().0 {
         rgba.extend_from_slice(&[pixel[2], pixel[1], pixel[0], pixel[3]]);
     }
     let theme_size = gtk::Settings::for_display(display).gtk_cursor_theme_size();

@@ -170,7 +170,9 @@ fn write_png(path: &Path, width: u32, height: u32, pixels: &[u8]) -> Result<(), 
         let mut writer = encoder.write_header().map_err(|error| error.to_string())?;
         // GPU targets use premultiplied alpha; PNG stores straight RGBA.
         let straight: Vec<u8> = pixels
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .flat_map(|pixel| {
                 shrimply_math_color::Color::<f32>::from_rgba8(
                     pixel[0], pixel[1], pixel[2], pixel[3],

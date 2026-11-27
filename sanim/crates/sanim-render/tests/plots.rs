@@ -33,7 +33,14 @@ wait(1s)
         .render(&scene, Fraction::new(1u64, 2u64), &options)
         .unwrap();
     let full = renderer.render(&scene, 1.into(), &options).unwrap();
-    let pixels = |image: &[u8]| image.chunks_exact(4).filter(|pixel| pixel[3] > 0).count();
+    let pixels = |image: &[u8]| {
+        image
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .filter(|pixel| pixel[3] > 0)
+            .count()
+    };
     assert!(pixels(&full.rgba) > pixels(&half.rgba));
     // Closing this triangle would incorrectly paint its horizontal bottom edge.
     assert_eq!(full.rgba[(70 * 100 + 50) * 4 + 3], 0);

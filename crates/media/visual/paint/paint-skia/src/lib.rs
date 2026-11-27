@@ -517,7 +517,9 @@ fn decode_texture_mask(asset: &Asset, snapshot: &AssetSnapshot) -> Result<Image,
     }
 
     let coverage: Vec<_> = rgba
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .map(|pixel| {
             (Color::<f32>::from_rgba8(pixel[0], pixel[1], pixel[2], pixel[3]).rec709_luma()
                 * f32::from(pixel[3]))

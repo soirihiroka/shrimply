@@ -98,7 +98,7 @@ let material=VoxelMaterial(texture=binary)
     );
     for name in ["blurred", "scaled", "sharpened"] {
         let texture = texture(&prepared, name);
-        for pixel in texture.pixels().chunks_exact(4) {
+        for pixel in texture.pixels().as_chunks::<4>().0 {
             if pixel[3] > 0 {
                 assert!(pixel[0] > 245, "{name}: {pixel:?}");
                 assert_eq!(pixel[2], 0, "transparent blue must not contaminate {name}");

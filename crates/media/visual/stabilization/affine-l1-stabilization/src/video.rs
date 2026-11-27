@@ -121,7 +121,7 @@ impl VideoChunk {
             .data(0)
             .chunks(bgr.stride(0))
             .take(height as usize)
-            .flat_map(|row| row[..row_bytes].chunks_exact(3))
+            .flat_map(|row| row[..row_bytes].as_chunks::<3>().0.iter())
             .flat_map(|pixel| [pixel[2], pixel[1], pixel[0], u8::MAX])
             .collect();
         self.next_frame = self.next_frame.saturating_add(1);

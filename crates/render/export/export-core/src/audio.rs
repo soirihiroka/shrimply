@@ -350,7 +350,7 @@ fn fill_frame(frame: &mut ffmpeg::frame::Audio, samples: &[f32]) {
             for (sample, stereo) in frame
                 .plane_mut::<(i16, i16)>(0)
                 .iter_mut()
-                .zip(samples.chunks_exact(CHANNELS))
+                .zip(samples.as_chunks::<CHANNELS>().0.iter())
             {
                 *sample = (to_i16(stereo[0]), to_i16(stereo[1]));
             }
@@ -370,7 +370,7 @@ fn fill_frame(frame: &mut ffmpeg::frame::Audio, samples: &[f32]) {
             for (sample, stereo) in frame
                 .plane_mut::<(f32, f32)>(0)
                 .iter_mut()
-                .zip(samples.chunks_exact(CHANNELS))
+                .zip(samples.as_chunks::<CHANNELS>().0.iter())
             {
                 *sample = (stereo[0].clamp(-1.0, 1.0), stereo[1].clamp(-1.0, 1.0));
             }

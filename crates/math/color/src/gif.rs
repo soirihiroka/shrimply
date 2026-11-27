@@ -99,7 +99,7 @@ impl PaletteBox {
 pub fn quantize_gif_rgba(rgba: &[u8], width: usize, height: usize) -> GifQuantization {
     assert_eq!(rgba.len(), width * height * 4, "GIF RGBA buffer size");
     let mut histogram = vec![HistogramEntry::default(); GIF_HISTOGRAM_SIZE];
-    for pixel in rgba.chunks_exact(4) {
+    for pixel in rgba.as_chunks::<4>().0 {
         if pixel[3] < GIF_ALPHA_THRESHOLD {
             continue;
         }
@@ -162,7 +162,7 @@ pub fn quantize_gif_rgba(rgba: &[u8], width: usize, height: usize) -> GifQuantiz
         .chunks_exact(width * 4)
         .zip(indices.chunks_exact_mut(width))
     {
-        for (x, (pixel, output)) in row.chunks_exact(4).zip(output).enumerate() {
+        for (x, (pixel, output)) in row.as_chunks::<4>().0.iter().zip(output).enumerate() {
             if pixel[3] < GIF_ALPHA_THRESHOLD {
                 current_errors[x + 1] = [0; 3];
                 continue;

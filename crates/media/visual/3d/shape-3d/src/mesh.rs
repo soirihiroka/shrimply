@@ -49,7 +49,7 @@ pub(crate) fn extrude(
     let requested_roundness = requested_roundness.clamp(0.0, half_depth);
     let roundness = safe_roundness(&contours, requested_roundness);
     let mut mesh = MeshBuilder::default();
-    for triangle in fill.indices.chunks_exact(3) {
+    for triangle in fill.indices.as_chunks::<3>().0 {
         let points = [
             fill.vertices[triangle[0] as usize],
             fill.vertices[triangle[1] as usize],

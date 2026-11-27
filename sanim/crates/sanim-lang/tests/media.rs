@@ -138,19 +138,25 @@ wait(1s)
     assert!(
         get("lettering")
             .pixels()
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .any(|pixel| pixel[3] > 0)
     );
     assert!(
         get("lettering")
             .pixels()
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .any(|pixel| pixel[3] == 0)
     );
     assert!(
         get("decal")
             .pixels()
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .all(|pixel| pixel[3] == 255)
     );
     assert_eq!(prepared.statistics.decoded_assets, 0);

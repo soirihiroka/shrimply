@@ -49,7 +49,9 @@ pub fn parse(bytes: &[u8]) -> Result<Document, String> {
         .par_iter()
         .map(|layer| {
             let mut rgba = layer.rgba();
-            rgba.chunks_exact_mut(4)
+            rgba.as_chunks_mut::<4>()
+                .0
+                .iter_mut()
                 .enumerate()
                 .for_each(|(index, pixel)| {
                     let x = (index % document.width() as usize) as i32;

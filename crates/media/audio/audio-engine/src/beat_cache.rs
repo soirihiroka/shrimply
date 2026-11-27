@@ -82,8 +82,11 @@ impl BeatCache {
             return Ok(None);
         }
         let beat_frames = bytes
-            .chunks_exact(8)
-            .map(|chunk| u64::from_le_bytes(chunk.try_into().expect("eight-byte beat frame")))
+            .as_chunks::<8>()
+            .0
+            .iter()
+            .copied()
+            .map(u64::from_le_bytes)
             .collect();
         Ok(Some(Some(BeatAnalysis {
             sample_rate: sample_rate.unwrap_or(SAMPLE_RATE),

@@ -266,8 +266,11 @@ fn bytes_to_path(bytes: Vec<u8>) -> rusqlite::Result<PathBuf> {
         return Err(rusqlite::Error::InvalidQuery);
     }
     let wide = bytes
-        .chunks_exact(2)
-        .map(|bytes| u16::from_le_bytes([bytes[0], bytes[1]]))
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .copied()
+        .map(u16::from_le_bytes)
         .collect::<Vec<_>>();
     Ok(std::ffi::OsString::from_wide(&wide).into())
 }

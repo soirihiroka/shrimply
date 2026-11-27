@@ -396,7 +396,7 @@ fn render_mouth_samples(
             frames,
             LIP_SYNC_SAMPLE_RATE,
         );
-        for channels in samples.chunks_exact(CHANNELS) {
+        for channels in samples.as_chunks::<CHANNELS>().0 {
             let mono = channels.iter().copied().sum::<f32>() / CHANNELS as f32;
             let sample = (mono.clamp(-1.0, 1.0) * i16::MAX as f32).round() as i16;
             output.push(sample);

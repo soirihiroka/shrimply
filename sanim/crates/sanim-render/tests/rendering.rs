@@ -227,9 +227,9 @@ fn pango_shaped_outlines_render_without_retaining_font_objects() {
     let frame = renderer
         .render(&scene, Fraction::from(1), &options)
         .unwrap();
-    assert!(start.rgba.chunks_exact(4).all(|p| p[3] == 0));
-    assert!(trace.rgba.chunks_exact(4).any(|p| p[3] > 0));
-    assert!(frame.rgba.chunks_exact(4).any(|p| p[3] > 0));
+    assert!(start.rgba.as_chunks::<4>().0.iter().all(|p| p[3] == 0));
+    assert!(trace.rgba.as_chunks::<4>().0.iter().any(|p| p[3] > 0));
+    assert!(frame.rgba.as_chunks::<4>().0.iter().any(|p| p[3] > 0));
     assert_ne!(trace.rgba, frame.rgba);
 }
 
@@ -245,7 +245,7 @@ fn create_draws_a_line_segment_instead_of_fading_the_whole_line() {
     let start = renderer
         .render(&scene, Fraction::from(0), &options)
         .unwrap();
-    assert!(start.rgba.chunks_exact(4).all(|p| p[3] == 0));
+    assert!(start.rgba.as_chunks::<4>().0.iter().all(|p| p[3] == 0));
     let middle = renderer
         .render(&scene, Fraction::new(1u64, 2u64), &options)
         .unwrap();
@@ -276,9 +276,9 @@ fn write_traces_then_fills_and_inverse_returns_to_empty() {
             |renderer: &mut Renderer, time| renderer.render(&scene, time, &options).unwrap();
         let first = frame(&mut renderer, Fraction::from(0));
         let quarter = frame(&mut renderer, Fraction::new(1u64, 4u64));
-        assert!(quarter.rgba.chunks_exact(4).any(|p| p[3] > 0));
+        assert!(quarter.rgba.as_chunks::<4>().0.iter().any(|p| p[3] > 0));
         assert!(
-            quarter.rgba.chunks_exact(4).any(|p| p[3] >= 127),
+            quarter.rgba.as_chunks::<4>().0.iter().any(|p| p[3] >= 127),
             "a reveal must expose solid pixels, not fade everything"
         );
         if forward == "write" {
@@ -321,11 +321,22 @@ fn group_write_reveals_children_without_changing_their_layout() {
     let end = renderer
         .render(&scene, Fraction::from(1), &options)
         .unwrap();
-    assert!(start.rgba.chunks_exact(4).all(|p| p[3] == 0));
-    assert!(middle.rgba.chunks_exact(4).any(|p| p[3] > 0));
+    assert!(start.rgba.as_chunks::<4>().0.iter().all(|p| p[3] == 0));
+    assert!(middle.rgba.as_chunks::<4>().0.iter().any(|p| p[3] > 0));
     assert!(
-        end.rgba.chunks_exact(4).filter(|p| p[3] > 0).count()
-            > middle.rgba.chunks_exact(4).filter(|p| p[3] > 0).count()
+        end.rgba
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .filter(|p| p[3] > 0)
+            .count()
+            > middle
+                .rgba
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .filter(|p| p[3] > 0)
+                .count()
     );
 }
 
@@ -347,7 +358,7 @@ fn grow_and_shrink_render_centered_without_zero_scale_artifacts() {
     let end = renderer
         .render(&scene, Fraction::from(2), &options)
         .unwrap();
-    assert!(start.rgba.chunks_exact(4).all(|p| p[3] == 0));
+    assert!(start.rgba.as_chunks::<4>().0.iter().all(|p| p[3] == 0));
     assert_eq!(middle.rgba[(32 * 64 + 32) * 4 + 3], 255);
     assert_eq!(middle.rgba[(32 * 64 + 20) * 4 + 3], 0);
     assert_eq!(start.rgba, end.rgba);
@@ -456,7 +467,14 @@ fn overlapping_trace_and_fill_preserve_element_opacity() {
                 &Options::for_animation(scene.animation()),
             )
             .unwrap();
-        let max = frame.rgba.chunks_exact(4).map(|p| p[3]).max().unwrap();
+        let max = frame
+            .rgba
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|p| p[3])
+            .max()
+            .unwrap();
         assert!(
             max <= 128,
             "{kind}: trace and fill accumulated opacity to {max}"

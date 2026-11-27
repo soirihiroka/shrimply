@@ -377,7 +377,7 @@ impl Session {
                     .read_exact(&mut pixels)
                     .map_err(|error| format!("read Blender frame pixels: {error}"))?;
                 if matches!(pixel_format, PixelFormat::Bgra) {
-                    for pixel in pixels.chunks_exact_mut(4) {
+                    for pixel in pixels.as_chunks_mut::<4>().0 {
                         pixel.swap(0, 2);
                     }
                 }

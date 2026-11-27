@@ -10,8 +10,10 @@ mod fixture;
 fn rmse(a: &[u8], b: &[u8]) -> f64 {
     assert_eq!(a.len(), b.len());
     let squared = a
-        .chunks_exact(4)
-        .zip(b.chunks_exact(4))
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(b.as_chunks::<4>().0.iter())
         .flat_map(|(a, b)| a[..3].iter().zip(&b[..3]))
         .map(|(a, b)| {
             let error = f64::from(*a) - f64::from(*b);

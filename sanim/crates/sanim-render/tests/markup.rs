@@ -83,7 +83,9 @@ wait(1s)"#;
     let image = frame(source, 240, 140);
     let maximum = image
         .rgba
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .map(|pixel| pixel[3])
         .max()
         .unwrap();

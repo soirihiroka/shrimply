@@ -237,7 +237,9 @@ fn horizontal_ranges_expand_about_their_anchor_without_changing_vertical_extent(
     let bounds = |frame: &sanim_render::Frame| {
         let pixels: Vec<_> = frame
             .rgba
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .enumerate()
             .filter(|(_, pixel)| pixel[3] > 0)
             .map(|(index, _)| (index % frame.width as usize, index / frame.width as usize))
@@ -252,7 +254,14 @@ fn horizontal_ranges_expand_about_their_anchor_without_changing_vertical_extent(
     let empty = renderer
         .render(&scene, Fraction::from(0), &options)
         .unwrap();
-    assert!(empty.rgba.chunks_exact(4).all(|pixel| pixel[3] == 0));
+    assert!(
+        empty
+            .rgba
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .all(|pixel| pixel[3] == 0)
+    );
     let half = bounds(
         &renderer
             .render(&scene, Fraction::new(1u64, 2u64), &options)
@@ -296,14 +305,18 @@ fn transparent_and_opaque_exports_cache_distinct_pixels_and_reuse_holds() {
     assert!(
         transparent
             .rgba
-            .chunks_exact(4)
-            .all(|pixel| pixel == [0, 0, 0, 0])
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .all(|pixel| *pixel == [0, 0, 0, 0])
     );
     assert!(
         opaque
             .rgba
-            .chunks_exact(4)
-            .all(|pixel| pixel == [0, 0, 0, 255])
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .all(|pixel| *pixel == [0, 0, 0, 255])
     );
     assert!(Arc::ptr_eq(
         &opaque,

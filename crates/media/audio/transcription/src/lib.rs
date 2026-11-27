@@ -93,7 +93,9 @@ fn mix_range_mono(project: &Project, start: Time, end: Time) -> Vec<f32> {
         SAMPLE_RATE,
     );
     stereo
-        .chunks_exact(CHANNELS)
+        .as_chunks::<CHANNELS>()
+        .0
+        .iter()
         .map(|frame| {
             let sample = frame[0] * 0.5 + frame[1] * 0.5;
             if sample.is_finite() { sample } else { 0.0 }

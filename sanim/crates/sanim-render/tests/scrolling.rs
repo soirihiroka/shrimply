@@ -190,7 +190,14 @@ wait(1s)"#,
     let mut options = Options::for_animation(scene.animation());
     options.encode_png = false;
     let frame = renderer.render(&scene, 0.into(), &options).unwrap();
-    assert!(frame.rgba.chunks_exact(4).all(|pixel| pixel[3] == 0));
+    assert!(
+        frame
+            .rgba
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .all(|pixel| pixel[3] == 0)
+    );
 }
 
 #[test]

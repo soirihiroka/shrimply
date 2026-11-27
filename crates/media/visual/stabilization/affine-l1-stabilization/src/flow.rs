@@ -101,7 +101,9 @@ impl Estimator {
             Ok(self
                 .renderer
                 .readback(buffer)?
-                .chunks_exact(size_of::<[f32; 2]>())
+                .as_chunks::<{ size_of::<[f32; 2]>() }>()
+                .0
+                .iter()
                 .map(|bytes| {
                     glam::Vec2::new(
                         f32::from_ne_bytes(bytes[..4].try_into().expect("flow x component")),

@@ -81,8 +81,8 @@ fn actual_gpu_random_never_rounds_the_open_upper_endpoint_to_one() {
         .unwrap();
     receive.recv().unwrap().unwrap();
     let mapped = readback.slice(..).get_mapped_range().unwrap();
-    for sample in mapped.chunks_exact(4) {
-        let sample = f32::from_le_bytes(sample.try_into().unwrap());
+    for sample in mapped.as_chunks::<4>().0 {
+        let sample = f32::from_le_bytes(*sample);
         assert!(
             (0.0..1.0).contains(&sample),
             "RNG sample must be within[0,1), got{sample}"

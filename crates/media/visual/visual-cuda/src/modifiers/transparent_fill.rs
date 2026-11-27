@@ -200,7 +200,7 @@ mod tests {
         for frame in 0..FRAMES {
             let mut mask = vec![0_u8; WIDTH.div_ceil(8) as usize * HEIGHT as usize];
             let marker = (frame % u64::from(WIDTH)) as u32;
-            for row in mask.chunks_exact_mut(WIDTH.div_ceil(8) as usize) {
+            for row in mask.as_chunks_mut::<{ WIDTH.div_ceil(8) as usize }>().0 {
                 row[marker as usize / 8] |= 0x80 >> (marker % 8);
             }
             cache
@@ -235,7 +235,7 @@ mod tests {
             .begin_analysis(&key)
             .expect("begin CUDA mask test analysis");
         let mut packed = vec![0_u8; WIDTH.div_ceil(8) as usize * HEIGHT as usize];
-        for row in packed.chunks_exact_mut(WIDTH.div_ceil(8) as usize) {
+        for row in packed.as_chunks_mut::<{ WIDTH.div_ceil(8) as usize }>().0 {
             row[MARKER as usize / 8] |= 0x80 >> (MARKER % 8);
         }
         cache
@@ -710,7 +710,7 @@ mod tests {
         for frame in FIRST_FRAME..FIRST_FRAME + FRAME_COUNT {
             let marker = marker(frame);
             let mut mask = vec![0_u8; WIDTH.div_ceil(8) as usize * HEIGHT as usize];
-            for row in mask.chunks_exact_mut(WIDTH.div_ceil(8) as usize) {
+            for row in mask.as_chunks_mut::<{ WIDTH.div_ceil(8) as usize }>().0 {
                 row[marker as usize / 8] |= 0x80 >> (marker % 8);
             }
             cache

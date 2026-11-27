@@ -279,7 +279,7 @@ impl TimelinePainterInner {
         // Ganesh expands draw_points(Lines) into a separate path draw per segment
         // with coverage antialiasing or a scaled canvas (including Retina displays).
         let mut path = PathBuilder::new();
-        for segment in segments.chunks_exact(2) {
+        for segment in segments.as_chunks::<2>().0 {
             path.move_to(point(segment[0]));
             path.line_to(point(segment[1]));
         }

@@ -181,7 +181,12 @@ fn write_pixels<T: FrameBufferSample + bytemuck::Pod>(
             return Err("Incomplete JPEG XL frame pixels".into());
         }
         if channels == 3 {
-            for (rgba, rgb) in row.chunks_exact_mut(4).zip(rgb.chunks_exact(3)) {
+            for (rgba, rgb) in row
+                .as_chunks_mut::<4>()
+                .0
+                .iter_mut()
+                .zip(rgb.as_chunks::<3>().0.iter())
+            {
                 rgba.copy_from_slice(&[rgb[0], rgb[1], rgb[2], opaque]);
             }
         }

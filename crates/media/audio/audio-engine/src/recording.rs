@@ -198,7 +198,9 @@ pub fn transcode_to_wav(input_path: &Path) -> Result<Vec<u8>, String> {
     let maximum_samples = TTS_REFERENCE_MAX_SECONDS * TTS_REFERENCE_RATE as usize * CHANNELS;
     let (stereo, _) = decode_stereo(input_path, Some(TTS_REFERENCE_RATE), Some(maximum_samples))?;
     let samples = stereo
-        .chunks_exact(CHANNELS)
+        .as_chunks::<CHANNELS>()
+        .0
+        .iter()
         .map(|frame| (frame[0] + frame[1]) * 0.5)
         .collect::<Vec<_>>();
     let data_size = u32::try_from(samples.len().saturating_mul(size_of::<f32>()))
@@ -592,7 +594,7 @@ fn fill_packed_f32_frame(frame: &mut frame::Audio, samples: &[f32]) {
     for (dst, src) in frame
         .plane_mut::<(f32, f32)>(0)
         .iter_mut()
-        .zip(samples.chunks_exact(CHANNELS))
+        .zip(samples.as_chunks::<CHANNELS>().0.iter())
     {
         *dst = (src[0], src[1]);
     }
@@ -702,13 +704,13 @@ fn fill_encoder_frame(frame: &mut frame::Audio, samples: &[f32]) -> Result<(), S
             for (dst, src) in frame
                 .plane_mut::<(f32, f32)>(0)
                 .iter_mut()
-                .zip(samples.chunks_exact(CHANNELS))
+                .zip(samples.as_chunks::<CHANNELS>().0.iter())
             {
                 *dst = (src[0], src[1]);
             }
         }
         format::Sample::F32(format::sample::Type::Planar) => {
-            for (index, src) in samples.chunks_exact(CHANNELS).enumerate() {
+            for (index, src) in samples.as_chunks::<CHANNELS>().0.iter().enumerate() {
                 frame.plane_mut::<f32>(0)[index] = src[0];
                 frame.plane_mut::<f32>(1)[index] = src[1];
             }
@@ -717,13 +719,13 @@ fn fill_encoder_frame(frame: &mut frame::Audio, samples: &[f32]) -> Result<(), S
             for (dst, src) in frame
                 .plane_mut::<(i16, i16)>(0)
                 .iter_mut()
-                .zip(samples.chunks_exact(CHANNELS))
+                .zip(samples.as_chunks::<CHANNELS>().0.iter())
             {
                 *dst = (f32_to_i16(src[0]), f32_to_i16(src[1]));
             }
         }
         format::Sample::I16(format::sample::Type::Planar) => {
-            for (index, src) in samples.chunks_exact(CHANNELS).enumerate() {
+            for (index, src) in samples.as_chunks::<CHANNELS>().0.iter().enumerate() {
                 frame.plane_mut::<i16>(0)[index] = f32_to_i16(src[0]);
                 frame.plane_mut::<i16>(1)[index] = f32_to_i16(src[1]);
             }

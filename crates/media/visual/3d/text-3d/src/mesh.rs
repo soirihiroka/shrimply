@@ -77,7 +77,7 @@ pub fn generate_mesh(geometry: &Geometry<'_>) -> Result<ObjMesh, Text3dError> {
     let mut mesh = MeshBuilder::default();
     let half_depth = depth * 0.5;
 
-    for triangle in fill.indices.chunks_exact(3) {
+    for triangle in fill.indices.as_chunks::<3>().0 {
         let points = [
             fill.vertices[triangle[0] as usize],
             fill.vertices[triangle[1] as usize],

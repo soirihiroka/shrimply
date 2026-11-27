@@ -84,7 +84,12 @@ fn input_buffer(bytes: &[u8], width: u32, height: u32) -> Result<Retained<CVPixe
         let source = &bytes[row * packed_row_bytes..(row + 1) * packed_row_bytes];
         let destination =
             unsafe { std::slice::from_raw_parts_mut(base.add(row * row_bytes), packed_row_bytes) };
-        for (rgba, bgra) in source.chunks_exact(4).zip(destination.chunks_exact_mut(4)) {
+        for (rgba, bgra) in source
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .zip(destination.as_chunks_mut::<4>().0.iter_mut())
+        {
             bgra.copy_from_slice(&[rgba[2], rgba[1], rgba[0], rgba[3]]);
         }
     }

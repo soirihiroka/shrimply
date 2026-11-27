@@ -30,7 +30,7 @@ impl Texture {
         }
         let mut has_cutout = false;
         let mut has_partial_alpha = false;
-        for pixel in pixels.chunks_exact(CHANNELS) {
+        for pixel in pixels.as_chunks::<CHANNELS>().0 {
             match pixel[3] {
                 0 => has_cutout = true,
                 255 => {}
@@ -277,7 +277,9 @@ impl Material {
             if texture.has_partial_alpha() {
                 let (index, pixel) = texture
                     .pixels()
-                    .chunks_exact(4)
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
                     .enumerate()
                     .find(|(_, pixel)| pixel[3] != 0 && pixel[3] != 255)
                     .expect("partial alpha metadata");

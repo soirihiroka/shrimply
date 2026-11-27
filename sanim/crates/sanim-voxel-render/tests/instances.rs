@@ -153,11 +153,18 @@ fn rebuilding_only_the_palette_reuses_exact_geometry_without_retaining_old_asset
         if let Some(resident) = resident {
             assert_eq!(frame.stats.resident_bytes, resident);
         }
-        assert!(frame.pixels.chunks_exact(4).any(|pixel| if step % 2 == 0 {
-            pixel[0] > 200 && pixel[2] < 20
-        } else {
-            pixel[2] > 200 && pixel[0] < 20
-        }));
+        assert!(
+            frame
+                .pixels
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .any(|pixel| if step % 2 == 0 {
+                    pixel[0] > 200 && pixel[2] < 20
+                } else {
+                    pixel[2] > 200 && pixel[0] < 20
+                })
+        );
         resident = Some(frame.stats.resident_bytes);
         previous = Some(weak);
     }

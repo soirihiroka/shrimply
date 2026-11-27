@@ -94,7 +94,7 @@ pub fn encode_tracking_frame(
     let mut visible = false;
     let mut pixels = Vec::with_capacity(row_bytes * size.height as usize);
     for row in rgba[..byte_count].chunks_exact(stride) {
-        for pixel in row[..row_bytes].chunks_exact(4) {
+        for pixel in row[..row_bytes].as_chunks::<4>().0 {
             let alpha = u16::from(pixel[3]);
             visible |= alpha != 0;
             pixels.extend_from_slice(&[

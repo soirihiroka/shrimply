@@ -320,7 +320,10 @@ impl VideoWriter {
                 let offset = row * *stride;
                 let dst = &mut plane[offset..offset + width];
                 if self.input.alpha == Some(true) {
-                    for (alpha, pixel) in dst.iter_mut().zip(src.chunks_exact(BYTES_PER_PIXEL)) {
+                    for (alpha, pixel) in dst
+                        .iter_mut()
+                        .zip(src.as_chunks::<BYTES_PER_PIXEL>().0.iter())
+                    {
                         *alpha = pixel[3];
                     }
                 } else {

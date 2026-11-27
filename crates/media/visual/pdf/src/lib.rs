@@ -128,7 +128,7 @@ fn render_document_page(
         .ok_or("PDF page pixel size overflow")?;
     let mut rgba = Vec::with_capacity(capacity);
     for row in data.chunks(stride).take(size.height as usize) {
-        for pixel in row[..row_bytes].chunks_exact(4) {
+        for pixel in row[..row_bytes].as_chunks::<4>().0 {
             #[cfg(target_endian = "little")]
             rgba.extend_from_slice(&[pixel[2], pixel[1], pixel[0], pixel[3]]);
             #[cfg(target_endian = "big")]

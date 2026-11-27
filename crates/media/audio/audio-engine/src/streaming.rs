@@ -371,7 +371,7 @@ fn apply_audio_clip_transition_gain(
         .saturating_sub(half)
         .as_sample_frame(sample_rate);
     let transition_frames = transition.duration.as_sample_frame(sample_rate).max(1);
-    for (frame, channels) in samples.chunks_exact_mut(CHANNELS).enumerate() {
+    for (frame, channels) in samples.as_chunks_mut::<CHANNELS>().0.iter_mut().enumerate() {
         let timeline_frame = timeline_start_frame.saturating_add(frame as u64);
         if timeline_frame < transition_start {
             continue;
@@ -1018,7 +1018,7 @@ impl AudioDecoderSession {
         let mut samples = self.decode_frames(decode_start, source_frames)?;
         if backwards {
             samples.reverse();
-            for frame in samples.chunks_exact_mut(CHANNELS) {
+            for frame in samples.as_chunks_mut::<CHANNELS>().0 {
                 frame.swap(0, 1);
             }
         }
@@ -1403,7 +1403,7 @@ fn apply_transition_gain(
     if item.transitions.intro.is_none() && item.transitions.outro.is_none() {
         return;
     }
-    for (frame, channels) in samples.chunks_exact_mut(CHANNELS).enumerate() {
+    for (frame, channels) in samples.as_chunks_mut::<CHANNELS>().0.iter_mut().enumerate() {
         let position = time_from_sample_frame(
             timeline_start_frame.saturating_add(frame as u64),
             sample_rate,

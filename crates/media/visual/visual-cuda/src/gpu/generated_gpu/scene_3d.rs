@@ -1086,7 +1086,12 @@ impl Scene3dRenderer {
         }
         self.submit_and_wait(command, "read first 3D ray-traced output")?;
         let bytes = staging.read()?;
-        let visible = bytes.chunks_exact(4).filter(|pixel| pixel[3] != 0).count();
+        let visible = bytes
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .filter(|pixel| pixel[3] != 0)
+            .count();
         self.logged_output = true;
         if visible == 0 {
             tracing::warn!(width, height, "Ray-traced 3D output contains no hit pixels");

@@ -40,8 +40,10 @@ pub fn refraction(
             ));
         }
         if pixels
-            .chunks_exact(4)
-            .zip(original.chunks_exact(4))
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .zip(original.as_chunks::<4>().0.iter())
             .any(|(filtered, original)| filtered[3] != original[3])
         {
             return Err(format!("{method:?} changed refraction output alpha"));
@@ -92,7 +94,12 @@ pub fn denoise() -> Result<(), String> {
     let filtered = compositor.renderer.readback(&output)?;
     let mut before_error = 0.0_f32;
     let mut after_error = 0.0_f32;
-    for (index, pixel) in filtered.chunks_exact(size_of::<[f32; 4]>()).enumerate() {
+    for (index, pixel) in filtered
+        .as_chunks::<{ size_of::<[f32; 4]>() }>()
+        .0
+        .iter()
+        .enumerate()
+    {
         let values: [f32; 4] = std::array::from_fn(|channel| {
             f32::from_ne_bytes(pixel[channel * 4..channel * 4 + 4].try_into().unwrap())
         });

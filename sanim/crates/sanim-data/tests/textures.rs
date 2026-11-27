@@ -31,7 +31,9 @@ fn shared_png_textures_preserve_smooth_rgba_and_jpeg_loads_opaque_pixels() {
     assert!(
         texture
             .pixels()
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .all(|pixel| pixel[3] == 255)
     );
 }

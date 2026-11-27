@@ -420,7 +420,9 @@ impl Processor {
                             *sample *= gain;
                         }
                     } else {
-                        for (frame, channels) in samples.chunks_exact_mut(CHANNELS).enumerate() {
+                        for (frame, channels) in
+                            samples.as_chunks_mut::<CHANNELS>().0.iter_mut().enumerate()
+                        {
                             let time = local_time(effect_start, frame, self.sample_rate);
                             let gain = db_gain(value.decibels.value_at(time).clamp(-60.0, 36.0));
                             channels[0] *= gain;
@@ -434,12 +436,14 @@ impl Processor {
                         let angle = (position + 1.0) * FRAC_PI_4;
                         let left = angle.cos() * 2.0_f32.sqrt();
                         let right = angle.sin() * 2.0_f32.sqrt();
-                        for channels in samples.chunks_exact_mut(CHANNELS) {
+                        for channels in samples.as_chunks_mut::<CHANNELS>().0 {
                             channels[0] *= left;
                             channels[1] *= right;
                         }
                     } else {
-                        for (frame, channels) in samples.chunks_exact_mut(CHANNELS).enumerate() {
+                        for (frame, channels) in
+                            samples.as_chunks_mut::<CHANNELS>().0.iter_mut().enumerate()
+                        {
                             let time = local_time(effect_start, frame, self.sample_rate);
                             let position = value.position.value_at(time).clamp(-1.0, 1.0);
                             let angle = (position + 1.0) * FRAC_PI_4;
@@ -451,12 +455,14 @@ impl Processor {
                 (AudioModifierEffect::StereoWidth(value), _) => {
                     if let TimelineBase::Const(width) = &value.width.base {
                         let width = width.clamp(0.0, 2.0);
-                        for channels in samples.chunks_exact_mut(CHANNELS) {
+                        for channels in samples.as_chunks_mut::<CHANNELS>().0 {
                             (channels[0], channels[1]) =
                                 crate::math::audio_stereo_width(channels[0], channels[1], width);
                         }
                     } else {
-                        for (frame, channels) in samples.chunks_exact_mut(CHANNELS).enumerate() {
+                        for (frame, channels) in
+                            samples.as_chunks_mut::<CHANNELS>().0.iter_mut().enumerate()
+                        {
                             let time = local_time(effect_start, frame, self.sample_rate);
                             let width = value.width.value_at(time).clamp(0.0, 2.0);
                             (channels[0], channels[1]) =
@@ -471,7 +477,9 @@ impl Processor {
                         }
                         _ => None,
                     };
-                    for (frame, channels) in samples.chunks_exact_mut(CHANNELS).enumerate() {
+                    for (frame, channels) in
+                        samples.as_chunks_mut::<CHANNELS>().0.iter_mut().enumerate()
+                    {
                         let time = local_time(effect_start, frame, self.sample_rate);
                         let (rate, depth) = constant.unwrap_or_else(|| {
                             (
@@ -540,7 +548,7 @@ impl Processor {
                 *sample *= gain;
             }
         } else {
-            for (frame, channels) in samples.chunks_exact_mut(CHANNELS).enumerate() {
+            for (frame, channels) in samples.as_chunks_mut::<CHANNELS>().0.iter_mut().enumerate() {
                 let time = local_time(local_start, frame, self.sample_rate);
                 let gain = db_gain(item.gain.decibels.value_at(time).clamp(-60.0, 36.0));
                 channels[0] *= gain;
@@ -584,14 +592,14 @@ impl EqualizerState {
                 mid.clamp(-24.0, 24.0),
                 high.clamp(-24.0, 24.0),
             ]);
-            for samples in samples.chunks_exact_mut(CHANNELS) {
+            for samples in samples.as_chunks_mut::<CHANNELS>().0 {
                 for (sample, channel) in samples.iter_mut().zip(&mut self.channels) {
                     *sample = channel.process(*sample);
                 }
             }
             return;
         }
-        for (frame, samples) in samples.chunks_exact_mut(CHANNELS).enumerate() {
+        for (frame, samples) in samples.as_chunks_mut::<CHANNELS>().0.iter_mut().enumerate() {
             let time = local_time(local_start, frame, sample_rate);
             let parameters = [
                 value.low_db.value_at(time).clamp(-24.0, 24.0),
@@ -670,7 +678,7 @@ impl CloseUpState {
         if let Some(distance_cm) = constant {
             self.set_distance(distance_cm);
         }
-        for (frame, channels) in samples.chunks_exact_mut(CHANNELS).enumerate() {
+        for (frame, channels) in samples.as_chunks_mut::<CHANNELS>().0.iter_mut().enumerate() {
             let distance_cm = constant.unwrap_or_else(|| {
                 value
                     .distance_cm
@@ -793,7 +801,7 @@ impl VoiceColorState {
         if let Some(amount) = constant {
             self.set_amount(amount);
         }
-        for (frame, channels) in samples.chunks_exact_mut(CHANNELS).enumerate() {
+        for (frame, channels) in samples.as_chunks_mut::<CHANNELS>().0.iter_mut().enumerate() {
             let amount = constant.unwrap_or_else(|| {
                 value
                     .amount
@@ -937,7 +945,7 @@ impl FilterState {
             )),
             _ => None,
         };
-        for (frame, channels) in samples.chunks_exact_mut(CHANNELS).enumerate() {
+        for (frame, channels) in samples.as_chunks_mut::<CHANNELS>().0.iter_mut().enumerate() {
             let (cutoff, resonance) = constant.unwrap_or_else(|| {
                 let time = local_time(local_start, frame, sample_rate);
                 (
@@ -997,7 +1005,7 @@ impl NoiseGateState {
             )),
             _ => None,
         };
-        for (frame, channels) in samples.chunks_exact_mut(CHANNELS).enumerate() {
+        for (frame, channels) in samples.as_chunks_mut::<CHANNELS>().0.iter_mut().enumerate() {
             let (threshold_db, attack_ms, release_ms) = constant.unwrap_or_else(|| {
                 let time = local_time(local_start, frame, sample_rate);
                 (
@@ -1058,7 +1066,7 @@ impl BitcrusherState {
             )),
             _ => None,
         };
-        for (frame, channels) in samples.chunks_exact_mut(CHANNELS).enumerate() {
+        for (frame, channels) in samples.as_chunks_mut::<CHANNELS>().0.iter_mut().enumerate() {
             let (resolution_bits, target_rate, mix) = constant.unwrap_or_else(|| {
                 let time = local_time(local_start, frame, sample_rate);
                 (
@@ -1122,7 +1130,7 @@ impl ChorusState {
             )),
             _ => None,
         };
-        for (frame, channels) in samples.chunks_exact_mut(CHANNELS).enumerate() {
+        for (frame, channels) in samples.as_chunks_mut::<CHANNELS>().0.iter_mut().enumerate() {
             let (rate, depth, delay, mix) = constant.unwrap_or_else(|| {
                 let time = local_time(local_start, frame, self.sample_rate);
                 (
@@ -1173,7 +1181,7 @@ impl CompressorState {
         local_start: Time,
         sample_rate: u32,
     ) {
-        for (frame, channels) in samples.chunks_exact_mut(CHANNELS).enumerate() {
+        for (frame, channels) in samples.as_chunks_mut::<CHANNELS>().0.iter_mut().enumerate() {
             let time = local_time(local_start, frame, sample_rate);
             let threshold_db = value.threshold_db.value_at(time).clamp(-60.0, 0.0);
             let ratio = value.ratio.value_at(time).clamp(1.0, 20.0);
@@ -1224,7 +1232,7 @@ impl LimiterState {
         if (release_ms - self.release_ms).abs() > f32::EPSILON {
             *self = Self::new(sample_rate, release_ms);
         }
-        for (frame, channels) in samples.chunks_exact_mut(CHANNELS).enumerate() {
+        for (frame, channels) in samples.as_chunks_mut::<CHANNELS>().0.iter_mut().enumerate() {
             let ceiling = db_gain(
                 value
                     .ceiling_db
@@ -1415,7 +1423,7 @@ impl ReverbState {
         if let Some((room_size, decay_seconds, damping, _, _)) = constant {
             self.update_network(room_size, decay_seconds, damping);
         }
-        for (frame, channels) in samples.chunks_exact_mut(CHANNELS).enumerate() {
+        for (frame, channels) in samples.as_chunks_mut::<CHANNELS>().0.iter_mut().enumerate() {
             let (room_size, decay_seconds, damping, pre_delay_ms, mix) =
                 constant.unwrap_or_else(|| {
                     let time = local_time(local_start, frame, self.sample_rate);
@@ -1496,7 +1504,7 @@ impl ReverbState {
         if let Some((room_size, absorption, distance_m)) = constant {
             self.update_capture_network(room_size, distance_m, absorption);
         }
-        for (frame, channels) in samples.chunks_exact_mut(CHANNELS).enumerate() {
+        for (frame, channels) in samples.as_chunks_mut::<CHANNELS>().0.iter_mut().enumerate() {
             let (room_size, absorption, distance_m) = constant.unwrap_or_else(|| {
                 let time = local_time(local_start, frame, self.sample_rate);
                 (
@@ -1634,7 +1642,7 @@ impl EchoState {
             )),
             _ => None,
         };
-        for (frame, channels) in samples.chunks_exact_mut(CHANNELS).enumerate() {
+        for (frame, channels) in samples.as_chunks_mut::<CHANNELS>().0.iter_mut().enumerate() {
             let (delay_ms, feedback, mix) = constant.unwrap_or_else(|| {
                 let time = local_time(local_start, frame, self.sample_rate);
                 (
@@ -1694,7 +1702,7 @@ impl DistortionState {
             crate::math::audio_smoothing_coefficient(LEVEL_WINDOW_SECONDS, sample_rate);
         let compensation_coefficient =
             crate::math::audio_smoothing_coefficient(LEVEL_SMOOTH_SECONDS, sample_rate);
-        for (frame, channels) in samples.chunks_exact_mut(CHANNELS).enumerate() {
+        for (frame, channels) in samples.as_chunks_mut::<CHANNELS>().0.iter_mut().enumerate() {
             let time = local_time(local_start, frame, sample_rate);
             let drive_db = value.drive_db.value_at(time).clamp(0.0, 48.0);
             if drive_db != self.drive_db {
