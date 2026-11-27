@@ -824,10 +824,10 @@ impl ObjRenderSession {
             let force_any_hit = object.material.pbr.transmission > 0.0;
             let material_offset = u32::try_from(reflected_materials.len())
                 .map_err(|_| Render3dError::message("3D material offset overflow"))?;
-            for slot in 0..geometry.geometry_count as usize {
+            for &opaque in &geometry.opaque[..geometry.geometry_count as usize] {
                 for source in &object.session.mesh.materials {
                     let triangle_opaque = !force_any_hit && source.flags[1] == 0;
-                    if triangle_opaque != geometry.opaque[slot] {
+                    if triangle_opaque != opaque {
                         continue;
                     }
                     let mut material = *source;
