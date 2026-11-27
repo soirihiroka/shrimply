@@ -1,4 +1,4 @@
-use crate::protocol::{BridgeCommand, BridgeRequest, BridgeResponse};
+use crate::protocol::{BridgeCommand, BridgeRequest, BridgeResponse, BuildVersion};
 use sha2::{Digest, Sha256};
 use shrimply_local_ipc::Stream;
 use shrimply_project_document::project::ProjectLockOwner;
@@ -115,9 +115,8 @@ impl Bridge {
         }
     }
 
-    /// Start the same binary as a detached project owner; concurrent callers reuse the winner.
     #[cfg(not(target_os = "android"))]
-    fn launch(path: &Path) -> Result<Self, BridgeError> {
+    pub fn executable() -> Result<PathBuf, BridgeError> {
         let mut executable =
             std::env::current_exe().map_err(|error| BridgeError::Transport(error.to_string()))?;
         if executable
@@ -127,7 +126,13 @@ impl Bridge {
         {
             executable.set_file_name(format!("shrimply{}", std::env::consts::EXE_SUFFIX));
         }
-        let mut command = Command::new(executable);
+        Ok(executable)
+    }
+
+    /// Start the same binary as a detached project owner; concurrent callers reuse the winner.
+    #[cfg(not(target_os = "android"))]
+    fn launch(path: &Path) -> Result<Self, BridgeError> {
+        let mut command = Command::new(Self::executable()?);
         command
             .args(["project", "serve", "--project"])
             .arg(path)
@@ -190,6 +195,47 @@ impl Bridge {
     /// The request validates project ownership; no separate queued handshake is needed.
     pub fn request(self, command: BridgeCommand) -> Result<serde_json::Value, BridgeError> {
         self.request_with_timeout(command, RESPONSE_TIMEOUT)
+    }
+
+    pub fn version(self) -> Result<BuildVersion, BridgeError> {
+        let value = self.request_with_timeout(BridgeCommand::Version, WRITE_TIMEOUT)?;
+        serde_json::from_value(value).map_err(|error| BridgeError::Transport(error.to_string()))
+    }
+
+    #[cfg(not(target_os = "android"))]
+    pub fn close(self, if_revision: Option<String>) -> Result<serde_json::Value, BridgeError> {
+        let path = PathBuf::from(&self.project_path);
+        let owner = self.owner.clone();
+        let mut result = self.request(BridgeCommand::Execute(crate::protocol::ApiCall {
+            name: "project_close".into(),
+            arguments: serde_json::json!({}),
+            dry_run: false,
+            if_revision,
+        }))?;
+        if result["closing"] != true {
+            return Err(BridgeError::Rejected(
+                "The local service did not confirm it saved and shut down.".into(),
+            ));
+        }
+        let deadline = Instant::now() + START_TIMEOUT;
+        while shrimply_project_document::project::project_lock_owner(&path)
+            .map_err(BridgeError::Transport)?
+            .as_ref()
+            == Some(&owner)
+        {
+            if Instant::now() >= deadline {
+                return Err(BridgeError::Transport(
+                    "project session accepted close but has not released the project within 30 seconds".into(),
+                ));
+            }
+            std::thread::sleep(START_POLL_INTERVAL);
+        }
+        result
+            .as_object_mut()
+            .expect("close response is an object")
+            .remove("closing");
+        result["closed"] = serde_json::json!(true);
+        Ok(result)
     }
 
     /// Interactive clients can bound how long an active owner may take to reply.

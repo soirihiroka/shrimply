@@ -88,7 +88,13 @@ async fn dispatch(
     }
     let path = request.uri().path();
     if request.method() == Method::GET && path == "/v1" {
-        return Ok(json(StatusCode::OK, serde_json::json!({"protocol":2})));
+        return Ok(json(
+            StatusCode::OK,
+            shrimply_project_protocol::ServerVersion {
+                protocol: shrimply_project_protocol::SERVER_PROTOCOL,
+                version: Some(env!("CARGO_PKG_VERSION").into()),
+            },
+        ));
     }
     if request.method() == Method::GET && path == "/v1/projects" {
         let projects = transact(authority, |store| store.list()).await?;

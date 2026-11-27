@@ -99,6 +99,8 @@ internal fun ProjectApp(timeline: TimelineSession, files: ProjectFiles, caption:
     }
     var choices by remember { mutableStateOf<List<File>>(emptyList()) }
     var choicesBottomSheet by rememberSaveable { mutableStateOf<Boolean?>(null) }
+    var versionOpen by rememberSaveable { mutableStateOf<String?>(null) }
+    var versionMessage by rememberSaveable { mutableStateOf("") }
     var comment by rememberSaveable { mutableStateOf(false) }
     var importTarget by rememberSaveable { mutableStateOf<String?>(null) }
     var pendingRemux by rememberSaveable(workspaceKey) { mutableStateOf<String?>(null) }
@@ -137,10 +139,17 @@ internal fun ProjectApp(timeline: TimelineSession, files: ProjectFiles, caption:
         if (result.has("show_in_files")) files.showInFiles(result.getString("show_in_files"))
         if (result.has("message")) android.widget.Toast.makeText(context, result.getString("message"), android.widget.Toast.LENGTH_SHORT).show()
     }
-    suspend fun requestOpen(path: String, reconciled: Boolean = false) {
-        try { timeline.request(files.openRequest(path, reconciled)) }
+    suspend fun openRequest(request: JSONObject) {
+        try {
+            val response = timeline.request(request)
+            response.optJSONObject("version_mismatch")?.let { mismatch ->
+                versionMessage = mismatch.getString("body")
+                versionOpen = request.put("force_version", mismatch.getJSONObject("identity")).toString()
+            }
+        }
         catch (failure: Exception) { files.cancelOpen(); throw failure }
     }
+    suspend fun requestOpen(path: String, reconciled: Boolean = false) = openRequest(files.openRequest(path, reconciled))
     fun open(path: String) = action { requestOpen(path) }
     fun closeProject() = action {
         timeline.request("save")
@@ -301,7 +310,8 @@ internal fun ProjectApp(timeline: TimelineSession, files: ProjectFiles, caption:
                 { entry ->
                     if (!entry.isNull("path")) open(entry.getString("path"))
                     else action {
-                        timeline.request("open_remote", "directory" to files.projectDirectory().absolutePath, "project" to entry)
+                        openRequest(JSONObject().put("op", "open_remote")
+                            .put("directory", files.projectDirectory().absolutePath).put("project", entry))
                     }
                 })
         } else {
@@ -357,6 +367,16 @@ internal fun ProjectApp(timeline: TimelineSession, files: ProjectFiles, caption:
             catalogRevision++
             complete()
         }
+    }
+    versionOpen?.let { request ->
+        val dismiss = { versionOpen = null; files.cancelOpen() }
+        AlertDialog(onDismissRequest = dismiss, title = { Text(tr("Service Version Mismatch")) },
+            text = { Text(versionMessage) },
+            dismissButton = { TextButton(onClick = dismiss) { Text(tr("Close")) } },
+            confirmButton = { TextButton(onClick = {
+                versionOpen = null
+                action { openRequest(JSONObject(request)) }
+            }) { Text(tr("Force Open")) } })
     }
     if (create && schema.has("frame_rates")) AlertDialog(
         modifier = Modifier.imePadding(),

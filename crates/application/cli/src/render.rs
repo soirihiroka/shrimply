@@ -16,9 +16,9 @@ use std::{
 
 const PROGRESS_INTERVAL: Duration = Duration::from_secs(1);
 
-pub fn run(options: Options) -> Result<(), String> {
+pub fn run(options: Options, force_version: bool) -> Result<(), String> {
     eprintln!("Loading {}", options.project.display());
-    let (path, project) = load(&options)?;
+    let (path, project) = load(&options, force_version)?;
     for source in project.executable_sources() {
         shrimply_trust_core::require(&source)?;
     }
@@ -185,14 +185,14 @@ fn settings(
 }
 
 /// Validate the session snapshot and output paths without initializing the exporter.
-pub fn dry_run(options: &Options) -> Result<serde_json::Value, String> {
-    let (path, project) = load(options)?;
+pub fn dry_run(options: &Options, force_version: bool) -> Result<serde_json::Value, String> {
+    let (path, project) = load(options, force_version)?;
     Ok(
         serde_json::json!({"success":true,"dry_run":true,"validation":"partial","execution_mode":"headless","project":path,"output":options.output,"codec":format!("{:?}",VideoEncoder::request_codec(&options.format).expect("validated format")),"container":format!("{:?}",options.container),"base_revision":shrimply_editing_api::preview::revision(&project)?,"deferred":["GPU setup, source execution, media decoding, encoding, and output creation were not performed"]}),
     )
 }
 
-fn load(options: &Options) -> Result<(PathBuf, project::Project), String> {
+fn load(options: &Options, force_version: bool) -> Result<(PathBuf, project::Project), String> {
     let path = options
         .project
         .canonicalize()
@@ -208,7 +208,8 @@ fn load(options: &Options) -> Result<(PathBuf, project::Project), String> {
             options.output.display()
         ));
     }
-    let project = shrimply_editing_runtime::attached::load(&path)?;
+    let bridge = crate::agent::open_bridge(&path, force_version)?;
+    let project = shrimply_editing_runtime::attached::load_snapshot(&path, bridge)?;
     // The exporter also writes a benchmark sidecar; neither path may replace a source.
     let mut benchmark_path = options.output.as_os_str().to_os_string();
     benchmark_path.push(".benchmark.json");

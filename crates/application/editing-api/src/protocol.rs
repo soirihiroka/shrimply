@@ -250,11 +250,17 @@ pub struct GetEditorStateRequest {}
 #[serde(deny_unknown_fields)]
 pub struct GetVersionRequest {}
 
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub const EDITING_PROTOCOL: u32 = 1;
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct BuildVersion {
     pub version: String,
     /// Full source commit SHA; absent only when source provenance was unavailable at build time.
     pub git_hash: Option<String>,
+    #[serde(default)]
+    pub protocol: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_time: Option<u64>,
 }
 
 impl BuildVersion {
@@ -262,7 +268,20 @@ impl BuildVersion {
         Self {
             version: version.into(),
             git_hash: option_env!("SHRIMPLY_BUILD_GIT_HASH").map(str::to_owned),
+            protocol: EDITING_PROTOCOL,
+            source_time: option_env!("SHRIMPLY_BUILD_SOURCE_TIME")
+                .and_then(|time| time.parse().ok()),
         }
+    }
+
+    pub fn matches(&self, peer: &Self) -> bool {
+        self.protocol == peer.protocol
+            && self.version == peer.version
+            && self
+                .git_hash
+                .as_ref()
+                .zip(peer.git_hash.as_ref())
+                .is_none_or(|(client, service)| client == service)
     }
 }
 

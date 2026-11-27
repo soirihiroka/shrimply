@@ -7,7 +7,7 @@ pub use cache::{MediaCache, MediaReader};
 pub use client::{ProjectClient, RequestError};
 pub use shrimply_editing_api::protocol::Presence;
 use shrimply_project_protocol as protocol;
-pub use shrimply_project_protocol::{MediaBlob, blob_digest};
+pub use shrimply_project_protocol::{MediaBlob, SERVER_PROTOCOL, ServerVersion, blob_digest};
 pub use workspace::{ProjectLink, SharedWorkspace, WorkspaceUpdate, prepare_uploads};
 
 use serde::{Deserialize, Serialize};

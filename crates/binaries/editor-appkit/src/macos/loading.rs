@@ -5,7 +5,9 @@ use objc2_app_kit::{
     NSLayoutConstraint, NSStackView, NSUserInterfaceLayoutOrientation, NSView,
 };
 use objc2_foundation::{NSData, NSSize};
-use shrimply_cross_ui_core::editor::{activate_project_session, load_project_session};
+use shrimply_cross_ui_core::editor::{
+    MatchVersion, OpenError, VersionMismatch, activate_project_session, load_project_session,
+};
 use shrimply_project_document::project::Project;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 
@@ -116,23 +118,28 @@ impl View {
     }
 }
 
-pub(super) type Preparation = Receiver<Result<Project, String>>;
+pub(super) type Preparation = Receiver<(Vec<VersionMismatch>, Result<Option<Project>, OpenError>)>;
 
 impl Editor {
     pub(super) fn begin_project_load(&self) {
+        self.prepare_project(Vec::new(), None);
+    }
+
+    fn prepare_project(&self, forced: Vec<VersionMismatch>, action: Option<MatchVersion>) {
         let path = self.ivars().project_path.clone();
         let (sender, receiver) = mpsc::channel();
         self.ivars().preparation.replace(Some(receiver));
         std::thread::Builder::new()
             .name("project-load".into())
             .spawn(move || {
-                let _ = sender.send(load_project_session(&path));
+                let result = load_project_session(&path, &forced, action);
+                let _ = sender.send((forced, result));
             })
             .expect("start project loading worker");
     }
 
     pub(super) fn poll_project_load(&self) {
-        let result = {
+        let (mut forced, result) = {
             let mut pending = self.ivars().preparation.borrow_mut();
             let Some(receiver) = pending.as_ref() else {
                 return;
@@ -140,15 +147,18 @@ impl Editor {
             let result = match receiver.try_recv() {
                 Ok(result) => result,
                 Err(TryRecvError::Empty) => return,
-                Err(TryRecvError::Disconnected) => {
-                    Err("Project loading worker stopped unexpectedly".into())
-                }
+                Err(TryRecvError::Disconnected) => (
+                    Vec::new(),
+                    Err(OpenError::Failed(
+                        "Project loading worker stopped unexpectedly".into(),
+                    )),
+                ),
             };
             pending.take();
             result
         };
         match result {
-            Ok(project) => {
+            Ok(Some(project)) => {
                 loop {
                     let review =
                         match shrimply_trust_core::Review::new(project.executable_sources()) {
@@ -191,7 +201,28 @@ impl Editor {
                     .set(layout)
                     .unwrap_or_else(|_| panic!("layout already installed"));
             }
-            Err(error) => self.fail_startup(&format!("Could not open project: {error}")),
+            Ok(None) => self.stop_loading(Ok(false)),
+            Err(OpenError::Version(prompt)) => {
+                let alert = NSAlert::new(self.mtm());
+                alert.setMessageText(ns_string!("Service Version Mismatch"));
+                alert.setInformativeText(&NSString::from_str(&prompt.to_string()));
+                alert.addButtonWithTitle(ns_string!("Close"));
+                alert.addButtonWithTitle(ns_string!("Force Open"));
+                if let Some(action) = &prompt.action {
+                    alert.addButtonWithTitle(&NSString::from_str(action.label()));
+                }
+                match alert.runModal() {
+                    NSAlertSecondButtonReturn => {
+                        forced.push(prompt.mismatch);
+                        self.prepare_project(forced, None);
+                    }
+                    NSAlertThirdButtonReturn => self.prepare_project(forced, prompt.action),
+                    _ => self.stop_loading(Ok(false)),
+                }
+            }
+            Err(OpenError::Failed(error)) => {
+                self.fail_startup(&format!("Could not open project: {error}"))
+            }
         }
     }
 

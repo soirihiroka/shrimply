@@ -3,7 +3,10 @@
 mod watch;
 use serde_json::{Value, json};
 #[cfg(target_os = "android")]
-use shrimply_editing_runtime::{attached, embedded};
+use shrimply_editing_runtime::{
+    attached::{self, VersionPrompt},
+    embedded,
+};
 use shrimply_math_core::Time;
 use shrimply_project_document::{
     self as document, Project,
@@ -151,10 +154,16 @@ impl ProjectBackend {
                 })?;
                 self.register_project()?;
             }
-            "open" => self.open(
-                Path::new(string(request, "path")?),
-                request["mirror_root"].as_str().map(Path::new),
-            )?,
+            "open" => {
+                let path = Path::new(string(request, "path")?);
+                #[cfg(target_os = "android")]
+                if let Some(workspace) = SharedWorkspace::open(path)?
+                    && let Some(prompt) = version_prompt(&workspace.link().server, request)
+                {
+                    return Ok(prompt);
+                }
+                self.open(path, request["mirror_root"].as_str().map(Path::new))?;
+            }
             #[cfg(target_os = "android")]
             "open_remote" => {
                 if self.project.is_some() {
@@ -171,6 +180,9 @@ impl ProjectBackend {
                     .contains(&link.server)
                 {
                     return Err("Choose a server from Project Servers".into());
+                }
+                if let Some(prompt) = version_prompt(&link.server, request) {
+                    return Ok(prompt);
                 }
                 let path = entry.open(Some(Path::new(string(request, "directory")?)))?;
                 self.open(&path, None)?;
@@ -909,6 +921,17 @@ impl Drop for ProjectBackend {
         self.close()
             .expect("flush and close Android project before releasing its owner");
     }
+}
+
+#[cfg(target_os = "android")]
+fn version_prompt(server: &str, request: &Value) -> Option<Value> {
+    let prompt = VersionPrompt::remote(server)?;
+    let identity = serde_json::to_value(&prompt.mismatch).expect("encode server version identity");
+    (request["force_version"] != identity).then(|| {
+        json!({
+            "version_mismatch": { "body": prompt.to_string(), "identity": identity }
+        })
+    })
 }
 
 fn string<'a>(request: &'a Value, key: &str) -> Result<&'a str, String> {

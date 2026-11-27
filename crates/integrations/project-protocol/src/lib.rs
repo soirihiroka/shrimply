@@ -8,6 +8,24 @@ use uuid::Uuid;
 
 pub const UPLOAD_CHUNK_BYTES: usize = 4 * 1024 * 1024;
 pub const LEGACY_CHECKPOINT_FIELD: &str = "$shrimp";
+pub const SERVER_PROTOCOL: u32 = 2;
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ServerVersion {
+    pub protocol: u32,
+    #[serde(default)]
+    pub version: Option<String>,
+}
+
+impl ServerVersion {
+    pub fn matches(&self, release: &str) -> bool {
+        self.protocol == SERVER_PROTOCOL
+            && self
+                .version
+                .as_deref()
+                .is_none_or(|version| version == release)
+    }
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ProjectSummary {

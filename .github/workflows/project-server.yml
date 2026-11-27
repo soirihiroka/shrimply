@@ -60,7 +60,7 @@ jobs:
           endpoint="http://$(docker port project-server-smoke 8080/tcp)/v1"
           curl --fail --silent --show-error --max-time 3 --retry 20 --retry-connrefused --retry-delay 1 \
             --header "Authorization: Bearer ${SHRIMPLY_PROJECT_SERVER_TOKEN}" "${endpoint}" \
-            | python3 -c 'import json, sys; assert json.load(sys.stdin)["protocol"] == 2'
+            | python3 -c 'import json, sys; info = json.load(sys.stdin); assert info["protocol"] == 2 and info["version"] == sys.argv[1]' "${expected}"
           test "$(curl --silent --show-error --max-time 3 --output /dev/null --write-out '%{http_code}' "${endpoint}")" = 401
           curl --fail --silent --show-error --max-time 3 \
             --header "Authorization: Bearer ${SHRIMPLY_PROJECT_SERVER_TOKEN}" "${endpoint}/projects" \

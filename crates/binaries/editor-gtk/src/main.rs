@@ -21,7 +21,7 @@ use ffmpeg_next as ffmpeg;
 use gdk_pixbuf::prelude::PixbufAnimationExtManual;
 use gtk::gdk::prelude::GdkCairoContextExt;
 use gtk::{gio, glib};
-use shrimply_cross_ui_core::editor::{EditorSession, LoadEvent, ProjectLoader};
+use shrimply_cross_ui_core::editor::{EditorSession, LoadEvent, ProjectLoader, VersionChoice};
 use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -553,6 +553,33 @@ fn handle_load_event(
     event: LoadEvent,
 ) {
     match event {
+        LoadEvent::ConfirmVersion(prompt) => {
+            let dialog = adw::AlertDialog::builder()
+                .heading(tr!("Service Version Mismatch").as_ref())
+                .body(prompt.to_string())
+                .build();
+            dialog.add_responses_i18n(&[("close", "Close"), ("force", "Force Open")]);
+            if let Some(action) = &prompt.action {
+                dialog.add_responses_i18n(&[("match", action.label())]);
+            }
+            dialog.set_default_response(Some("close"));
+            dialog.set_close_response("close");
+            let app = app.clone();
+            let window = window.clone();
+            dialog.choose(
+                Some(&window.clone()),
+                None::<&gio::Cancellable>,
+                move |answer| {
+                    let choice = match answer.as_str() {
+                        "force" => VersionChoice::Force,
+                        "match" => VersionChoice::Match,
+                        _ => VersionChoice::Close,
+                    };
+                    let event = loader.borrow_mut().confirm_version(choice);
+                    handle_load_event(&app, &window, loader, event);
+                },
+            );
+        }
         LoadEvent::ConfirmTrust(review) => {
             let app = app.clone();
             let window = window.clone();

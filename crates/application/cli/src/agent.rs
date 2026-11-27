@@ -2,16 +2,13 @@ use crate::{catalog, search};
 use clap::ArgMatches;
 use serde_json::{Value, json};
 use shrimply_editing_api::{bridge::Bridge, commands, preview, protocol::*};
+use shrimply_editing_runtime::attached::{self, OpenError, VersionPrompt};
 use shrimply_project_document::project;
 use shrimply_project_service::SharedWorkspace;
 use std::{
     io::{IsTerminal, Read},
     path::{Path, PathBuf},
-    time::{Duration, Instant},
 };
-
-const SESSION_WAIT_TIMEOUT: Duration = Duration::from_secs(30);
-const SESSION_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
 pub fn run(arguments: Vec<std::ffi::OsString>) -> u8 {
     let matches = match catalog::cli().try_get_matches_from(arguments) {
@@ -173,6 +170,7 @@ fn execute(path: &str, leaf: &ArgMatches, root: &ArgMatches) -> Result<Value, St
     }
     let definition = commands::get(path)?;
     let dry_run = root.get_flag("dry-run");
+    let force_version = root.get_flag("force-version");
     let if_revision = root.get_one::<String>("if-revision").cloned();
     let mut arguments = arguments(leaf, definition)?;
     if definition.name == "get_version" {
@@ -180,9 +178,7 @@ fn execute(path: &str, leaf: &ArgMatches, root: &ArgMatches) -> Result<Value, St
         let mut editor = None;
         let mut editor_error = None;
         if let Some(path) = &project_path {
-            match Bridge::connect_or_launch(path)
-                .and_then(|bridge| bridge.request(BridgeCommand::Version))
-            {
+            match Bridge::connect_or_launch(path).and_then(Bridge::version) {
                 Ok(value) => editor = Some(value),
                 Err(error) => editor_error = Some(error.to_string()),
             }
@@ -213,10 +209,10 @@ fn execute(path: &str, leaf: &ArgMatches, root: &ArgMatches) -> Result<Value, St
         let options = crate::render_options::from_request(path.clone(), request, if_revision)
             .map_err(|error| format!("invalid arguments: {error}"))?;
         let result = if dry_run {
-            crate::render::dry_run(&options)?
+            crate::render::dry_run(&options, force_version)?
         } else {
             shrimply_process_reporting::diagnostics::init();
-            crate::render::run(options)?;
+            crate::render::run(options, force_version)?;
             json!({"rendered":true})
         };
         return Ok(
@@ -224,7 +220,7 @@ fn execute(path: &str, leaf: &ArgMatches, root: &ArgMatches) -> Result<Value, St
         );
     }
     normalize_media_paths(definition.name, &mut arguments)?;
-    resolve_addresses(leaf, definition, &path, &mut arguments)?;
+    resolve_addresses(leaf, definition, &path, &mut arguments, force_version)?;
     arguments =
         (definition.validate)(arguments).map_err(|error| format!("invalid arguments: {error}"))?;
     if definition.name == "create_project" {
@@ -298,12 +294,15 @@ fn execute(path: &str, leaf: &ArgMatches, root: &ArgMatches) -> Result<Value, St
             );
         }
         if let Some((server, id)) = remote {
+            if !force_version && let Some(prompt) = VersionPrompt::remote(&server) {
+                return Err(version_error(&prompt));
+            }
             SharedWorkspace::join(&path, &server, id)?;
         }
         if !path.is_file() {
             return Err("project does not exist".into());
         }
-        let bridge = Bridge::connect_or_launch(&path).map_err(|error| error.to_string())?;
+        let bridge = open_bridge(&path, force_version)?;
         let mut result = bridge
             .request(BridgeCommand::Handshake)
             .map_err(|error| error.to_string())?;
@@ -325,26 +324,16 @@ fn execute(path: &str, leaf: &ArgMatches, root: &ArgMatches) -> Result<Value, St
         if_revision,
     };
     let bridge = if closing {
-        Bridge::connect(&path)
+        Bridge::connect(&path).map_err(|error| error.to_string())?
     } else {
-        Bridge::connect_or_launch(&path)
+        open_bridge(&path, force_version)?
+    };
+    let mut result = if closing {
+        bridge.close(call.if_revision)
+    } else {
+        bridge.request(BridgeCommand::Execute(call))
     }
     .map_err(|error| error.to_string())?;
-    let owner = closing.then(|| bridge.owner.clone());
-    let mut result = bridge
-        .request(BridgeCommand::Execute(call))
-        .map_err(|error| error.to_string())?;
-    if closing {
-        let deadline = Instant::now() + SESSION_WAIT_TIMEOUT;
-        while project::project_lock_owner(&path)? == owner {
-            if Instant::now() >= deadline {
-                return Err("headless session accepted close but has not released the project within 30 seconds; inspect the owner before retrying".into());
-            }
-            std::thread::sleep(SESSION_POLL_INTERVAL);
-        }
-        result.as_object_mut().unwrap().remove("closing");
-        result["closed"] = json!(true);
-    }
     if definition.name == "view_frame"
         && !dry_run
         && let Some(output) = leaf.get_one::<String>("output")
@@ -514,6 +503,7 @@ fn resolve_addresses(
     definition: &commands::Command,
     path: &Path,
     arguments: &mut Value,
+    force_version: bool,
 ) -> Result<(), String> {
     let schema = (definition.schema)();
     let empty = serde_json::Map::new();
@@ -550,7 +540,12 @@ fn resolve_addresses(
         .map(|id| id.parse::<uuid::Uuid>())
         .transpose()
         .map_err(|error| error.to_string())?;
-    let snapshot = load_snapshot(path)?;
+    let snapshot: LiveSnapshot = serde_json::from_value(
+        open_bridge(path, force_version)?
+            .request(BridgeCommand::Snapshot)
+            .map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| error.to_string())?;
     let address = if let Some(item_id) = item_id {
         let candidates: Vec<_> = shrimply_editing_api::query::all_clips(&snapshot)?
             .clips
@@ -603,11 +598,18 @@ fn resolve_addresses(
     Ok(())
 }
 
-fn load_snapshot(path: &Path) -> Result<LiveSnapshot, String> {
-    let value = Bridge::connect_or_launch(path)
-        .and_then(|bridge| bridge.request(BridgeCommand::Snapshot))
-        .map_err(|error| error.to_string())?;
-    serde_json::from_value(value).map_err(|error| error.to_string())
+pub(crate) fn open_bridge(path: &Path, force: bool) -> Result<Bridge, String> {
+    if force {
+        return Bridge::connect_or_launch(path).map_err(|error| error.to_string());
+    }
+    attached::connect_project(path, &[]).map_err(|error| match error {
+        OpenError::Version(prompt) => version_error(&prompt),
+        OpenError::Failed(error) => error,
+    })
+}
+
+fn version_error(prompt: &VersionPrompt) -> String {
+    format!("{prompt}\nUse --force-version to try this operation anyway.")
 }
 
 fn write_image(project: &Path, output: &Path, bytes: &[u8]) -> Result<(), String> {

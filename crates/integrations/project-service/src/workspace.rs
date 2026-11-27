@@ -100,6 +100,15 @@ impl SharedWorkspace {
         let server = server.trim_end_matches('/');
         Self::check_destination(project_file)?;
         let client = ProjectClient::configured(server)?;
+        if let Ok(version) = client.version()
+            && !version.matches(env!("CARGO_PKG_VERSION"))
+        {
+            return Err(format!(
+                "The project server reports version {} with protocol {}. Match the Shrimply and server versions before creating a project.",
+                version.version.as_deref().unwrap_or("unknown"),
+                version.protocol
+            ));
+        }
         let workspace = match Self::open(project_file)? {
             Some(workspace) if workspace.link.server == server => workspace,
             Some(_) => {

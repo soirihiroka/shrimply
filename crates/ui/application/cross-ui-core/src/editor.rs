@@ -1,7 +1,8 @@
 use crate::project_save::ProjectFormat;
 use shrimply_editing_runtime::attached;
 pub use shrimply_editing_runtime::attached::{
-    activate as activate_project_session, load as load_project_session,
+    MatchVersion, OpenError, VersionMismatch, VersionPrompt, activate as activate_project_session,
+    open as load_project_session,
 };
 use shrimply_editor_state::{player_state, preferences, preview_focus};
 use shrimply_math_core::Fraction;
@@ -30,6 +31,7 @@ pub enum ImportKind {
 #[derive(Debug)]
 pub enum LoadEvent {
     ConfirmTrust(shrimply_trust_core::Review),
+    ConfirmVersion(Box<VersionPrompt>),
     ConfirmKdenlive,
     ChooseOtioSettings,
     Progress(&'static str),
@@ -48,6 +50,12 @@ pub enum LoadEvent {
         body: String,
     },
     Canceled,
+}
+
+pub enum VersionChoice {
+    Close,
+    Force,
+    Match,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -304,7 +312,9 @@ impl EditorSession {
         project::flush_history()?;
         let source = self.project.borrow().clone();
         attached::save_copy(&path, &source)?;
-        let mut candidate = load_project_session(&path)?;
+        let mut candidate = load_project_session(&path, &[], None)
+            .map_err(|error| error.to_string())?
+            .expect("opening a new copy cannot relaunch the editor");
         candidate.copy_view_state_from(&source);
         let editing = attached::Editor::new(
             &path,
@@ -390,7 +400,7 @@ enum SaveKind {
 }
 
 enum Pending {
-    Load(Result<ProjectValidationOutcome, String>),
+    Load(Result<Option<ProjectValidationOutcome>, OpenError>),
     Import {
         kind: ImportKind,
         source: PathBuf,
@@ -411,6 +421,7 @@ enum State {
     },
     WaitingForKdenlive,
     WaitingForOtioSettings,
+    WaitingForVersion(Box<VersionPrompt>),
     Working(Receiver<Pending>),
     WaitingForRepair {
         source: PathBuf,
@@ -433,6 +444,7 @@ pub struct ProjectLoader {
     path: PathBuf,
     state: State,
     cancellation: CancelToken,
+    forced_versions: Vec<VersionMismatch>,
 }
 
 impl Drop for ProjectLoader {
@@ -447,6 +459,7 @@ impl ProjectLoader {
             path,
             state: State::Idle,
             cancellation: CancelToken::default(),
+            forced_versions: Vec::new(),
         }
     }
 
@@ -462,7 +475,7 @@ impl ProjectLoader {
             self.state = State::WaitingForOtioSettings;
             LoadEvent::ChooseOtioSettings
         } else {
-            self.start_native_load();
+            self.start_native_load(None);
             LoadEvent::Progress(PROJECT_READING)
         }
     }
@@ -612,7 +625,7 @@ impl ProjectLoader {
             panic!("warning acknowledgement without pending warnings");
         };
         self.path = path;
-        self.start_native_load();
+        self.start_native_load(None);
         LoadEvent::Progress(PROJECT_READING)
     }
 
@@ -646,15 +659,38 @@ impl ProjectLoader {
         })
     }
 
-    fn start_native_load(&mut self) {
+    pub fn confirm_version(&mut self, choice: VersionChoice) -> LoadEvent {
+        let State::WaitingForVersion(prompt) = std::mem::replace(&mut self.state, State::Finished)
+        else {
+            panic!("project loader is not waiting for a version choice");
+        };
+        let action = match choice {
+            VersionChoice::Close => return LoadEvent::Canceled,
+            VersionChoice::Force => {
+                self.forced_versions.push(prompt.mismatch);
+                None
+            }
+            VersionChoice::Match => Some(prompt.action.expect("version match action is available")),
+        };
+        self.start_native_load(action);
+        LoadEvent::Progress(PROJECT_READING)
+    }
+
+    fn start_native_load(&mut self, action: Option<MatchVersion>) {
         let path = self.path.clone();
+        let forced = self.forced_versions.clone();
         self.start_worker(move || {
-            let result = match load_project_session(&path) {
-                Ok(project) => Ok(ProjectValidationOutcome::Valid(project)),
-                Err(error) => match project::read_project_for_editor(&path) {
-                    Ok(outcome @ ProjectValidationOutcome::FrameGridRepair(_)) => Ok(outcome),
-                    _ => Err(error),
-                },
+            let result = match load_project_session(&path, &forced, action) {
+                Ok(project) => Ok(project.map(ProjectValidationOutcome::Valid)),
+                Err(error @ OpenError::Failed(_)) => {
+                    match project::read_project_for_editor(&path) {
+                        Ok(outcome @ ProjectValidationOutcome::FrameGridRepair(_)) => {
+                            Ok(Some(outcome))
+                        }
+                        _ => Err(error),
+                    }
+                }
+                Err(error) => Err(error),
             };
             Pending::Load(result)
         });
@@ -670,10 +706,10 @@ impl ProjectLoader {
 
     fn finish_native_load(
         &mut self,
-        result: Result<ProjectValidationOutcome, String>,
+        result: Result<Option<ProjectValidationOutcome>, OpenError>,
     ) -> LoadEvent {
         match result {
-            Ok(ProjectValidationOutcome::Valid(project)) => {
+            Ok(Some(ProjectValidationOutcome::Valid(project))) => {
                 let review = match shrimply_trust_core::Review::new(project.executable_sources()) {
                     Ok(review) => review,
                     Err(body) => {
@@ -699,7 +735,7 @@ impl ProjectLoader {
                     project: Box::new(project),
                 }
             }
-            Ok(ProjectValidationOutcome::FrameGridRepair(project)) => {
+            Ok(Some(ProjectValidationOutcome::FrameGridRepair(project))) => {
                 self.state = State::WaitingForRepair {
                     source: self.path.clone(),
                     project,
@@ -708,7 +744,15 @@ impl ProjectLoader {
                 };
                 LoadEvent::ConfirmFrameGridRepair
             }
-            Err(body) => {
+            Ok(None) => {
+                self.state = State::Finished;
+                LoadEvent::Canceled
+            }
+            Err(OpenError::Version(prompt)) => {
+                self.state = State::WaitingForVersion(prompt.clone());
+                LoadEvent::ConfirmVersion(prompt)
+            }
+            Err(OpenError::Failed(body)) => {
                 self.state = State::Finished;
                 LoadEvent::Error {
                     heading: "Could not open project",
@@ -783,7 +827,7 @@ impl ProjectLoader {
                 }
                 SaveKind::Repair | SaveKind::Import(_) => {
                     self.path = path;
-                    self.start_native_load();
+                    self.start_native_load(None);
                     LoadEvent::Progress(PROJECT_READING)
                 }
             },

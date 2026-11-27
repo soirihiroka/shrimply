@@ -22,7 +22,7 @@ use shrimply_resource_pipeline::fingerprint::Writer;
 use crate::{MediaCache, MediaReader, ProjectVersion, SyncRequest, SyncResponse};
 use shrimply_project_protocol::{
     ErrorResponse, LEGACY_CHECKPOINT_FIELD, MediaBlob, ProjectSummary, ProjectVersionReceipt,
-    PublishRequest, UPLOAD_CHUNK_BYTES, UploadReceipt, valid_digest,
+    PublishRequest, ServerVersion, UPLOAD_CHUNK_BYTES, UploadReceipt, valid_digest,
 };
 
 #[derive(Debug)]
@@ -150,6 +150,16 @@ impl ProjectClient {
 
     pub fn list_projects(&self) -> Result<Vec<ProjectSummary>, RequestError> {
         response(self.request(Method::GET, None, &[]).send())
+    }
+
+    pub fn version(&self) -> Result<ServerVersion, RequestError> {
+        response(
+            self.client
+                .get(self.api_url())
+                .bearer_auth(&self.token)
+                .timeout(Duration::from_secs(3))
+                .send(),
+        )
     }
 
     pub fn get(&self, id: Uuid) -> Result<ProjectVersion, RequestError> {
@@ -361,18 +371,27 @@ impl ProjectClient {
     }
 
     fn request(&self, method: Method, id: Option<Uuid>, action: &[&str]) -> RequestBuilder {
-        let mut url = self.base.clone();
+        let mut url = self.api_url();
         {
             let mut path = url
                 .path_segments_mut()
                 .expect("project server URL has a path");
-            path.pop_if_empty().extend(["v1", "projects"]);
+            path.push("projects");
             if let Some(id) = id {
                 path.push(&id.to_string());
             }
             path.extend(action.iter().copied());
         }
         self.client.request(method, url).bearer_auth(&self.token)
+    }
+
+    fn api_url(&self) -> Url {
+        let mut url = self.base.clone();
+        url.path_segments_mut()
+            .expect("project server URL has a path")
+            .pop_if_empty()
+            .push("v1");
+        url
     }
 }
 

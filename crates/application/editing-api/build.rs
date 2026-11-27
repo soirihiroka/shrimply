@@ -39,5 +39,8 @@ fn main() {
             "Build Git hash must be a full commit SHA"
         );
         println!("cargo:rustc-env=SHRIMPLY_BUILD_GIT_HASH={hash}");
+        if let Some(time) = git(&["show", "-s", "--format=%ct", hash]) {
+            println!("cargo:rustc-env=SHRIMPLY_BUILD_SOURCE_TIME={time}");
+        }
     }
 }

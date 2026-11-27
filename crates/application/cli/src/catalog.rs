@@ -30,6 +30,13 @@ pub fn cli() -> Command {
                 .global(true)
                 .value_name("REVISION")
                 .help("Reject if the project content revision differs"),
+        )
+        .arg(
+            Arg::new("force-version")
+                .long("force-version")
+                .global(true)
+                .action(clap::ArgAction::SetTrue)
+                .help("Try the operation despite an editing service or project server version mismatch"),
         );
     root = root.subcommand(
         Command::new("cli").about("Discover operations").subcommand(

@@ -3,7 +3,7 @@ use cxx_qt::CxxQtType;
 use cxx_qt_lib::{QString, QStringList, QUrl};
 use shrimply_components_qt::about;
 use shrimply_cross_ui_core::editor::project_menu::{self, Action as ProjectAction};
-use shrimply_cross_ui_core::editor::{EditorSession, LoadEvent, ProjectLoader};
+use shrimply_cross_ui_core::editor::{EditorSession, LoadEvent, ProjectLoader, VersionChoice};
 use shrimply_editor_state::player_state;
 use shrimply_math_core::{Fraction, frame_count, frame_index, time_from_signed_frame};
 use shrimply_preview_render_core::playback::toolbar as preview_toolbar;
@@ -114,6 +114,9 @@ pub mod qobject {
         #[qinvokable]
         #[cxx_name = "confirmRepair"]
         fn confirm_repair(self: Pin<&mut EditorBackend>, repair: bool);
+        #[qinvokable]
+        #[cxx_name = "confirmVersion"]
+        fn confirm_version(self: Pin<&mut EditorBackend>, choice: i32);
         #[qinvokable]
         #[cxx_name = "chooseDestination"]
         fn choose_destination(self: Pin<&mut EditorBackend>, accepted: bool, url: &QUrl);
@@ -304,7 +307,8 @@ pub mod qobject {
         #[cxx_name = "requestWarnings"]
         fn request_warnings(self: Pin<&mut EditorBackend>, body: QString);
         #[qsignal]
-        #[cxx_name = "requestLock"]
+        #[cxx_name = "requestVersion"]
+        fn request_version(self: Pin<&mut EditorBackend>, body: QString, match_label: QString);
         #[qsignal]
         #[cxx_name = "showError"]
         fn show_error(self: Pin<&mut EditorBackend>, heading: QString, body: QString);
@@ -609,6 +613,16 @@ impl qobject::EditorBackend {
     pub fn confirm_repair(mut self: Pin<&mut Self>, repair: bool) {
         let event = self.as_mut().loader_mut().confirm_frame_grid_repair(repair);
         self.as_mut().handle_event(event);
+    }
+
+    pub fn confirm_version(mut self: Pin<&mut Self>, choice: i32) {
+        let choice = match choice {
+            1 => VersionChoice::Force,
+            2 => VersionChoice::Match,
+            _ => VersionChoice::Close,
+        };
+        let event = self.as_mut().loader_mut().confirm_version(choice);
+        self.handle_event(event);
     }
 
     pub fn choose_destination(mut self: Pin<&mut Self>, accepted: bool, url: &QUrl) {
@@ -1142,6 +1156,16 @@ impl qobject::EditorBackend {
 
     fn handle_event(mut self: Pin<&mut Self>, event: LoadEvent) {
         match event {
+            LoadEvent::ConfirmVersion(prompt) => {
+                let label = prompt
+                    .action
+                    .as_ref()
+                    .map_or_else(QString::default, |action| {
+                        shrimply_i18n_qt::text(action.label())
+                    });
+                self.as_mut()
+                    .request_version(QString::from(prompt.to_string()), label);
+            }
             LoadEvent::ConfirmTrust(review) => self.as_mut().show_trust(&review),
             LoadEvent::ConfirmKdenlive => self.as_mut().request_kdenlive(),
             LoadEvent::ChooseOtioSettings => self.as_mut().request_otio(),

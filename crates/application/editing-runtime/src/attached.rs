@@ -23,13 +23,78 @@ use super::{
     SharedPlayerState, SharedSelectionState, content_revision, player_state, replace_live_project,
 };
 
+mod version;
+pub use version::{MatchVersion, VersionMismatch, VersionPrompt};
+
 const UPDATE_INTERVAL: Duration = Duration::from_millis(100);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(8);
 
+#[derive(Debug)]
+pub enum OpenError {
+    Version(Box<VersionPrompt>),
+    Failed(String),
+}
+
+impl std::fmt::Display for OpenError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Version(prompt) => write!(formatter, "{prompt}"),
+            Self::Failed(error) => formatter.write_str(error),
+        }
+    }
+}
+
+impl From<String> for OpenError {
+    fn from(error: String) -> Self {
+        Self::Failed(error)
+    }
+}
+
+impl From<BridgeError> for OpenError {
+    fn from(error: BridgeError) -> Self {
+        Self::Failed(error.to_string())
+    }
+}
+
+#[cfg(not(target_os = "android"))]
+pub fn open(
+    path: &Path,
+    forced: &[VersionMismatch],
+    action: Option<MatchVersion>,
+) -> Result<Option<Project>, OpenError> {
+    if let Some(action) = action
+        && !action.apply(path)?
+    {
+        return Ok(None);
+    }
+    Ok(Some(load_snapshot(path, connect_project(path, forced)?)?))
+}
+
+#[cfg(not(target_os = "android"))]
+pub fn connect_project(path: &Path, forced: &[VersionMismatch]) -> Result<Bridge, OpenError> {
+    if let Some(workspace) = SharedWorkspace::open(path)?
+        && let Some(prompt) = VersionPrompt::remote(&workspace.link().server)
+        && !forced.contains(&prompt.mismatch)
+    {
+        return Err(OpenError::Version(Box::new(prompt)));
+    }
+    version::checked_bridge(path, forced)
+}
+
 pub fn load(path: &Path) -> Result<Project, String> {
-    let mut snapshot: LiveSnapshot =
-        serde_json::from_value(request(path, BridgeCommand::Snapshot)?)
-            .map_err(|error| error.to_string())?;
+    load_snapshot(
+        path,
+        Bridge::connect_or_launch(path).map_err(|error| error.to_string())?,
+    )
+}
+
+pub fn load_snapshot(path: &Path, bridge: Bridge) -> Result<Project, String> {
+    let mut snapshot: LiveSnapshot = serde_json::from_value(
+        bridge
+            .request_with_timeout(BridgeCommand::Snapshot, REQUEST_TIMEOUT)
+            .map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| error.to_string())?;
     if let Some(media) = Media::open(path)? {
         media.bind(&mut snapshot.project)?;
     }
@@ -160,8 +225,7 @@ pub fn activate(path: &Path, project: &Project) {
 }
 
 fn publish(target: &Path, operation: &mut ApplyChanges) -> Result<MediaRewrites, PublishError> {
-    let bridge = Bridge::connect_or_launch(target)
-        .map_err(|error| PublishError::Retry(error.to_string()))?;
+    let bridge = reconnect(target).map_err(PublishError::Retry)?;
     let receipt = bridge
         .request(BridgeCommand::ApplyChanges(operation.clone()))
         .map_err(|error| match error {
@@ -337,7 +401,15 @@ impl Editor {
 }
 
 fn request(target: &Path, command: BridgeCommand) -> Result<serde_json::Value, String> {
-    Bridge::connect_or_launch(target)
-        .and_then(|bridge| bridge.request_with_timeout(command, REQUEST_TIMEOUT))
+    reconnect(target)?
+        .request_with_timeout(command, REQUEST_TIMEOUT)
         .map_err(|error| error.to_string())
+}
+
+fn reconnect(target: &Path) -> Result<Bridge, String> {
+    #[cfg(not(target_os = "android"))]
+    let bridge = version::reconnect(target).map_err(|error| error.to_string());
+    #[cfg(target_os = "android")]
+    let bridge = Bridge::connect_or_launch(target).map_err(|error| error.to_string());
+    bridge
 }

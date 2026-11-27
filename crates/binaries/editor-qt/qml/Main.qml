@@ -81,6 +81,11 @@ ApplicationWindow {
         function onRequestKdenlive() { kdenliveDialog.open() }
         function onRequestOtio() { otioDialog.open() }
         function onRequestRepair() { repairDialog.open() }
+        function onRequestVersion(body, matchLabel) {
+            versionDialog.body = body
+            versionDialog.matchLabel = matchLabel
+            versionDialog.open()
+        }
         function onRequestDestination(title, suggestedName) {
             window.destinationTitle = title
             window.destinationName = suggestedName
@@ -1127,6 +1132,39 @@ ApplicationWindow {
         buttons: MessageDialog.Ok | MessageDialog.Cancel
         onAccepted: backend.confirmRepair(true)
         onRejected: backend.confirmRepair(false)
+    }
+
+    Dialog {
+        id: versionDialog
+        title: backend.translate("Service Version Mismatch")
+        anchors.centerIn: parent
+        width: Math.min(480, window.width - 32)
+        modal: true
+        property string body: ""
+        property string matchLabel: ""
+        property int choice: 0
+        onOpened: choice = 0
+        onClosed: backend.confirmVersion(choice)
+        contentItem: Label {
+            text: versionDialog.body
+            wrapMode: Text.Wrap
+        }
+        footer: DialogButtonBox {
+            Button {
+                text: backend.translate("Close")
+                onClicked: versionDialog.close()
+            }
+            Button {
+                text: backend.translate("Force Open")
+                onClicked: { versionDialog.choice = 1; versionDialog.close() }
+            }
+            Button {
+                visible: versionDialog.matchLabel.length > 0
+                text: versionDialog.matchLabel
+                highlighted: true
+                onClicked: { versionDialog.choice = 2; versionDialog.close() }
+            }
+        }
     }
 
     MessageDialog {
