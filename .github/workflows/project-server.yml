@@ -43,6 +43,7 @@ jobs:
           file: Dockerfile.project-server
           load: true
           tags: shrimply-project-server:ci
+          labels: org.opencontainers.image.revision=${{ github.sha }}
           cache-from: type=gha,scope=project-server
           cache-to: type=gha,scope=project-server,mode=max
 
@@ -64,3 +65,12 @@ jobs:
           curl --fail --silent --show-error --max-time 3 \
             --header "Authorization: Bearer ${SHRIMPLY_PROJECT_SERVER_TOKEN}" "${endpoint}/projects" \
             | python3 -c 'import json, sys; assert json.load(sys.stdin) == []'
+          docker tag shrimply-project-server:ci "shrimply-project-server:${expected}"
+          docker save "shrimply-project-server:${expected}" | gzip > shrimply-project-server.tar.gz
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: shrimply-project-server-image
+          path: shrimply-project-server.tar.gz
+          if-no-files-found: error
+          compression-level: 0
