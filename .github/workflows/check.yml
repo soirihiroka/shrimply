@@ -16,77 +16,88 @@ concurrency:
 
 env:
   TZ: UTC
-  CARGO_BUILD_JOBS: "2"
   CARGO_PROFILE_DEV_DEBUG: "0"
 
 jobs:
-  linux:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 240
+  check:
+    name: ${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux
+            runner: ubuntu-24.04
+            timeout: 240
+            command: nix develop --accept-flake-config --command make check
+          - platform: macos
+            runner: macos-26
+            command: make check
+          - platform: windows
+            runner: windows-2022
+            timeout: 180
+            command: |
+              $env:PATH += ";C:\Program Files\Git\bin;C:\Program Files\Git\usr\bin"
+              make check
+          - platform: android
+            runner: ubuntu-24.04
+            timeout: 180
+            command: make android-check ANDROID_PROFILE=release ANDROID_SDK_ROOT="${ANDROID_HOME}"
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: ${{ matrix.timeout || 360 }}
+    env:
+      CARGO_BUILD_JOBS: ${{ matrix.platform == 'windows' && '3' || '2' }}
     steps:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
-          submodules: recursive
+          submodules: ${{ matrix.platform != 'windows' && 'recursive' || 'false' }}
+
       - name: Free space for native build dependencies
+        if: matrix.platform == 'linux'
         run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
-      - uses: ./.github/actions/cache-cargo
+      - if: matrix.platform == 'linux'
+        uses: ./.github/actions/cache-cargo
         with:
           scope: linux
-      - uses: cachix/install-nix-action@v30
+      - if: matrix.platform == 'linux'
+        uses: cachix/install-nix-action@v30
         with:
           install_url: https://releases.nixos.org/nix/nix-2.35.2/install
           extra_nix_config: |
             accept-flake-config = true
             extra-substituters = https://cache.nixos-cuda.org https://shrimply.cachix.org
             extra-trusted-public-keys = cache.nixos-cuda.org:74DUi4Ye579gUqzH4ziL9IyiJBlDpMRn9MBN8oNan9M= shrimply.cachix.org-1:cAgdyBbGPgJZMWUP4PAQPVENeCYtGT7OPPkocvo+uuA=
-      - name: Check shared Rust, GTK, and Qt
-        run: nix develop --accept-flake-config --command make check
 
-  macos:
-    runs-on: macos-26
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-          submodules: recursive
-
-      - uses: ./.github/actions/setup-macos
-        id: setup
+      - if: matrix.platform == 'macos'
+        uses: ./.github/actions/setup-macos
+        id: macos-setup
         with:
           profile: debug
+      - if: matrix.platform == 'windows'
+        uses: ./.github/actions/setup-windows
+      - if: matrix.platform == 'android'
+        uses: ./.github/actions/setup-android
 
-      - name: Check AppKit and run Clippy
-        run: make check
+      - name: Check
+        run: ${{ matrix.command }}
+
+      - name: Save Rust compiler cache after a failed check
+        if: failure() && env.SCCACHE_CACHE_KEY != ''
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ env.SCCACHE_DIR }}
+          key: ${{ env.SCCACHE_CACHE_KEY }}
 
       - name: Save macOS check cache
-        if: steps.setup.outputs.application-hit != 'true'
+        if: matrix.platform == 'macos' && steps.macos-setup.outputs.application-hit != 'true'
         uses: actions/cache/save@v6
         with:
           path: target/debug
-          key: ${{ steps.setup.outputs.application-key }}
-
-  windows:
-    runs-on: windows-2022
-    timeout-minutes: 180
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-
-      - uses: ./.github/actions/setup-windows
-
-      - name: Check Windows and run Clippy
-        shell: powershell
-        env:
-          CARGO_BUILD_JOBS: "3"
-        run: |
-          $env:PATH += ";C:\Program Files\Git\bin;C:\Program Files\Git\usr\bin"
-          make check
+          key: ${{ steps.macos-setup.outputs.application-key }}
 
       - name: Upload build diagnostics
-        if: always()
-        uses: actions/upload-artifact@v6
+        if: always() && matrix.platform == 'windows'
+        uses: actions/upload-artifact@v7
         with:
           name: windows-build-diagnostics
           path: |
@@ -94,22 +105,9 @@ jobs:
             .ci/vcpkg/buildtrees/**/*.log
           if-no-files-found: ignore
 
-  android:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 180
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-          submodules: recursive
-
-      - uses: ./.github/actions/setup-android
-
-      - name: Check Android Rust and Kotlin
-        run: make android-check ANDROID_PROFILE=release ANDROID_SDK_ROOT="${ANDROID_HOME}"
-
       - name: Upload Android lint report
-        uses: actions/upload-artifact@v6
+        if: matrix.platform == 'android'
+        uses: actions/upload-artifact@v7
         with:
           name: android-lint
           path: android/app/build/reports/lint-results-release.html

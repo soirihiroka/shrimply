@@ -37,6 +37,7 @@ runs:
       shell: bash
       env:
         SANDBOX_CACHE: ${{ inputs.sandbox-cache }}
+        CACHE_PREFIX: sccache-v1-${{ runner.os }}-${{ runner.arch }}-${{ inputs.scope }}-${{ github.workflow }}-${{ hashFiles('rust-toolchain.toml') }}
       run: |
         if [[ -n "$SANDBOX_CACHE" ]]; then
           install -Dm755 "$SCCACHE_PATH" "$SANDBOX_CACHE/sccache"
@@ -48,15 +49,15 @@ runs:
             echo "RUSTC_WRAPPER=sccache"
             echo "SCCACHE_DIR=$directory"
             echo "SCCACHE_CACHE_SIZE=512M"
+            echo "SCCACHE_CACHE_KEY=$CACHE_PREFIX-$GITHUB_SHA"
           } >> "$GITHUB_ENV"
         fi
         echo "directory=$directory" >> "$GITHUB_OUTPUT"
+        echo "prefix=$CACHE_PREFIX" >> "$GITHUB_OUTPUT"
 
     - name: Cache Rust compiler outputs
       uses: actions/cache@v6
-      env:
-        PREFIX: sccache-v1-${{ runner.os }}-${{ runner.arch }}-${{ inputs.scope }}-${{ github.workflow }}-${{ hashFiles('rust-toolchain.toml') }}
       with:
         path: ${{ steps.compiler.outputs.directory }}
-        key: ${{ env.PREFIX }}-${{ github.sha }}
-        restore-keys: ${{ env.PREFIX }}-
+        key: ${{ steps.compiler.outputs.prefix }}-${{ github.sha }}
+        restore-keys: ${{ steps.compiler.outputs.prefix }}-
