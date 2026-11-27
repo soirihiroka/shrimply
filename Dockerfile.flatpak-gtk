@@ -23,7 +23,7 @@ WORKDIR /src
 COPY rust-toolchain.toml ./
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
         | sh -s -- -y --default-toolchain none --profile minimal \
-    && rustup show
+    && rustup toolchain install --no-self-update
 
 RUN flatpak remote-add --user --if-not-exists flathub \
         https://dl.flathub.org/repo/flathub.flatpakrepo \

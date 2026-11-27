@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - ".github/workflows/android.yml"
+      - ".github/workflows/publish-zip.yml"
       - ".github/actions/cache-cargo/**"
       - ".github/actions/setup-android/**"
       - ".github/scripts/publish-prerelease.sh"
@@ -92,47 +93,19 @@ jobs:
           python3 packaging/android-check.py "${apk}" \
             "${ANDROID_HOME}/ndk/${ANDROID_NDK_VERSION}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf" \
             "${ANDROID_HOME}"
-          (cd dist && zip -9 -q shrimply-android-arm64.zip shrimply-android-arm64.apk && sha256sum shrimply-android-arm64.zip > shrimply-android-arm64.zip.sha256)
+          (cd dist && zip -9 -q shrimply-android-arm64.zip shrimply-android-arm64.apk)
 
       - name: Upload signed release APK ZIP
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: shrimply-android-arm64
-          path: |
-            dist/shrimply-android-arm64.zip
-            dist/shrimply-android-arm64.zip.sha256
+          path: dist/shrimply-android-arm64.zip
           if-no-files-found: error
 
   publish:
-    if: github.ref == 'refs/heads/main'
     needs: build
-    runs-on: ubuntu-24.04
+    uses: ./.github/workflows/publish-zip.yml
     permissions:
       contents: write
-    defaults:
-      run:
-        shell: bash
-    env:
-      GH_TOKEN: ${{ github.token }}
-      GH_REPO: ${{ github.repository }}
-
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-
-      - name: Download release assets
-        uses: actions/download-artifact@v6
-        with:
-          name: shrimply-android-arm64
-          path: dist
-
-      - name: Verify release archive
-        run: |
-          (cd dist && sha256sum --check --strict shrimply-android-arm64.zip.sha256)
-          unzip -tq dist/shrimply-android-arm64.zip
-
-      - name: Publish prerelease
-        run: |
-          bash .github/scripts/publish-prerelease.sh \
-            "dist/shrimply-android-arm64.zip"
+    with:
+      artifact: shrimply-android-arm64

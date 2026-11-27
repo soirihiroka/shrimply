@@ -127,12 +127,10 @@ jobs:
           test "$(ostree --repo="${verify_repo}" rev-parse app/dev.shrimply.Shrimply/x86_64/master)" = "${{ steps.release.outputs.commit }}"
 
       - name: Upload release assets
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ steps.release.outputs.tag }}
-          path: |
-            ${{ env.FLATPAK_BUNDLE }}
-            ${{ env.FLATPAK_BUNDLE }}.sha256
+          path: ${{ env.FLATPAK_BUNDLE }}
           if-no-files-found: error
           retention-days: 7
 
@@ -165,7 +163,7 @@ jobs:
           persist-credentials: false
 
       - name: Download release assets
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: ${{ needs.build.outputs.tag }}
           path: dist
@@ -198,6 +196,5 @@ jobs:
 
       - name: Publish prerelease
         run: |
-          (cd dist && sha256sum --check shrimply-gtk-x86_64.flatpak.sha256)
           bash .github/scripts/publish-prerelease.sh \
             "${FLATPAK_BUNDLE}"

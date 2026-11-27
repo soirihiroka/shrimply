@@ -30,7 +30,7 @@ RUN . /etc/os-release && \
 COPY . .
 
 
-RUN rustup show
+RUN rustup toolchain install --no-self-update
 
 ENV CUDA_HOME=/usr/local/cuda
 ENV CUDA_TOOLKIT_PATH=/usr/local/cuda

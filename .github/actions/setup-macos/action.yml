@@ -61,7 +61,7 @@ runs:
           "${rustup_init}" --yes --default-toolchain none --profile minimal
         fi
         echo "${CARGO_HOME}/bin" >> "${GITHUB_PATH}"
-        "${CARGO_HOME}/bin/rustup" show
+        "${CARGO_HOME}/bin/rustup" toolchain install --no-self-update
 
     - name: Save Rust toolchain
       if: steps.rust-cache.outputs.cache-hit != 'true'

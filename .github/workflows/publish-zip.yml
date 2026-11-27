@@ -1,0 +1,32 @@
+name: Publish prerelease ZIP
+
+on:
+  workflow_call:
+    inputs:
+      artifact:
+        required: true
+        type: string
+
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v8
+        with:
+          name: ${{ inputs.artifact }}
+          path: dist
+      - name: Verify and publish prerelease
+        working-directory: dist
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          ARCHIVE: ${{ inputs.artifact }}.zip
+        run: |
+          unzip -tq "$ARCHIVE"
+          bash ../.github/scripts/publish-prerelease.sh "$ARCHIVE"

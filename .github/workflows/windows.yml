@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - ".github/workflows/windows.yml"
+      - ".github/workflows/publish-zip.yml"
       - ".github/actions/cache-cargo/**"
       - ".github/actions/setup-windows/**"
       - ".github/scripts/publish-prerelease.sh"
@@ -70,17 +71,15 @@ jobs:
           key: ${{ steps.setup.outputs.skia-key }}
 
       - name: Upload portable ZIP
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: shrimply-windows-x86_64
-          path: |
-            dist/shrimply-windows-x86_64.zip
-            dist/shrimply-windows-x86_64.zip.sha256
+          path: dist/shrimply-windows-x86_64.zip
           if-no-files-found: error
 
       - name: Upload build diagnostics
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: windows-build-diagnostics
           path: |
@@ -89,35 +88,9 @@ jobs:
           if-no-files-found: ignore
 
   publish:
-    if: github.ref == 'refs/heads/main'
     needs: build
-    runs-on: ubuntu-24.04
+    uses: ./.github/workflows/publish-zip.yml
     permissions:
       contents: write
-    defaults:
-      run:
-        shell: bash
-    env:
-      GH_TOKEN: ${{ github.token }}
-      GH_REPO: ${{ github.repository }}
-
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-
-      - name: Download release assets
-        uses: actions/download-artifact@v6
-        with:
-          name: shrimply-windows-x86_64
-          path: dist
-
-      - name: Verify portable archive
-        run: |
-          (cd dist && sha256sum --check --strict shrimply-windows-x86_64.zip.sha256)
-          unzip -tq dist/shrimply-windows-x86_64.zip
-
-      - name: Publish prerelease
-        run: |
-          bash .github/scripts/publish-prerelease.sh \
-            "dist/shrimply-windows-x86_64.zip"
+    with:
+      artifact: shrimply-windows-x86_64

@@ -92,9 +92,3 @@ flatpak build-bundle \
   --gpg-keys="${FLATPAK_PAGES_DIR}/shrimply.gpg" \
   --runtime-repo="${runtime_repo}" \
   "${FLATPAK_REPO_DIR}" "${FLATPAK_BUNDLE}" "${app_id}" "${branch}"
-(
-  cd "$(dirname "${FLATPAK_BUNDLE}")"
-  bundle_name="$(basename "${FLATPAK_BUNDLE}")"
-  sha256sum "${bundle_name}" > "${bundle_name}.sha256"
-  sha256sum --check "${bundle_name}.sha256"
-)

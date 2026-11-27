@@ -16,15 +16,13 @@ concurrency:
 
 env:
   TZ: UTC
+  CARGO_BUILD_JOBS: "2"
+  CARGO_PROFILE_DEV_DEBUG: "0"
 
 jobs:
   linux:
     runs-on: ubuntu-24.04
     timeout-minutes: 240
-    env:
-      CARGO_BUILD_JOBS: "2"
-      CARGO_INCREMENTAL: "0"
-      CARGO_PROFILE_DEV_DEBUG: "0"
     steps:
       - uses: actions/checkout@v7
         with:
@@ -59,10 +57,6 @@ jobs:
           profile: debug
 
       - name: Check AppKit and run Clippy
-        env:
-          CARGO_BUILD_JOBS: "2"
-          CARGO_INCREMENTAL: "0"
-          CARGO_PROFILE_DEV_DEBUG: "0"
         run: make appkit-check fmt source-size-check
 
       - name: Save macOS check cache
@@ -86,8 +80,6 @@ jobs:
         shell: powershell
         env:
           CARGO_BUILD_JOBS: "3"
-          CARGO_INCREMENTAL: "0"
-          CARGO_PROFILE_DEV_DEBUG: "0"
         run: |
           $env:PATH += ";C:\Program Files\Git\bin;C:\Program Files\Git\usr\bin"
           make windows-check

@@ -14,7 +14,6 @@ runs:
       shell: bash
       run: |
         echo "CARGO_BUILD_JOBS=3" >> "$GITHUB_ENV"
-        echo "CARGO_INCREMENTAL=0" >> "$GITHUB_ENV"
         echo "ANDROID_NDK_VERSION=28.2.13676358" >> "$GITHUB_ENV"
         echo "SKIA_ARCHIVE=target/android-skia.tar.gz" >> "$GITHUB_ENV"
         echo "GRADLE_OPTS=-Dorg.gradle.daemon=false -Dorg.gradle.jvmargs=-Xmx2g" >> "$GITHUB_ENV"
@@ -45,7 +44,7 @@ runs:
     - name: Install Rust and Android SDK components
       shell: bash
       run: |
-        rustup show
+        rustup toolchain install --no-self-update
         export JAVA_HOME="${JAVA_HOME_21_X64}"
         echo "JAVA_HOME=${JAVA_HOME}" >> "${GITHUB_ENV}"
         echo "${JAVA_HOME}/bin" >> "${GITHUB_PATH}"

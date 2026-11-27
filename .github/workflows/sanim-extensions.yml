@@ -43,7 +43,7 @@ jobs:
 
       - name: Install Rust toolchain and WebAssembly target
         run: |
-          rustup show
+          rustup toolchain install --no-self-update
           make target
 
       - name: Check, build, and verify installation

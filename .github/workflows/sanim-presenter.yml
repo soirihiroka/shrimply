@@ -56,7 +56,7 @@ jobs:
 
       - name: Build presenter
         run: |
-          rustup show
+          rustup toolchain install --no-self-update
           make -C sanim presenter-release
 
       - name: Package and smoke-check Linux binary

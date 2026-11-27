@@ -95,7 +95,7 @@ runs:
           & $installer -y --default-toolchain none --profile minimal
         }
         "$env:CARGO_HOME\bin" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
-        & "$env:CARGO_HOME\bin\rustup.exe" show
+        & "$env:CARGO_HOME\bin\rustup.exe" toolchain install --no-self-update
 
     - name: Install Qt 6.11.1
       uses: jurplel/install-qt-action@v4
