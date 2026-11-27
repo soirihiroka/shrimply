@@ -212,3 +212,4 @@ runs:
       with:
         scope: flatpak
         cargo-home: ${{ env.FLATPAK_STATE_DIR }}/ccache/cargo-home
+        sandbox-cache: ${{ env.FLATPAK_STATE_DIR }}/ccache

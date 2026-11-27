@@ -1,5 +1,5 @@
-name: Cache Cargo downloads
-description: Reuse registry archives, indexes, and Git dependencies independently of build outputs.
+name: Cache Rust builds
+description: Reuse Cargo downloads and Rust compiler outputs.
 inputs:
   cargo-home:
     description: Cargo home on the runner when it differs from the build environment.
@@ -8,6 +8,10 @@ inputs:
   scope:
     description: Build environment that owns the cache.
     required: true
+  sandbox-cache:
+    description: Host directory mounted at /run/ccache during a Flatpak build.
+    required: false
+    default: ""
 runs:
   using: composite
   steps:
@@ -26,3 +30,38 @@ runs:
         restore-keys: |
           ${{ env.PREFIX }}-${{ env.LOCKS }}-
           ${{ env.PREFIX }}-
+
+    - name: Install sccache
+      uses: mozilla-actions/sccache-action@v0.0.11
+      with:
+        version: v0.16.0
+        disable_annotations: ${{ inputs.sandbox-cache != '' }}
+
+    - name: Configure the Rust compiler cache
+      id: compiler
+      shell: bash
+      env:
+        SANDBOX_CACHE: ${{ inputs.sandbox-cache }}
+      run: |
+        if [[ -n "$SANDBOX_CACHE" ]]; then
+          install -Dm755 "$SCCACHE_PATH" "$SANDBOX_CACHE/sccache"
+          directory="$SANDBOX_CACHE/rust-cache"
+        else
+          directory="$GITHUB_WORKSPACE/.ci/sccache"
+          {
+            echo "CARGO_INCREMENTAL=0"
+            echo "RUSTC_WRAPPER=sccache"
+            echo "SCCACHE_DIR=$directory"
+            echo "SCCACHE_CACHE_SIZE=512M"
+          } >> "$GITHUB_ENV"
+        fi
+        echo "directory=$directory" >> "$GITHUB_OUTPUT"
+
+    - name: Cache Rust compiler outputs
+      uses: actions/cache@v6
+      env:
+        PREFIX: sccache-v1-${{ runner.os }}-${{ runner.arch }}-${{ inputs.scope }}-${{ hashFiles('rust-toolchain.toml') }}
+      with:
+        path: ${{ steps.compiler.outputs.directory }}
+        key: ${{ env.PREFIX }}-${{ github.sha }}
+        restore-keys: ${{ env.PREFIX }}-
