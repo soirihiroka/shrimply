@@ -143,31 +143,23 @@ pub fn fold_items(project: &mut Project, selected_items: &[ItemKey]) -> Option<V
         && keys.iter().any(|key| key.kind == TrackKind::Audio))
     .then(|| next_group_id(project));
 
-    let video_source_tracks = keys
-        .iter()
-        .filter(|key| key.kind == TrackKind::Video)
-        .map(|key| key.track_index)
-        .collect::<HashSet<_>>();
-    let audio_source_tracks = keys
-        .iter()
-        .filter(|key| key.kind == TrackKind::Audio)
-        .map(|key| key.track_index)
-        .collect::<HashSet<_>>();
+    let mut items_by_track = HashMap::<_, HashSet<_>>::new();
+    for key in &keys {
+        items_by_track
+            .entry((key.kind, key.track_index))
+            .or_default()
+            .insert(key.item_index);
+    }
     let mut sequence_video_tracks = Vec::new();
     let mut sequence_audio_tracks = Vec::new();
     let mut visual_proxy = None;
     let mut audio_proxy = None;
 
-    for track_index in 0..project.video_tracks.len() {
-        if !video_source_tracks.contains(&track_index) {
+    for (track_index, track) in project.video_tracks.iter().enumerate() {
+        let Some(indices) = items_by_track.get(&(TrackKind::Video, track_index)) else {
             continue;
-        }
-        let indices = keys
-            .iter()
-            .filter(|key| key.kind == TrackKind::Video && key.track_index == track_index)
-            .map(|key| key.item_index)
-            .collect::<HashSet<_>>();
-        let mut nested = project.video_tracks[track_index].clone();
+        };
+        let mut nested = track.clone();
         nested.id = Uuid::new_v4();
         nested.items = nested
             .items
@@ -186,16 +178,11 @@ pub fn fold_items(project: &mut Project, selected_items: &[ItemKey]) -> Option<V
         }
         sequence_video_tracks.push(nested);
     }
-    for track_index in 0..project.audio_tracks.len() {
-        if !audio_source_tracks.contains(&track_index) {
+    for (track_index, track) in project.audio_tracks.iter().enumerate() {
+        let Some(indices) = items_by_track.get(&(TrackKind::Audio, track_index)) else {
             continue;
-        }
-        let indices = keys
-            .iter()
-            .filter(|key| key.kind == TrackKind::Audio && key.track_index == track_index)
-            .map(|key| key.item_index)
-            .collect::<HashSet<_>>();
-        let mut nested = project.audio_tracks[track_index].clone();
+        };
+        let mut nested = track.clone();
         nested.id = Uuid::new_v4();
         nested.items = nested
             .items
@@ -238,6 +225,14 @@ pub fn fold_items(project: &mut Project, selected_items: &[ItemKey]) -> Option<V
         audio_tracks: sequence_audio_tracks,
     });
 
+    let source_tracks = |kind| {
+        let mut indices = items_by_track
+            .keys()
+            .filter_map(|&(track_kind, index)| (track_kind == kind).then_some(index))
+            .collect::<Vec<_>>();
+        indices.sort_unstable();
+        indices
+    };
     let mut selection = Vec::new();
     if let Some(mut item) = visual_proxy {
         item.id = Uuid::new_v4();
@@ -269,9 +264,8 @@ pub fn fold_items(project: &mut Project, selected_items: &[ItemKey]) -> Option<V
         item.content = VideoItemContent::FoldedSequence(reference);
         item.file = Default::default();
         item.track_id = 0;
-        let preferred_index = video_source_tracks.iter().copied().min().unwrap_or(0);
-        let mut indices = video_source_tracks.iter().copied().collect::<Vec<_>>();
-        indices.sort_unstable();
+        let indices = source_tracks(TrackKind::Video);
+        let preferred_index = indices[0];
         let target = indices.into_iter().find(|index| {
             project.video_tracks.get(*index).is_some_and(|track| {
                 (!video_requires_enabled_track || track.enabled)
@@ -314,9 +308,8 @@ pub fn fold_items(project: &mut Project, selected_items: &[ItemKey]) -> Option<V
         item.source = AudioSource::FoldedSequence(reference);
         item.file = Default::default();
         item.track_id = 0;
-        let preferred_index = audio_source_tracks.iter().copied().min().unwrap_or(0);
-        let mut indices = audio_source_tracks.iter().copied().collect::<Vec<_>>();
-        indices.sort_unstable();
+        let indices = source_tracks(TrackKind::Audio);
+        let preferred_index = indices[0];
         let target = indices.into_iter().find(|index| {
             project.audio_tracks.get(*index).is_some_and(|track| {
                 (!audio_requires_enabled_track || track.enabled)

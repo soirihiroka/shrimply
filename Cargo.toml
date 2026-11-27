@@ -333,7 +333,6 @@ async-channel = "2"
 autodiff = "0.7"
 cached = { version = "4", default-features = false, features = ["ahash"] }
 cairo = { package = "cairo-rs", version = "0.22" }
-cint = "0.3"
 cpal = { version = "0.18.2", features = ["pipewire", "pulseaudio"] }
 cxx = "1"
 cxx-qt = "0.10"
