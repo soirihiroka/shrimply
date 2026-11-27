@@ -44,8 +44,8 @@ pub const COMPACT_LABEL_WIDTH: f64 =
 pub const TIMELINE_PADDING_LEFT: f64 = 2.0;
 pub const TIMELINE_X: f64 = LABEL_WIDTH + TIMELINE_PADDING_LEFT;
 const LABEL_FONT_SIZE: f32 = 12.0;
-const CLIP_FONT_SIZE: f32 = 10.0;
-const LABEL_INSET: f64 = 4.0;
+const ITEM_LABEL_FONT_SIZE: f32 = 10.0;
+const LABEL_INSET: f32 = 4.0;
 
 #[derive(Clone, Copy)]
 pub struct Viewport {
@@ -129,14 +129,13 @@ pub fn draw_track_label(painter: &TimelinePainter, label: TrackLabel<'_>) {
     );
 }
 
-pub fn draw_clip_label(painter: &TimelinePainter, bounds: Rect, text: &str, color: Color) {
-    let max_width = (f64::from(bounds.width()) - LABEL_INSET * 2.0).max(0.0);
+pub fn draw_label(painter: &TimelinePainter, bounds: Rect, text: &str, color: Color) {
+    let inset = vec2(LABEL_INSET, 0.0);
     painter.with_clip_rect(bounds).system_text_ellipsized(
-        vec2(bounds.min.x + LABEL_INSET as f32, bounds.min.y + 12.0),
+        Rect::from_min_max(bounds.min + inset, bounds.max - inset),
         text,
-        FontId::proportional(CLIP_FONT_SIZE),
+        FontId::proportional(ITEM_LABEL_FONT_SIZE),
         color,
-        max_width as f32,
     );
 }
 

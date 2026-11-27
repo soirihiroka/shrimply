@@ -81,7 +81,7 @@ pub fn draw_comment_item(
         border_color,
         theme::current().sidebar_border,
     );
-    crate::draw_clip_label(
+    crate::draw_label(
         painter,
         rect(clip_x, y, clip_width, TRACK_HEIGHT),
         &item.text,
@@ -108,7 +108,7 @@ pub fn draw_caption_item(
         Color::YELLOW1,
         theme::current().sidebar_border,
     );
-    crate::draw_clip_label(
+    crate::draw_label(
         painter,
         rect(clip_x, y, clip_width, TRACK_HEIGHT),
         &item.text,

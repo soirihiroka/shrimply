@@ -537,7 +537,7 @@ fn draw_collaborators(
         } else {
             &peer.name
         };
-        shrimply_timeline_paint_skia::draw_clip_label(painter, label, name, Color::BLACK);
+        shrimply_timeline_paint_skia::draw_label(painter, label, name, Color::BLACK);
     }
 }
 

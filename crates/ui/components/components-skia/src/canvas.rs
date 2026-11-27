@@ -244,19 +244,23 @@ impl TimelinePainterInner {
 
     pub fn system_text_ellipsized(
         &self,
-        pos: Vec2,
+        bounds: Rect,
         text: impl AsRef<str>,
         font_id: FontId,
         color: Color,
-        max_width: f32,
     ) {
         let text = text.as_ref();
-        if text.is_empty() || max_width <= 0.0 {
+        let width = bounds.width();
+        if text.is_empty() || width <= 0.0 {
             return;
         }
 
-        crate::skia_system_font::ellipsized_paragraph(text, font_id.size, color, max_width)
-            .paint(self.canvas(), point(pos));
+        let paragraph =
+            crate::skia_system_font::ellipsized_paragraph(text, font_id.size, color, width);
+        paragraph.paint(
+            self.canvas(),
+            (bounds.min.x, bounds.center().y - paragraph.height() / 2.0),
+        );
     }
 
     pub fn line_segment(&self, segment: [Vec2; 2], stroke: Stroke) {
