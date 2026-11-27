@@ -266,25 +266,26 @@ define_class!(
         #[unsafe(method_id(tableView:viewForTableColumn:row:))]
         fn project_row(&self, _table: &NSTableView, _column: Option<&NSTableColumn>, row: isize) -> Option<Retained<NSView>> {
             let model = self.ivars().model.borrow();
-            let project = model.project(usize::try_from(row).ok()?)?;
-            let button = unsafe {
-                NSButton::buttonWithTitle_target_action(
-                    &NSString::from_str(&project.name), Some(self), Some(sel!(openListedProject:)), self.mtm(),
-                )
-            };
-            let symbol = if let Some(remote) = &project.remote {
-                button.setToolTip(Some(&NSString::from_str(&remote.server)));
-                ns_string!("externaldrive.connected.to.line.below")
-            } else {
-                ns_string!("folder")
-            };
-            let icon = NSImage::imageWithSystemSymbolName_accessibilityDescription(symbol, None);
-            button.setImage(icon.as_deref());
-            button.setImagePosition(NSCellImagePosition::ImageLeading);
-            button.setAlignment(NSTextAlignment::Left);
-            button.setBordered(false);
-            button.setTag(row);
-            Some(button.into_super().into_super())
+            usize::try_from(row).ok().and_then(|index| model.project(index)).map(|project| {
+                let button = unsafe {
+                    NSButton::buttonWithTitle_target_action(
+                        &NSString::from_str(&project.name), Some(self), Some(sel!(openListedProject:)), self.mtm(),
+                    )
+                };
+                let symbol = if let Some(remote) = &project.remote {
+                    button.setToolTip(Some(&NSString::from_str(&remote.server)));
+                    ns_string!("externaldrive.connected.to.line.below")
+                } else {
+                    ns_string!("folder")
+                };
+                let icon = NSImage::imageWithSystemSymbolName_accessibilityDescription(symbol, None);
+                button.setImage(icon.as_deref());
+                button.setImagePosition(NSCellImagePosition::ImageLeading);
+                button.setAlignment(NSTextAlignment::Left);
+                button.setBordered(false);
+                button.setTag(row);
+                button.into_super().into_super()
+            })
         }
     }
 
