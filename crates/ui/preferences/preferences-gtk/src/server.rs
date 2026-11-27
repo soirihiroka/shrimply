@@ -398,7 +398,7 @@ fn update_project_server(
     previous: Option<&str>,
     url: Option<&str>,
 ) {
-    match store::update_project_server(preferences, previous, url) {
+    match shrimply_project_service::update_server(preferences, previous, url) {
         Ok(()) => rebuild_project_servers(preferences, rows),
         Err(error) => {
             if let Some(group) = rows.group.upgrade() {
@@ -585,12 +585,29 @@ fn show_server_editor(
     status.add_css_class("dim-label");
     let group = adw::PreferencesGroup::new();
     group.add(&url);
+    let login = matches!(purpose, ServerPurpose::Project).then(|| {
+        let username = adw::EntryRow::builder()
+            .title(tr!("Username").as_ref())
+            .build();
+        let password = adw::PasswordEntryRow::builder()
+            .title(tr!("Password").as_ref())
+            .activates_default(true)
+            .build();
+        group.add(&username);
+        group.add(&password);
+        (username, password)
+    });
     group.add(&status);
 
     let dialog = adw::AlertDialog::builder()
         .heading(tr!(title).as_ref())
         .extra_child(&group)
         .build();
+    let confirm_label = if login.is_some() {
+        "Sign In"
+    } else {
+        confirm_label
+    };
     dialog.add_responses_i18n(&[("cancel", "Cancel"), ("save", confirm_label)]);
     dialog.set_close_response("cancel");
     dialog.set_default_response(Some("save"));
@@ -606,6 +623,7 @@ fn show_server_editor(
         let status = status.clone();
         let revision = revision.clone();
         let selected_url = selected_url.clone();
+        let login = login.clone();
         Rc::new(move || {
             let current_revision = revision.get().wrapping_add(1);
             revision.set(current_revision);
@@ -640,11 +658,15 @@ fn show_server_editor(
                 }
             };
             selected_url.replace(Some(normalized.clone()));
-            dialog.set_response_enabled("save", true);
-            if matches!(purpose, ServerPurpose::Project) {
+            if let Some((username, password)) = &login {
+                dialog.set_response_enabled(
+                    "save",
+                    !username.text().trim().is_empty() && !password.text().is_empty(),
+                );
                 status.set_text("");
                 return;
             }
+            dialog.set_response_enabled("save", true);
             status.set_text(tr!("Checking…").as_ref());
             spinner.set_visible(true);
             spinner.start();
@@ -660,17 +682,66 @@ fn show_server_editor(
         })
     };
     let changed_validate = validate.clone();
-    url.connect_changed(move |_| changed_validate());
+    let url_handler = url.connect_changed(move |_| changed_validate());
+    let login_handlers = login.as_ref().map(|(username, password)| {
+        let username_validate = validate.clone();
+        let username_handler = username.connect_changed(move |_| username_validate());
+        let password_validate = validate.clone();
+        let password_handler = password.connect_changed(move |_| password_validate());
+        (username_handler, password_handler)
+    });
     validate();
 
+    let weak_parent = parent.upcast_ref::<gtk::Widget>().downgrade();
     dialog.choose(
         Some(parent.upcast_ref::<gtk::Widget>()),
         None::<&gio::Cancellable>,
         move |answer| {
+            url.disconnect(url_handler);
+            let credentials = login.zip(login_handlers).map(
+                |((username, password), (user_handler, password_handler))| {
+                    username.disconnect(user_handler);
+                    password.disconnect(password_handler);
+                    let credentials = (username.text().to_string(), password.text().to_string());
+                    password.set_text("");
+                    credentials
+                },
+            );
             if answer == "save"
                 && let Some(url) = selected_url.borrow().clone()
             {
-                on_confirm(url);
+                if let Some((username, password)) = credentials {
+                    let server = url.clone();
+                    let (sender, receiver) = async_channel::bounded(1);
+                    thread::spawn(move || {
+                        let _ =
+                            sender.send_blocking(shrimply_project_service::ProjectClient::sign_in(
+                                &server, &username, &password,
+                            ));
+                    });
+                    glib::spawn_future_local(async move {
+                        match receiver.recv().await {
+                            Ok(Ok(())) => on_confirm(url),
+                            failure => {
+                                if let Some(parent) = weak_parent.upgrade() {
+                                    let error = failure
+                                        .ok()
+                                        .and_then(Result::err)
+                                        .unwrap_or_else(|| "Sign-in stopped unexpectedly".into());
+                                    let dialog = adw::AlertDialog::new(
+                                        Some(tr!("Could not sign in").as_ref()),
+                                        Some(&error),
+                                    );
+                                    dialog.add_responses_i18n(&[("close", "Close")]);
+                                    dialog.set_close_response("close");
+                                    dialog.present(Some(&parent));
+                                }
+                            }
+                        }
+                    });
+                } else {
+                    on_confirm(url);
+                }
             }
         },
     );

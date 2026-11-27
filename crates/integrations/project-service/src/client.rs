@@ -22,7 +22,7 @@ use shrimply_resource_pipeline::fingerprint::Writer;
 use crate::{MediaCache, MediaReader, ProjectVersion, SyncRequest, SyncResponse};
 use shrimply_project_protocol::{
     ErrorResponse, LEGACY_CHECKPOINT_FIELD, MediaBlob, ProjectSummary, ProjectVersionReceipt,
-    PublishRequest, ServerVersion, UPLOAD_CHUNK_BYTES, UploadReceipt, valid_digest,
+    PublishRequest, ServerVersion, SignIn, UPLOAD_CHUNK_BYTES, UploadReceipt, valid_digest,
 };
 
 #[derive(Debug)]
@@ -65,36 +65,47 @@ pub struct ProjectClient {
 
 impl ProjectClient {
     pub fn configured(base: &str) -> Result<Self, String> {
-        #[cfg(target_os = "android")]
-        let token = std::fs::read_to_string(Self::android_token_path(base))
-            .map_err(|_| "Set the access token for this project server in Project Servers")?;
-        #[cfg(not(target_os = "android"))]
-        let token = std::env::var("SHRIMPLY_PROJECT_SERVER_TOKEN")
-            .map_err(|_| "set SHRIMPLY_PROJECT_SERVER_TOKEN to connect to a project server")?;
-        Self::new(base, token)
+        let mut client = Self::new(base, String::new())?;
+        client.token = std::fs::read_to_string(client.session_path()).map_err(
+            |_| "Sign in to this project server in Project Servers or with shrimply project login",
+        )?;
+        Ok(client)
     }
 
-    #[cfg(target_os = "android")]
-    fn android_token_path(base: &str) -> std::path::PathBuf {
+    fn session_path(&self) -> std::path::PathBuf {
         shrimply_path_core::config_directory()
-            .join("project-server-tokens")
+            .join("project-server-sessions")
             .join(shrimply_resource_pipeline::fingerprint::digest(
-                base.trim_end_matches('/').as_bytes(),
+                self.base.as_str().trim_end_matches('/').as_bytes(),
             ))
     }
 
-    #[cfg(target_os = "android")]
-    pub fn store_android_token(base: &str, token: &str) -> Result<(), String> {
+    pub fn sign_in(base: &str, username: &str, password: &str) -> Result<(), String> {
         use std::io::Write as _;
-        let token = token.trim();
+        if username.trim().is_empty() || username.contains(':') || password.is_empty() {
+            return Err("Enter a username without a colon and a password".into());
+        }
+        let client = Self::new(base, String::new())?;
+        let mut url = client.api_url();
+        url.path_segments_mut()
+            .expect("project server URL has a path")
+            .push("login");
+        let SignIn { token } = response(
+            client
+                .client
+                .post(url)
+                .basic_auth(username, Some(password))
+                .send(),
+        )
+        .map_err(|error| error.to_string())?;
         if token.is_empty()
             || token.chars().any(char::is_whitespace)
-            || header::HeaderValue::from_str(token).is_err()
+            || header::HeaderValue::from_str(&token).is_err()
         {
-            return Err("Enter a valid project server access token".into());
+            return Err("The project server returned an invalid session".into());
         }
-        let path = Self::android_token_path(base);
-        let directory = path.parent().expect("token directory");
+        let path = client.session_path();
+        let directory = path.parent().expect("project server session directory");
         std::fs::create_dir_all(directory).map_err(|error| error.to_string())?;
         let mut staged =
             tempfile::NamedTempFile::new_in(directory).map_err(|error| error.to_string())?;
@@ -105,6 +116,14 @@ impl ProjectClient {
             .persist(path)
             .map_err(|error| error.error.to_string())?;
         Ok(())
+    }
+
+    pub(crate) fn forget(base: &str) -> Result<(), String> {
+        match std::fs::remove_file(Self::new(base, String::new())?.session_path()) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error.to_string()),
+        }
     }
 
     pub fn new(base: &str, token: String) -> Result<Self, String> {
@@ -156,7 +175,6 @@ impl ProjectClient {
         response(
             self.client
                 .get(self.api_url())
-                .bearer_auth(&self.token)
                 .timeout(Duration::from_secs(3))
                 .send(),
         )

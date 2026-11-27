@@ -216,6 +216,15 @@ pub enum RangeMatch {
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+pub struct ProjectLoginRequest {
+    /// Project server base URL.
+    pub server: String,
+    /// Account name. Supply the password through standard input or SHRIMPLY_PROJECT_SERVER_PASSWORD.
+    pub username: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ConnectProjectRequest {
     /// Existing project path or local workspace destination when joining a shared project.
     pub project_path: String,

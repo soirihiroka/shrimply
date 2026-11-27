@@ -100,6 +100,10 @@ impl Store {
         connection.execute_batch(
             "PRAGMA journal_mode=WAL;
              PRAGMA foreign_keys=ON;
+             CREATE TABLE IF NOT EXISTS server_auth (
+                 id INTEGER PRIMARY KEY CHECK (id = 1),
+                 key BLOB NOT NULL
+             );
              CREATE TABLE IF NOT EXISTS projects (
                  id TEXT PRIMARY KEY,
                  revision INTEGER NOT NULL,
@@ -159,6 +163,25 @@ impl Store {
             sessions: BTreeMap::new(),
             blobs,
         })
+    }
+
+    pub(super) fn signing_key(&self) -> Result<ring::hmac::Key, Failure> {
+        use ring::rand::{SecureRandom, SystemRandom};
+
+        let mut key = [0; 32];
+        SystemRandom::new()
+            .fill(&mut key)
+            .map_err(|_| Failure::Storage("could not generate a signing key".into()))?;
+        self.connection.execute(
+            "INSERT INTO server_auth (id, key) VALUES (1, ?1) ON CONFLICT DO NOTHING",
+            [&key[..]],
+        )?;
+        Ok(self
+            .connection
+            .query_row("SELECT key FROM server_auth", [], |row| {
+                let key: Vec<u8> = row.get(0)?;
+                Ok(ring::hmac::Key::new(ring::hmac::HMAC_SHA256, &key))
+            })?)
     }
 
     pub(super) fn list(&self) -> Result<Vec<ProjectSummary>, Failure> {

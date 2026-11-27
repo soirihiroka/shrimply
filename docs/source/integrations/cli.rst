@@ -201,22 +201,21 @@ Undo history is scoped to the running session.
 Sharing a project
 ~~~~~~~~~~~~~~~~~
 
-Build the optional Rust project server with ``make project-server``. Set
-``SHRIMPLY_PROJECT_SERVER_TOKEN`` on the server and in the environment from
-which collaborators launch Shrimply. Run the server with a listen address
-and SQLite database path.
+Build the optional server with ``make project-server``. Set
+``SHRIMPLY_PROJECT_SERVER_USERNAME`` and ``SHRIMPLY_PROJECT_SERVER_PASSWORD``
+in the server environment, then run it with a listen address and database path.
 
 .. code-block:: console
 
    $ target/debug/shrimply-project-server 127.0.0.1:8788 projects.sqlite
 
-Use an HTTPS reverse proxy to reach the server over a network. The token
-grants access to the server's projects. Use a separate server instance if
-different groups should have different access.
+Use an HTTPS reverse proxy for network access. The configured account has
+access to all projects on that server.
 
-Add the endpoint under :guilabel:`Project Servers` to browse its projects
-in the launcher's :guilabel:`Projects` list. Choose the server under
-:guilabel:`Location` when creating a project.
+Sign in under :guilabel:`Project Servers` or run ``shrimply project login
+--server <url> --username <name>`` with the password piped on standard input
+or set in ``SHRIMPLY_PROJECT_SERVER_PASSWORD``. The launcher and CLI share the
+saved session. Choose the server under :guilabel:`Location` to create projects there.
 
 The CLI accepts a server URL when creating or joining a project. The
 creation result contains the shared project ID.

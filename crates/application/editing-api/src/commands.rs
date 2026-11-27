@@ -58,6 +58,13 @@ pub static COMMANDS: &[Command] = &[
         false
     ),
     command!(
+        "project_login",
+        "project login",
+        "Sign in to a project server with a username and password",
+        ProjectLoginRequest,
+        false
+    ),
+    command!(
         "connect_project",
         "project open",
         "Connect to the local project session, starting the editing service if needed",

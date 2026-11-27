@@ -173,6 +173,37 @@ fn execute(path: &str, leaf: &ArgMatches, root: &ArgMatches) -> Result<Value, St
     let force_version = root.get_flag("force-version");
     let if_revision = root.get_one::<String>("if-revision").cloned();
     let mut arguments = arguments(leaf, definition)?;
+    if definition.name == "project_login" {
+        let request: ProjectLoginRequest = serde_json::from_value(arguments)
+            .map_err(|error| format!("invalid arguments: {error}"))?;
+        let server = shrimply_preferences_core::normalize_project_server_url(&request.server)?;
+        if !dry_run {
+            let password = match std::env::var("SHRIMPLY_PROJECT_SERVER_PASSWORD") {
+                Ok(password) => password,
+                Err(_) if !std::io::stdin().is_terminal() => {
+                    let mut password = String::new();
+                    std::io::stdin()
+                        .read_line(&mut password)
+                        .map_err(|error| error.to_string())?;
+                    password.trim_end_matches(['\r', '\n']).to_owned()
+                }
+                Err(_) => {
+                    return Err(
+                        "Read the password from a pipe or set SHRIMPLY_PROJECT_SERVER_PASSWORD"
+                            .into(),
+                    );
+                }
+            };
+            shrimply_project_service::ProjectClient::sign_in(
+                &server,
+                &request.username,
+                &password,
+            )?;
+            let preferences = shrimply_preferences_core::open_with_defaults();
+            shrimply_project_service::update_server(&preferences, None, Some(&server))?;
+        }
+        return Ok(json!({"success":true,"server":server,"dry_run":dry_run}));
+    }
     if definition.name == "get_version" {
         (definition.validate)(arguments).map_err(|error| format!("invalid arguments: {error}"))?;
         let mut editor = None;

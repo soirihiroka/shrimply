@@ -195,15 +195,13 @@ impl ProjectBackend {
                     .map(shrimply_preferences_core::normalize_project_server_url)
                     .transpose()?;
                 if let Some(server) = server.as_deref() {
-                    if let Some(token) = request["token"]
-                        .as_str()
-                        .filter(|token| !token.trim().is_empty())
-                    {
-                        ProjectClient::store_android_token(server, token)?;
-                    }
-                    ProjectClient::configured(server)?;
+                    ProjectClient::sign_in(
+                        server,
+                        string(request, "username")?,
+                        string(request, "password")?,
+                    )?;
                 }
-                shrimply_preferences_core::update_project_server(
+                shrimply_project_service::update_server(
                     &self.preferences,
                     previous,
                     server.as_deref(),

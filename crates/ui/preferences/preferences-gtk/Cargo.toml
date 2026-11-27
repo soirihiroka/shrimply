@@ -12,6 +12,7 @@ pango.workspace = true
 shrimply-blender-core = { workspace = true }
 shrimply-inspector-gtk = { workspace = true }
 shrimply-preferences-core = { workspace = true }
+shrimply-project-service.workspace = true
 shrimply-components-gtk = { workspace = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]

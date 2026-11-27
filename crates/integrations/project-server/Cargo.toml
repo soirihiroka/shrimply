@@ -9,12 +9,13 @@ futures-util.workspace = true
 http-body-util.workspace = true
 hyper = { workspace = true, features = ["http1", "server"] }
 hyper-util = { workspace = true, features = ["tokio"] }
+ring = "0.17"
 rmp-serde.workspace = true
 rusqlite = { workspace = true, features = ["bundled"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 shrimply-project-protocol.workspace = true
 shrimply-resource-pipeline.workspace = true
-tokio = { workspace = true, features = ["fs", "io-util", "net"] }
+tokio = { workspace = true, features = ["fs", "io-util", "net", "sync", "time"] }
 tokio-util = { workspace = true, features = ["io"] }
 uuid = { workspace = true, features = ["serde"] }

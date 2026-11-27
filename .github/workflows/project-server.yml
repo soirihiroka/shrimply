@@ -47,24 +47,30 @@ jobs:
           cache-from: type=gha,scope=project-server
           cache-to: type=gha,scope=project-server,mode=max
 
-      - name: Verify workspace version and HTTP startup
+      - name: Verify workspace version and sign-in
         env:
-          SHRIMPLY_PROJECT_SERVER_TOKEN: ci-smoke-test
+          SHRIMPLY_PROJECT_SERVER_USERNAME: editor
+          SHRIMPLY_PROJECT_SERVER_PASSWORD: ci-smoke-test
         run: |
           expected="$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["workspace"]["package"]["version"])')"
           test "$(docker run --rm shrimply-project-server:ci --version)" = "shrimply-project-server ${expected}"
           port=8788
           docker run --detach --name project-server-smoke \
-            --env SHRIMPLY_PROJECT_SERVER_TOKEN --publish "127.0.0.1::${port}/tcp" \
+            --env SHRIMPLY_PROJECT_SERVER_USERNAME --env SHRIMPLY_PROJECT_SERVER_PASSWORD \
+            --publish "127.0.0.1::${port}/tcp" \
             shrimply-project-server:ci
           trap 'docker logs project-server-smoke; docker rm --force project-server-smoke' EXIT
           endpoint="http://$(docker port project-server-smoke "${port}/tcp")/v1"
           curl --fail --silent --show-error --max-time 3 --retry 20 --retry-connrefused --retry-delay 1 \
-            --header "Authorization: Bearer ${SHRIMPLY_PROJECT_SERVER_TOKEN}" "${endpoint}" \
-            | python3 -c 'import json, sys; info = json.load(sys.stdin); assert info["protocol"] == 2 and info["version"] == sys.argv[1]' "${expected}"
-          test "$(curl --silent --show-error --max-time 3 --output /dev/null --write-out '%{http_code}' "${endpoint}")" = 401
+            "${endpoint}" \
+            | python3 -c 'import json, sys; info = json.load(sys.stdin); assert info["protocol"] == 3 and info["version"] == sys.argv[1]' "${expected}"
+          test "$(curl -sS -u "${SHRIMPLY_PROJECT_SERVER_USERNAME}:wrong" -X POST -o /dev/null -w '%{http_code}' "${endpoint}/login")" = 401
+          test "$(curl -sS -o /dev/null -w '%{http_code}' "${endpoint}/projects")" = 401
+          session="$(curl --fail --silent --show-error --max-time 3 --request POST \
+            --user "${SHRIMPLY_PROJECT_SERVER_USERNAME}:${SHRIMPLY_PROJECT_SERVER_PASSWORD}" "${endpoint}/login" \
+            | python3 -c 'import json, sys; print(json.load(sys.stdin)["token"])')"
           curl --fail --silent --show-error --max-time 3 \
-            --header "Authorization: Bearer ${SHRIMPLY_PROJECT_SERVER_TOKEN}" "${endpoint}/projects" \
+            --header "Authorization: Bearer ${session}" "${endpoint}/projects" \
             | python3 -c 'import json, sys; assert json.load(sys.stdin) == []'
 
       - name: Export prerelease image

@@ -37,7 +37,8 @@ internal fun ProjectServersDialog(servers: List<String>, busy: Boolean, close: (
     }
 
     var url by rememberSaveable(previous) { mutableStateOf(previous) }
-    var token by remember(previous) { mutableStateOf("") }
+    var username by rememberSaveable(previous) { mutableStateOf("") }
+    var password by remember(previous) { mutableStateOf("") }
     val command = { JSONObject().put("op", "update_project_server").apply {
         if (previous.isNotEmpty()) put("previous", previous)
     } }
@@ -46,14 +47,17 @@ internal fun ProjectServersDialog(servers: List<String>, busy: Boolean, close: (
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(url, { url = it }, label = { Text(tr("Server URL")) }, singleLine = true, enabled = !busy)
-                OutlinedTextField(token, { token = it }, label = { Text(tr("Access token")) }, singleLine = true,
+                OutlinedTextField(username, { username = it }, label = { Text(tr("Username")) }, singleLine = true, enabled = !busy)
+                OutlinedTextField(password, { password = it }, label = { Text(tr("Password")) }, singleLine = true,
                     visualTransformation = PasswordVisualTransformation(), enabled = !busy)
             }
         },
         confirmButton = { TextButton(enabled = !busy && url.isNotBlank() &&
-            (url.trim() == previous || token.isNotBlank()), onClick = {
-            update(command().put("server", url).put("token", token)) { editing = null }
-        }) { Text(tr("Save")) } },
+            username.isNotBlank() && password.isNotEmpty(), onClick = {
+            val request = command().put("server", url).put("username", username).put("password", password)
+            password = ""
+            update(request) { editing = null }
+        }) { Text(tr("Sign In")) } },
         dismissButton = {
             if (previous.isNotEmpty()) TextButton(enabled = !busy, onClick = {
                 update(command()) { editing = null }

@@ -43,7 +43,13 @@ pub mod qobject {
             self: Pin<&mut LauncherBackend>,
             previous: &QString,
             url: &QString,
-        ) -> bool;
+            username: &QString,
+            password: &QString,
+        );
+
+        #[qsignal]
+        #[cxx_name = "projectServersUpdated"]
+        fn project_servers_updated(self: Pin<&mut LauncherBackend>, success: bool);
 
         #[qinvokable]
         #[cxx_name = "setSearch"]
@@ -125,22 +131,33 @@ impl qobject::LauncherBackend {
             .collect()
     }
 
-    pub fn update_project_server(self: Pin<&mut Self>, previous: &QString, url: &QString) -> bool {
+    pub fn update_project_server(
+        self: Pin<&mut Self>,
+        previous: &QString,
+        url: &QString,
+        username: &QString,
+        password: &QString,
+    ) {
         let previous = previous.to_string();
         let url = url.to_string();
-        match launcher::update_project_servers(
-            (!previous.is_empty()).then_some(previous.as_str()),
-            (!url.is_empty()).then_some(url.as_str()),
-        ) {
-            Ok(()) => {
-                self.reload_projects();
-                true
-            }
-            Err(error) => {
-                self.emit_error("Could not update project server", &error);
-                false
-            }
-        }
+        let username = username.to_string();
+        let password = password.to_string();
+        let qt_thread = self.qt_thread();
+        std::thread::spawn(move || {
+            let previous = (!previous.is_empty()).then_some(previous.as_str());
+            let result = if url.is_empty() {
+                launcher::update_project_servers(previous, None)
+            } else {
+                launcher::sign_in_project_server(previous, &url, &username, &password)
+            };
+            let _ = qt_thread.queue(move |mut backend| {
+                backend.as_mut().project_servers_updated(result.is_ok());
+                match result {
+                    Ok(()) => backend.reload_projects(),
+                    Err(error) => backend.emit_error("Could not update project server", &error),
+                }
+            });
+        });
     }
 
     fn open_project_async(

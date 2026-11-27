@@ -7592,6 +7592,7 @@ dependencies = [
  "shrimply-components-gtk",
  "shrimply-inspector-gtk",
  "shrimply-preferences-core",
+ "shrimply-project-service",
  "shrimply-trust-core",
  "shrimply-visual-cuda",
 ]
@@ -7902,9 +7903,7 @@ name = "shrimply-project-evaluation"
 version = "0.1.0"
 dependencies = [
  "glam 0.34.1",
- "hashbrown 0.17.1",
- "num-traits",
- "rhai",
+ "sanim-lang",
  "shrimply-3dgs-core",
  "shrimply-lip-sync",
  "shrimply-math-color",
@@ -7938,6 +7937,7 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
+ "ring",
  "rmp-serde",
  "rusqlite",
  "serde",
@@ -8394,6 +8394,7 @@ version = "0.1.0"
 dependencies = [
  "glam 0.34.1",
  "num-traits",
+ "sanim-core",
  "serde",
  "shrimply-math-color",
  "shrimply-math-core",

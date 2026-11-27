@@ -30,6 +30,15 @@ ApplicationWindow {
             errorBody.text = body
             errorDialog.open()
         }
+        function onProjectServersUpdated(success) {
+            projectServersDialog.updating = false
+            if (success) {
+                projectServerRows.model = backend.projectServers(false)
+                projectServersDialog.previous = ""
+                newProjectServer.clear()
+                projectUsername.clear()
+            }
+        }
 
         function onEditorStarted() {
             window.hide()
@@ -137,7 +146,15 @@ ApplicationWindow {
         title: backend.text("Project Servers")
         modal: true
         standardButtons: Dialog.Close
+        property bool updating: false
+        property string previous: ""
         onOpened: projectServerRows.model = backend.projectServers(false)
+        onClosed: {
+            previous = ""
+            newProjectServer.clear()
+            projectUsername.clear()
+            projectPassword.clear()
+        }
 
         ColumnLayout {
             width: parent.width
@@ -151,14 +168,22 @@ ApplicationWindow {
                     required property string modelData
                     width: projectServerRows.width
 
-                    TextField {
-                        id: savedUrl
+                    Label {
                         Layout.fillWidth: true
                         text: modelData
-                        onAccepted: {
-                            if (text.trim().length > 0 && backend.updateProjectServer(modelData, text)) {
-                                projectServerRows.model = backend.projectServers(false)
-                            }
+                        elide: Text.ElideRight
+                    }
+
+                    ToolButton {
+                        icon.source: "qrc:/shrimply/icons/pencil-symbolic.svg"
+                        text: backend.text("Edit")
+                        display: AbstractButton.IconOnly
+                        enabled: !projectServersDialog.updating
+                        onClicked: {
+                            projectServersDialog.previous = modelData
+                            newProjectServer.text = modelData
+                            projectPassword.clear()
+                            projectUsername.forceActiveFocus()
                         }
                     }
 
@@ -168,33 +193,45 @@ ApplicationWindow {
                         display: AbstractButton.IconOnly
                         ToolTip.visible: hovered
                         ToolTip.text: text
+                        enabled: !projectServersDialog.updating
                         onClicked: {
-                            if (backend.updateProjectServer(modelData, "")) {
-                                projectServerRows.model = backend.projectServers(false)
-                            }
+                            projectServersDialog.updating = true
+                            backend.updateProjectServer(modelData, "", "", "")
                         }
                     }
                 }
             }
 
-            RowLayout {
-                TextField {
-                    id: newProjectServer
-                    Layout.fillWidth: true
-                    placeholderText: backend.text("Server URL")
-                    onAccepted: addProjectServer.clicked()
-                }
-
-                Button {
-                    id: addProjectServer
-                    text: backend.text("Add Server")
-                    enabled: newProjectServer.text.trim().length > 0
-                    onClicked: {
-                        if (backend.updateProjectServer("", newProjectServer.text)) {
-                            newProjectServer.clear()
-                            projectServerRows.model = backend.projectServers(false)
-                        }
-                    }
+            TextField {
+                id: newProjectServer
+                Layout.fillWidth: true
+                enabled: !projectServersDialog.updating
+                placeholderText: backend.text("Server URL")
+            }
+            TextField {
+                id: projectUsername
+                Layout.fillWidth: true
+                enabled: !projectServersDialog.updating
+                placeholderText: backend.text("Username")
+            }
+            TextField {
+                id: projectPassword
+                Layout.fillWidth: true
+                enabled: !projectServersDialog.updating
+                placeholderText: backend.text("Password")
+                echoMode: TextInput.Password
+                onAccepted: if (signIn.enabled) signIn.clicked()
+            }
+            Button {
+                id: signIn
+                text: backend.text("Sign In")
+                enabled: !projectServersDialog.updating && newProjectServer.text.trim().length > 0 &&
+                    projectUsername.text.trim().length > 0 && projectPassword.text.length > 0
+                onClicked: {
+                    projectServersDialog.updating = true
+                    backend.updateProjectServer(projectServersDialog.previous, newProjectServer.text,
+                                                projectUsername.text, projectPassword.text)
+                    projectPassword.clear()
                 }
             }
         }

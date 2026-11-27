@@ -8,7 +8,12 @@ use uuid::Uuid;
 
 pub const UPLOAD_CHUNK_BYTES: usize = 4 * 1024 * 1024;
 pub const LEGACY_CHECKPOINT_FIELD: &str = "$shrimp";
-pub const SERVER_PROTOCOL: u32 = 2;
+pub const SERVER_PROTOCOL: u32 = 3;
+
+#[derive(Serialize, Deserialize)]
+pub struct SignIn {
+    pub token: String,
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ServerVersion {

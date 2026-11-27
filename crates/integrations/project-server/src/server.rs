@@ -4,8 +4,13 @@ use std::{
     net::SocketAddr,
     path::Path,
     sync::{Arc, Mutex},
+    time::Duration,
 };
 
+use base64::{
+    Engine,
+    engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
+};
 use http_body_util::{BodyExt, Full, Limited};
 use hyper::{
     Method, Request, Response, StatusCode,
@@ -15,15 +20,16 @@ use hyper::{
     service::service_fn,
 };
 use hyper_util::rt::TokioIo;
+use ring::hmac;
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
-use tokio::net::TcpListener;
+use tokio::{net::TcpListener, sync::Semaphore};
 use uuid::Uuid;
 
 use crate::media::BlobStore;
 use crate::store::{Failure, Presence, Store};
 use shrimply_project_protocol::{
-    ErrorResponse, ProjectVersionReceipt, PublishRequest, SyncRequest, UPLOAD_CHUNK_BYTES,
+    ErrorResponse, ProjectVersionReceipt, PublishRequest, SignIn, SyncRequest, UPLOAD_CHUNK_BYTES,
 };
 
 pub(super) type Body = http_body_util::combinators::UnsyncBoxBody<Bytes, io::Error>;
@@ -33,20 +39,44 @@ const MAX_DOCUMENT_BYTES: usize = 64 * 1024 * 1024;
 struct Authority {
     store: Mutex<Store>,
     blobs: Arc<BlobStore>,
-    credential: String,
+    signing_key: hmac::Key,
+    password: hmac::Tag,
+    session: hmac::Tag,
+    sign_in: SignIn,
+    login_attempts: Semaphore,
 }
 
-pub async fn serve(address: SocketAddr, database: &Path, token: &str) -> Result<(), String> {
-    if token.is_empty() {
-        return Err("a project server token is required".into());
+pub async fn serve(
+    address: SocketAddr,
+    database: &Path,
+    username: String,
+    password: String,
+) -> Result<(), String> {
+    if username.trim().is_empty() || username.contains(':') || password.is_empty() {
+        return Err("set a username without a colon and a nonempty password".into());
     }
     let blobs = Arc::new(BlobStore::new(database));
+    let store = Store::open(database, blobs.clone()).map_err(|error| format!("{error:?}"))?;
+    let signing_key = store.signing_key().map_err(|error| format!("{error:?}"))?;
+    let password_tag = hmac::sign(
+        &signing_key,
+        format!(
+            "Basic {}",
+            STANDARD.encode(format!("{username}:{password}"))
+        )
+        .as_bytes(),
+    );
+    drop(password);
+    let token = URL_SAFE_NO_PAD.encode(password_tag.as_ref());
+    let session = hmac::sign(&signing_key, format!("Bearer {token}").as_bytes());
     let authority = Arc::new(Authority {
-        store: Mutex::new(
-            Store::open(database, blobs.clone()).map_err(|error| format!("{error:?}"))?,
-        ),
+        store: Mutex::new(store),
         blobs,
-        credential: format!("Bearer {token}"),
+        signing_key,
+        password: password_tag,
+        session,
+        sign_in: SignIn { token },
+        login_attempts: Semaphore::new(4),
     });
     let listener = TcpListener::bind(address)
         .await
@@ -76,16 +106,6 @@ async fn dispatch(
     authority: Arc<Authority>,
     request: Request<Incoming>,
 ) -> Result<Response<Body>, Failure> {
-    let authorization = request.headers().get(header::AUTHORIZATION);
-    if authorization.is_none_or(|value| value.as_bytes() != authority.credential.as_bytes()) {
-        return Ok(json(
-            StatusCode::UNAUTHORIZED,
-            ErrorResponse {
-                message: "invalid project server credentials".into(),
-                revision: None,
-            },
-        ));
-    }
     let path = request.uri().path();
     if request.method() == Method::GET && path == "/v1" {
         return Ok(json(
@@ -95,6 +115,57 @@ async fn dispatch(
                 version: Some(env!("CARGO_PKG_VERSION").into()),
             },
         ));
+    }
+    let authorization = request
+        .headers()
+        .get(header::AUTHORIZATION)
+        .map_or(&[][..], header::HeaderValue::as_bytes);
+    let login = request.method() == Method::POST && path == "/v1/login";
+    let _attempt = if login {
+        match authority.login_attempts.try_acquire() {
+            Ok(attempt) => Some(attempt),
+            Err(_) => {
+                return Ok(json(
+                    StatusCode::TOO_MANY_REQUESTS,
+                    ErrorResponse {
+                        message: "Too many sign-in attempts. Try again in a moment".into(),
+                        revision: None,
+                    },
+                ));
+            }
+        }
+    } else {
+        None
+    };
+    let credential = if login {
+        &authority.password
+    } else {
+        &authority.session
+    };
+    if hmac::verify(&authority.signing_key, authorization, credential.as_ref()).is_err() {
+        if login {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
+        return Ok(json(
+            StatusCode::UNAUTHORIZED,
+            ErrorResponse {
+                message: if login {
+                    "Incorrect project server username or password"
+                } else {
+                    "Sign in to this project server again"
+                }
+                .into(),
+                revision: None,
+            },
+        ));
+    }
+    if login {
+        let mut response = json(StatusCode::OK, &authority.sign_in);
+        response.headers_mut().insert(
+            header::CACHE_CONTROL,
+            header::HeaderValue::from_static("no-store"),
+        );
+        return Ok(response);
     }
     if request.method() == Method::GET && path == "/v1/projects" {
         let projects = transact(authority, |store| store.list()).await?;

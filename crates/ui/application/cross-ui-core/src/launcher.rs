@@ -148,7 +148,18 @@ pub fn project_servers() -> Vec<String> {
 
 pub fn update_project_servers(previous: Option<&str>, value: Option<&str>) -> Result<(), String> {
     let store = shrimply_editor_state::preferences::open_with_defaults();
-    shrimply_editor_state::preferences::update_project_server(&store, previous, value)
+    shrimply_project_service::update_server(&store, previous, value)
+}
+
+pub fn sign_in_project_server(
+    previous: Option<&str>,
+    url: &str,
+    username: &str,
+    password: &str,
+) -> Result<(), String> {
+    let url = shrimply_editor_state::preferences::normalize_project_server_url(url)?;
+    shrimply_project_service::ProjectClient::sign_in(&url, username, password)?;
+    update_project_servers(previous, Some(&url))
 }
 
 pub fn default_project_filename(name: &str) -> String {

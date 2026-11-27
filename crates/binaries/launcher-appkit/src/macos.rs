@@ -9,10 +9,10 @@ use objc2_app_kit::{
     NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate, NSAutoresizingMaskOptions,
     NSBackingStoreType, NSBezelStyle, NSButton, NSCellImagePosition, NSColor, NSControlSize,
     NSControlTextEditingDelegate, NSFont, NSImage, NSMenu, NSMenuItem, NSModalResponseOK,
-    NSOpenPanel, NSOpenSavePanelDelegate, NSSavePanel, NSScrollView, NSSearchField, NSTableColumn,
-    NSTableView, NSTableViewDataSource, NSTableViewDelegate, NSTextAlignment, NSTextField,
-    NSTitlebarSeparatorStyle, NSToolbar, NSView, NSWindow, NSWindowDelegate, NSWindowStyleMask,
-    NSWindowTitleVisibility, NSWindowToolbarStyle,
+    NSOpenPanel, NSOpenSavePanelDelegate, NSSavePanel, NSScrollView, NSSearchField,
+    NSSecureTextField, NSTableColumn, NSTableView, NSTableViewDataSource, NSTableViewDelegate,
+    NSTextAlignment, NSTextField, NSTitlebarSeparatorStyle, NSToolbar, NSView, NSWindow,
+    NSWindowDelegate, NSWindowStyleMask, NSWindowTitleVisibility, NSWindowToolbarStyle,
 };
 use objc2_foundation::{
     MainThreadMarker, NSNotification, NSObject, NSObjectProtocol, NSPoint, NSProcessInfo, NSRect,
@@ -379,12 +379,11 @@ define_class!(
                 let selected = usize::try_from(selection.indexOfSelectedItem()).ok()
                     .and_then(|index| servers.get(index)).map(String::as_str);
                 let result = match response {
-                    value if value == NSAlertFirstButtonReturn => self.prompt_remote("Add Project Server", "Server URL", "")
-                        .map(|url| launcher::update_project_servers(None, Some(&url))),
-                    value if value == NSAlertSecondButtonReturn => selected.and_then(|current| {
-                        self.prompt_remote("Edit Project Server", "Server URL", current)
-                            .map(|url| launcher::update_project_servers(Some(current), Some(&url)))
-                    }),
+                    value if matches!(value, NSAlertFirstButtonReturn | NSAlertSecondButtonReturn) => {
+                        let previous = if value == NSAlertSecondButtonReturn { selected } else { None };
+                        if self.prompt_project_server(previous) { return; }
+                        continue;
+                    }
                     value if value == NSAlertThirdButtonReturn => selected.map(|current| launcher::update_project_servers(Some(current), None)),
                     _ => { self.reload_projects(); return; },
                 };
@@ -487,20 +486,45 @@ impl Delegate {
         });
     }
 
-    fn prompt_remote(&self, heading: &str, placeholder: &str, value: &str) -> Option<String> {
+    fn prompt_project_server(&self, previous: Option<&str>) -> bool {
+        use shrimply_components_appkit::controls::{column_append_intrinsic, column_stack};
+
         let mtm = self.mtm();
         let alert = NSAlert::new(mtm);
-        alert.setMessageText(&NSString::from_str(heading));
-        alert.addButtonWithTitle(ns_string!("Continue"));
+        alert.setMessageText(ns_string!("Sign In to Project Server"));
+        alert.addButtonWithTitle(ns_string!("Sign In"));
         alert.addButtonWithTitle(ns_string!("Cancel"));
-        let field = NSTextField::initWithFrame(
-            NSTextField::alloc(mtm),
-            NSRect::new(NSPoint::ZERO, NSSize::new(360.0, 28.0)),
+        let fields = column_stack(8.0, mtm);
+        fields.setFrameSize(NSSize::new(360.0, 80.0));
+        let url = NSTextField::initWithFrame(NSTextField::alloc(mtm), NSRect::ZERO);
+        let username = NSTextField::initWithFrame(NSTextField::alloc(mtm), NSRect::ZERO);
+        let password =
+            NSSecureTextField::initWithFrame(NSSecureTextField::alloc(mtm), NSRect::ZERO);
+        url.setPlaceholderString(Some(ns_string!("Server URL")));
+        username.setPlaceholderString(Some(ns_string!("Username")));
+        password.setPlaceholderString(Some(ns_string!("Password")));
+        url.setStringValue(&NSString::from_str(previous.unwrap_or_default()));
+        column_append_intrinsic(&fields, &url);
+        column_append_intrinsic(&fields, &username);
+        column_append_intrinsic(&fields, &password);
+        alert.setAccessoryView(Some(&fields));
+        if alert.runModal() != NSAlertFirstButtonReturn {
+            return false;
+        }
+        let previous = previous.map(str::to_owned);
+        let url = url.stringValue().to_string();
+        let username = username.stringValue().to_string();
+        let password = password.stringValue().to_string();
+        self.project_task(
+            move || {
+                launcher::sign_in_project_server(previous.as_deref(), &url, &username, &password)
+            },
+            |delegate, result| match result {
+                Ok(()) => delegate.reload_projects(),
+                Err(error) => delegate.show_error("Could not sign in", &error),
+            },
         );
-        field.setPlaceholderString(Some(&NSString::from_str(placeholder)));
-        field.setStringValue(&NSString::from_str(value));
-        alert.setAccessoryView(Some(&field));
-        (alert.runModal() == NSAlertFirstButtonReturn).then(|| field.stringValue().to_string())
+        true
     }
 
     fn open_remote(

@@ -19,7 +19,9 @@ async fn main() -> Result<(), String> {
         .ok_or("listen address must be UTF-8")?
         .parse()
         .map_err(|error| format!("invalid listen address: {error}"))?;
-    let token = std::env::var("SHRIMPLY_PROJECT_SERVER_TOKEN")
-        .map_err(|_| "set SHRIMPLY_PROJECT_SERVER_TOKEN")?;
-    server::serve(address, Path::new(&database), &token).await
+    let username = std::env::var("SHRIMPLY_PROJECT_SERVER_USERNAME")
+        .map_err(|_| "set SHRIMPLY_PROJECT_SERVER_USERNAME")?;
+    let password = std::env::var("SHRIMPLY_PROJECT_SERVER_PASSWORD")
+        .map_err(|_| "set SHRIMPLY_PROJECT_SERVER_PASSWORD")?;
+    server::serve(address, Path::new(&database), username, password).await
 }
