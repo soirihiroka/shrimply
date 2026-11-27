@@ -15,7 +15,7 @@ impl DecoderActivity {
 
     pub(crate) fn begin(&self) -> DecoderActivityGuard {
         self.pending
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |pending| {
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |pending| {
                 pending.checked_add(1)
             })
             .expect("decoder activity count overflowed");
@@ -36,7 +36,7 @@ pub struct DecoderActivityGuard {
 impl Drop for DecoderActivityGuard {
     fn drop(&mut self) {
         self.pending
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |pending| {
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |pending| {
                 pending.checked_sub(1)
             })
             .expect("decoder activity completed work that was not pending");

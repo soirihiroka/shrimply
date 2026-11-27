@@ -26,7 +26,7 @@ pub(crate) fn font_generation() -> u64 {
     CHANGES.get_or_init(|| {
         shrimply_fonts::subscribe(Arc::new(|| {
             GENERATION
-                .fetch_update(Ordering::AcqRel, Ordering::Acquire, |value| {
+                .try_update(Ordering::AcqRel, Ordering::Acquire, |value| {
                     value.checked_add(1)
                 })
                 .expect("font generation overflow");

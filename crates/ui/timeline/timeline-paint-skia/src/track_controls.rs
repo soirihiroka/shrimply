@@ -1,4 +1,3 @@
-use super::icons::*;
 use crate::canvas::Stroke;
 use crate::math::{row_screen_y, track_button_bounds};
 use crate::*;

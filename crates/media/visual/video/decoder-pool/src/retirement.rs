@@ -26,7 +26,7 @@ impl<D: Send + 'static> Retirement<D> {
                         RetirementWork::Decoder(decoder) => {
                             drop(decoder);
                             worker_pending
-                                .fetch_update(Ordering::AcqRel, Ordering::Acquire, |pending| {
+                                .try_update(Ordering::AcqRel, Ordering::Acquire, |pending| {
                                     pending.checked_sub(1)
                                 })
                                 .expect("decoder retirement count underflowed");
@@ -49,7 +49,7 @@ impl<D: Send + 'static> Retirement<D> {
 impl<D> Retirement<D> {
     pub(super) fn retire(&self, decoder: D) {
         self.pending
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |pending| {
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |pending| {
                 pending.checked_add(1)
             })
             .expect("decoder retirement count overflowed");

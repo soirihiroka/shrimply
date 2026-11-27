@@ -272,7 +272,7 @@ impl ImportQueue {
     pub(crate) fn reserve_batch(&mut self) -> BatchId {
         BatchId(
             NEXT_BATCH
-                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |batch| {
+                .try_update(Ordering::Relaxed, Ordering::Relaxed, |batch| {
                     batch.checked_add(1)
                 })
                 .expect("import batch counter overflow"),

@@ -1064,7 +1064,7 @@ fn index([x, y, z]: [u32; 3]) -> usize {
 
 pub(crate) fn revision() -> u64 {
     static NEXT: AtomicU64 = AtomicU64::new(1);
-    NEXT.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
+    NEXT.try_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
         value.checked_add(1)
     })
     .expect("voxel revision counter overflowed")

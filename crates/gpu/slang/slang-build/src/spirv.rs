@@ -48,13 +48,12 @@ struct Declaration<'a> {
 /// Emit the same nonrecursive declarations in dependency order, with their IDs,
 /// layouts, constants, annotations and executable instructions unchanged.
 pub fn order_declarations(code: &[u8]) -> Vec<u8> {
-    assert!(
-        code.len().is_multiple_of(size_of::<u32>()),
-        "unaligned SPIR-V code"
-    );
-    let words = code
-        .chunks_exact(size_of::<u32>())
-        .map(|word| u32::from_le_bytes(word.try_into().expect("SPIR-V word")))
+    let (words, remainder) = code.as_chunks();
+    assert!(remainder.is_empty(), "unaligned SPIR-V code");
+    let words = words
+        .iter()
+        .copied()
+        .map(u32::from_le_bytes)
         .collect::<Vec<_>>();
     assert!(
         words.len() >= HEADER_WORDS && words[0] == MAGIC,

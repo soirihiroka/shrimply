@@ -1161,7 +1161,7 @@ fn managed_location(location: ManagedLocation) -> sys::CUmemLocation {
 fn next_access(shared: &Shared) -> u64 {
     shared
         .access
-        .fetch_update(Ordering::AcqRel, Ordering::Acquire, |value| {
+        .try_update(Ordering::AcqRel, Ordering::Acquire, |value| {
             value.checked_add(1)
         })
         .expect("GPU memory access counter overflow")

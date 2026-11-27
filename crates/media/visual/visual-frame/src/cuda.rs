@@ -93,12 +93,12 @@ impl GpuStorage {
             })
             .expect("GPU visual frame byte accounting overflowed");
         GPU_FRAME_BYTES
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |bytes| {
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |bytes| {
                 bytes.checked_add(allocation_bytes)
             })
             .expect("GPU visual frame byte counter overflowed");
         GPU_FRAME_COUNT
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |count| {
                 count.checked_add(1)
             })
             .expect("GPU visual frame counter overflowed");
@@ -115,12 +115,12 @@ impl GpuStorage {
 impl Drop for GpuStorage {
     fn drop(&mut self) {
         GPU_FRAME_COUNT
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |count| {
                 count.checked_sub(1)
             })
             .expect("GPU visual frame counter underflowed");
         GPU_FRAME_BYTES
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |bytes| {
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |bytes| {
                 bytes.checked_sub(self.allocation_bytes)
             })
             .expect("GPU visual frame byte counter underflowed");
