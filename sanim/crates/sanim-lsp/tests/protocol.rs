@@ -1501,7 +1501,7 @@ fn literal_completion_edits_round_trip_sanim_braces_and_control_characters() {
     assert!(!text.contains("\\b") && !text.contains("\\u"));
     source.replace_range(declaration.len() + start..declaration.len() + end, text);
     let mut files = sanim_lang::MemorySources::default();
-    files.insert("main.sanim", format!("{}\nAnimation()", &source));
+    files.insert("main.sanim", format!("{source}\nAnimation()"));
     let prepared = sanim_lang::Engine::default()
         .prepare("main.sanim", &files, &Default::default())
         .unwrap_or_else(|error| panic!("{error}; source={source:?}"));

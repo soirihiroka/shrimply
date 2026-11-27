@@ -1,4 +1,6 @@
 //! Bounded, schema-driven decoding. No filesystem or network access.
+#![recursion_limit = "256"]
+
 pub mod code;
 mod csv;
 pub mod dataframe;

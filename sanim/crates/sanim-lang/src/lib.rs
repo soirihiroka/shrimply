@@ -1,4 +1,6 @@
 //! Sanim: a bounded, typed animation scripting language, independent of any editor.
+#![recursion_limit = "256"]
+
 mod analysis;
 pub(crate) mod animation_plan;
 mod animations;

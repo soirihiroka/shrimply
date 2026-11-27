@@ -1,3 +1,5 @@
+#![recursion_limit = "256"]
+
 use sanim_runtime::{Runtime, Snapshot};
 use std::{
     collections::BTreeMap,

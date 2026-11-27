@@ -1,4 +1,6 @@
 //! Background preparation and dependency watching, independent of any editor.
+#![recursion_limit = "256"]
+
 mod watcher;
 use watcher::WatchedSources;
 mod notifications;

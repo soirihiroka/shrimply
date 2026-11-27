@@ -278,19 +278,15 @@ wait(1s)
 #[test]
 fn documented_procedural_world_is_runnable() {
     let docs = include_str!("../../../../docs/source/sanim/voxels.rst");
-    let section = docs
-        .split("Procedural fields and reusable assets\n")
-        .nth(1)
-        .unwrap();
-    let code = section
-        .split(".. code-block:: text\n\n")
-        .nth(1)
-        .unwrap()
-        .split("\nNoise kinds")
-        .next()
-        .unwrap();
+    let (_, section) = docs
+        .split_once("Procedural fields and reusable assets\n")
+        .expect("missing procedural fields section");
+    let (_, code) = section
+        .split_once(".. code-block:: sanim\n\n")
+        .expect("missing procedural world example");
     let source = code
         .lines()
+        .take_while(|line| line.is_empty() || line.starts_with("   "))
         .map(|line| line.strip_prefix("   ").unwrap_or(line))
         .collect::<Vec<_>>()
         .join("\n");

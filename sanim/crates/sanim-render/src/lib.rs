@@ -1,4 +1,6 @@
 //! Skia command recording, native bitmap/SVG assets and explicit headless raster output.
+#![recursion_limit = "256"]
+
 use sanim_core::*;
 use skia_safe::{Canvas, Picture, PictureRecorder, Rect};
 use std::{collections::BTreeMap, rc::Rc, sync::Arc};
