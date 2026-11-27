@@ -4,7 +4,7 @@ mod watch;
 use serde_json::{Value, json};
 #[cfg(target_os = "android")]
 use shrimply_editing_runtime::{
-    attached::{self, VersionPrompt},
+    attached::{self, VersionMismatch, VersionPrompt},
     embedded,
 };
 use shrimply_math_core::Time;
@@ -926,7 +926,10 @@ impl Drop for ProjectBackend {
 #[cfg(target_os = "android")]
 fn version_prompt(server: &str, request: &Value) -> Option<Value> {
     let prompt = VersionPrompt::remote(server)?;
-    let identity = serde_json::to_value(&prompt.mismatch).expect("encode server version identity");
+    let VersionMismatch::Remote { server, service } = &prompt.mismatch else {
+        unreachable!("remote probe returns a remote mismatch");
+    };
+    let identity = json!({ "server": server, "version": service });
     (request["force_version"] != identity).then(|| {
         json!({
             "version_mismatch": { "body": prompt.to_string(), "identity": identity }

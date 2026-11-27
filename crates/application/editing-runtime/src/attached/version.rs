@@ -11,7 +11,7 @@ use shrimply_editing_api::{
 use shrimply_project_document::project::ProjectLockOwner;
 use shrimply_project_service::{ProjectClient, SERVER_PROTOCOL, ServerVersion};
 
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum VersionMismatch {
     Local {
         owner: ProjectLockOwner,
