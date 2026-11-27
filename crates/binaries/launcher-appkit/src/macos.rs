@@ -379,7 +379,7 @@ define_class!(
                 let selected = usize::try_from(selection.indexOfSelectedItem()).ok()
                     .and_then(|index| servers.get(index)).map(String::as_str);
                 let result = match response {
-                    value if matches!(value, NSAlertFirstButtonReturn | NSAlertSecondButtonReturn) => {
+                    value if value == NSAlertFirstButtonReturn || value == NSAlertSecondButtonReturn => {
                         let previous = if value == NSAlertSecondButtonReturn { selected } else { None };
                         if self.prompt_project_server(previous) { return; }
                         continue;
@@ -487,7 +487,7 @@ impl Delegate {
     }
 
     fn prompt_project_server(&self, previous: Option<&str>) -> bool {
-        use shrimply_components_appkit::controls::{column_append_intrinsic, column_stack};
+        use shrimply_components_appkit::{column_append_intrinsic, column_stack};
 
         let mtm = self.mtm();
         let alert = NSAlert::new(mtm);
