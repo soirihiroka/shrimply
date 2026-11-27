@@ -495,7 +495,7 @@ impl ProjectLoader {
                 body,
             };
         }
-        self.finish_native_load(Ok(ProjectValidationOutcome::Valid(project)))
+        self.finish_native_load(Ok(Some(ProjectValidationOutcome::Valid(project))))
     }
 
     pub fn confirm_kdenlive(&mut self, convert: bool) -> LoadEvent {
