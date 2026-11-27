@@ -43,8 +43,7 @@ jobs:
 
       - name: Install Rust toolchain and WebAssembly target
         run: |
-          toolchain=$(sed -n 's/^RUST_TOOLCHAIN ?= //p' Makefile)
-          rustup toolchain install "$toolchain" --profile minimal --component rustfmt --component clippy
+          rustup show
           make target
 
       - name: Check, build, and verify installation

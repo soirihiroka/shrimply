@@ -1,5 +1,5 @@
 RUSTUP ?= rustup
-RUST_TOOLCHAIN ?= nightly-2026-04-03
+RUST_TOOLCHAIN ?= $(firstword $(shell $(RUSTUP) show active-toolchain))
 CARGO = $(RUSTUP) run $(RUST_TOOLCHAIN) cargo
 ARGS ?=
 

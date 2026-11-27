@@ -19,9 +19,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
+WORKDIR /src
+COPY rust-toolchain.toml ./
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
         | sh -s -- -y --default-toolchain none --profile minimal \
-    && rustup toolchain install nightly-2026-04-03 --profile minimal
+    && rustup show
 
 RUN flatpak remote-add --user --if-not-exists flathub \
         https://dl.flathub.org/repo/flathub.flatpakrepo \
@@ -39,7 +41,6 @@ ENV RUSTUP_HOME=/usr/local/rustup
 ENV CARGO_HOME=/usr/local/cargo
 ENV PATH=/usr/local/cargo/bin:${PATH}
 
-WORKDIR /src
 COPY . .
 ARG SHRIMPLY_BUILD_GIT_HASH
 RUN tar --sort=name --owner=0 --group=0 --numeric-owner \
