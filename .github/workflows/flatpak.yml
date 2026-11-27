@@ -7,6 +7,7 @@ on:
     paths:
       - ".github/workflows/flatpak.yml"
       - ".github/actions/cache-cargo/**"
+      - ".github/actions/setup-flatpak/**"
       - ".github/scripts/**"
       - "packaging/flatpak/**"
       - "packaging/linux/**"
@@ -42,18 +43,10 @@ defaults:
 
 env:
   TZ: UTC
-  CARGO_HOME: /usr/local/cargo
-  CUDA_KEYRING_SHA256: d2a6b11c096396d868758b86dab1823b25e14d70333f1dfa74da5ddaf6a06dba
-  CUDA_SERIES: 12-9
-  CUDA_VERSION: "12.9"
-  FLATPAK_BUILD_DIR: target/flatpak-gtk/build
   FLATPAK_BUNDLE: dist/shrimply-gtk-x86_64.flatpak
   FLATPAK_REPO_DIR: target/flatpak-gtk/repo
-  FLATPAK_STATE_DIR: target/flatpak-gtk/state
   FLATPAK_PAGES_DIR: target/flatpak-pages
   FLATPAK_PAGES_URL: https://soirihiroka.github.io/shrimply
-  GNOME_RUNTIME_VERSION: "51"
-  RUSTUP_HOME: /usr/local/rustup
 
 jobs:
   build:
@@ -71,183 +64,8 @@ jobs:
           persist-credentials: false
           submodules: recursive
 
-      - name: Install host build dependencies
-        run: |
-          # Chrome is preinstalled on the runner but is not a build dependency.
-          for source in /etc/apt/sources.list.d/*; do
-            if grep -q 'dl.google.com/linux/chrome' "${source}"; then
-              sudo mv "${source}" "${source}.disabled"
-            fi
-          done
-          sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends \
-            ca-certificates \
-            clang \
-            curl \
-            flatpak \
-            flatpak-builder \
-            g++ \
-            git \
-            gnupg \
-            ostree \
-            libclang-dev \
-            librsvg2-common \
-            make \
-            pkg-config
-
-          cuda_keyring="${RUNNER_TEMP}/cuda-keyring.deb"
-          curl --fail --location --silent --show-error \
-            "https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb" \
-            --output "${cuda_keyring}"
-          echo "${CUDA_KEYRING_SHA256}  ${cuda_keyring}" | sha256sum --check --strict
-          sudo dpkg --install "${cuda_keyring}"
-          sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends "cuda-nvcc-${CUDA_SERIES}"
-          sudo apt-get clean
-
-          sudo install -d -o "${USER}" -g "$(id -gn)" "${RUSTUP_HOME}" "${CARGO_HOME}"
-          sudo install -d /usr/local/libclang-deps
-          for library in \
-            libbsd.so.0 \
-            libedit.so.2 \
-            libffi.so.8 \
-            libicudata.so.74 \
-            libicuuc.so.74 \
-            liblzma.so.5 \
-            libmd.so.0 \
-            libtinfo.so.6 \
-            libxml2.so.2 \
-            libz.so.1 \
-            libzstd.so.1
-          do
-            sudo ln -sf "/run/host/usr/lib/x86_64-linux-gnu/${library}" "/usr/local/libclang-deps/${library}"
-          done
-
-          test -x "/usr/local/cuda-${CUDA_VERSION}/bin/nvcc"
-          test -f "/usr/local/cuda-${CUDA_VERSION}/include/cuda.h"
-          test -f "/usr/local/cuda-${CUDA_VERSION}/lib64/stubs/libcuda.so"
-
-      - name: Restore Rust toolchain
-        id: rust-cache
-        uses: actions/cache/restore@v6
-        with:
-          path: |
-            /usr/local/cargo
-            /usr/local/rustup
-          key: rust-ubuntu-24.04-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml') }}
-
-      - name: Install Rust toolchain
-        run: |
-          if [[ ! -x "${CARGO_HOME}/bin/rustup" ]]; then
-            rustup_init="${RUNNER_TEMP}/rustup-init"
-            curl --proto '=https' --tlsv1.2 --fail --location --silent --show-error \
-              https://sh.rustup.rs \
-              --output "${rustup_init}"
-            chmod +x "${rustup_init}"
-            "${rustup_init}" --yes --default-toolchain none --profile minimal
-          fi
-          echo "${CARGO_HOME}/bin" >> "${GITHUB_PATH}"
-          "${CARGO_HOME}/bin/rustup" show
-
-      - name: Save Rust toolchain
-        if: steps.rust-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v6
-        with:
-          path: |
-            /usr/local/cargo
-            /usr/local/rustup
-          key: ${{ steps.rust-cache.outputs.cache-primary-key }}
-
-      - name: Install GNOME SDK
-        run: |
-          flatpak remote-add --user --if-not-exists flathub \
-            https://dl.flathub.org/repo/flathub.flatpakrepo
-          flatpak install --user --assumeyes --noninteractive flathub \
-            "org.gnome.Sdk//${GNOME_RUNTIME_VERSION}" \
-            org.freedesktop.Sdk.Extension.llvm22//26.08
-
-      # Both builds must use the same manifest path: --state-dir keys the cache by it.
-      - name: Create Flatpak source archive
-        id: source
-        shell: bash
-        run: |
-          source_archive="${RUNNER_TEMP}/shrimply-source.tar"
-          bash packaging/flatpak/source-archive.sh "${source_archive}"
-          source_hash="$(sha256sum "${source_archive}" | cut -d ' ' -f 1)"
-          hashed_archive="${RUNNER_TEMP}/shrimply-source-${source_hash}.tar"
-          mv "${source_archive}" "${hashed_archive}"
-
-          manifest="${RUNNER_TEMP}/dev.shrimply.Shrimply.yml"
-          bash packaging/flatpak/prepare-manifest.sh "${manifest}" "${hashed_archive}" "${GITHUB_SHA}"
-          echo "manifest=${manifest}" >> "${GITHUB_OUTPUT}"
-
-      - name: Resolve dependency cache key
-        id: dependency-cache-key
-        run: |
-          {
-            sed '/^  - name: shrimply-gtk$/,$d' dev.shrimply.Shrimply.yml
-            git rev-parse :external/ffmpeg
-            printf '%s\n' "${{ hashFiles('packaging/flatpak/*.patch') }}"
-          } \
-            | sha256sum \
-            | cut -d ' ' -f 1 \
-            | sed 's/^/hash=/' >> "${GITHUB_OUTPUT}"
-
-      - name: Restore Flatpak dependency cache
-        id: dependency-cache
-        uses: actions/cache/restore@v6
-        with:
-          path: ${{ env.FLATPAK_STATE_DIR }}
-          key: flatpak-dependencies-v2-ubuntu-24.04-${{ runner.arch }}-cuda-${{ env.CUDA_VERSION }}-${{ steps.dependency-cache-key.outputs.hash }}
-          restore-keys: |
-            flatpak-dependencies-v2-ubuntu-24.04-${{ runner.arch }}-cuda-${{ env.CUDA_VERSION }}-
-
-      - name: Prepare Flatpak dependencies
-        if: steps.dependency-cache.outputs.cache-hit != 'true'
-        run: |
-          mkdir -p "${FLATPAK_BUILD_DIR}" "${FLATPAK_STATE_DIR}"
-          flatpak-builder \
-            --user \
-            --ccache \
-            --disable-rofiles-fuse \
-            --force-clean \
-            --state-dir="${FLATPAK_STATE_DIR}" \
-            --install-deps-from=flathub \
-            --stop-at=shrimply-gtk \
-            "${FLATPAK_BUILD_DIR}" \
-            "${{ steps.source.outputs.manifest }}"
-
-      - name: Save Flatpak dependency cache
-        if: steps.dependency-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v6
-        with:
-          path: ${{ env.FLATPAK_STATE_DIR }}
-          key: ${{ steps.dependency-cache.outputs.cache-primary-key }}
-
-      - name: Resolve application cache key
-        id: application-cache-key
-        run: |
-          sdk_commit="$(flatpak info --user --show-commit "org.gnome.Sdk//${GNOME_RUNTIME_VERSION}")"
-          native_versions="$(dpkg-query -W)"
-          # Generated FFI bindings must match the bundled native libraries.
-          native_hash="$(printf '%s\n' "${ImageOS}" "${ImageVersion}" "${sdk_commit}" "${native_versions}" "${{ steps.dependency-cache-key.outputs.hash }}" \
-            | LC_ALL=C sort | sha256sum | cut -d ' ' -f 1)"
-          echo "prefix=flatpak-application-v2-ubuntu-24.04-${{ runner.arch }}-cuda-${CUDA_VERSION}-${{ hashFiles('rust-toolchain.toml') }}-${native_hash}" >> "${GITHUB_OUTPUT}"
-
-      - name: Restore Flatpak application cache
-        id: application-cache
-        uses: actions/cache/restore@v6
-        with:
-          path: ${{ env.FLATPAK_STATE_DIR }}/ccache/cargo-target
-          key: ${{ steps.application-cache-key.outputs.prefix }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/**/Cargo.toml', 'external/**/Cargo.toml', '.cargo/config.toml', 'Makefile', 'dev.shrimply.Shrimply.yml', 'packaging/flatpak/nvcc-g++', '.github/workflows/flatpak.yml') }}-${{ github.sha }}
-          restore-keys: |
-            ${{ steps.application-cache-key.outputs.prefix }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/**/Cargo.toml', 'external/**/Cargo.toml', '.cargo/config.toml', 'Makefile', 'dev.shrimply.Shrimply.yml', 'packaging/flatpak/nvcc-g++', '.github/workflows/flatpak.yml') }}-
-            ${{ steps.application-cache-key.outputs.prefix }}-
-
-      - uses: ./.github/actions/cache-cargo
-        with:
-          scope: flatpak
-          cargo-home: ${{ env.FLATPAK_STATE_DIR }}/ccache/cargo-home
+      - uses: ./.github/actions/setup-flatpak
+        id: setup
 
       - name: Build Flatpak
         run: |
@@ -266,22 +84,22 @@ jobs:
             --repo="${FLATPAK_REPO_DIR}" \
             --install-deps-from=flathub \
             "${FLATPAK_BUILD_DIR}" \
-            "${{ steps.source.outputs.manifest }}"
+            "${{ steps.setup.outputs.manifest }}"
           df -h /
 
       - name: Save Flatpak application cache
         id: save-application-cache
-        if: ${{ success() && steps.application-cache.outputs.cache-hit != 'true' }}
+        if: ${{ success() && steps.setup.outputs.application-hit != 'true' }}
         uses: actions/cache/save@v6
         with:
           path: ${{ env.FLATPAK_STATE_DIR }}/ccache/cargo-target
-          key: ${{ steps.application-cache.outputs.cache-primary-key }}
+          key: ${{ steps.setup.outputs.application-key }}
 
       - name: Prune old Flatpak application caches
         if: github.ref == 'refs/heads/main' && steps.save-application-cache.outcome == 'success'
         env:
           GH_TOKEN: ${{ github.token }}
-          CACHE_KEY: ${{ steps.application-cache.outputs.cache-primary-key }}
+          CACHE_KEY: ${{ steps.setup.outputs.application-key }}
         run: |
           bash .github/scripts/prune-application-caches.sh "${CACHE_KEY}" \
             "flatpak-application-v2-ubuntu-24.04-${{ runner.arch }}-" \

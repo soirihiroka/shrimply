@@ -2,9 +2,9 @@ name: CI checks
 
 on:
   push:
-    branches: [android]
+    branches: [main]
   pull_request:
-    branches: [main, android]
+    branches: [main]
   workflow_dispatch:
 
 permissions:
