@@ -99,6 +99,9 @@ foreach ($license in @(
     Copy-Item $source (Join-Path $licenses $license.Name)
 }
 foreach ($license in @(
+    @{ Source = "vendor/pocketsphinx/LICENSE"; Name = "PocketSphinx-code.txt" },
+    @{ Source = "vendor/pocketsphinx/MODEL-LICENSE"; Name = "PocketSphinx-model.txt" },
+    @{ Source = "vendor/rhubarb-lip-sync/LICENSE"; Name = "Rhubarb-Lip-Sync.txt" },
     @{ Source = "vendor/vision/LICENSE"; Name = "OpenCV-Vision.txt" },
     @{ Source = "vendor/rubberband/COPYING"; Name = "Rubber-Band.txt" },
     @{ Source = "crates/math/color/src/css/LICENSE"; Name = "GTK-Pango-Color.txt" },
