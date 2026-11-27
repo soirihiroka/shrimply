@@ -7903,7 +7903,9 @@ name = "shrimply-project-evaluation"
 version = "0.1.0"
 dependencies = [
  "glam 0.34.1",
- "sanim-lang",
+ "hashbrown 0.17.1",
+ "num-traits",
+ "rhai",
  "shrimply-3dgs-core",
  "shrimply-lip-sync",
  "shrimply-math-color",
@@ -8394,7 +8396,6 @@ version = "0.1.0"
 dependencies = [
  "glam 0.34.1",
  "num-traits",
- "sanim-core",
  "serde",
  "shrimply-math-color",
  "shrimply-math-core",
