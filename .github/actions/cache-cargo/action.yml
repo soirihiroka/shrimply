@@ -11,33 +11,19 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Cache Cargo downloads
-      uses: actions/cache@v6
-      env:
-        DOWNLOADS: ${{ inputs.cargo-home || env.CARGO_HOME || '~/.cargo' }}
-        PREFIX: cargo-downloads-v1-${{ runner.os }}-${{ runner.arch }}-${{ inputs.scope }}
-        LOCKS: ${{ hashFiles('Cargo.lock', 'sanim/Cargo.lock', 'sanim/editors/zed/Cargo.lock') }}
-      with:
-        path: |
-          ${{ env.DOWNLOADS }}/registry/cache
-          ${{ env.DOWNLOADS }}/registry/index
-          ${{ env.DOWNLOADS }}/git/db
-        key: ${{ env.PREFIX }}-${{ env.LOCKS }}-${{ github.workflow }}
-        restore-keys: |
-          ${{ env.PREFIX }}-${{ env.LOCKS }}-
-          ${{ env.PREFIX }}-
-
     - name: Install sccache
       uses: mozilla-actions/sccache-action@v0.0.11
       with:
         disable_annotations: ${{ inputs.sandbox-cache != '' }}
 
-    - name: Configure the Rust compiler cache
-      id: compiler
+    - name: Configure Rust caches
       shell: bash
       env:
+        DOWNLOADS: ${{ inputs.cargo-home || env.CARGO_HOME || '~/.cargo' }}
+        DOWNLOAD_PREFIX: cargo-downloads-v1-${{ runner.os }}-${{ runner.arch }}-${{ inputs.scope }}
+        LOCKS: ${{ hashFiles('Cargo.lock', 'sanim/Cargo.lock', 'sanim/editors/zed/Cargo.lock') }}
         SANDBOX_CACHE: ${{ inputs.sandbox-cache }}
-        CACHE_PREFIX: sccache-v1-${{ runner.os }}-${{ runner.arch }}-${{ inputs.scope }}-${{ github.workflow }}-${{ hashFiles('rust-toolchain.toml') }}
+        COMPILER_PREFIX: sccache-v1-${{ runner.os }}-${{ runner.arch }}-${{ inputs.scope }}-${{ github.workflow }}-${{ hashFiles('rust-toolchain.toml') }}
       run: |
         if [[ -n "$SANDBOX_CACHE" ]]; then
           install -Dm755 "$SCCACHE_PATH" "$SANDBOX_CACHE/sccache"
@@ -47,17 +33,33 @@ runs:
           {
             echo "CARGO_INCREMENTAL=0"
             echo "RUSTC_WRAPPER=sccache"
-            echo "SCCACHE_DIR=$directory"
             echo "SCCACHE_CACHE_SIZE=512M"
-            echo "SCCACHE_CACHE_KEY=$CACHE_PREFIX-$GITHUB_SHA"
           } >> "$GITHUB_ENV"
         fi
-        echo "directory=$directory" >> "$GITHUB_OUTPUT"
-        echo "prefix=$CACHE_PREFIX" >> "$GITHUB_OUTPUT"
+        {
+          echo "CARGO_DOWNLOADS_PATH=$DOWNLOADS"
+          echo "CARGO_DOWNLOADS_PREFIX=$DOWNLOAD_PREFIX"
+          echo "CARGO_DOWNLOADS_LOCK_PREFIX=$DOWNLOAD_PREFIX-$LOCKS"
+          echo "SCCACHE_DIR=$directory"
+          echo "SCCACHE_CACHE_PREFIX=$COMPILER_PREFIX"
+          echo "SCCACHE_CACHE_KEY=$COMPILER_PREFIX-$GITHUB_SHA"
+        } >> "$GITHUB_ENV"
+
+    - name: Cache Cargo downloads
+      uses: actions/cache@v6
+      with:
+        path: |
+          ${{ env.CARGO_DOWNLOADS_PATH }}/registry/cache
+          ${{ env.CARGO_DOWNLOADS_PATH }}/registry/index
+          ${{ env.CARGO_DOWNLOADS_PATH }}/git/db
+        key: ${{ env.CARGO_DOWNLOADS_LOCK_PREFIX }}-${{ github.workflow }}
+        restore-keys: |
+          ${{ env.CARGO_DOWNLOADS_LOCK_PREFIX }}-
+          ${{ env.CARGO_DOWNLOADS_PREFIX }}-
 
     - name: Cache Rust compiler outputs
       uses: actions/cache@v6
       with:
-        path: ${{ steps.compiler.outputs.directory }}
-        key: ${{ steps.compiler.outputs.prefix }}-${{ github.sha }}
-        restore-keys: ${{ steps.compiler.outputs.prefix }}-
+        path: ${{ env.SCCACHE_DIR }}
+        key: ${{ env.SCCACHE_CACHE_KEY }}
+        restore-keys: ${{ env.SCCACHE_CACHE_PREFIX }}-

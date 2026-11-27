@@ -25,6 +25,11 @@ flatpak update --user dev.shrimply.Shrimply
 EOF
 
 if ! gh release view "${tag}" >/dev/null 2>&1; then
+  latest="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha')"
+  if [[ "${GITHUB_SHA}" != "${latest}" ]]; then
+    echo "::notice::Using published build artifacts for superseded commit ${GITHUB_SHA}"
+    exit 0
+  fi
   if gh release create "${tag}" "$@" \
     --target "${GITHUB_SHA}" \
     --title "Shrimply Prerelease ${release_date} (${short_sha})" \
