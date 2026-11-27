@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - ".github/workflows/android.yml"
+      - ".github/actions/cache-cargo/**"
       - ".github/actions/setup-android/**"
       - ".github/scripts/publish-prerelease.sh"
       - "android/**"

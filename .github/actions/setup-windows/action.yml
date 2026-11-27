@@ -29,6 +29,10 @@ runs:
         git config --global core.longpaths true
         New-ItemProperty -Path HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem -Name LongPathsEnabled -Value 1 -PropertyType DWord -Force | Out-Null
 
+    - uses: ./.github/actions/cache-cargo
+      with:
+        scope: windows
+
     - name: Check out source submodules
       shell: powershell
       run: |

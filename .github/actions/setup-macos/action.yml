@@ -22,6 +22,10 @@ runs:
         echo "CARGO_UNSTABLE_CHECKSUM_FRESHNESS=true" >> "$GITHUB_ENV"
         echo "MACOSX_DEPLOYMENT_TARGET=15.0" >> "$GITHUB_ENV"
 
+    - uses: ./.github/actions/cache-cargo
+      with:
+        scope: macos
+
     - name: Install host build dependencies
       shell: bash
       run: |
@@ -81,10 +85,7 @@ runs:
       id: application-cache
       uses: actions/cache/restore@v6
       with:
-        path: |
-          target/${{ inputs.profile }}
-          ${{ env.CARGO_HOME }}/registry
-          ${{ env.CARGO_HOME }}/git
+        path: target/${{ inputs.profile }}
         key: ${{ steps.application-cache-key.outputs.prefix }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/**/Cargo.toml', 'external/**/Cargo.toml', '.cargo/config.toml', 'Makefile', '.github/workflows/macos.yml') }}-${{ github.sha }}
         restore-keys: |
           ${{ steps.application-cache-key.outputs.prefix }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/**/Cargo.toml', 'external/**/Cargo.toml', '.cargo/config.toml', 'Makefile', '.github/workflows/macos.yml') }}-

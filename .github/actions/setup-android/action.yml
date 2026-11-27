@@ -51,16 +51,19 @@ runs:
         echo "${JAVA_HOME}/bin" >> "${GITHUB_PATH}"
         "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37.0" "build-tools;37.0.0" "ndk;${ANDROID_NDK_VERSION}"
 
-    - uses: actions/cache@v6
+    - uses: ./.github/actions/cache-cargo
+      with:
+        scope: android
+
+    - name: Cache Gradle dependencies
+      uses: actions/cache@v6
       with:
         path: |
-          ~/.cargo/registry
-          ~/.cargo/git
           ~/.gradle/caches
           ~/.gradle/wrapper
-        key: android-release-v1-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml', 'android/**/*.kts', 'android/gradle/libs.versions.toml', 'android/gradle/wrapper/gradle-wrapper.properties') }}
+        key: android-gradle-v1-${{ runner.os }}-${{ hashFiles('android/**/*.kts', 'android/gradle/libs.versions.toml', 'android/gradle/wrapper/gradle-wrapper.properties') }}
         restore-keys: |
-          android-release-v1-${{ runner.os }}-
+          android-gradle-v1-${{ runner.os }}-
 
     - name: Read the pinned FFmpeg commit
       id: ffmpeg

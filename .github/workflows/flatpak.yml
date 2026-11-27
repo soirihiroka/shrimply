@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - ".github/workflows/flatpak.yml"
+      - ".github/actions/cache-cargo/**"
       - ".github/scripts/**"
       - "packaging/flatpak/**"
       - "packaging/linux/**"
@@ -237,13 +238,16 @@ jobs:
         id: application-cache
         uses: actions/cache/restore@v6
         with:
-          path: |
-            ${{ env.FLATPAK_STATE_DIR }}/ccache/cargo-home
-            ${{ env.FLATPAK_STATE_DIR }}/ccache/cargo-target
+          path: ${{ env.FLATPAK_STATE_DIR }}/ccache/cargo-target
           key: ${{ steps.application-cache-key.outputs.prefix }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/**/Cargo.toml', 'external/**/Cargo.toml', '.cargo/config.toml', 'Makefile', 'dev.shrimply.Shrimply.yml', 'packaging/flatpak/nvcc-g++', '.github/workflows/flatpak.yml') }}-${{ github.sha }}
           restore-keys: |
             ${{ steps.application-cache-key.outputs.prefix }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/**/Cargo.toml', 'external/**/Cargo.toml', '.cargo/config.toml', 'Makefile', 'dev.shrimply.Shrimply.yml', 'packaging/flatpak/nvcc-g++', '.github/workflows/flatpak.yml') }}-
             ${{ steps.application-cache-key.outputs.prefix }}-
+
+      - uses: ./.github/actions/cache-cargo
+        with:
+          scope: flatpak
+          cargo-home: ${{ env.FLATPAK_STATE_DIR }}/ccache/cargo-home
 
       - name: Build Flatpak
         run: |
@@ -270,9 +274,7 @@ jobs:
         if: ${{ success() && steps.application-cache.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@v6
         with:
-          path: |
-            ${{ env.FLATPAK_STATE_DIR }}/ccache/cargo-home
-            ${{ env.FLATPAK_STATE_DIR }}/ccache/cargo-target
+          path: ${{ env.FLATPAK_STATE_DIR }}/ccache/cargo-target
           key: ${{ steps.application-cache.outputs.cache-primary-key }}
 
       - name: Prune old Flatpak application caches

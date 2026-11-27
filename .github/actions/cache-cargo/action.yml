@@ -1,0 +1,28 @@
+name: Cache Cargo downloads
+description: Reuse registry archives, indexes, and Git dependencies independently of build outputs.
+inputs:
+  cargo-home:
+    description: Cargo home on the runner when it differs from the build environment.
+    required: false
+    default: ""
+  scope:
+    description: Build environment that owns the cache.
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Cache Cargo downloads
+      uses: actions/cache@v6
+      env:
+        DOWNLOADS: ${{ inputs.cargo-home || env.CARGO_HOME || '~/.cargo' }}
+        PREFIX: cargo-downloads-v1-${{ runner.os }}-${{ runner.arch }}-${{ inputs.scope }}
+        LOCKS: ${{ hashFiles('Cargo.lock', 'sanim/Cargo.lock', 'sanim/editors/zed/Cargo.lock') }}
+      with:
+        path: |
+          ${{ env.DOWNLOADS }}/registry/cache
+          ${{ env.DOWNLOADS }}/registry/index
+          ${{ env.DOWNLOADS }}/git/db
+        key: ${{ env.PREFIX }}-${{ env.LOCKS }}-${{ github.workflow }}
+        restore-keys: |
+          ${{ env.PREFIX }}-${{ env.LOCKS }}-
+          ${{ env.PREFIX }}-

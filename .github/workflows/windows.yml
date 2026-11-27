@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - ".github/workflows/windows.yml"
+      - ".github/actions/cache-cargo/**"
       - ".github/actions/setup-windows/**"
       - ".github/scripts/publish-prerelease.sh"
       - "packaging/windows/**"

@@ -7,6 +7,7 @@ on:
   pull_request:
     paths:
       - ".github/workflows/sanim-presenter.yml"
+      - ".github/actions/cache-cargo/**"
       - ".cargo/**"
       - "Cargo.toml"
       - "crates/**"
@@ -38,6 +39,10 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
+
+      - uses: ./.github/actions/cache-cargo
+        with:
+          scope: sanim-presenter
 
       - name: Install Linux build dependencies
         if: runner.os == 'Linux'

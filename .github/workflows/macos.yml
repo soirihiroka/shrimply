@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - ".github/workflows/macos.yml"
+      - ".github/actions/cache-cargo/**"
       - ".github/actions/setup-macos/**"
       - ".github/scripts/**"
       - "packaging/macos/**"
@@ -66,10 +67,7 @@ jobs:
         if: ${{ success() && steps.setup.outputs.application-hit != 'true' }}
         uses: actions/cache/save@v6
         with:
-          path: |
-            target/release
-            ${{ env.CARGO_HOME }}/registry
-            ${{ env.CARGO_HOME }}/git
+          path: target/release
           key: ${{ steps.setup.outputs.application-key }}
 
       - name: Prune old macOS application caches
