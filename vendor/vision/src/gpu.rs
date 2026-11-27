@@ -139,7 +139,11 @@ impl TrackingJob {
         }
         self.original_points
             .iter()
-            .zip(output.chunks_exact(RESULT_COMPONENTS * size_of::<f32>()))
+            .zip(
+                output
+                    .as_chunks::<{ RESULT_COMPONENTS * size_of::<f32>() }>()
+                    .0,
+            )
             .map(|(&previous, bytes)| {
                 let values = std::array::from_fn::<_, RESULT_COMPONENTS, _>(|i| {
                     f32::from_ne_bytes(

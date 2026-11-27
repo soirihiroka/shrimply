@@ -16,7 +16,7 @@ pub fn rotate_rgba(image: RgbaImage, clockwise_degrees: i32) -> Result<RgbaImage
         (image.width, image.height)
     };
     let mut data = vec![0; image.data.len()];
-    for (index, pixel) in image.data.chunks_exact(4).enumerate() {
+    for (index, pixel) in image.data.as_chunks::<4>().0.iter().enumerate() {
         let (x, y) = (index % image.width, index / image.width);
         let (x, y) = match turns {
             1 => (image.height - 1 - y, x),

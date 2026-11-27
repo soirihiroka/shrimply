@@ -132,7 +132,9 @@ fn detect_voice_activity(samples: &[i16], duration: i64) -> Vec<Span<()>> {
     let samples = remove_dc_offset(samples);
     let mut detector = Detector::default();
     let active = samples
-        .chunks_exact(VAD_FRAME_SAMPLES)
+        .as_chunks::<VAD_FRAME_SAMPLES>()
+        .0
+        .iter()
         .enumerate()
         .filter_map(|(index, frame)| {
             if detector.predict_i16(frame) < VAD_THRESHOLD {

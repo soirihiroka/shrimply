@@ -151,21 +151,23 @@ impl Reader<'_> {
     }
 
     fn u16s(&mut self, count: usize) -> Result<Vec<u16>, String> {
-        self.take(count * 2)?
-            .chunks_exact(2)
-            .map(|bytes| {
-                Ok(u16::from_le_bytes(
-                    bytes.try_into().expect("length checked"),
-                ))
-            })
-            .collect()
+        Ok(self
+            .take(count * 2)?
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .copied()
+            .map(u16::from_le_bytes)
+            .collect())
     }
 
     fn f32s(&mut self, count: usize) -> Result<Vec<f32>, String> {
         self.take(count * 4)?
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .map(|bytes| {
-                let value = f32::from_le_bytes(bytes.try_into().expect("length checked"));
+                let value = f32::from_le_bytes(*bytes);
                 if value.is_infinite() {
                     Err("model contains an infinite float".to_owned())
                 } else {

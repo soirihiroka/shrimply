@@ -63,7 +63,9 @@ impl RgbaImage {
             height: self.height,
             data: self
                 .data
-                .chunks_exact(4)
+                .as_chunks::<4>()
+                .0
+                .iter()
                 .map(|rgba| {
                     ((u32::from(rgba[0]) * RED
                         + u32::from(rgba[1]) * GREEN

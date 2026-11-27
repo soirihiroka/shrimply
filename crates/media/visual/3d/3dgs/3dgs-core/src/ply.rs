@@ -585,12 +585,13 @@ fn gaussian(
     }
     let degree = layout.spherical_harmonic_degree as usize;
     let coefficients_per_channel = (degree + 1).pow(2) - 1;
-    for channel in 0..SH_CHANNELS {
-        for coefficient in 1..=coefficients_per_channel {
-            if let Some(index) = layout.spherical_harmonics[coefficient][channel] {
+    let higher_order_indices = &layout.spherical_harmonics[1..coefficients_per_channel + 1];
+    for (channel, _) in spherical_harmonics.iter().enumerate() {
+        for (coefficient, indices) in higher_order_indices.iter().enumerate() {
+            if let Some(index) = indices[channel] {
                 let name = format!(
                     "f_rest_{}",
-                    channel * coefficients_per_channel + coefficient - 1
+                    channel * coefficients_per_channel + coefficient
                 );
                 higher_order.push(value(index, &name)?);
             }

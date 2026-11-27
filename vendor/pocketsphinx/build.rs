@@ -220,12 +220,17 @@ fn convert(cache: &Path, output: &Path) -> Result<(), String> {
         }
     }
     let mut mixture_logs = Vec::with_capacity(SENONE_COUNT * DENSITY_COUNT);
-    for row in mixtures.chunks_exact(DENSITY_COUNT).take(SENONE_COUNT) {
+    for row in mixtures
+        .as_chunks::<DENSITY_COUNT>()
+        .0
+        .iter()
+        .take(SENONE_COUNT)
+    {
         let mut normalized = normalize(row, 1.0e-7, false);
         mixture_logs.extend(normalized.drain(..).map(quantized_log));
     }
     let mut transition_logs = Vec::with_capacity(PHONE_COUNT * 12);
-    for row in transitions.chunks_exact(4) {
+    for row in transitions.as_chunks::<4>().0 {
         transition_logs.extend(normalize(row, 0.0001, true).into_iter().map(|value| {
             if value == 0.0 {
                 IMPOSSIBLE
