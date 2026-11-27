@@ -13,7 +13,7 @@ pub fn split_pane_extent(total: f32, divider: f32, fraction: f32) -> f32 {
 
 pub fn split_pane_fraction(leading: f32, trailing: f32) -> Option<f32> {
     let content = leading + trailing;
-    (leading > 0.0 && trailing > 0.0 && content.is_finite()).then(|| trailing / content)
+    (leading > 0.0 && trailing > 0.0 && content.is_finite()).then_some(trailing / content)
 }
 
 /// Preview, inspector and full-width timeline bounds, in the same logical units as `size`.

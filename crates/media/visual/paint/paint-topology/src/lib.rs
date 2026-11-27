@@ -165,11 +165,12 @@ fn finite_runs(centerlines: &[Vec<Vec2>], epsilon: f64) -> Vec<Polyline> {
                 {
                     points.push(point);
                 }
+            } else if points.len() > 1 {
+                runs.push(Polyline {
+                    points: std::mem::take(&mut points),
+                });
             } else {
-                if points.len() > 1 {
-                    runs.push(Polyline { points });
-                }
-                points = Vec::new();
+                points.clear();
             }
         }
         if points.len() > 1 {
