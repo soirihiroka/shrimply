@@ -65,8 +65,15 @@ jobs:
           curl --fail --silent --show-error --max-time 3 \
             --header "Authorization: Bearer ${SHRIMPLY_PROJECT_SERVER_TOKEN}" "${endpoint}/projects" \
             | python3 -c 'import json, sys; assert json.load(sys.stdin) == []'
-          docker tag shrimply-project-server:ci "shrimply-project-server:${expected}"
-          docker save "shrimply-project-server:${expected}" | gzip > shrimply-project-server.tar.gz
+
+      - name: Export prerelease image
+        run: |
+          image="shrimply-project-server:prerelease"
+          timestamped="${image}-$(date -u +%Y%m%dT%H%M%SZ)"
+          docker tag shrimply-project-server:ci "$image"
+          docker tag shrimply-project-server:ci "$timestamped"
+          docker save "$image" "$timestamped" \
+            | gzip > shrimply-project-server.tar.gz
 
       - uses: actions/upload-artifact@v6
         with:

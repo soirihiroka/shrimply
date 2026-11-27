@@ -363,27 +363,29 @@ internal fun ProjectApp(timeline: TimelineSession, files: ProjectFiles, caption:
         onDismissRequest = { if (!busy) { create = false } },
         title = { Text(tr("Create Project")) },
         text = { Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            OutlinedTextField(name, { name = it }, label = { Text(tr("Project Name")) }, singleLine = true, enabled = !busy)
-            OutlinedTextField(tags, { tags = it }, label = { Text(tr("Tags")) }, enabled = !busy)
-            AdaptiveMenuAnchor(anchor = { open ->
-                OutlinedButton(onClick = open, enabled = !busy) { Text(tr("Preset")) }
-            }) { dismiss ->
-                val presets = checkNotNull(schema.optJSONArray("presets"))
-                ChoiceMenuItems((0 until presets.length()).map { presets.getJSONObject(it).getString("label") }) { index ->
-                    val preset = presets.getJSONObject(index)
-                    canvasWidth = preset.getString("canvas_width"); canvasHeight = preset.getString("canvas_height")
-                    fps = preset.getString("fps"); dismiss()
-                }
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(canvasWidth, { canvasWidth = it }, label = { Text(tr("Width")) }, singleLine = true, modifier = Modifier.weight(1f), enabled = !busy)
-                OutlinedTextField(canvasHeight, { canvasHeight = it }, label = { Text(tr("Height")) }, singleLine = true, modifier = Modifier.weight(1f), enabled = !busy)
-            }
             if (servers.isNotEmpty()) {
                 ChoiceInput(tr("Location"), projectServer.ifEmpty { tr("On this device") },
                     listOf(tr("On this device")) + servers, !busy) { index ->
                     projectServer = servers.getOrNull(index - 1).orEmpty()
                 }
+            }
+            OutlinedTextField(name, { name = it }, modifier = Modifier.fillMaxWidth(), label = { Text(tr("Project Name")) }, singleLine = true, enabled = !busy)
+            OutlinedTextField(tags, { tags = it }, modifier = Modifier.fillMaxWidth(), label = { Text(tr("Tags")) }, enabled = !busy)
+            val presets = schema.getJSONArray("presets").objects()
+            val preset = presets.firstOrNull {
+                it.getString("canvas_width") == canvasWidth && it.getString("canvas_height") == canvasHeight &&
+                    it.getString("fps") == fps
+            }
+            ChoiceInput(tr("Preset"), preset?.getString("label") ?: tr("Custom"),
+                presets.map { it.getString("label") }, !busy) { index ->
+                val selected = presets[index]
+                canvasWidth = selected.getString("canvas_width")
+                canvasHeight = selected.getString("canvas_height")
+                fps = selected.getString("fps")
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(canvasWidth, { canvasWidth = it }, label = { Text(tr("Width")) }, singleLine = true, modifier = Modifier.weight(1f), enabled = !busy)
+                OutlinedTextField(canvasHeight, { canvasHeight = it }, label = { Text(tr("Height")) }, singleLine = true, modifier = Modifier.weight(1f), enabled = !busy)
             }
             val rates = schema.getJSONArray("frame_rates").objects()
             ChoiceInput(tr("FPS"), rates.first { it.getString("value") == fps }.getString("label"),

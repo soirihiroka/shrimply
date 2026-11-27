@@ -211,14 +211,19 @@ ApplicationWindow {
             projectDestination.currentIndex = 0
         }
 
-        contentItem: ColumnLayout {
-            spacing: 12
+        contentItem: GridLayout {
+            columns: 2
+            rowSpacing: 12
+            columnSpacing: 12
 
-            Label {
-                text: backend.text("Project Name")
-                font.bold: true
+            Label { text: backend.text("Location") }
+            AdaptiveComboBox {
+                id: projectDestination
+                Layout.fillWidth: true
+                enabled: count > 1
             }
 
+            Label { text: backend.text("Project Name") }
             TextField {
                 id: projectName
                 Layout.fillWidth: true
@@ -226,23 +231,13 @@ ApplicationWindow {
                 selectByMouse: true
             }
 
-            RowLayout {
-                Layout.fillWidth: true
-                Label {
-                    text: backend.text("Location")
-                    Layout.fillWidth: true
-                }
-                ComboBox {
-                    id: projectDestination
-                    Layout.fillWidth: true
-                }
-            }
-
             Label {
-                text: backend.text("Preset")
+                Layout.columnSpan: 2
+                text: backend.text("Project Settings")
                 font.bold: true
             }
 
+            Label { text: backend.text("Preset") }
             AdaptiveComboBox {
                 id: preset
                 Layout.fillWidth: true
@@ -259,67 +254,41 @@ ApplicationWindow {
                 }
             }
 
-            Label {
-                text: backend.text("Project Settings")
-                font.bold: true
+            Label { text: backend.text("Width") }
+            SpinBox {
+                id: widthInput
+                Layout.fillWidth: true
+                from: 1
+                to: 16384
+                value: 1920
+                editable: true
+                onValueModified: preset.currentIndex = backend.presetCount - 1
             }
 
-            RowLayout {
+            Label { text: backend.text("Height") }
+            SpinBox {
+                id: heightInput
                 Layout.fillWidth: true
-
-                Label {
-                    text: backend.text("Width")
-                    Layout.fillWidth: true
-                }
-
-                SpinBox {
-                    id: widthInput
-                    from: 1
-                    to: 16384
-                    value: 1920
-                    editable: true
-                    onValueModified: preset.currentIndex = backend.presetCount - 1
-                }
+                from: 1
+                to: 16384
+                value: 1080
+                editable: true
+                onValueModified: preset.currentIndex = backend.presetCount - 1
             }
 
-            RowLayout {
+            Label { text: backend.text("Frame Rate") }
+            AdaptiveComboBox {
+                id: frameRate
                 Layout.fillWidth: true
-
-                Label {
-                    text: backend.text("Height")
-                    Layout.fillWidth: true
-                }
-
-                SpinBox {
-                    id: heightInput
-                    from: 1
-                    to: 16384
-                    value: 1080
-                    editable: true
-                    onValueModified: preset.currentIndex = backend.presetCount - 1
-                }
-            }
-
-            RowLayout {
-                Layout.fillWidth: true
-
-                Label {
-                    text: backend.text("Frame Rate")
-                    Layout.fillWidth: true
-                }
-
-                AdaptiveComboBox {
-                    id: frameRate
-                    model: backend.frameRateCount
-                    currentIndex: 8
-                    displayText: currentIndex >= 0
-                        ? backend.frameRateLabel(currentIndex) : ""
-                    labelForIndex: function(index) { return backend.frameRateLabel(index) }
-                    onActivated: preset.currentIndex = backend.presetCount - 1
-                }
+                model: backend.frameRateCount
+                currentIndex: 8
+                displayText: currentIndex >= 0 ? backend.frameRateLabel(currentIndex) : ""
+                labelForIndex: function(index) { return backend.frameRateLabel(index) }
+                onActivated: preset.currentIndex = backend.presetCount - 1
             }
 
             Button {
+                Layout.columnSpan: 2
                 Layout.alignment: Qt.AlignHCenter
                 Layout.topMargin: 8
                 text: backend.text("Create Project")
