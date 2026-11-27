@@ -1,3 +1,5 @@
+#![recursion_limit = "256"]
+
 #![cfg(any(target_os = "linux", target_os = "android"))]
 
 use shrimply_render_vulkan as gpu;

@@ -1,3 +1,5 @@
+#![recursion_limit = "256"]
+
 use shrimply_components_gtk::tr;
 use shrimply_components_gtk::ui::I18nFileFilterExt;
 use shrimply_components_gtk::ui::I18nMenuExt;

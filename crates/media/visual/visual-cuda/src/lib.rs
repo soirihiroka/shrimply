@@ -1,3 +1,5 @@
+#![recursion_limit = "256"]
+
 pub(crate) mod alpha_mask;
 mod analysis_renderer;
 mod background_render;

@@ -1,3 +1,5 @@
+#![recursion_limit = "256"]
+
 use shrimply_local_ipc::{Listener as UnixListener, Stream as UnixStream};
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet, VecDeque};

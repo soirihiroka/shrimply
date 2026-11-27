@@ -1,3 +1,5 @@
+#![recursion_limit = "256"]
+
 pub mod benchmark;
 pub mod capture;
 mod decode;
