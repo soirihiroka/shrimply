@@ -263,7 +263,7 @@ define_class!(
     unsafe impl NSControlTextEditingDelegate for Delegate {}
 
     unsafe impl NSTableViewDelegate for Delegate {
-        #[unsafe(method(tableView:viewForTableColumn:row:))]
+        #[unsafe(method_id(tableView:viewForTableColumn:row:))]
         fn project_row(&self, _table: &NSTableView, _column: Option<&NSTableColumn>, row: isize) -> Option<Retained<NSView>> {
             let model = self.ivars().model.borrow();
             let project = model.project(usize::try_from(row).ok()?)?;
