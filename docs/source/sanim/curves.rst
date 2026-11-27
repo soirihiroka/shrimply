@@ -1,98 +1,69 @@
-Keyframed curves
-================
+Curves
+======
 
-``Curve(keys=[...])`` is an immutable, typed F-curve. Each ``Keyframe`` has an
-exact timestamp and an ordinary numeric value. A scalar curve has type
-``Curve<Number>`` (or ``Length``, ``Angle``, ``Percent``, ``Duration``, ``Rate``).
-A vector curve uses a fixed numeric List, for example ``Curve<List<Length,2>>``.
-Every key preserves the value's units and List length.
+Keyframed values
+----------------
 
-.. code-block:: sanim
+A ``Curve<T>`` maps time to a numeric scalar or fixed-size numeric List.
 
-   let size_keys = reflect([
-       Keyframe(time=0s, value=24pt),
-       Keyframe(time=1s, value=80pt),
-       Keyframe(time=2s, value=40pt)
-   ], label="Size curve")
-   let size_curve = Curve(keys=size_keys)
-   mut clock = 0s
-   sig size = size_curve.sample(clock)
-   let shape = <Box width={size} height={size} radius="full" fill="blue3" />
-   Animation(children=[shape, animate(clock, to=2s, duration=2s, ease="linear")])
+.. code-block:: text
 
-Reflect the key List to expose the timestamps, values, interpolation and handles
-as editable inputs. Rebuilding a curve compiles its segments once; playback
-shares those segments and performs a binary search for the requested time.
-Seeking backward and forward does not integrate a simulation or evaluate Sanim
-source code.
+   curve.sample(time: Duration): T
+   curve.at(progress: Number): T
+   curve.duration(): Duration
 
-Sampling and animation
-----------------------
-
-``curve.sample(500ms)`` samples its exact clock. ``curve.at(0.5)`` samples normalized
-progress through the same clock. Values before/after the endpoints hold the first
-or final key; ``sample`` rejects negative or nonfinite time. ``curve.duration()``
-returns the last timestamp as a ``Duration``.
-
-A curve can drive a mutable value directly:
+``sample`` uses an exact timestamp; ``at`` uses normalized progress 0..1.
+Values outside the key interval hold the nearest endpoint. Negative times fail.
 
 .. code-block:: sanim
 
    let movement = Curve(keys=[
-       Keyframe(time=0s, value=0),
-       Keyframe(time=1s, value=0.25),
-       Keyframe(time=3s, value=1)
+       Keyframe(time=0s, value=0pt),
+       Keyframe(time=1s, value=120pt)
    ])
-   mut progress = 0
-   animate(progress, curve=movement)
+   mut distance = 0pt
+   animate(distance, curve=movement)
 
-``animate`` derives its duration from the curve. An explicit ``duration=6s``
-retimes the same curve without altering its keys. Use exactly one of ``to=`` or
-``curve=``; ``to=`` requires an explicit duration. Curves define their own timing,
-so ``ease=`` is unavailable with ``curve=``. These plans compose and repeat using
-the ordinary ``Animation`` layout. Camera position, target and zoom can consume
-``curve.at(progress)`` or ``curve.sample(clock)`` signals just like other values.
+``animate`` takes either ``to=`` with a duration or ``curve=``. With a curve,
+duration defaults to its last timestamp; an explicit duration retimes it.
+``ease`` cannot be combined with ``curve``.
 
-Handles and interpolation
--------------------------
+Keyframe arguments
+------------------
 
-The outgoing key selects the segment interpolation:
+``Keyframe(time: Duration, value: T, ...)`` returns a record used in
+``Curve(keys=[...])``. All keys must have matching units and List lengths.
 
-* ``interpolation="bezier"`` uses cubic Bézier handles (the default).
-* ``interpolation="linear"`` joins the two values at constant speed.
-* ``interpolation="hold"`` keeps the outgoing value until the next timestamp.
+.. list-table::
+   :header-rows: 1
 
-``tangents="auto_clamped"`` is the default. It flattens extrema and limits automatic
-handles to prevent overshooting adjacent values. ``"auto"`` uses smooth finite
-difference tangents and permits overshoot. For manual handles, use ``"manual"``
-and provide the handles consumed by each Bézier segment:
+   * - Argument
+     - Type / default
+     - Meaning
+   * - ``time``
+     - ``Duration``; required
+     - Timestamp; first key is zero, subsequent times strictly increase.
+   * - ``value``
+     - Numeric scalar or fixed-size numeric List; required
+     - Value at the key.
+   * - ``interpolation``
+     - ``"bezier"`` (default), ``"linear"``, ``"hold"``
+     - How this key connects to the next.
+   * - ``tangents``
+     - ``"auto_clamped"`` (default), ``"auto"``, ``"manual"``
+     - Automatic handles with/without overshoot limiting, or manual handles.
+   * - ``handle_in`` / ``handle_out``
+     - Optional ``{time: Duration, value: T}``
+     - Offsets from this key; incoming time is nonpositive, outgoing nonnegative.
 
-.. code-block:: sanim
-
-   let travel = Curve(keys=[
-       Keyframe(time=0s, value=0,
-           tangents="manual", handle_out={time=300ms, value=0}),
-       Keyframe(time=2s, value=1,
-           tangents="manual", handle_in={time=-600ms, value=-0.1})
-   ])
-
-Handle ``time`` and ``value`` are offsets from their owning key. Incoming time is
-nonpositive; outgoing time is nonnegative. A value offset uses the same units
-and scalar/List shape as the key. Handles must remain ordered inside their
-segment's time interval. Explicit handles override automatic handles on that
-side of a key; missing automatic handles are derived from neighboring keys.
-
-The first key starts at ``0s``. Timestamps are strictly increasing, without
-duplicate-time keys. A curve has 2–4096 keys, at most 256 scalar channels and
-65,536 key/channel components; its finite duration is at most two hours.
-Serialization stores the editable keys and validates/recompiles them on load.
+Reflect the key List to edit it in Shrimply. Curves allow 2–4096 keys, up to
+256 channels and 65,536 key/channel components; finite duration is at most two
+hours. Handles must stay ordered within each segment.
 
 Geometric paths
 ---------------
 
-``Curve(points=[[0,0],[10,20],[30,20]])`` describes a geometric path rather than
-an F-curve. Its ``at(progress)`` samples distance along that path, and
-``direction(progress)`` returns its spatial tangent. Geometric paths have no
-clock: ``sample(time)``, ``duration()`` and ``animate(curve=...)`` require timestamped
-keys. To control travel speed, animate progress with a keyframed scalar curve
-and pass that progress to the geometric path.
+``Curve(points=[[0,0], [10,20], [30,20]])`` defines a path without a clock.
+``at(progress)`` samples distance along it; ``direction(progress)`` returns its
+tangent. Animate a scalar progress value to control travel speed. Timed
+``sample``, ``duration`` and ``animate(curve=...)`` require keyframes.

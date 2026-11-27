@@ -8,7 +8,7 @@ Syntax basics
   newline or semicolon.
 * Comments begin with ``#`` outside strings and run to the end of the line.
   (Hex colors must be quoted: ``Color("#3584e4")``.)
-* Named arguments and record values use ``=`` (``Box(width=100pt)``,
+* Named arguments and record values use ``=`` (``wait(duration=1s)``,
   ``{ field = value }``). Colons declare types (``name: Type``) and separate
   dictionary entries (``{"key": value}``).
 * Standard names are protected and shadowing enclosing bindings is an error.
@@ -28,7 +28,7 @@ Bindings and reactivity
    assert(b == 4)
    assert(saved == 2)
 
-Constructor properties retain expressions that depend on ``mut`` cells or
+Element attributes retain expressions that depend on ``mut`` cells or
 ``sig`` values, so animating a cell with ``animate(cell, to=..., duration=...)``
 updates every dependent property smoothly:
 
@@ -36,10 +36,8 @@ updates every dependent property smoothly:
 
    mut phase = 0deg
    sig size = 100pt + sin(phase) * 25pt
-   let square = Box(
-       width=size, height=size, radius=size / 6,
-       fill=Color("light1"), x_align=Align.Center, y_align=Align.Center,
-   )
+   let square = <Box width={size} height={size} radius={size / 6} fill="light1"
+       x_align={Align.Center} y_align={Align.Center}/>
    <Animation>
        {square}
        {animate(phase, to=1800deg, duration=10s, ease="linear")}
@@ -55,7 +53,10 @@ alignment, and transforms (animate ``scale`` rather than continuously changing
    mut count = 0
    mut typeface = Font("sans-serif")
    let title = <Label font={typeface} font_size={24pt}>Count = {count:.0f}</Label>
-   Animation(children=[title, animate(count, to=10, duration=1s, ease="linear")])
+   <Animation>
+       {title}
+       {animate(count, to=10, duration=1s, ease="linear")}
+   </Animation>
    typeface = Font("monospace")
    wait(1s)
 

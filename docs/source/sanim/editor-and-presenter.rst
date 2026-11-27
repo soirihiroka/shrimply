@@ -69,15 +69,15 @@ animate out earlier elements when advancing:
 .. code-block:: sanim
 
    bg(Color("#121826"))
-   let first = Text("First page", font_size=64pt)
-   Animation(children=[first])
+   let first = <Label font_size={64pt}>First page</Label>
+   <Animation>{first}</Animation>
    page()
    first.fade_out(duration=0s)
-   let second = Text("Second page", font_size=64pt)
-   Animation(children=[second])
+   let second = <Label font_size={64pt}>Second page</Label>
+   <Animation>{second}</Animation>
    page()
    second.fade_out(duration=300ms)
-   let third = Text("Third page", font_size=64pt)
+   let third = <Label font_size={64pt}>Third page</Label>
    third.fade_in(duration=300ms)
    page()
 

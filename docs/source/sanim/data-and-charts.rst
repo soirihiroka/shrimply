@@ -79,20 +79,21 @@ Charts are ordinary elements sharing one explicit coordinate mapping
    let xs = LinearScale(domain=[0.78, 1.28], range=[-275pt, 309pt])
    let ys = LinearScale(domain=[0, 4], range=[200pt, -200pt])
    let ticks = [0.8, 0.9, 1.0, 1.1, 1.2]
-   let grid = Grid(scale=xs, ticks=ticks, spans=[[-200pt, 200pt]], highlight=[1.0])
-   let axis = Axis(scale=xs, ticks=ticks, format="percent")
+   let grid = <Grid scale={xs} ticks={ticks} spans={[[-200pt, 200pt]]} highlight={[1.0]}/>
+   let axis = <Axis scale={xs} ticks={ticks} format="percent"/>
    type Observation = { x: Number, y: Number }
    let samples = read<List<Observation>>("samples.csv")
-   let points = Scatter(data=samples, x_scale=xs, y_scale=ys, radius=2pt)
-   let interval_box = BoxPlot(
-       scale=xs,
-       summary={low=0.8, q1=0.9, middle=1.0, q3=1.1, high=1.2},
-   )
-   Animation(children=[grid, axis])
-   Animation(children=[
-       points.fade_in(duration=400ms, ease="smootherstep"),
-       interval_box.expand_x(duration=400ms, ease="smootherstep"),
-   ])
+   let points = <Scatter data={samples} x_scale={xs} y_scale={ys} radius={2pt}/>
+   let quartiles = {low=0.8, q1=0.9, middle=1.0, q3=1.1, high=1.2}
+   let interval_box = <BoxPlot scale={xs} summary={quartiles}/>
+   <Animation>
+       {grid}
+       {axis}
+   </Animation>
+   <Animation>
+       {points.fade_in()}
+       {interval_box.expand_x()}
+   </Animation>
 
 Available chart elements:
 
@@ -115,9 +116,9 @@ Available chart elements:
    let xs = LinearScale(domain=[-4, 4], range=[-240pt, 240pt])
    let ys = LinearScale(domain=[0, 0.7], range=[100pt, -100pt])
    let measured = [-2, -1.5, -1, -0.4, 0, 0.2, 0.7, 1, 1.7, 2]
-   let bars = Histogram(values=measured, bins=16, normalization="density", x_scale=xs, y_scale=ys)
-   let estimate = DensityPlot(values=measured, bandwidth=0.5, x_scale=xs, y_scale=ys, fill=Color("orange3"))
-   let model = NormalCurve(mean=0, std_dev=1, x_scale=xs, y_scale=ys, shade=false)
+   let bars = <Histogram values={measured} bins={16} normalization="density" x_scale={xs} y_scale={ys}/>
+   let estimate = <DensityPlot values={measured} bandwidth={0.5} x_scale={xs} y_scale={ys} fill="orange3"/>
+   let model = <NormalCurve mean={0} std_dev={1} x_scale={xs} y_scale={ys} shade={false}/>
    [bars, estimate, model].create(duration=1s)
    wait(2s)
 

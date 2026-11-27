@@ -1,77 +1,51 @@
-Container overflow and scrolling
-================================
+Scrolling
+=========
 
-Scrolling is a layout behavior of ordinary ``Box`` elements. A Box fills the available width and measures its natural height, like an unstyled div. Set a bounded height and ``overflow="auto"`` to scroll its content. There is no separate scrolling element.
-
-+-----------------------+---------------------------------------------------------+------------------------------+
-| Policy                | Clipping                                                | Scrollbar                    |
-+=======================+=========================================================+==============================+
-| ``visible`` (default) | Content can extend outside the box                      | None                         |
-+-----------------------+---------------------------------------------------------+------------------------------+
-| ``hidden``            | Content is clipped; programmatic scrolling is supported | None                         |
-+-----------------------+---------------------------------------------------------+------------------------------+
-| ``auto``              | Content is clipped                                      | Shown when content overflows |
-+-----------------------+---------------------------------------------------------+------------------------------+
-| ``scroll``            | Content is clipped                                      | Always shown                 |
-+-----------------------+---------------------------------------------------------+------------------------------+
-
-``overflow`` sets both axes. ``overflow_x`` and ``overflow_y`` override their respective axes independently. For example, ``overflow_x="hidden" overflow_y="auto"`` shows only the vertical scrollbar when needed. The equivalent bare utilities are ``overflow-auto``, ``overflow-x-hidden`` and ``overflow-y-auto``.
+Give a ``Box`` fixed dimensions and ``overflow="auto"``. Display it with XML,
+then animate its scroll position:
 
 .. code-block:: sanim
 
-   let content = <Box flex flex-col width={300pt} height={800pt}>
-       <Label>First item</Label>
-       <Label>Second item</Label>
+   let viewport = <Box overflow="auto" width={300pt} height={120pt}>
+       <Box width={300pt} height={600pt} fill="light1"/>
    </Box>
-   let viewport = <Box overflow="auto" width={50%} height={30%}>{content}</Box>
-   Animation(children=[viewport])
-   viewport.scroll_to(to=[0%, 100%], duration=600ms)
+   <Animation>{viewport}</Animation>
+   viewport.scroll_to(y=200pt, duration=1s)
 
-Scroll offsets are ordinary two-element Lists. Points describe content offsets; percentages describe the current overflow range, so ``[0%, 100%]`` means the bottom edge even after resizing. Offsets are clamped after layout, including content changes, folding and font changes. The default scroll curve is the normal bounded spring; ``ease="linear"`` is available for constant-speed movement.
+Scroll API
+----------
 
-``scroll_to`` accepts one target form: ``to=[x, y]``, ``x=``/``y=``, or a CodeView ``line=``/``range=``. Code lines use 1-based numbering. Use the same bound ranges as folding, selecting, styling and editing; range scrolling checks the source revision and keeps its visible line interval in view.
+.. code-block:: text
 
-Axis targets preserve their units: ``scroll_to(y=100%)`` stays at the bottom when the viewport resizes. When specifying both ``x=`` and ``y=``, use the same unit for both.
+   view.scroll_to(
+       to?: List<Length, 2> | List<Percent, 2>,
+       x?: Length | Percent, y?: Length | Percent,
+       line?: Number, range?: CodeRange,
+       align: "nearest" | "start" | "center" | "end" = "nearest",
+       duration: Duration = 300ms, ease: String = "spring"
+   ): Animation
+
+``?`` means optional. Choose one target form: ``to``, ``x``/``y``, ``line``, or
+``range``. Points are content offsets; percentages are a fraction of overflow,
+so ``y=100%`` reaches the bottom after resizing too. Offsets are clamped.
+``line``/``range`` and ``align`` apply to CodeView; lines start at 1.
+
+Overflow policies: ``visible`` does not clip; ``hidden`` clips without a bar;
+``auto`` shows a bar when needed; ``scroll`` always shows it. ``overflow_x``
+and ``overflow_y`` set axes separately. A CodeView with fixed dimensions
+defaults to ``auto``.
+
+Shared reactive offset
+----------------------
 
 .. code-block:: sanim
 
-   let code = <CodeView src="./example.py" width={80%} height={50%} />
-   Animation(children=[code])
-   code.scroll_to(line=40, align="center", duration=500ms)
-   code.range(name="main").scroll_to(duration=400ms)
-   code.scroll_to(range=code.range(regex="result"), align="center", duration=400ms)
-
-A CodeView with both width and height defaults to ``overflow="auto"``. Without a fixed viewport it uses its intrinsic content size and visible overflow. An explicit ``overflow="visible"`` keeps content visible outside an allocated box.
-
-The default ``align="nearest"`` moves only enough to reveal the requested line. ``start``, ``center`` and ``end`` choose an explicit vertical alignment. Targets follow the actual wrapped visual rows, including blank lines and viewport padding. A target inside a folded scope reveals its visible header.
-
-For a shared reactive offset, supply ``scroll=`` and animate its mutable input:
-
-.. code-block:: sanim
-
-   mut offset = [0pt, 0pt]
+   mut offset: List<Length, 2> = [0pt, 0pt]
    let viewport = <Box overflow="auto" width={300pt} height={120pt} scroll={offset}>
-       <Box width={300pt} height={600pt} x_align={Align.Start} y_align={Align.Start} fill="light1"/>
+       <Box width={300pt} height={600pt} fill="light1"/>
    </Box>
-   Animation(children=[viewport])
+   <Animation>{viewport}</Animation>
    animate(offset, to=[0pt, 200pt], duration=1s)
 
-A signal-owned offset has one writer: use ``animate(offset, ...)`` rather than ``.scroll_to(...)`` on that view. These controls animate the Sanim scene and do not intercept the editor's wheel or canvas navigation gestures.
-
-Clipping and offset transforms are shared by Skia drawing and item picking. Glyphs outside the viewport defer native path preparation; cached states and recordings support reverse scrubbing normally.
-
-Rendered scrollbars use libadwaita's idle overlay proportions: a narrow rounded thumb, inset ends, and no persistent trough. They remain inside the viewport clip. Hover and dragging belong to the host editor, rather than the headless animation.
-
-All drawables have the same layout metadata and common alignment, box-size and padding inputs. Intrinsic leaves such as Polygon and Label keep their geometry: a wider layout box does not stretch polygon vertices or change a font size. Box and media width/height size their painted surfaces. ``Line.width`` remains stroke thickness. Box children use normal vertical block flow. Opt into flex flow with ``flex flex-row`` or ``flex flex-col``; flex items accept ``flex_grow``, ``flex_shrink`` and ``flex_basis``. An automatic-height parent with a percentage-height child fails with a clear constraint-cycle error.
-
-Use ``absolute`` for a child that should retain its authored ``position`` and alignment instead of taking space in block or flex flow. Its points and percentages remain relative to its parent. Absolute children do not determine an automatic container height, but their painted bounds still contribute to scroll overflow. Give a full-canvas composition an explicit containing box:
-
-.. code-block:: sanim
-
-   let marker = <Box absolute position={[-20%, 10%]} width={2*(12pt)} height={2*(12pt)} rounded-full fill="light1" x_align={Align.Center} y_align={Align.Center}/>
-   let stage = <Box w-full h-full x_align={Align.Center} y_align={Align.Center}>
-       {marker}
-   </Box>
-   Animation(children=[stage])
-
-``relative`` is the default flow participation. The corresponding ordinary constructor argument is ``position_mode="absolute"`` or ``"relative"``; explicit arguments override utilities. A typed signal may switch modes. A constant absolute mode supports ordinary position animations. A mode signal that can become relative reserves position ownership for flow throughout the timeline, so combining it with a position signal or a manual position animation fails with an actionable error. A percentage height inside an automatic-height parent still requires a definite parent height.
+A bound ``scroll`` has one writer: animate its input instead of also calling
+``scroll_to``. See :doc:`code-view` for range selection.

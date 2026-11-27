@@ -86,7 +86,10 @@ numeric refinements:
    fn repetitions(count: Int < 1): Animation { return wait(0s) }
    fn repetitions(count: Int >= 1): Animation { return wait(count * 1s) }
 
-   return Animation(children=[delay("1s"), repetitions(3)], flow="sequence")
+   return <Animation flow="sequence">
+       {delay("1s")}
+       {repetitions(3)}
+   </Animation>
 
 ``Int`` is an integer refinement of ``Number``. Comparisons use matching units
 (e.g., ``Duration <= 1s``). Clause domains must be provably disjoint—overlap is

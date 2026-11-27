@@ -1,90 +1,97 @@
-Colors and perceptual ramps
-===========================
+Colors
+======
 
-``Color`` is shared by 2D elements, generated textures and voxel materials. Named
-Adwaita colors use Shrimply's palette. String parsing also uses the shared CSS
-name/hex/rgb/hsl parser, including ``Color("rebeccapurple")`` and ``Color("#abc")``.
-``Color("transparent")`` is transparent black.
+Constructors
+------------
 
-Typed constructors avoid the byte quantization of legacy CSS string parsing:
+In signatures, ``Gamut`` abbreviates ``"chroma" | "clip" | "error"``.
 
-.. code-block:: sanim
+.. code-block:: text
 
-   let rgb = Rgb(0.2, 0.5, 0.8, alpha=0.75)
-   let hsl = Hsl(210deg, 0.6, 0.5)
-   let hsv = Hsv(210deg, 0.6, 0.8)
-   let lab = Oklab(0.7, -0.05, -0.1)
-   let accent = Oklch(0.7, 0.15, 250deg)
+   Color(value: String = "red3"): Color
+   Rgb(red: Number, green: Number, blue: Number, alpha: Number = 1): Color
+   Hsl(hue: Angle, saturation: Number, lightness: Number, alpha: Number = 1): Color
+   Hsv(hue: Angle, saturation: Number, value: Number, alpha: Number = 1): Color
+   Oklab(lightness: Number, a: Number, b: Number, alpha: Number = 1, gamut: Gamut = "chroma"): Color
+   Oklch(lightness: Number, chroma: Number, hue: Angle, alpha: Number = 1, gamut: Gamut = "chroma"): Color
 
-RGB channels, saturation, lightness, HSV value and alpha use 0..1. Oklab ``a`` and
-``b`` are signed; OKLCH chroma is nonnegative. Hue is a typed angle, wraps around
-360 degrees and accepts negative angles. Nonfinite values and invalid ranges
-produce source diagnostics rather than silently clamping arguments.
+``Color`` accepts Adwaita/CSS names and CSS color strings, such as ``"blue3"``,
+``"#3584e4"`` or ``"transparent"``. RGB, saturation, lightness, value and alpha
+are in 0..1. OKLab ``a``/``b`` are signed; chroma is nonnegative. Angles use
+units such as ``210deg``.
 
-Conversion methods return typed records, including their alpha:
+Mix two colors
+--------------
 
-.. code-block:: sanim
+Call on a ``Color`` value:
 
-   let rgb_channels = accent.to_rgb()       # red, green, blue, alpha
-   let hsl_channels = accent.to_hsl()       # hue, saturation, lightness, alpha
-   let hsv_channels = accent.to_hsv()       # hue, saturation, value, alpha
-   let lab_channels = accent.to_oklab()     # lightness, a, b, alpha
-   let lch_channels = accent.to_oklch()     # lightness, chroma, hue, alpha
+.. code-block:: text
 
-Mixing and adjustments
-----------------------
+   color.mix(
+       other: Color,
+       amount: Number,
+       space: "oklab" | "oklch" | "linear-rgb" | "srgb" = "oklab",
+       hue: "shorter" | "longer" | "increasing" | "decreasing" = "shorter",
+       gamut: "chroma" | "clip" | "error" = "chroma"
+   ): Color
 
-``mix`` defaults to OKLab. Explicit spaces are ``"oklab"``, ``"oklch"``,
-``"linear-rgb"`` and ``"srgb"``. RGB and OKLab channels are interpolated with
-premultiplied alpha; OKLCH lightness and chroma are premultiplied while hue is
-interpolated around the selected angular path. Gray or fully transparent
-endpoints do not introduce an arbitrary hue. Endpoints are preserved exactly.
+``amount`` is the share of ``other``: 0 returns ``color``, 1 returns ``other``;
+0.5 blends halfway. It must be in 0..1.
 
-.. code-block:: sanim
+.. list-table:: ``space`` chooses how the intermediate color is calculated
+   :header-rows: 1
 
-   let warm = Color("orange3")
-   let cool = Color("blue3")
-   let middle = warm.mix(cool, 0.5)
-   let rainbow = warm.mix(cool, 0.5, space="oklch", hue="longer")
-   let encoded = warm.mix(cool, 0.5, space="srgb")
-   let adjusted = middle.with_lightness(0.75).with_chroma(0.1).rotate_hue(20deg)
-   let translucent = adjusted.with_alpha(0.4)
-
-OKLCH hue paths are ``"shorter"`` (default), ``"longer"``, ``"increasing"`` and
-``"decreasing"``. ``with_hue(angle)`` sets hue directly. ``over(background)``
-composites in linear light, preserving alpha. ``luminance()`` returns relative
-linear-light luminance; ``contrast(other)`` returns a contrast ratio and requires
-opaque colors. Composite translucent colors first. ``distance(other)`` measures
-Euclidean OKLab distance, excluding alpha.
-
-The alpha and hue rules follow the standard distinction described in
-`CSS Color 4 interpolation <https://www.w3.org/TR/css-color-4/#interpolation>`_.
-
-Display gamut
--------------
-
-OKLab/OKLCH constructors, mixing and perceptual adjustments accept
-``gamut="chroma"`` (default), ``"clip"`` or ``"error"``. Chroma mapping uses a
-bounded radial search, reducing chroma while preserving lightness and hue.
-It is not CSS's local-MINDE mapping algorithm. Clip clamps display RGB channels;
-error reports that the requested color lies outside display sRGB.
-
-Signals and reuse
------------------
-
-Color constructors, methods and conversion-record fields use the same retained
-native graph as other animated properties. Sampling never interprets source
-functions again. Multiple fields of one conversion share a frame-local result;
-projecting a literal record depends only on the selected field.
+   * - Value
+     - Meaning
+   * - ``"oklab"``
+     - Blend perceptual lightness and color axes; the default.
+   * - ``"oklch"``
+     - Blend lightness, chroma and hue; ``hue`` selects the angular path.
+   * - ``"linear-rgb"``
+     - Blend RGB channels in linear light.
+   * - ``"srgb"``
+     - Blend encoded display RGB channels directly.
 
 .. code-block:: sanim
 
-   mut hue = 30deg
-   sig tint = Oklch(0.72, 0.12, hue)
-   sig lightness = tint.to_oklch().lightness
-   let swatch = <Box w-160 h-80 fill={tint}/>
-   Animation(children=[swatch])
-   animate(hue, to=390deg, duration=4s)
+   let midpoint = Color("orange3").mix(other=Color("blue3"), amount=0.5)
 
-Generated texture ramps use the same color interpolation. Palette stops are
-converted once per prepared ramp, with bounded allocation and work accounting.
+For colors outside display sRGB, ``gamut="chroma"`` reduces chroma while
+preserving lightness and hue, ``"clip"`` clamps RGB channels, and ``"error"``
+fails. The same option applies to OKLab/OKLCH constructors and adjustments.
+
+Adjust and measure
+------------------
+
+.. code-block:: text
+
+   color.with_alpha(alpha: Number): Color
+   color.with_lightness(lightness: Number, gamut: Gamut = "chroma"): Color
+   color.with_chroma(chroma: Number, gamut: Gamut = "chroma"): Color
+   color.with_hue(hue: Angle, gamut: Gamut = "chroma"): Color
+   color.rotate_hue(angle: Angle, gamut: Gamut = "chroma"): Color
+   color.over(background: Color): Color
+   color.luminance(): Number
+   color.contrast(other: Color): Number
+   color.distance(other: Color): Number
+
+Adjustments use OKLCH. ``over`` composites in linear light. ``luminance`` is
+relative linear-light brightness; ``contrast`` returns a contrast ratio and
+requires opaque colors.
+``distance`` is Euclidean OKLab distance, excluding alpha.
+
+Conversions
+-----------
+
+Each method returns a record with the listed fields:
+
+.. code-block:: text
+
+   color.to_rgb(): {red: Number, green: Number, blue: Number, alpha: Number}
+   color.to_hsl(): {hue: Angle, saturation: Number, lightness: Number, alpha: Number}
+   color.to_hsv(): {hue: Angle, saturation: Number, value: Number, alpha: Number}
+   color.to_oklab(): {lightness: Number, a: Number, b: Number, alpha: Number}
+   color.to_oklch(): {lightness: Number, chroma: Number, hue: Angle, alpha: Number}
+
+Color operations accept signals; see :doc:`language`. Texture palettes use the
+same mixing rules (:doc:`images-and-textures`).
