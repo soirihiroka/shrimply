@@ -507,7 +507,9 @@ fn accept_loop(
                 let presence_sender = presence_sender.clone();
                 let stop = stop.clone();
                 let project_path = project_path.clone();
-                thread::spawn(move || serve_connection(stream, &sender, &presence_sender, &stop, &project_path));
+                thread::spawn(move || {
+                    serve_connection(stream, &sender, &presence_sender, &stop, &project_path)
+                });
             }
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                 thread::sleep(Duration::from_millis(10));
@@ -539,11 +541,16 @@ fn serve_connection(
         let request: BridgeRequest = serde_json::from_str(&line)
             .map_err(|error| format!("malformed editing API bridge request: {error}"))?;
         if request.project_path != project_path {
-            return Ok(bridge_response(project_path, Err(format!("editing service is open for {project_path}"))));
+            return Ok(bridge_response(
+                project_path,
+                Err(format!("editing service is open for {project_path}")),
+            ));
         }
         let metadata = match request.command {
             BridgeCommand::Handshake => Some(json!({"ready":true,"mode":"headless"})),
-            BridgeCommand::Version => Some(json!(shrimply_editing_api::protocol::BuildVersion::current(env!("CARGO_PKG_VERSION")))),
+            BridgeCommand::Version => Some(json!(
+                shrimply_editing_api::protocol::BuildVersion::current(env!("CARGO_PKG_VERSION"))
+            )),
             _ => None,
         };
         if let Some(metadata) = metadata {

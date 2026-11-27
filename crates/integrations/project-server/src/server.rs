@@ -23,7 +23,10 @@ use hyper_util::rt::TokioIo;
 use ring::hmac;
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
-use tokio::{net::TcpListener, sync::{RwLock, Semaphore}};
+use tokio::{
+    net::TcpListener,
+    sync::{RwLock, Semaphore},
+};
 use uuid::Uuid;
 
 use crate::media::BlobStore;
@@ -198,7 +201,8 @@ async fn dispatch(
                 let _guard = guard;
                 store.delete(id)?;
                 blobs.remove_project(id)
-            }).await?;
+            })
+            .await?;
             Ok(json(StatusCode::OK, true))
         }
         (&Method::GET, path) if path.starts_with("operations/") => {

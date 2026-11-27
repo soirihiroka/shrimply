@@ -79,7 +79,10 @@ impl Session {
                     "presence name must be between 1 and 128 bytes".into(),
                 ));
             }
-            joined |= self.participants.insert(presence.id, (now, presence)).is_none();
+            joined |= self
+                .participants
+                .insert(presence.id, (now, presence))
+                .is_none();
         }
         Ok(joined)
     }
@@ -118,7 +121,8 @@ impl Store {
         )?;
         if !connection.query_row(
             "SELECT EXISTS(SELECT 1 FROM pragma_table_info('projects') WHERE name = 'opened_at')",
-            [], |row| row.get::<_, bool>(0),
+            [],
+            |row| row.get::<_, bool>(0),
         )? {
             connection.execute("ALTER TABLE projects ADD COLUMN opened_at INTEGER", [])?;
         }
@@ -193,7 +197,11 @@ impl Store {
             .connection
             .prepare("SELECT id, name, opened_at FROM projects ORDER BY opened_at DESC, name COLLATE NOCASE, id")?;
         let rows = statement.query_map([], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get(2)?))
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get(2)?,
+            ))
         })?;
         rows.map(|row| {
             let (id, name, opened_at) = row?;
@@ -236,7 +244,10 @@ impl Store {
     }
 
     fn record_access(&self, id: Uuid) -> Result<(), Failure> {
-        self.connection.execute("UPDATE projects SET opened_at = unixepoch() WHERE id = ?1", [id.to_string()])?;
+        self.connection.execute(
+            "UPDATE projects SET opened_at = unixepoch() WHERE id = ?1",
+            [id.to_string()],
+        )?;
         Ok(())
     }
 
@@ -260,7 +271,11 @@ impl Store {
         let joined = session.update_presence(presence)?;
         let response = SyncResponse {
             version: (revision != session.revision).then(|| session.version()),
-            participants: session.participants.values().map(|(_, presence)| presence.clone()).collect(),
+            participants: session
+                .participants
+                .values()
+                .map(|(_, presence)| presence.clone())
+                .collect(),
         };
         if joined {
             self.record_access(id)?;

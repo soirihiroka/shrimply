@@ -72,6 +72,13 @@ jobs:
           curl --fail --silent --show-error --max-time 3 \
             --header "Authorization: Bearer ${session}" "${endpoint}/projects" \
             | python3 -c 'import json, sys; assert json.load(sys.stdin) == []'
+          project="${endpoint}/projects/00000000-0000-0000-0000-000000000001"
+          auth=(--header "Authorization: Bearer ${session}")
+          curl -fsS "${auth[@]}" --json '{"name":"Smoke"}' "${project}" >/dev/null
+          curl -fsS "${auth[@]}" "${endpoint}/projects" \
+            | python3 -c 'import json, sys; assert json.load(sys.stdin)[0]["opened_at"] > 0'
+          curl -fsS "${auth[@]}" --request DELETE "${project}" >/dev/null
+          test "$(curl -sS "${auth[@]}" -o /dev/null -w '%{http_code}' "${project}")" = 404
 
       - name: Export prerelease image
         run: |

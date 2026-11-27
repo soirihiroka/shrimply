@@ -22,11 +22,13 @@ impl ProjectEntry {
     pub fn delete(&self) -> Result<(), String> {
         if let Some(link) = &self.remote {
             return ProjectClient::configured(&link.server)?
-                .delete(link.project_id).map_err(|error| error.to_string());
+                .delete(link.project_id)
+                .map_err(|error| error.to_string());
         }
         let path = self.path.as_deref().ok_or("Project file is missing")?;
         use shrimply_project_document::project::{acquire_project_lock, release_project_lock};
-        acquire_project_lock(path).map_err(|error| format!("Could not acquire the project for deletion: {error:?}"))?;
+        acquire_project_lock(path)
+            .map_err(|error| format!("Could not acquire the project for deletion: {error:?}"))?;
         let result = std::fs::remove_file(path).map_err(|error| error.to_string());
         release_project_lock(path);
         result
@@ -152,7 +154,10 @@ pub fn list() -> Result<Vec<ProjectEntry>, String> {
     for (server, entries) in remote {
         let Ok(entries) = entries else { continue };
         for entry in entries {
-            let link = ProjectLink { server: server.clone(), project_id: entry.id };
+            let link = ProjectLink {
+                server: server.clone(),
+                project_id: entry.id,
+            };
             listed.insert(link.clone());
             if let Some(&index) = cached.get(&link) {
                 projects[index].name = entry.name;
@@ -169,7 +174,17 @@ pub fn list() -> Result<Vec<ProjectEntry>, String> {
         }
         available.insert(server);
     }
-    projects.retain(|entry| entry.remote.as_ref().is_none_or(|link| !available.contains(&link.server) || listed.contains(link)));
-    projects.sort_by_cached_key(|entry| (std::cmp::Reverse(entry.opened_at), entry.name.to_lowercase()));
+    projects.retain(|entry| {
+        entry
+            .remote
+            .as_ref()
+            .is_none_or(|link| !available.contains(&link.server) || listed.contains(link))
+    });
+    projects.sort_by_cached_key(|entry| {
+        (
+            std::cmp::Reverse(entry.opened_at),
+            entry.name.to_lowercase(),
+        )
+    });
     Ok(projects)
 }

@@ -100,7 +100,10 @@ pub fn stop_local_service(path: &Path) -> Result<(), String> {
 #[cfg(not(target_os = "android"))]
 pub fn restart_local_service(path: &Path) -> Result<(), String> {
     stop_local_service(path)?;
-    Bridge::connect_or_launch(path).and_then(Bridge::version).map(|_| ()).map_err(|error| error.to_string())
+    Bridge::connect_or_launch(path)
+        .and_then(Bridge::version)
+        .map(|_| ())
+        .map_err(|error| error.to_string())
 }
 
 pub fn load_snapshot(path: &Path, bridge: Bridge) -> Result<Project, String> {
