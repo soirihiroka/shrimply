@@ -11,7 +11,7 @@ const RETRY_INTERVAL: Duration = Duration::from_secs(2);
 
 pub(super) struct Session {
     workspace: SharedWorkspace,
-    worker: Option<SyncWorker>,
+    worker: SyncWorker,
     media_client: ProjectClient,
     media_cache: MediaCache,
     project: Rc<RefCell<Project>>,
@@ -24,6 +24,7 @@ pub(super) struct Session {
     participants: Vec<Presence>,
     revision: Option<u64>,
     last_error: Option<String>,
+    pub(super) connected: bool,
 }
 
 struct SyncWorker {
@@ -87,21 +88,17 @@ impl Session {
             return Ok(None);
         };
         let media_cache = workspace.media_cache()?;
-        let (media_client, last_error) = workspace.media_client()?;
-        let worker = if last_error.is_none() {
-            let connection = || {
-                SharedWorkspace::open(project_path)?
-                    .ok_or_else(|| "shared project workspace was removed".to_string())
-            };
-            Some(SyncWorker::start(
-                connection()?,
-                connection()?,
-                media_client.clone(),
-                media_cache.clone(),
-            ))
-        } else {
-            None
+        let media_client = ProjectClient::new(&workspace.link().server)?;
+        let connection = || {
+            SharedWorkspace::open(project_path)?
+                .ok_or_else(|| "shared project workspace was removed".to_string())
         };
+        let worker = SyncWorker::start(
+            connection()?,
+            connection()?,
+            media_client.clone(),
+            media_cache.clone(),
+        );
         let name = peers::local_name();
         let revision = Some(workspace.confirmed_revision()?);
         let session = Self {
@@ -118,7 +115,8 @@ impl Session {
             next_sync: Instant::now(),
             participants: Vec::new(),
             revision,
-            last_error,
+            last_error: None,
+            connected: false,
         };
         session.adopt_draft()?;
         Ok(Some(Rc::new(RefCell::new(session))))
@@ -172,8 +170,7 @@ impl Session {
 
     pub(super) fn poll(&mut self, mut local: Vec<Presence>) {
         if self.pending {
-            let worker = self.worker.as_ref().expect("pending work has a worker");
-            let result = match worker.receive.try_recv() {
+            let result = match self.worker.receive.try_recv() {
                 Ok(result) => result,
                 Err(async_channel::TryRecvError::Empty) => return,
                 Err(async_channel::TryRecvError::Closed) => {
@@ -193,23 +190,24 @@ impl Session {
                     .collect();
                 Ok(update.conflict)
             });
+            self.connected = result.is_ok();
             self.next_sync = Instant::now()
-                + if result.is_ok() {
+                + if self.connected {
                     SYNC_INTERVAL
                 } else {
                     RETRY_INTERVAL
                 };
             self.last_error = match result {
                 Ok(conflict) => conflict,
-                Err(error) => Some(error),
+                Err(error) => {
+                    self.participants.clear();
+                    Some(error)
+                }
             };
         }
         if Instant::now() < self.next_sync {
             return;
         }
-        let Some(worker) = &self.worker else {
-            return;
-        };
         if local.is_empty() {
             local.push(peers::capture(
                 self.id,
@@ -219,9 +217,11 @@ impl Session {
                 &self.project.borrow(),
             ));
         }
-        match worker.send.try_send(local) {
+        match self.worker.send.try_send(local) {
             Ok(()) => self.pending = true,
             Err(_) => {
+                self.connected = false;
+                self.participants.clear();
                 self.next_sync = Instant::now() + RETRY_INTERVAL;
                 self.last_error = Some("project synchronization worker stopped".into());
             }

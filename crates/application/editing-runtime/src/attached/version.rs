@@ -71,10 +71,7 @@ pub struct VersionPrompt {
 
 impl VersionPrompt {
     pub fn remote(server: &str) -> Option<Self> {
-        let service = ProjectClient::new(server, String::new())
-            .ok()?
-            .version()
-            .ok()?;
+        let service = ProjectClient::new(server).ok()?.version().ok()?;
         if service.matches(env!("CARGO_PKG_VERSION")) {
             return None;
         }

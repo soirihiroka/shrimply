@@ -138,7 +138,7 @@ impl SharedWorkspace {
     ) -> Result<(Self, Arc<Project>), String> {
         let server = server.trim_end_matches('/');
         Self::check_destination(project_file)?;
-        let client = ProjectClient::configured(server)?;
+        let client = ProjectClient::new(server)?;
         let version = client.get(project_id).map_err(text)?;
         let workspace = match Self::open(project_file)? {
             Some(workspace)
@@ -537,14 +537,6 @@ impl SharedWorkspace {
             .join("shared-media")
             .join(&self.key);
         MediaCache::new(path, CACHE_BUDGET).map_err(text)
-    }
-
-    pub fn media_client(&self) -> Result<(ProjectClient, Option<String>), String> {
-        let server = &self.link.server;
-        match ProjectClient::configured(server) {
-            Ok(client) => Ok((client, None)),
-            Err(error) => Ok((ProjectClient::new(server, String::new())?, Some(error))),
-        }
     }
 
     pub fn bind_media(

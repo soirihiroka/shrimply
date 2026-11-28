@@ -174,6 +174,7 @@ pub struct SessionState {
     pub project: Option<Project>,
     pub participants: Vec<Presence>,
     pub sync_error: Option<String>,
+    pub server_connected: Option<bool>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

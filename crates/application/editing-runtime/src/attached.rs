@@ -327,7 +327,7 @@ impl Media {
         let Some(workspace) = SharedWorkspace::open(path)? else {
             return Ok(None);
         };
-        let (client, _) = workspace.media_client()?;
+        let client = ProjectClient::new(&workspace.link().server)?;
         let cache = workspace.media_cache()?;
         Ok(Some(Self {
             workspace,
@@ -352,6 +352,7 @@ pub struct Editor {
     media: Option<Media>,
     next_update: Cell<Instant>,
     sync_error: RefCell<Option<String>>,
+    server_connected: Cell<Option<bool>>,
     send: async_channel::Sender<SessionUpdates>,
     receive: async_channel::Receiver<(Instant, Result<SessionState, String>)>,
 }
@@ -390,6 +391,7 @@ impl Editor {
             media,
             next_update: Cell::new(Instant::now()),
             sync_error: RefCell::new(None),
+            server_connected: Cell::new(None),
             send,
             receive,
         })
@@ -402,10 +404,25 @@ impl Editor {
                     self.sync_error.replace(Some(error));
                     player_state::set_collaborators(&self.player, Vec::new());
                 }
-                Ok(state) => {
-                    self.sync_error.replace(state.sync_error.clone());
+                Ok(mut state) => {
+                    self.sync_error.replace(state.sync_error.take());
+                    let recovered = self.server_connected.replace(state.server_connected)
+                        == Some(false)
+                        && state.server_connected == Some(true);
                     if let Err(error) = self.sync_snapshot(started, state) {
                         tracing::debug!(%error, "Waiting to catch up with the editing service");
+                    }
+                    if recovered {
+                        player_state::refresh_project(
+                            &self.player,
+                            player_state::ProjectChange {
+                                audio: true,
+                                audio_beats: true,
+                                audio_waveforms: true,
+                                video: true,
+                                ..Default::default()
+                            },
+                        );
                     }
                 }
             }

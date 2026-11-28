@@ -29,7 +29,7 @@ impl ProjectEntry {
 
     pub fn delete(&self) -> Result<(), String> {
         if let Some(link) = &self.remote {
-            return ProjectClient::configured(&link.server)?
+            return ProjectClient::new(&link.server)?
                 .delete(link.project_id)
                 .map_err(|error| error.to_string());
         }
@@ -189,7 +189,7 @@ pub fn list() -> Result<ProjectCatalog, String> {
     let remote = std::thread::scope(|scope| {
         servers.into_iter().map(|mut source| {
                 scope.spawn(move || {
-                    let projects = ProjectClient::configured(&source.url)
+                    let projects = ProjectClient::new(&source.url)
                         .and_then(|client| client.list_projects().map_err(|error| error.to_string()))
                         .map(|(projects, name)| {
                             if let Some(name) = name {

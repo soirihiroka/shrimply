@@ -2,7 +2,7 @@ use std::{
     fmt,
     fs::File,
     io::{self, Read, Seek, SeekFrom},
-    path::Path,
+    path::{Path, PathBuf},
     time::Duration,
 };
 
@@ -61,24 +61,20 @@ impl std::error::Error for RequestError {}
 pub struct ProjectClient {
     client: Client,
     base: Url,
-    token: String,
+    session_path: PathBuf,
 }
 
 impl ProjectClient {
-    pub fn configured(base: &str) -> Result<Self, String> {
-        let mut client = Self::new(base, String::new())?;
-        client.token = std::fs::read_to_string(client.session_path()).map_err(
-            |_| "Sign in to this project server in Project Servers or with shrimply project login",
-        )?;
+    pub(crate) fn configured(base: &str) -> Result<Self, String> {
+        let client = Self::new(base)?;
+        client.session_token()?;
         Ok(client)
     }
 
-    fn session_path(&self) -> std::path::PathBuf {
-        shrimply_path_core::config_directory()
-            .join("project-server-sessions")
-            .join(shrimply_resource_pipeline::fingerprint::digest(
-                self.base.as_str().trim_end_matches('/').as_bytes(),
-            ))
+    fn session_token(&self) -> Result<String, String> {
+        std::fs::read_to_string(&self.session_path).map_err(|_| {
+            "Sign in to this project server in Settings or with shrimply project login".into()
+        })
     }
 
     pub fn sign_in(base: &str, username: &str, password: &str) -> Result<(), String> {
@@ -86,7 +82,7 @@ impl ProjectClient {
         if username.trim().is_empty() || username.contains(':') || password.is_empty() {
             return Err("Enter a username without a colon and a password".into());
         }
-        let client = Self::new(base, String::new())?;
+        let client = Self::new(base)?;
         let mut url = client.api_url();
         url.path_segments_mut()
             .expect("project server URL has a path")
@@ -105,7 +101,7 @@ impl ProjectClient {
         {
             return Err("The project server returned an invalid session".into());
         }
-        let path = client.session_path();
+        let path = client.session_path;
         let directory = path.parent().expect("project server session directory");
         std::fs::create_dir_all(directory).map_err(|error| error.to_string())?;
         let mut staged =
@@ -120,14 +116,14 @@ impl ProjectClient {
     }
 
     pub(crate) fn forget(base: &str) -> Result<(), String> {
-        match std::fs::remove_file(Self::new(base, String::new())?.session_path()) {
+        match std::fs::remove_file(Self::new(base)?.session_path) {
             Ok(()) => Ok(()),
             Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
             Err(error) => Err(error.to_string()),
         }
     }
 
-    pub fn new(base: &str, token: String) -> Result<Self, String> {
+    pub fn new(base: &str) -> Result<Self, String> {
         let base = Url::parse(base).map_err(|error| error.to_string())?;
         if !matches!(base.scheme(), "http" | "https")
             || base.host().is_none()
@@ -143,10 +139,15 @@ impl ProjectClient {
             .redirect(reqwest::redirect::Policy::none())
             .build()
             .map_err(|error| error.to_string())?;
+        let session_path = shrimply_path_core::config_directory()
+            .join("project-server-sessions")
+            .join(shrimply_resource_pipeline::fingerprint::digest(
+                base.as_str().trim_end_matches('/').as_bytes(),
+            ));
         Ok(Self {
             client,
             base,
-            token,
+            session_path,
         })
     }
 
@@ -161,7 +162,7 @@ impl ProjectClient {
         project.ensure_ids();
         project.validate().map_err(RequestError::InvalidProject)?;
         response(
-            self.request(Method::POST, Some(id), &[])
+            self.request(Method::POST, Some(id), &[])?
                 .json(&project)
                 .send(),
         )
@@ -169,7 +170,7 @@ impl ProjectClient {
     }
 
     pub fn list_projects(&self) -> Result<(Vec<ProjectSummary>, Option<String>), RequestError> {
-        let reply = self.request(Method::GET, None, &[]).send();
+        let reply = self.request(Method::GET, None, &[])?.send();
         let name = reply
             .as_ref()
             .ok()
@@ -191,11 +192,11 @@ impl ProjectClient {
     }
 
     pub fn get(&self, id: Uuid) -> Result<ProjectVersion, RequestError> {
-        response(self.request(Method::GET, Some(id), &[]).send()).and_then(decode_version)
+        response(self.request(Method::GET, Some(id), &[])?.send()).and_then(decode_version)
     }
 
     pub fn delete(&self, id: Uuid) -> Result<(), RequestError> {
-        response::<bool>(self.request(Method::DELETE, Some(id), &[]).send()).map(|_| ())
+        response::<bool>(self.request(Method::DELETE, Some(id), &[])?.send()).map(|_| ())
     }
 
     pub(super) fn publish(
@@ -204,7 +205,7 @@ impl ProjectClient {
         request: &PublishRequest<&Project>,
     ) -> Result<ProjectVersionReceipt, RequestError> {
         response(
-            self.request(Method::POST, Some(id), &["snapshots"])
+            self.request(Method::POST, Some(id), &["snapshots"])?
                 .json(request)
                 .send(),
         )
@@ -217,7 +218,7 @@ impl ProjectClient {
     ) -> Result<Option<ProjectVersionReceipt>, RequestError> {
         let operation = operation.to_string();
         let reply = self
-            .request(Method::GET, Some(id), &["operations", &operation])
+            .request(Method::GET, Some(id), &["operations", &operation])?
             .send()
             .map_err(RequestError::Transport)?;
         if reply.status() == reqwest::StatusCode::NOT_FOUND {
@@ -232,7 +233,7 @@ impl ProjectClient {
         request: &SyncRequest,
     ) -> Result<SyncResponse, RequestError> {
         let reply: shrimply_project_protocol::SyncResponse<Value, crate::Presence> = response(
-            self.request(Method::POST, Some(id), &["sync"])
+            self.request(Method::POST, Some(id), &["sync"])?
                 .json(request)
                 .send(),
         )?;
@@ -247,7 +248,7 @@ impl ProjectClient {
             return Err(invalid_media("invalid media identifier"));
         }
         let response = self
-            .request(Method::HEAD, Some(id), &["blobs", digest])
+            .request(Method::HEAD, Some(id), &["blobs", digest])?
             .send()
             .map_err(RequestError::Transport)?;
         let etag = format!("\"{digest}\"");
@@ -314,7 +315,7 @@ impl ProjectClient {
         let length = blob.length;
         let segments = ["blobs", &blob.digest];
         let mut progress: UploadReceipt = response(
-            self.request(Method::GET, Some(id), &["blobs", &blob.digest, "upload"])
+            self.request(Method::GET, Some(id), &["blobs", &blob.digest, "upload"])?
                 .send(),
         )?;
         while !progress.complete {
@@ -333,7 +334,7 @@ impl ProjectClient {
             let mut bytes = vec![0; chunk];
             file.read_exact(&mut bytes).map_err(RequestError::Media)?;
             progress = response(
-                self.request(Method::PATCH, Some(id), &segments)
+                self.request(Method::PATCH, Some(id), &segments)?
                     .header("Upload-Offset", offset)
                     .header("Upload-Length", length)
                     .body(bytes)
@@ -367,7 +368,7 @@ impl ProjectClient {
             .filter(|end| *end < blob.length && length <= UPLOAD_CHUNK_BYTES)
             .ok_or_else(|| invalid_media("invalid media byte range"))?;
         let response = self
-            .request(Method::GET, Some(id), &["blobs", &blob.digest])
+            .request(Method::GET, Some(id), &["blobs", &blob.digest])?
             .header(header::RANGE, format!("bytes={offset}-{end}"))
             .send()
             .map_err(RequestError::Transport)?;
@@ -402,7 +403,18 @@ impl ProjectClient {
         Ok(bytes)
     }
 
-    fn request(&self, method: Method, id: Option<Uuid>, action: &[&str]) -> RequestBuilder {
+    fn request(
+        &self,
+        method: Method,
+        id: Option<Uuid>,
+        action: &[&str],
+    ) -> Result<RequestBuilder, RequestError> {
+        let token = self
+            .session_token()
+            .map_err(|message| RequestError::Rejected {
+                message,
+                revision: None,
+            })?;
         let mut url = self.api_url();
         {
             let mut path = url
@@ -414,7 +426,7 @@ impl ProjectClient {
             }
             path.extend(action.iter().copied());
         }
-        self.client.request(method, url).bearer_auth(&self.token)
+        Ok(self.client.request(method, url).bearer_auth(token))
     }
 
     fn api_url(&self) -> Url {

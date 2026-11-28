@@ -314,7 +314,8 @@ fn start_session(
                     project: (request.version != Some(version))
                         .then(|| presence_project.borrow().clone()),
                     participants,
-                    sync_error: remote.and_then(|remote| remote.sync_error()),
+                    sync_error: remote.as_ref().and_then(|remote| remote.sync_error()),
+                    server_connected: remote.map(|remote| remote.connected),
                 })
                 .map_err(|error| error.to_string())
             };
