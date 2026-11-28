@@ -102,10 +102,7 @@ fn host_action(action: Action) -> Option<HostAction> {
         Action::SaveAs => show_save_as_dialog,
         Action::Shortcuts => |window, _, _| show_shortcuts_dialog(window),
         Action::Preferences => |window, _, session| {
-            shrimply_preferences_gtk::page::show_preferences_dialog(
-                window,
-                session.preferences.clone(),
-            );
+            shrimply_preferences_gtk::page::show_settings(window, session.preferences.clone());
         },
         Action::RestartService => |window, _, _| {
             let window = window.downgrade();

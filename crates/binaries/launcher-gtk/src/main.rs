@@ -274,11 +274,14 @@ fn build_ui(app: &adw::Application) {
         let reload = reload.clone();
         move || {
             let reload = reload.clone();
-            shrimply_preferences_gtk::page::show_preferences_dialog(
+            shrimply_preferences_gtk::page::show_settings(
                 &window.upgrade()?,
                 shrimply_preferences_gtk::store::open_with_defaults(),
             )
-            .connect_closed(move |_| reload());
+            .connect_close_request(move |_| {
+                reload();
+                glib::Propagation::Proceed
+            });
             None
         }
     }));

@@ -4,14 +4,17 @@ use shrimply_components_gtk::tr;
 use shrimply_components_gtk::ui::ColorPicker;
 use store::{PreferenceId, PreferencePage, PreferenceValue, SharedPreferences};
 
-pub fn show_preferences_dialog(
+pub fn show_settings(
     window: &adw::ApplicationWindow,
     preferences: SharedPreferences,
-) -> adw::Dialog {
-    let dialog = adw::Dialog::builder()
+) -> adw::Window {
+    let settings = adw::Window::builder()
         .title(tr!(store::SETTINGS_TITLE).as_ref())
-        .content_width(940)
-        .content_height(630)
+        .default_width(940)
+        .default_height(630)
+        .transient_for(window)
+        .destroy_with_parent(true)
+        .modal(true)
         .build();
     let categories = gtk::ListBox::builder()
         .selection_mode(gtk::SelectionMode::Single)
@@ -97,10 +100,10 @@ pub fn show_preferences_dialog(
         adw::LengthUnit::Px,
     ));
     narrow.add_setter(&split, "collapsed", Some(&true.to_value()));
-    dialog.add_breakpoint(narrow);
-    dialog.set_child(Some(&split));
-    dialog.present(Some(window));
-    dialog
+    settings.add_breakpoint(narrow);
+    settings.set_content(Some(&split));
+    settings.present();
+    settings
 }
 
 fn preference_row(id: PreferenceId, preferences: &SharedPreferences) -> gtk::Widget {

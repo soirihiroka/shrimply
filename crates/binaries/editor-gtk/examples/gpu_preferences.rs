@@ -148,7 +148,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .default_height(600)
         .build();
     window.present();
-    shrimply_preferences_gtk::page::show_preferences_dialog(&window, store.clone());
+    shrimply_preferences_gtk::page::show_settings(&window, store.clone());
     let dialog = window
         .visible_dialog()
         .ok_or("Preferences dialog was not presented")?
