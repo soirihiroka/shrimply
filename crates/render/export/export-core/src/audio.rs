@@ -611,6 +611,51 @@ mod tests {
             assert!(input.duration() > 0);
         }
 
+        let path = directory.join("audio.mp4");
+        let assets = crate::snapshot_assets(&project).unwrap();
+        let encoder = Encoder::shrimply(SAMPLE_RATE, 192_000).unwrap();
+        let mut output = ffmpeg::format::output_as(&path, "mp4").unwrap();
+        let index = encoder.add_stream(&mut output).unwrap();
+        output.write_header().unwrap();
+        let time_base = output.stream(index).unwrap().time_base();
+        let mut packets = AudioPackets::new(encoder, &project, &assets);
+        let mut pts = -(shrimply_aac::FRAME_SAMPLES as i64);
+        while let Some(packet) = packets.next(|_| true).unwrap() {
+            assert_eq!(packet.pts(), Some(pts));
+            pts += packet.duration();
+            crate::write_packet(&mut output, packet, index, packets.time_base(), time_base)
+                .unwrap();
+        }
+        assert_eq!(pts, sample_frames as i64);
+        output.write_trailer().unwrap();
+        drop(output);
+
+        let mut input = ffmpeg::format::input(&path).unwrap();
+        let stream = input.streams().best(ffmpeg::media::Type::Audio).unwrap();
+        assert_eq!(stream.parameters().id(), ffmpeg::codec::Id::AAC);
+        assert_eq!(stream.time_base(), ffmpeg::Rational(1, SAMPLE_RATE as i32));
+        assert_eq!(stream.duration(), sample_frames as i64);
+        let mut decoder = ffmpeg::codec::Context::from_parameters(stream.parameters())
+            .unwrap()
+            .decoder()
+            .audio()
+            .unwrap();
+        let mut decoded = 0;
+        let mut frame = ffmpeg::frame::Audio::empty();
+        for (_, packet) in input.packets() {
+            decoder.send_packet(&packet).unwrap();
+            while decoder.receive_frame(&mut frame).is_ok() {
+                decoded += frame.samples() as u64;
+            }
+        }
+        decoder.send_eof().unwrap();
+        while decoder.receive_frame(&mut frame).is_ok() {
+            decoded += frame.samples() as u64;
+        }
+        assert!(
+            (sample_frames..sample_frames + shrimply_aac::FRAME_SAMPLES as u64).contains(&decoded)
+        );
+
         std::fs::remove_dir_all(directory).unwrap();
     }
 }
