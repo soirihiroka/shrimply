@@ -79,12 +79,18 @@ impl Search {
                     let masked = (100.0 + (16.0 / 3.0) * step.log2()) as i32;
                     let minimum =
                         (100.0 + (16.0 / 3.0) * (peak / MAX_QUANTIZED as f32).log2()).ceil() as i32;
-                    let first = (masked - 20).max(minimum).clamp(0, 255);
+                    let first = (masked - 24).max(minimum).clamp(0, 255);
                     let last = ((100.0 + (16.0 / 3.0) * (peak / 0.6).log2()).ceil() as i32)
                         .min(masked + 36)
                         .clamp(first, 255);
                     let mut quantized = [0_i16; FRAME_SAMPLES];
-                    for sf in (first..=last).step_by(3) {
+                    let rooted_rms = rms.sqrt();
+                    let step = if peak > 2.0 * rooted_rms * rooted_rms.sqrt() {
+                        1 // A few strong coefficients dominate the band's distortion.
+                    } else {
+                        2
+                    };
+                    for sf in (first..=last).step_by(step) {
                         let scale = gain(sf as u8);
                         let factor = scale.powf(-0.75);
                         let mut error = 0.0;
@@ -116,14 +122,14 @@ impl Search {
         }
     }
 
-    pub fn select(&self, layout: Layout, lambda: f32) -> [Vec<Choice>; 2] {
-        std::array::from_fn(|channel| {
+    pub fn select(&self, layout: Layout, lambda: f32, output: &mut [Vec<Choice>; 2]) {
+        for (channel, result) in self.bands.iter().zip(output) {
             let mut previous = None::<u8>;
             let mut previous_book = None;
-            let mut result = Vec::with_capacity(layout.groups * layout.band_count());
+            result.clear();
             for group in 0..layout.groups {
                 for band in 0..layout.band_count() {
-                    let choices = &self.bands[channel][group * layout.band_count() + band];
+                    let choices = &channel[group * layout.band_count() + band];
                     let mut best = choices[0];
                     let mut score = f32::INFINITY;
                     for &choice in choices {
@@ -153,8 +159,7 @@ impl Search {
                     result.push(best);
                 }
             }
-            result
-        })
+        }
     }
 
     pub fn coefficient(&self, channel: usize, index: usize, sample: f32, factor: f32) -> i16 {

@@ -70,22 +70,6 @@ impl Book {
         SPECTRUM[usize::from(id - 1)][index]
     }
 
-    pub fn cost(&self, id: u8, values: &[i16]) -> u16 {
-        let mut bits = 0;
-        for tuple in values.chunks_exact(self.width) {
-            bits += (self.code(id, tuple) & 31) as u16;
-        }
-        if !self.signed {
-            for &sample in values {
-                bits += u16::from(sample != 0);
-                if id == 11 && sample.unsigned_abs() >= 16 {
-                    bits += (2 * sample.unsigned_abs().ilog2() - 3) as u16;
-                }
-            }
-        }
-        bits
-    }
-
     pub fn write(&self, out: &mut Bits, id: u8, values: &[i16]) {
         for tuple in values.chunks_exact(self.width) {
             out.code(self.code(id, tuple));
@@ -122,8 +106,28 @@ pub(crate) fn best_book(values: &[i16], peak: u16) -> (u8, u16) {
         8..=12 => 9,
         _ => 11,
     };
+    let signs = values.iter().filter(|&&sample| sample != 0).count() as u16;
+    let escapes: u16 = values
+        .iter()
+        .map(|sample| sample.unsigned_abs())
+        .filter(|&sample| sample >= 16)
+        .map(|sample| (2 * sample.ilog2() - 3) as u16)
+        .sum();
     (first..=11)
-        .map(|id| (id, Book::new(id).cost(id, values)))
+        .map(|id| {
+            let book = Book::new(id);
+            let mut cost: u16 = values
+                .chunks_exact(book.width)
+                .map(|tuple| (book.code(id, tuple) & 31) as u16)
+                .sum();
+            if !book.signed {
+                cost += signs;
+                if id == 11 {
+                    cost += escapes;
+                }
+            }
+            (id, cost)
+        })
         .min_by_key(|&(_, cost)| cost)
         .unwrap()
 }
