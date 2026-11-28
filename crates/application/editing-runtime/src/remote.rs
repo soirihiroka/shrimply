@@ -75,9 +75,7 @@ impl SyncWorker {
                     .as_mut()
                     .ok()
                     .and_then(|update| update.server_version.take());
-                if version.is_some() {
-                    next_version_probe = Instant::now();
-                } else if Instant::now() >= next_version_probe {
+                if version.is_none() && Instant::now() >= next_version_probe {
                     // Also cover older servers and servers that reject the sync protocol.
                     version = client.version().ok();
                     next_version_probe = Instant::now() + VERSION_PROBE_INTERVAL;
