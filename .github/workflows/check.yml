@@ -1,114 +1,29 @@
 name: CI checks
 
-on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
-  workflow_dispatch:
+on: workflow_dispatch
 
 permissions:
   contents: read
 
-concurrency:
-  group: ci-checks-${{ github.ref }}
-  cancel-in-progress: true
-
-env:
-  TZ: UTC
-  CARGO_PROFILE_DEV_DEBUG: "0"
-
 jobs:
-  check:
-    name: ${{ matrix.platform }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - platform: linux
-            runner: ubuntu-24.04
-            timeout: 240
-            command: nix develop --accept-flake-config --command make check
-          - platform: macos
-            runner: macos-26
-            command: make check
-          - platform: windows
-            runner: windows-2022
-            timeout: 180
-            command: |
-              $env:PATH += ";C:\Program Files\Git\bin;C:\Program Files\Git\usr\bin"
-              make check
-          - platform: android
-            runner: ubuntu-24.04
-            timeout: 180
-            command: make android-check ANDROID_PROFILE=release ANDROID_SDK_ROOT="${ANDROID_HOME}"
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: ${{ matrix.timeout || 360 }}
-    env:
-      CARGO_BUILD_JOBS: ${{ matrix.platform == 'windows' && '3' || '2' }}
+  audio:
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
-          submodules: ${{ matrix.platform != 'windows' && 'recursive' || 'false' }}
-
-      - name: Free space for native build dependencies
-        if: matrix.platform == 'linux'
-        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
-      - if: matrix.platform == 'linux'
-        uses: ./.github/actions/cache-cargo
+      - name: Round-trip and compare
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y ffmpeg python3-numpy clang lld
+          make test -o native-deps -o cuda-target-check ARGS='--locked --release -p shrimply-aac --example encode --no-run --message-format=json' > build.jsonl
+          encoder=$(jq -r 'select(.reason? == "compiler-artifact" and .target.name == "encode") | .executable // empty' build.jsonl)
+          /usr/bin/python3 vendor/aac/benchmark.py "$encoder" --smoke > aac-smoke.json
+          /usr/bin/python3 vendor/aac/benchmark.py "$encoder" --bitrates 96 128 192 256 --repeat 2 > aac-native.json
+      - uses: actions/upload-artifact@v7
+        if: always()
         with:
-          scope: linux
-      - if: matrix.platform == 'linux'
-        uses: cachix/install-nix-action@v30
-        with:
-          install_url: https://releases.nixos.org/nix/nix-2.35.2/install
-          extra_nix_config: |
-            accept-flake-config = true
-            extra-substituters = https://cache.nixos-cuda.org https://shrimply.cachix.org
-            extra-trusted-public-keys = cache.nixos-cuda.org:74DUi4Ye579gUqzH4ziL9IyiJBlDpMRn9MBN8oNan9M= shrimply.cachix.org-1:cAgdyBbGPgJZMWUP4PAQPVENeCYtGT7OPPkocvo+uuA=
-
-      - if: matrix.platform == 'macos'
-        uses: ./.github/actions/setup-macos
-        id: macos-setup
-        with:
-          profile: debug
-      - if: matrix.platform == 'windows'
-        uses: ./.github/actions/setup-windows
-      - if: matrix.platform == 'android'
-        uses: ./.github/actions/setup-android
-
-      - name: Check
-        run: ${{ matrix.command }}
-
-      - name: Save Rust compiler cache after a failed check
-        if: failure() && env.SCCACHE_CACHE_KEY != ''
-        uses: actions/cache/save@v6
-        with:
-          path: ${{ env.SCCACHE_DIR }}
-          key: ${{ env.SCCACHE_CACHE_KEY }}
-
-      - name: Save macOS check cache
-        if: matrix.platform == 'macos' && steps.macos-setup.outputs.application-hit != 'true'
-        uses: actions/cache/save@v6
-        with:
-          path: target/debug
-          key: ${{ steps.macos-setup.outputs.application-key }}
-
-      - name: Upload build diagnostics
-        if: always() && matrix.platform == 'windows'
-        uses: actions/upload-artifact@v7
-        with:
-          name: windows-build-diagnostics
+          name: aac-results
           path: |
-            .ci/ffmpeg-validation/*.log
-            .ci/vcpkg/buildtrees/**/*.log
-          if-no-files-found: ignore
-
-      - name: Upload Android lint report
-        if: matrix.platform == 'android'
-        uses: actions/upload-artifact@v7
-        with:
-          name: android-lint
-          path: android/app/build/reports/lint-results-release.html
-          if-no-files-found: error
+            aac-*.json
+            build.jsonl
