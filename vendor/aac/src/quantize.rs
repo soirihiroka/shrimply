@@ -1,3 +1,5 @@
+use std::sync::LazyLock;
+
 use crate::{FRAME_SAMPLES, Layout, bits::best_book};
 
 const MAX_QUANTIZED: usize = 8191;
@@ -7,13 +9,13 @@ pub(crate) struct Choice {
     pub sf: u8,
     pub book: u8,
     pub cost: u16,
-    error: f32,
+    pub error: f32,
 }
 
 pub(crate) struct Search {
     inverse: Vec<f32>,
     boundaries: Vec<f32>,
-    bands: [Vec<Vec<Choice>>; 2],
+    pub bands: [Vec<Vec<Choice>>; 2],
     powers: [[f32; FRAME_SAMPLES]; 2],
 }
 
@@ -41,6 +43,7 @@ impl Search {
         spectra: &[[f32; FRAME_SAMPLES]; 2],
         masking: &[Vec<f32>; 2],
     ) {
+        let mut quantized = [0_i16; FRAME_SAMPLES];
         for ((channel, powers), (source, masking)) in self
             .bands
             .iter_mut()
@@ -83,7 +86,6 @@ impl Search {
                     let last = ((100.0 + (16.0 / 3.0) * (peak / 0.6).log2()).ceil() as i32)
                         .min(masked + 36)
                         .clamp(first, 255);
-                    let mut quantized = [0_i16; FRAME_SAMPLES];
                     let rooted_rms = rms.sqrt();
                     let step = if peak > 2.0 * rooted_rms * rooted_rms.sqrt() {
                         1 // A few strong coefficients dominate the band's distortion.
@@ -91,8 +93,7 @@ impl Search {
                         2
                     };
                     for sf in (first..=last).step_by(step) {
-                        let scale = gain(sf as u8);
-                        let factor = scale.powf(-0.75);
+                        let (scale, factor) = gains(sf as u8);
                         let mut error = 0.0;
                         let mut high = 0;
                         for (value, i) in quantized
@@ -172,8 +173,14 @@ impl Search {
     }
 }
 
-pub(crate) fn gain(sf: u8) -> f32 {
-    ((f32::from(sf) - 100.0) * 0.25).exp2()
+pub(crate) fn gains(sf: u8) -> (f32, f32) {
+    static GAINS: LazyLock<[(f32, f32); 256]> = LazyLock::new(|| {
+        std::array::from_fn(|sf| {
+            let exponent = (sf as f32 - 100.0) * 0.25;
+            (exponent.exp2(), (-0.75 * exponent).exp2())
+        })
+    });
+    GAINS[usize::from(sf)]
 }
 
 fn quantize(sample: f32, power: f32, factor: f32, boundaries: &[f32]) -> i16 {

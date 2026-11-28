@@ -11,7 +11,7 @@ use std::ops::Range;
 use bits::{Bits, Book};
 use mdct::Analysis;
 use psychoacoustics::Masking;
-use quantize::{Choice, Search, gain};
+use quantize::{Choice, Search, gains};
 use tables::*;
 
 pub const FRAME_SAMPLES: usize = 1024;
@@ -167,7 +167,7 @@ impl Encoder {
         self.remainder += u64::from(self.bitrate) * FRAME_SAMPLES as u64;
         let frame_budget = (self.remainder / u64::from(self.sample_rate)) as i64;
         self.remainder %= u64::from(self.sample_rate);
-        let available = (frame_budget + self.reservoir.min(frame_budget / 3)) as usize;
+        let available = (frame_budget + self.reservoir.min(frame_budget)) as usize;
         let limit = available.min(FRAME_LIMIT) / 8;
         let packet = self.allocate(layout, &spectra, &stereo, limit);
         self.reservoir =
@@ -215,6 +215,46 @@ impl Encoder {
                 } else {
                     low = lambda;
                 }
+            }
+        }
+        // The discrete choices can leave room below the packet limit. Spend it on
+        // the largest remaining masking violations using exact section and offset bits.
+        if size(&picks) < limit {
+            let mut worst: Vec<_> = picks
+                .iter()
+                .enumerate()
+                .flat_map(|(channel, choices)| {
+                    choices
+                        .iter()
+                        .enumerate()
+                        .map(move |(band, choice)| (channel, band, choice.error))
+                })
+                .collect();
+            worst.sort_unstable_by(|left, right| right.2.total_cmp(&left.2));
+            for (channel, band, _) in worst.into_iter().take(6) {
+                let previous = picks[channel][..band]
+                    .iter()
+                    .rfind(|choice| choice.book != 0)
+                    .map(|choice| choice.sf);
+                let next = picks[channel][band + 1..]
+                    .iter()
+                    .find(|choice| choice.book != 0)
+                    .map(|choice| choice.sf);
+                let mut best = picks[channel][band];
+                for &choice in &self.quantizer.bands[channel][band] {
+                    if choice.error >= best.error
+                        || choice.book == 0
+                        || previous.is_some_and(|sf| sf.abs_diff(choice.sf) > 60)
+                        || next.is_some_and(|sf| sf.abs_diff(choice.sf) > 60)
+                    {
+                        continue;
+                    }
+                    picks[channel][band] = choice;
+                    if size(&picks) <= limit {
+                        best = choice;
+                    }
+                }
+                picks[channel][band] = best;
             }
         }
         let packet = self.packet(layout, spectra, stereo, &picks);
@@ -285,7 +325,7 @@ impl Encoder {
             {
                 let group = index / layout.band_count();
                 let band = index % layout.band_count();
-                let factor = gain(choice.sf).powf(-0.75);
+                let (_, factor) = gains(choice.sf);
                 let book = Book::new(choice.book);
                 for range in layout.ranges(group, band) {
                     for (value, i) in values.iter_mut().zip(range.clone()) {
