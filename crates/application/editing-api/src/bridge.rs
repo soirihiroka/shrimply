@@ -124,7 +124,7 @@ pub struct Bridge {
 impl Bridge {
     pub fn connect(path: &Path) -> Result<Self, BridgeError> {
         let path = shrimply_project_document::project::normalized_project_path(path);
-        let owner = shrimply_project_document::project::project_lock_owner(&path)
+        let owner = shrimply_project_document::project::project_lock_record(&path)
             .map_err(BridgeError::Transport)?
             .ok_or_else(|| {
                 BridgeError::Transport(format!("{} has no project session", path.display()))
@@ -155,17 +155,24 @@ impl Bridge {
 
     #[cfg(not(target_os = "android"))]
     pub fn connect_or_launch(path: &Path) -> Result<Self, BridgeError> {
-        let owner = shrimply_project_document::project::project_lock_owner;
         let deadline = Instant::now() + START_TIMEOUT;
         loop {
-            if owner(path).map_err(BridgeError::Transport)?.is_none() {
+            let error = match Self::connect(path) {
+                Ok(bridge) => return Ok(bridge),
+                Err(error) => error,
+            };
+            // A working socket is sufficient for editing. Inspect the owner before
+            // replacing an unreachable session, which can require a host Flatpak call.
+            if shrimply_project_document::project::project_lock_owner(path)
+                .map_err(BridgeError::Transport)?
+                .is_none()
+            {
                 return Self::launch(path);
             }
-            match Self::connect(path) {
-                Ok(bridge) => return Ok(bridge),
-                Err(error) if Instant::now() >= deadline => return Err(error),
-                Err(_) => std::thread::sleep(START_POLL_INTERVAL),
+            if Instant::now() >= deadline {
+                return Err(error);
             }
+            std::thread::sleep(START_POLL_INTERVAL);
         }
     }
 

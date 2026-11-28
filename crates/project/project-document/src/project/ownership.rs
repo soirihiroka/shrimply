@@ -82,8 +82,15 @@ fn project_lock_path(path: &Path) -> PathBuf {
 
 /// Returns the live process owning a project's lock, if any.
 pub fn project_lock_owner(path: &Path) -> Result<Option<ProjectLockOwner>, String> {
-    let path = normalized_project_path(path);
-    let lock_path = project_lock_path(&path);
+    let Some(owner) = project_lock_record(&normalized_project_path(path))? else {
+        return Ok(None);
+    };
+    Ok(project_lock_owner_is_running(&owner)?.then_some(owner))
+}
+
+/// Reads the recorded owner of a normalized project path without inspecting the process.
+pub fn project_lock_record(path: &Path) -> Result<Option<ProjectLockOwner>, String> {
+    let lock_path = project_lock_path(path);
     if !lock_path.exists() {
         return Ok(None);
     }
@@ -93,7 +100,7 @@ pub fn project_lock_owner(path: &Path) -> Result<Option<ProjectLockOwner>, Strin
             lock_path.display()
         )
     })?;
-    Ok(project_lock_owner_is_running(&owner)?.then_some(owner))
+    Ok(Some(owner))
 }
 
 pub fn acquire_project_lock(path: &Path) -> Result<(), ProjectLockError> {
