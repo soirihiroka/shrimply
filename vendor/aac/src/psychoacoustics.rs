@@ -72,7 +72,8 @@ impl Masking {
                         .map(|(power, weight)| power * weight)
                         .sum();
                     let width = layout.bands[band + 1] - layout.bands[band];
-                    (masking + quiet) / width as f32
+                    // Keep wide high-frequency bands from crowding out narrow bands.
+                    (masking + quiet) / (width as f32).sqrt()
                 },
             ));
         }

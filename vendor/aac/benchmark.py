@@ -206,12 +206,17 @@ def verify_sample_rates(encoder, raw, adts):
 
 
 def matched_rates(rows):
-    key = "visqol_moslqo"
+    metrics = (
+        "visqol_moslqo", "waveform_snr_db_lr_ms", "gain_db_lr_ms", "stereo_balance_delta_db",
+        "spurious_spectral_energy_db_lr_ms", "pre_echo_db",
+        *(f"spectral_rmse_{size}_db_lr_ms" for size in (256, 1024, 4096)),
+    )
     by_item = {}
     for row in rows:
-        by_item.setdefault(row["item"], {}).setdefault(row["encoder"], []).append(row)
+        identity = row["item"], row["pcm_sha256"]
+        by_item.setdefault(identity, {}).setdefault(row["encoder"], []).append(row)
     results = []
-    for item, encoders in by_item.items():
+    for (item, pcm_sha256), encoders in by_item.items():
         if len(encoders) < 2:
             continue
         low = max(min(row["payload_bps"] for row in group) for group in encoders.values())
@@ -221,8 +226,8 @@ def matched_rates(rows):
                 continue
             for encoder, group in encoders.items():
                 group.sort(key=lambda row: row["payload_bps"])
-                record = dict(item=item, encoder=encoder, interpolated_at_bps=rate)
-                for metric in (key, "spectral_rmse_1024_db_lr_ms", "stereo_balance_delta_db"):
+                record = dict(item=item, pcm_sha256=pcm_sha256, encoder=encoder, interpolated_at_bps=rate)
+                for metric in metrics:
                     if not all(metric in row for row in group):
                         continue
                     values = np.array([row[metric] for row in group])

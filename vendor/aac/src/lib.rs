@@ -68,6 +68,7 @@ pub struct Encoder {
     bitrate: u32,
     remainder: u64,
     reservoir: i64,
+    average_demand: f32,
     delayed: Option<[[f32; 2]; FRAME_SAMPLES]>,
     overlap: [[f32; 2]; 2 * FRAME_SAMPLES],
     envelope: [f32; 2],
@@ -108,6 +109,7 @@ impl Encoder {
             bitrate,
             remainder: 0,
             reservoir: 0,
+            average_demand: 0.0,
             delayed: None,
             overlap: [[0.0; 2]; 2 * FRAME_SAMPLES],
             envelope: [0.0; 2],
@@ -162,12 +164,21 @@ impl Encoder {
         let masking = spectra
             .each_ref()
             .map(|lines| self.masking[index].thresholds(layout, lines));
-        self.quantizer.analyze(layout, &spectra, &masking);
+        let demand = self.quantizer.analyze(layout, &spectra, &masking);
 
         self.remainder += u64::from(self.bitrate) * FRAME_SAMPLES as u64;
         let frame_budget = (self.remainder / u64::from(self.sample_rate)) as i64;
         self.remainder %= u64::from(self.sample_rate);
-        let available = (frame_budget + self.reservoir.min(frame_budget)) as usize;
+        // The demand floor smooths the transition out of silence. Limit borrowing
+        // to half a frame so the bitrate remains bounded over the stream.
+        let demand_floor = FRAME_SAMPLES as f32 / 4.0;
+        let demand_ratio = ((demand + demand_floor) / (self.average_demand + demand_floor)).sqrt();
+        self.average_demand += (demand - self.average_demand) / 16.0;
+        let target = (frame_budget as f32 * demand_ratio.clamp(0.5, 1.75)) as i64;
+        let borrow_limit = frame_budget / 2;
+        let available = (target + self.reservoir / 8)
+            .clamp(borrow_limit, frame_budget + self.reservoir + borrow_limit)
+            as usize;
         let limit = available.min(FRAME_LIMIT) / 8;
         let packet = self.allocate(layout, &spectra, &stereo, limit);
         self.reservoir =
