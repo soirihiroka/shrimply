@@ -1,4 +1,4 @@
-use std::{f32::consts::PI, sync::Arc};
+use std::{f64::consts::PI, sync::Arc};
 
 use rustfft::{Fft, FftPlanner, num_complex::Complex32};
 
@@ -17,8 +17,8 @@ pub(crate) struct Analysis {
 impl Analysis {
     pub fn new() -> Self {
         let mut planner = FftPlanner::new();
-        let long = Transform::new(FRAME_SAMPLES, &mut planner);
-        let short = Transform::new(SHORT, &mut planner);
+        let long = Transform::new(FRAME_SAMPLES, 4.0, &mut planner);
+        let short = Transform::new(SHORT, 6.0, &mut planner);
         let mut start = long.window.clone();
         start[FRAME_SAMPLES..FRAME_SAMPLES + OFFSET].fill(1.0);
         start[FRAME_SAMPLES + OFFSET..FRAME_SAMPLES + OFFSET + SHORT]
@@ -65,29 +65,30 @@ struct Transform {
 }
 
 impl Transform {
-    fn new(size: usize, planner: &mut FftPlanner<f32>) -> Self {
+    fn new(size: usize, alpha: f64, planner: &mut FftPlanner<f32>) -> Self {
         let fft = planner.plan_fft_forward(2 * size);
         let scratch = vec![Complex32::ZERO; fft.get_inplace_scratch_len()];
-        let length = size as f32;
-        let window = (0..2 * size)
-            .map(|n| (PI * (n as f32 + 0.5) / (2.0 * length)).sin())
-            .collect();
+        let length = size as f64;
+        let rotation = |phase: f64, gain: f64| {
+            let (sin, cos) = phase.sin_cos();
+            Complex32::new((gain * cos) as f32, (gain * sin) as f32)
+        };
         // A half-bin FFT shift followed by the MDCT's half-window phase shift.
         let input_rotation = (0..2 * size)
-            .map(|n| Complex32::from_polar(1.0, -PI * n as f32 / (2.0 * length)))
+            .map(|n| rotation(-PI * n as f64 / (2.0 * length), 1.0))
             .collect();
         let output_rotation = (0..size)
             .map(|k| {
                 // AAC's factor of two and the conversion from normalized PCM.
-                Complex32::from_polar(
+                rotation(
+                    -PI * (k as f64 + 0.5) * (0.5 + length / 2.0) / length,
                     65536.0,
-                    -PI * (k as f32 + 0.5) * (0.5 + length / 2.0) / length,
                 )
             })
             .collect();
         Self {
             fft,
-            window,
+            window: kbd_window(size, alpha),
             input_rotation,
             output_rotation,
             spectrum: vec![Complex32::ZERO; 2 * size],
@@ -119,6 +120,35 @@ impl Transform {
             *line = (bin * rotation).re;
         }
     }
+}
+
+// ISO/IEC 13818-7 §15.3.2. The cumulative Kaiser weights reduce leakage from
+// strong tonal components while complementary halves preserve time-domain alias cancellation.
+fn kbd_window(size: usize, alpha: f64) -> Vec<f32> {
+    let weights: Vec<_> = (0..=size)
+        .map(|index| {
+            let coordinate = 2.0 * index as f64 / size as f64 - 1.0;
+            let argument = (PI * alpha).powi(2) * (1.0 - coordinate.powi(2)) / 4.0;
+            let mut term = 1.0;
+            let mut sum = 1.0;
+            for order in 1..=40 {
+                term *= argument / f64::from(order * order);
+                sum += term;
+            }
+            sum
+        })
+        .collect();
+    let total = weights.iter().sum::<f64>();
+    let mut window: Vec<_> = weights[..size]
+        .iter()
+        .scan(0.0, |sum, weight| {
+            *sum += weight;
+            Some((*sum / total).sqrt() as f32)
+        })
+        .collect();
+    window.extend_from_within(..);
+    window[size..].reverse();
+    window
 }
 
 pub(crate) fn transient(
