@@ -114,7 +114,9 @@ foreach ($option in @(
     "--toolchain=msvc",
     "--enable-shared",
     "--disable-static",
+    "--enable-libmp3lame",
     "--enable-libopus",
+    "--enable-libvorbis",
     "--enable-libx264",
     "--enable-libx265",
     "--enable-cuda",
@@ -126,7 +128,7 @@ foreach ($option in @(
     Assert-Contains $version ([regex]::Escape($option)) "configure option $option"
 }
 $encoders = Invoke-PinnedFfmpeg "encoders" @("-hide_banner", "-encoders")
-foreach ($encoder in @("aac", "libopus", "h264_nvenc", "hevc_nvenc", "libx264", "libx265")) {
+foreach ($encoder in @("aac", "libmp3lame", "libopus", "libvorbis", "h264_nvenc", "hevc_nvenc", "libx264", "libx265")) {
     Assert-Contains $encoders "(?m)\b$encoder\b" "encoder $encoder"
 }
 

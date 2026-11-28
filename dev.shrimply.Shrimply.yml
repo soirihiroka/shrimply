@@ -114,7 +114,9 @@ modules:
       - --enable-shared
       - --disable-doc
       - --disable-ffplay
+      - --enable-libmp3lame
       - --enable-libopus
+      - --enable-libvorbis
       - --enable-gpl
       - --enable-libx264
       - --enable-libx265

@@ -12,10 +12,12 @@
         "avfilter",
         "avformat",
         "ffmpeg",
+        "mp3lame",
         "nvcodec",
         "opus",
         "swresample",
         "swscale",
+        "vorbis",
         "x264",
         "x265"
       ]

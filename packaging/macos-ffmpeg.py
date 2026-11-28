@@ -25,7 +25,7 @@ def main():
     installed = Path(output("brew", "--prefix", "ffmpeg")) / "bin/ffmpeg"
     flags = [flag for flag in shlex.split(output(str(installed), "-hide_banner", "-buildconf"))
              if flag.startswith(("--enable-", "--disable-"))]
-    deps = output("brew", "deps", "--installed", "ffmpeg").splitlines()
+    deps = sorted({"libvorbis", *output("brew", "deps", "--union", "--installed", "ffmpeg", "libvorbis").splitlines()})
     brew = Path(output("brew", "--prefix"))
     paths = [brew / "opt" / name for name in deps]
     env = os.environ.copy()
@@ -48,7 +48,7 @@ def main():
             return
         source = ffmpeg_source(root, patch)
         with tempfile.TemporaryDirectory(dir=root) as build:
-            subprocess.run([source / "configure", *flags, f"--prefix={prefix}", "--enable-videotoolbox",
+            subprocess.run([source / "configure", *flags, f"--prefix={prefix}", "--enable-videotoolbox", "--enable-libvorbis",
                             "--enable-shared", "--disable-static", "--enable-ffmpeg", "--disable-ffplay", "--disable-ffprobe", "--disable-doc"],
                            cwd=build, env=env, check=True)
             subprocess.run(["make", f"-j{os.cpu_count() or 1}", "install"], cwd=build, env=env, check=True)
