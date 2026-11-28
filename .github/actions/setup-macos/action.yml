@@ -33,6 +33,7 @@ runs:
           dylibbundler \
           ffmpeg \
           librsvg \
+          libvorbis \
           llvm@22 \
           pkgconf \
           poppler \
@@ -92,7 +93,8 @@ runs:
           printf '%s\n' "${MACOSX_DEPLOYMENT_TARGET}" "${ffmpeg_revision}"
         } | shasum -a 256 | cut -d ' ' -f 1)"
         prefix="macos-application-v2${{ inputs.profile == 'debug' && '-debug' || '' }}-macos-26-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml') }}"
-        echo "native-hash=${native_hash}" >> "${GITHUB_OUTPUT}"
+        vorbis_hash="$(brew list --versions libvorbis libogg | LC_ALL=C sort | shasum -a 256 | cut -d ' ' -f 1)"
+        echo "native-hash=${native_hash}-${vorbis_hash}" >> "${GITHUB_OUTPUT}"
         echo "legacy-prefix=${prefix}-${legacy_hash}" >> "${GITHUB_OUTPUT}"
         echo "cargo-prefix=${prefix}-cargo-${abi_hash}" >> "${GITHUB_OUTPUT}"
         echo "previous-cargo-prefix=${prefix}-cargo-${native_hash}" >> "${GITHUB_OUTPUT}"
