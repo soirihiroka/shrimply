@@ -2,8 +2,7 @@
 param(
     [string]$VcpkgRoot = $env:VCPKG_ROOT,
     [string]$InstalledDir = $env:VCPKG_INSTALLED_DIR,
-    [string]$BinarySources = $env:VCPKG_BINARY_SOURCES,
-    [ValidateSet("ffmpeg", "runtime")] [string]$Manifest = "ffmpeg"
+    [string]$BinarySources = $env:VCPKG_BINARY_SOURCES
 )
 
 $ErrorActionPreference = "Stop"
@@ -14,7 +13,7 @@ if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT -or
 }
 
 $root = (Resolve-Path (Join-Path $PSScriptRoot "../..")).Path
-$manifestRoot = Join-Path $PSScriptRoot "vcpkg/$Manifest"
+$manifestRoot = Join-Path $PSScriptRoot "vcpkg"
 $configuration = Get-Content (Join-Path $manifestRoot "vcpkg.json") -Raw | ConvertFrom-Json
 $revision = $configuration.'builtin-baseline'
 if (!$revision -or $revision -notmatch '^[0-9a-f]{40}$') {

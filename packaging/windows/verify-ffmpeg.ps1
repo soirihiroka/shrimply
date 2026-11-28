@@ -26,7 +26,7 @@ foreach ($path in @("include/libavutil/ffversion.h", "lib/avutil.lib", "lib/avco
 }
 $versionHeader = Get-Content (Join-Path $FfmpegRoot "include/libavutil/ffversion.h")
 if ($versionHeader -notcontains "#define FFMPEG_VERSION `"$ffmpegVersion`"") {
-    throw "Expected FFmpeg $ffmpegVersion in $FfmpegRoot. Run packaging/windows/build-ffmpeg.ps1 -Manifest runtime."
+    throw "Expected FFmpeg $ffmpegVersion in $FfmpegRoot. Run packaging/windows/build-ffmpeg.ps1."
 }
 if ($DevelopmentFilesOnly) { return }
 if (!$OutputDir) {

@@ -17,6 +17,7 @@ See Apple's [Icon Composer guide](https://developer.apple.com/documentation/xcod
 ## FFmpeg
 
 AppKit build, check and release targets build FFmpeg under `target/macos-ffmpeg`.
-They use the installed Homebrew FFmpeg's codec and filter choices. The local
+They use the installed Homebrew FFmpeg's codec and filter choices and enable
+Vorbis with Homebrew `libvorbis`. The local
 patch requires a hardware VideoToolbox decoder when creating each decompression
 session, including HEVC and ProRes. An unsupported stream fails to open.

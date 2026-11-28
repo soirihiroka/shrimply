@@ -64,7 +64,6 @@ runs:
         $clang = (Get-FileHash -Algorithm SHA256 "$env:LLVM_HOME\bin\clang.exe").Hash
         $libclang = (Get-FileHash -Algorithm SHA256 "$env:LLVM_HOME\bin\libclang.dll").Hash
         "skia=msvc-$env:VCToolsVersion-sdk-$sdk-clang-$clang-bindgen-$libclang" | Out-File -Append -Encoding utf8 $env:GITHUB_OUTPUT
-        "ffmpeg=$ffmpeg" | Out-File -Append -Encoding utf8 $env:GITHUB_OUTPUT
         "key=ffmpeg-$ffmpeg-$env:ImageOS-$env:ImageVersion-msvc-$env:VCToolsVersion-sdk-$sdk-x64-vcpkg-$vcpkg" | Out-File -Append -Encoding utf8 $env:GITHUB_OUTPUT
 
     - name: Install uv
@@ -139,34 +138,7 @@ runs:
       run: .ci/vcpkg/bootstrap-vcpkg.bat -disableMetrics
 
     # vcpkg validates each restored archive against its own package ABI.
-    - name: Restore FFmpeg cache
-      id: ffmpeg-cache
-      uses: actions/cache/restore@v6
-      with:
-        path: .ci/vcpkg/binary-cache/ffmpeg
-        key: windows-vcpkg-ffmpeg-v4-cuda-12.9.2-${{ steps.native-cache-abi.outputs.key }}-${{ hashFiles('packaging/windows/vcpkg/**', 'packaging/windows/build-ffmpeg.ps1', 'packaging/windows-ffmpeg.py', 'packaging/native_sources.py') }}
-        restore-keys: |
-          windows-vcpkg-ffmpeg-v4-cuda-12.9.2-ffmpeg-${{ steps.native-cache-abi.outputs.ffmpeg }}-
-
-    - name: Install FFmpeg
-      shell: powershell
-      run: |
-        $cache = "$pwd\.ci\vcpkg\binary-cache\ffmpeg"
-        New-Item -ItemType Directory -Force $cache | Out-Null
-        $sources = "clear;files,$cache,readwrite"
-        & packaging/windows/build-ffmpeg.ps1 `
-          -VcpkgRoot "$pwd\.ci\vcpkg" `
-          -InstalledDir "$env:VCPKG_INSTALLED_DIR" `
-          -BinarySources $sources
-
-    - name: Save FFmpeg cache
-      if: steps.ffmpeg-cache.outputs.cache-hit != 'true'
-      uses: actions/cache/save@v6
-      with:
-        path: .ci/vcpkg/binary-cache/ffmpeg
-        key: ${{ steps.ffmpeg-cache.outputs.cache-primary-key }}
-
-    - name: Restore remaining native library cache
+    - name: Restore native library cache
       id: runtime-cache
       uses: actions/cache/restore@v6
       with:
@@ -175,16 +147,17 @@ runs:
         restore-keys: |
           windows-vcpkg-runtime-v4-cuda-12.9.2-
 
-    - name: Install remaining native libraries
+    - name: Install native libraries
       shell: powershell
       run: |
-        New-Item -ItemType Directory -Force .ci/vcpkg/binary-cache/runtime | Out-Null
-        $env:VCPKG_BINARY_SOURCES = "clear;files,$pwd\.ci\vcpkg\binary-cache\runtime,readwrite;files,$pwd\.ci\vcpkg\binary-cache\ffmpeg,read"
-        & packaging/windows/build-ffmpeg.ps1 -Manifest runtime `
-          -VcpkgRoot "$pwd\.ci\vcpkg" -InstalledDir "$env:VCPKG_INSTALLED_DIR"
+        $cache = "$pwd\.ci\vcpkg\binary-cache\runtime"
+        New-Item -ItemType Directory -Force $cache | Out-Null
+        & packaging/windows/build-ffmpeg.ps1 `
+          -VcpkgRoot "$pwd\.ci\vcpkg" -InstalledDir "$env:VCPKG_INSTALLED_DIR" `
+          -BinarySources "clear;files,$cache,readwrite"
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-    - name: Save remaining native library cache
+    - name: Save native library cache
       if: steps.runtime-cache.outputs.cache-hit != 'true'
       uses: actions/cache/save@v6
       with:

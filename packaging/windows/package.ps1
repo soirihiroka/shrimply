@@ -78,6 +78,9 @@ New-Item -ItemType Directory -Force $licenses | Out-Null
 foreach ($license in @(
     @{ Package = "ffmpeg"; Name = "ffmpeg.txt" },
     @{ Package = "ffnvcodec"; Name = "nv-codec-headers.txt" },
+    @{ Package = "libogg"; Name = "libogg.txt" },
+    @{ Package = "libvorbis"; Name = "libvorbis.txt" },
+    @{ Package = "mp3lame"; Name = "mp3lame.txt" },
     @{ Package = "opus"; Name = "opus.txt" },
     @{ Package = "x264"; Name = "x264.txt" },
     @{ Package = "x265"; Name = "x265.txt" }

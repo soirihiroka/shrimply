@@ -22,6 +22,9 @@ $ffmpegDlls = @(
 $requiredNotices = @(
     "ffmpeg.txt",
     "nv-codec-headers.txt",
+    "libogg.txt",
+    "libvorbis.txt",
+    "mp3lame.txt",
     "opus.txt",
     "ffmpeg-build-configuration.txt",
     "PocketSphinx-code.txt",
