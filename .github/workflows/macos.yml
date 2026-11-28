@@ -35,7 +35,6 @@ permissions:
 
 concurrency:
   group: macos-prerelease-${{ github.ref }}
-  cancel-in-progress: true
 
 env:
   TZ: UTC

@@ -6,10 +6,10 @@ inputs:
     required: true
 outputs:
   application-key:
-    description: Cache key for the application build.
+    description: Cache key for compiled Cargo artifacts.
     value: ${{ steps.application-cache.outputs.cache-primary-key }}
   application-hit:
-    description: Whether the application cache was restored.
+    description: Whether the compiled Cargo artifacts were restored.
     value: ${{ steps.application-cache.outputs.cache-hit }}
 runs:
   using: composite
@@ -75,26 +75,37 @@ runs:
       id: application-cache-key
       shell: bash
       run: |
+        ffmpeg_revision="$(git -C external/ffmpeg rev-parse HEAD)"
         native_versions="$(brew list --versions)"
-        native_hash="$(printf '%s\n' "${ImageOS}" "${ImageVersion}" "${native_versions}" "$(git -C external/ffmpeg rev-parse HEAD)" \
+        legacy_hash="$(printf '%s\n' "${ImageOS}" "${ImageVersion}" "${native_versions}" "${ffmpeg_revision}" \
           | LC_ALL=C sort | shasum -a 256 | cut -d ' ' -f 1)"
-        echo "prefix=macos-application-v2${{ inputs.profile == 'debug' && '-debug' || '' }}-macos-26-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml') }}-${native_hash}" >> "${GITHUB_OUTPUT}"
+        sdk_hash="$({
+          xcodebuild -version
+          xcrun --sdk macosx --show-sdk-build-version
+          brew list --versions ffmpeg librsvg llvm@22 pkgconf poppler $(brew deps --installed ffmpeg)
+          printf '%s\n' "${MACOSX_DEPLOYMENT_TARGET}" "${ffmpeg_revision}"
+        } | shasum -a 256 | cut -d ' ' -f 1)"
+        prefix="macos-application-v2${{ inputs.profile == 'debug' && '-debug' || '' }}-macos-26-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml') }}"
+        echo "native-hash=${sdk_hash}" >> "${GITHUB_OUTPUT}"
+        echo "legacy-prefix=${prefix}-${legacy_hash}" >> "${GITHUB_OUTPUT}"
+        echo "cargo-prefix=${prefix}-cargo-${sdk_hash}" >> "${GITHUB_OUTPUT}"
 
     - name: Restore macOS application cache
       id: application-cache
       uses: actions/cache/restore@v6
       with:
         path: target/${{ inputs.profile }}
-        key: ${{ steps.application-cache-key.outputs.prefix }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/**/Cargo.toml', 'external/**/Cargo.toml', '.cargo/config.toml', 'Makefile', '.github/workflows/macos.yml') }}-${{ github.sha }}
+        key: ${{ steps.application-cache-key.outputs.cargo-prefix }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/**/Cargo.toml', 'external/**/Cargo.toml', '.cargo/config.toml', 'Makefile', 'packaging/native_sources.py', 'packaging/macos-ffmpeg.py', 'packaging/macos/ffmpeg-hardware.patch') }}
         restore-keys: |
-          ${{ steps.application-cache-key.outputs.prefix }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/**/Cargo.toml', 'external/**/Cargo.toml', '.cargo/config.toml', 'Makefile', '.github/workflows/macos.yml') }}-
-          ${{ steps.application-cache-key.outputs.prefix }}-
+          ${{ steps.application-cache-key.outputs.cargo-prefix }}-
+          ${{ steps.application-cache-key.outputs.legacy-prefix }}-
 
     - name: Cache hardware-only FFmpeg
       uses: actions/cache@v6
       with:
         path: target/macos-ffmpeg
-        key: ${{ steps.application-cache-key.outputs.prefix }}-ffmpeg-${{ hashFiles('packaging/native_sources.py', 'packaging/macos-ffmpeg.py', 'packaging/macos/ffmpeg-hardware.patch') }}
+        key: macos-ffmpeg-v1-${{ runner.arch }}-${{ steps.application-cache-key.outputs.native-hash }}-${{ hashFiles('packaging/native_sources.py', 'packaging/macos-ffmpeg.py', 'packaging/macos/ffmpeg-hardware.patch') }}
+        restore-keys: ${{ steps.application-cache-key.outputs.legacy-prefix }}-ffmpeg-${{ hashFiles('packaging/native_sources.py', 'packaging/macos-ffmpeg.py', 'packaging/macos/ffmpeg-hardware.patch') }}
 
     - name: Cache PocketSphinx resources
       uses: actions/cache@v6
