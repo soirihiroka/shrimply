@@ -151,6 +151,7 @@ jobs:
           codesign --verify --deep --strict "${MACOS_APP}"
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "${contents}/Info.plist")" = "shrimply"
           test "$(lipo -archs "${contents}/MacOS/shrimply")" = "arm64"
+          env PATH=/usr/bin:/bin "${contents}/MacOS/shrimply" --version
           env PATH=/usr/bin:/bin "${contents}/MacOS/uv" --version
           ffmpeg_version="$(env PATH=/usr/bin:/bin "${contents}/MacOS/shrimply-ffmpeg" -version)"
           test "$(awk 'NR == 1 {print $3}' <<< "${ffmpeg_version}")" = "$(cat external/ffmpeg/RELEASE)"
