@@ -458,14 +458,6 @@ impl Editor {
                 });
             },
             Action::About => |editor| about::show(editor.mtm()),
-            Action::Close => |editor| {
-                editor
-                    .ivars()
-                    .window
-                    .get()
-                    .expect("project window")
-                    .performClose(None)
-            },
             _ => return None,
         })
     }

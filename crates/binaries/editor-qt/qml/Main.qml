@@ -246,7 +246,6 @@ ApplicationWindow {
         target: backend
         function onProjectPreferencesRequested() { preferencesWindow.openPreferences() }
         function onProjectAboutRequested() { aboutWindow.openAbout() }
-        function onProjectCloseRequested() { window.close() }
     }
 
     component ProjectMenu: AdaptiveMenu {

@@ -280,9 +280,6 @@ pub mod qobject {
         #[cxx_name = "projectAboutRequested"]
         fn project_about_requested(self: Pin<&mut EditorBackend>);
         #[qsignal]
-        #[cxx_name = "projectCloseRequested"]
-        fn project_close_requested(self: Pin<&mut EditorBackend>);
-        #[qsignal]
         #[cxx_name = "requestTrust"]
         fn request_trust(
             self: Pin<&mut EditorBackend>,
@@ -695,7 +692,6 @@ impl qobject::EditorBackend {
             ProjectAction::Preferences => Self::project_preferences_requested,
             ProjectAction::RestartService => Self::restart_local_service,
             ProjectAction::About => Self::project_about_requested,
-            ProjectAction::Close => Self::project_close_requested,
             _ => return None,
         })
     }

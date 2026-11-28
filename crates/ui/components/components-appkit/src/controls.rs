@@ -4,9 +4,9 @@ use objc2::ffi::{OBJC_ASSOCIATION_RETAIN_NONATOMIC, objc_setAssociatedObject};
 use objc2::rc::{Retained, Weak};
 use objc2::{ClassType, DefinedClass, MainThreadOnly, define_class, msg_send};
 use objc2_app_kit::{
-    NSAutoresizingMaskOptions, NSBezelStyle, NSButton, NSCellImagePosition, NSColor, NSColorWell,
-    NSControlStateValueOff, NSControlStateValueOn, NSEvent, NSFont, NSImage, NSImageView,
-    NSLayoutAttribute, NSLayoutConstraintOrientation, NSLayoutPriorityDefaultLow,
+    NSAccessibility, NSAutoresizingMaskOptions, NSBezelStyle, NSButton, NSCellImagePosition,
+    NSColor, NSColorWell, NSControlStateValueOff, NSControlStateValueOn, NSEvent, NSFont, NSImage,
+    NSImageView, NSLayoutAttribute, NSLayoutConstraintOrientation, NSLayoutPriorityDefaultLow,
     NSLayoutPriorityRequired, NSPasteboard, NSPasteboardTypeString, NSPopover, NSPopoverBehavior,
     NSProgressIndicator, NSProgressIndicatorStyle, NSScrollView, NSSearchField, NSSegmentedControl,
     NSStackView, NSStackViewDistribution, NSSwitch, NSTextAlignment, NSTextField,
@@ -1013,6 +1013,9 @@ pub fn switch_row(
     mtm: MainThreadMarker,
 ) -> Retained<NSView> {
     let toggle = Switch::new(active, tooltip, on_change, mtm);
+    toggle
+        .view()
+        .setAccessibilityLabel(Some(&NSString::from_str(label)));
     let aligned = NSView::new(mtm);
     toggle
         .view()
