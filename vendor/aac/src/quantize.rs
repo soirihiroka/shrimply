@@ -195,18 +195,17 @@ impl Search {
                         peak = peak.max(powers[i]);
                         width += 1;
                     }
-                    // Penalize completely zeroing out audible bands (prevents "birdies" / spectral holes).
+                    // Smooth energy-envelope distortion weight: penalizes both spectral holes
+                    // and severe low-bitrate band energy collapse continuously (matches 1.85x at E_hat = 0).
                     let raw_zero_err = energy / mask;
-                    entry.zero_error = if raw_zero_err > 1.5 {
-                        raw_zero_err * 1.85
-                    } else {
-                        raw_zero_err
-                    };
+                    let env_weight = band_env_weight(raw_zero_err);
+                    entry.zero_error = raw_zero_err * (1.0 + env_weight);
                     if energy == 0.0 {
                         entry.min_sf = SF_OFFSET;
                         entry.max_sf = SF_OFFSET;
                         continue;
                     }
+                    let orig_norm = energy.sqrt();
                     let sf_offset = f32::from(SF_OFFSET);
                     let rms = (energy / width as f32).sqrt();
                     let bin_mask = mask / width as f32;
@@ -243,6 +242,7 @@ impl Search {
                     for &sf in &sfs[..n_sfs] {
                         let (scale, factor) = gains(sf);
                         let mut sq_err = 0.0_f32;
+                        let mut hat_energy = 0.0_f32;
                         let mut high = 0_u16;
                         for (value, i) in qbuf.iter_mut().zip(layout.ranges(group, band).flatten())
                         {
@@ -250,15 +250,18 @@ impl Search {
                                 quantize_scalar(source[i], powers[i], factor, &self.boundaries);
                             let mag = value.unsigned_abs();
                             high = high.max(mag);
-                            let diff = source[i].abs() - self.inverse[usize::from(mag)] * scale;
+                            let deq = self.inverse[usize::from(mag)] * scale;
+                            let diff = source[i].abs() - deq;
                             sq_err += diff * diff;
+                            hat_energy += deq * deq;
                         }
                         if high == 0 {
                             break;
                         }
                         let costs = codebook_costs(&qbuf[..width], high);
                         let min_cost = costs[1..].iter().copied().min().unwrap_or(u16::MAX);
-                        let err = sq_err / mask;
+                        let env_diff = orig_norm - hat_energy.sqrt();
+                        let err = (sq_err + env_weight * env_diff * env_diff) / mask;
                         let mut errors = [f32::INFINITY; CODEBOOK_COUNT];
                         for cb in ACTIVE_BOOKS {
                             let ci = cb.index();
@@ -934,6 +937,11 @@ fn viterbi_channel<'a>(
     }
 }
 
+#[inline]
+fn band_env_weight(raw_zero_err: f32) -> f32 {
+    if raw_zero_err > 1.5 { 0.85 } else { 0.0 }
+}
+
 struct RdoqCtx<'a> {
     xs: &'a [f32],
     ps: &'a [f32],
@@ -941,6 +949,8 @@ struct RdoqCtx<'a> {
     factor: f32,
     inv_mask: f32,
     lambda: f32,
+    orig_norm: f32,
+    env_weight: f32,
     inverse: &'a [f32],
 }
 
@@ -954,6 +964,7 @@ impl<'a> RdoqCtx<'a> {
         inverse: &'a [f32],
     ) -> Self {
         let (scale, factor) = gains(sf);
+        let orig_energy: f32 = xs.iter().map(|&x| x * x).sum();
         Self {
             xs,
             ps,
@@ -961,7 +972,19 @@ impl<'a> RdoqCtx<'a> {
             factor,
             inv_mask,
             lambda,
+            orig_norm: orig_energy.sqrt(),
+            env_weight: band_env_weight(orig_energy * inv_mask),
             inverse,
+        }
+    }
+
+    #[inline]
+    fn env_penalty(&self, hat_energy: f32) -> f32 {
+        if self.env_weight > 0.0 {
+            let d = self.orig_norm - hat_energy.sqrt();
+            self.env_weight * d * d * self.inv_mask
+        } else {
+            0.0
         }
     }
 }
@@ -1048,21 +1071,26 @@ fn rdoq_quad<const PAIRED: bool>(
     let t1 = if PAIRED { SPECTRUM[book.index()] } else { t0 };
 
     let mut err0 = 0.0_f32;
+    let mut hat_e0 = 0.0_f32;
     let mut bits0 = 0_u16;
     let mut nz0 = false;
     let mut err1 = 0.0_f32;
+    let mut hat_e1 = 0.0_f32;
     let mut bits1 = 0_u16;
     let mut nz1 = false;
 
     for (tuple_idx, (xq, pq)) in ctx
         .xs
-        .chunks_exact(4)
-        .zip(ctx.ps.chunks_exact(4))
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(ctx.ps.as_chunks::<4>().0)
         .enumerate()
     {
         let mut cands = [[0_usize; 2]; 4];
         let mut counts = [1_usize; 4];
         let mut errs = [[0.0_f32; 2]; 4];
+        let mut deq2 = [[0.0_f32; 2]; 4];
         let mut digits = [[0_usize; 2]; 4];
 
         for j in 0..4 {
@@ -1080,8 +1108,10 @@ fn rdoq_quad<const PAIRED: bool>(
                 }
             };
             cands[j][0] = q0;
-            let d0 = ax - ctx.inverse[q0] * ctx.scale;
+            let v0 = ctx.inverse[q0] * ctx.scale;
+            let d0 = ax - v0;
             errs[j][0] = d0 * d0 * ctx.inv_mask;
+            deq2[j][0] = v0 * v0;
             digits[j][0] = if spec.signed {
                 if neg { limit - q0 } else { limit + q0 }
             } else {
@@ -1090,8 +1120,10 @@ fn rdoq_quad<const PAIRED: bool>(
             if q1 != q0 {
                 counts[j] = 2;
                 cands[j][1] = q1;
-                let d1 = ax - ctx.inverse[q1] * ctx.scale;
+                let v1 = ctx.inverse[q1] * ctx.scale;
+                let d1 = ax - v1;
                 errs[j][1] = d1 * d1 * ctx.inv_mask;
+                deq2[j][1] = v1 * v1;
                 digits[j][1] = if spec.signed {
                     if neg { limit - q1 } else { limit + q1 }
                 } else {
@@ -1102,28 +1134,34 @@ fn rdoq_quad<const PAIRED: bool>(
 
         let mut b0_j = f32::INFINITY;
         let mut b0_e = 0.0_f32;
+        let mut b0_h = 0.0_f32;
         let mut b0_r = 0_u16;
         let mut b0_nz = false;
         let mut b0_q = [0_usize; 4];
         let mut b1_j = f32::INFINITY;
         let mut b1_e = 0.0_f32;
+        let mut b1_h = 0.0_f32;
         let mut b1_r = 0_u16;
         let mut b1_nz = false;
 
         for i0 in 0..counts[0] {
             let e0 = errs[0][i0];
+            let h0 = deq2[0][i0];
             let idx0 = digits[0][i0] * radix;
             let s0 = u16::from(cands[0][i0] != 0);
             for i1 in 0..counts[1] {
                 let e01 = e0 + errs[1][i1];
+                let h01 = h0 + deq2[1][i1];
                 let idx1 = (idx0 + digits[1][i1]) * radix;
                 let s01 = s0 + u16::from(cands[1][i1] != 0);
                 for i2 in 0..counts[2] {
                     let e012 = e01 + errs[2][i2];
+                    let h012 = h01 + deq2[2][i2];
                     let idx2 = (idx1 + digits[2][i2]) * radix;
                     let s012 = s01 + u16::from(cands[2][i2] != 0);
                     for i3 in 0..counts[3] {
                         let e = e012 + errs[3][i3];
+                        let h = h012 + deq2[3][i3];
                         let idx = idx2 + digits[3][i3];
                         let nz_cnt = s012 + u16::from(cands[3][i3] != 0);
                         let sign_b = if spec.signed { 0 } else { nz_cnt };
@@ -1133,6 +1171,7 @@ fn rdoq_quad<const PAIRED: bool>(
                         if j0 < b0_j {
                             b0_j = j0;
                             b0_e = e;
+                            b0_h = h;
                             b0_r = r0;
                             b0_nz = any_nz;
                             if !PAIRED {
@@ -1145,6 +1184,7 @@ fn rdoq_quad<const PAIRED: bool>(
                             if j1 < b1_j {
                                 b1_j = j1;
                                 b1_e = e;
+                                b1_h = h;
                                 b1_r = r1;
                                 b1_nz = any_nz;
                             }
@@ -1161,13 +1201,22 @@ fn rdoq_quad<const PAIRED: bool>(
             }
         }
         err0 += b0_e;
+        hat_e0 += b0_h;
         bits0 += b0_r;
         nz0 |= b0_nz;
         if PAIRED {
             err1 += b1_e;
+            hat_e1 += b1_h;
             bits1 += b1_r;
             nz1 |= b1_nz;
         }
+    }
+
+    if nz0 {
+        err0 += ctx.env_penalty(hat_e0);
+    }
+    if PAIRED && nz1 {
+        err1 += ctx.env_penalty(hat_e1);
     }
 
     (
@@ -1196,21 +1245,26 @@ fn rdoq_duo<const PAIRED: bool>(
     let t1 = if PAIRED { SPECTRUM[book.index()] } else { t0 };
 
     let mut err0 = 0.0_f32;
+    let mut hat_e0 = 0.0_f32;
     let mut bits0 = 0_u16;
     let mut nz0 = false;
     let mut err1 = 0.0_f32;
+    let mut hat_e1 = 0.0_f32;
     let mut bits1 = 0_u16;
     let mut nz1 = false;
 
     for (tuple_idx, (xp, pp)) in ctx
         .xs
-        .chunks_exact(2)
-        .zip(ctx.ps.chunks_exact(2))
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .zip(ctx.ps.as_chunks::<2>().0)
         .enumerate()
     {
         let mut cands = [[0_usize; 3]; 2];
         let mut counts = [0_usize; 2];
         let mut errs = [[0.0_f32; 3]; 2];
+        let mut deq2 = [[0.0_f32; 3]; 2];
         let mut digits = [[0_usize; 3]; 2];
         let mut extra = [[0_u16; 3]; 2];
 
@@ -1222,8 +1276,10 @@ fn rdoq_duo<const PAIRED: bool>(
             let mut n = 0;
             let mut push = |q: usize| {
                 cands[j][n] = q;
-                let d = ax - ctx.inverse[q] * ctx.scale;
+                let v = ctx.inverse[q] * ctx.scale;
+                let d = ax - v;
                 errs[j][n] = d * d * ctx.inv_mask;
+                deq2[j][n] = v * v;
                 digits[j][n] = if spec.signed {
                     if neg { limit - q } else { limit + q }
                 } else {
@@ -1252,21 +1308,25 @@ fn rdoq_duo<const PAIRED: bool>(
 
         let mut b0_j = f32::INFINITY;
         let mut b0_e = 0.0_f32;
+        let mut b0_h = 0.0_f32;
         let mut b0_r = 0_u16;
         let mut b0_nz = false;
         let mut b0_q = [0_usize; 2];
         let mut b1_j = f32::INFINITY;
         let mut b1_e = 0.0_f32;
+        let mut b1_h = 0.0_f32;
         let mut b1_r = 0_u16;
         let mut b1_nz = false;
 
         for i0 in 0..counts[0] {
             let e0 = errs[0][i0];
+            let h0 = deq2[0][i0];
             let idx0 = digits[0][i0] * radix;
             let x0 = extra[0][i0];
             let q0 = cands[0][i0];
             for i1 in 0..counts[1] {
                 let e = e0 + errs[1][i1];
+                let h = h0 + deq2[1][i1];
                 let idx = idx0 + digits[1][i1];
                 let q1 = cands[1][i1];
                 let any_nz = q0 != 0 || q1 != 0;
@@ -1276,6 +1336,7 @@ fn rdoq_duo<const PAIRED: bool>(
                 if j0 < b0_j {
                     b0_j = j0;
                     b0_e = e;
+                    b0_h = h;
                     b0_r = r0;
                     b0_nz = any_nz;
                     if !PAIRED {
@@ -1288,6 +1349,7 @@ fn rdoq_duo<const PAIRED: bool>(
                     if j1 < b1_j {
                         b1_j = j1;
                         b1_e = e;
+                        b1_h = h;
                         b1_r = r1;
                         b1_nz = any_nz;
                     }
@@ -1302,13 +1364,22 @@ fn rdoq_duo<const PAIRED: bool>(
             }
         }
         err0 += b0_e;
+        hat_e0 += b0_h;
         bits0 += b0_r;
         nz0 |= b0_nz;
         if PAIRED {
             err1 += b1_e;
+            hat_e1 += b1_h;
             bits1 += b1_r;
             nz1 |= b1_nz;
         }
+    }
+
+    if nz0 {
+        err0 += ctx.env_penalty(hat_e0);
+    }
+    if PAIRED && nz1 {
+        err1 += ctx.env_penalty(hat_e1);
     }
 
     (
