@@ -59,7 +59,12 @@ jobs:
           fi
           cd "$RUNNER_TEMP"
           project=session.shrimp
-          shrimply() { "$SHRIMPLY_EXE" "$@" --project "$project"; }
+          shrimply() {
+            printf 'Running %s %s\n' "$1" "$2" >&2
+            local -a limit=()
+            if [[ "$RUNNER_OS" == Windows ]]; then limit=(timeout --kill-after=5s 45s); fi
+            "${limit[@]}" "$SHRIMPLY_EXE" "$@" --project "$project"
+          }
           trap 'shrimply project close || true' EXIT
           if creation=$(shrimply project create --name Original); then
             jq -e '.success and .result.created' <<<"$creation"
