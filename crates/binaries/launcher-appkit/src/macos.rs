@@ -386,7 +386,7 @@ define_class!(
         #[unsafe(method(openListedProject:))]
         fn open_listed_project(&self, sender: &NSButton) {
             if let Some(project) = self.ivars().model.borrow().project(sender.tag() as usize).cloned() {
-                self.open_remote("Could not open project", move || project.open(None));
+                self.start_editor(launcher::launch_listed_project(&project));
             }
         }
 
@@ -527,7 +527,11 @@ define_class!(
 
 impl Delegate {
     fn open_in_editor(&self, path: &Path) {
-        let mut child = match launcher::launch_editor(path) {
+        self.start_editor(launcher::launch_editor(path));
+    }
+
+    fn start_editor(&self, result: Result<std::process::Child, String>) {
+        let mut child = match result {
             Ok(child) => child,
             Err(error) => {
                 self.show_error("Could not start editor", &error);

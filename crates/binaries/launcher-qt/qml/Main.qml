@@ -44,6 +44,11 @@ ApplicationWindow {
             window.hide()
         }
 
+        function onEditorCanceled() {
+            window.show()
+            window.requestActivate()
+        }
+
         function onEditorFinished() {
             Qt.quit()
         }

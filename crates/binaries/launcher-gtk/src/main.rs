@@ -247,9 +247,7 @@ fn build_ui(app: &adw::Application) {
         let (window, app) = (window.clone(), app.clone());
         move |_, row| {
             if let Some(entry) = model.borrow().project(row.index() as usize).cloned() {
-                open_remote(&window, &app, "Could not open project", move || {
-                    entry.open(None)
-                });
+                start_editor(&window, &app, launcher::launch_listed_project(&entry));
             }
         }
     });
@@ -585,7 +583,15 @@ fn show_create_project(window: &adw::ApplicationWindow, app: &adw::Application) 
 
 fn open_in_editor(window: &adw::ApplicationWindow, app: &adw::Application, path: &Path) {
     tracing::info!(path = %path.display(), "Opening project from launcher");
-    match shrimply_cross_ui_core::launcher::launch_editor(path) {
+    start_editor(window, app, launcher::launch_editor(path));
+}
+
+fn start_editor(
+    window: &adw::ApplicationWindow,
+    app: &adw::Application,
+    result: Result<std::process::Child, String>,
+) {
+    match result {
         Ok(mut editor) => {
             let mut hold = Some(app.hold());
             window.set_visible(false);
@@ -594,8 +600,19 @@ fn open_in_editor(window: &adw::ApplicationWindow, app: &adw::Application, path:
                 let _ = sender.send(editor.wait());
             });
             let app = app.clone();
+            let window = window.downgrade();
             glib::timeout_add_local(Duration::from_millis(100), move || {
                 match receiver.try_recv() {
+                    Ok(Ok(status))
+                        if status.code()
+                            == Some(i32::from(launcher::EDITOR_OPEN_CANCELED_EXIT_CODE)) =>
+                    {
+                        if let Some(window) = window.upgrade() {
+                            window.present();
+                        }
+                        hold.take();
+                        glib::ControlFlow::Break
+                    }
                     Ok(Ok(status)) if status.success() => {
                         hold.take();
                         app.quit();
@@ -618,7 +635,7 @@ fn open_in_editor(window: &adw::ApplicationWindow, app: &adw::Application, path:
             });
         }
         Err(error) => {
-            tracing::error!(path = %path.display(), %error, "Could not start editor");
+            tracing::error!(%error, "Could not start editor");
             show_error(window, "Could not start editor", &error);
         }
     }

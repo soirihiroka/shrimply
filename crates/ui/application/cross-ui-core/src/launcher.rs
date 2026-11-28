@@ -220,10 +220,17 @@ pub fn project_path_argument() -> Result<Option<PathBuf>, String> {
     let Some(path) = args.next().map(PathBuf::from) else {
         return Ok(None);
     };
-    if args.next().is_some() {
-        return Err("usage: shrimply [PROJECT]".into());
+    match (args.next(), args.next(), args.next(), args.next()) {
+        (None, None, None, None) => check_project_file(&path)?,
+        (Some(flag), Some(server), Some(id), None) if flag == "--join" => {
+            shrimply_editing_runtime::attached::request_join(
+                &path,
+                server.to_str().ok_or("Project server URL must be UTF-8")?,
+                id.to_str().ok_or("Project ID must be UTF-8")?,
+            )?
+        }
+        _ => return Err("usage: shrimply [PROJECT [--join SERVER PROJECT-ID]]".into()),
     }
-    check_project_file(&path)?;
     Ok(Some(path))
 }
 
@@ -236,9 +243,32 @@ fn check_project_file(path: &Path) -> Result<(), String> {
 
 pub fn launch_editor(path: &Path) -> Result<Child, String> {
     check_project_file(path)?;
+    launch(path, None)
+}
+
+pub fn launch_listed_project(entry: &ProjectEntry) -> Result<Child, String> {
+    let path = entry.destination(None)?;
+    if entry.path.is_some() || path.is_file() {
+        launch_editor(&path)
+    } else {
+        launch(&path, entry.remote.as_ref())
+    }
+}
+
+fn launch(
+    path: &Path,
+    remote: Option<&shrimply_project_service::ProjectLink>,
+) -> Result<Child, String> {
     let editor = std::env::current_exe().map_err(|error| format!("locate Shrimply: {error}"))?;
-    Command::new(&editor)
-        .arg(path)
+    let mut command = Command::new(&editor);
+    command.arg(path);
+    if let Some(link) = remote {
+        command
+            .arg("--join")
+            .arg(&link.server)
+            .arg(link.project_id.to_string());
+    }
+    command
         .spawn()
         .map_err(|error| format!("could not launch {}: {error}", editor.display()))
 }

@@ -59,6 +59,24 @@ impl From<BridgeError> for OpenError {
 }
 
 #[cfg(not(target_os = "android"))]
+static REQUESTED_JOIN: std::sync::OnceLock<(
+    std::path::PathBuf,
+    shrimply_project_service::ProjectLink,
+)> = std::sync::OnceLock::new();
+
+#[cfg(not(target_os = "android"))]
+pub fn request_join(path: &Path, server: &str, project_id: &str) -> Result<(), String> {
+    let link = shrimply_project_service::ProjectLink {
+        server: shrimply_editor_state::preferences::normalize_project_server_url(server)
+            .map_err(str::to_owned)?,
+        project_id: Uuid::parse_str(project_id).map_err(|error| error.to_string())?,
+    };
+    REQUESTED_JOIN
+        .set((path.to_path_buf(), link))
+        .map_err(|_| "A project join is already pending".into())
+}
+
+#[cfg(not(target_os = "android"))]
 pub fn open(
     path: &Path,
     forced: &[VersionMismatch],
@@ -74,11 +92,42 @@ pub fn open(
 
 #[cfg(not(target_os = "android"))]
 pub fn connect_project(path: &Path, forced: &[VersionMismatch]) -> Result<Bridge, OpenError> {
-    if let Some(workspace) = SharedWorkspace::open(path)?
-        && let Some(prompt) = VersionPrompt::remote(&workspace.link().server)
+    let requested = REQUESTED_JOIN
+        .get()
+        .filter(|(candidate, _)| candidate == path)
+        .map(|(_, link)| link);
+    let workspace = SharedWorkspace::open(path)?;
+    let link = workspace.as_ref().map(SharedWorkspace::link);
+    if requested
+        .is_some_and(|requested| link.map_or_else(|| path.is_file(), |link| link != requested))
+    {
+        return Err(
+            "The workspace already belongs to another project server or project"
+                .to_string()
+                .into(),
+        );
+    }
+    if let Some(link) = requested.or(link)
+        && let Some(prompt) = VersionPrompt::remote(&link.server)
         && !forced.contains(&prompt.mismatch)
     {
         return Err(OpenError::Version(Box::new(prompt)));
+    }
+    if let Some(link) = requested
+        && !path.is_file()
+    {
+        fs::create_dir_all(
+            path.parent()
+                .ok_or_else(|| "Project needs a destination directory".to_string())?,
+        )
+        .map_err(|error| error.to_string())?;
+        // A second launcher may have joined the same project during the version check.
+        if let Err(error) = SharedWorkspace::join(path, &link.server, link.project_id)
+            && !(path.is_file()
+                && SharedWorkspace::open(path)?.is_some_and(|workspace| workspace.link() == link))
+        {
+            return Err(error.into());
+        }
     }
     version::checked_bridge(path, forced)
 }

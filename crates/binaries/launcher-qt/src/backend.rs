@@ -94,6 +94,10 @@ pub mod qobject {
         #[cxx_name = "editorFinished"]
         fn editor_finished(self: Pin<&mut LauncherBackend>);
 
+        #[qsignal]
+        #[cxx_name = "editorCanceled"]
+        fn editor_canceled(self: Pin<&mut LauncherBackend>);
+
     }
 
     impl cxx_qt::Initialize for LauncherBackend {}
@@ -200,8 +204,9 @@ impl qobject::LauncherBackend {
     }
 
     pub fn open_listed_project(self: Pin<&mut Self>, key: &QString) {
-        if let Some(project) = self.core.project_by_key(&key.to_string()).cloned() {
-            self.open_project_async("Could not open project", move || project.open(None));
+        if let Some(project) = self.core.project_by_key(&key.to_string()) {
+            let result = launcher::launch_listed_project(project);
+            self.start_editor(result);
         }
     }
 
@@ -353,6 +358,11 @@ impl qobject::LauncherBackend {
         let qt_thread = self.qt_thread();
         self.as_mut().editor_started();
         std::thread::spawn(move || match editor.wait() {
+            Ok(status)
+                if status.code() == Some(i32::from(launcher::EDITOR_OPEN_CANCELED_EXIT_CODE)) =>
+            {
+                let _ = qt_thread.queue(|backend| backend.editor_canceled());
+            }
             Ok(status) if status.success() => {
                 qt_thread
                     .queue(|backend| backend.editor_finished())

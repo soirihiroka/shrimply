@@ -112,7 +112,7 @@ ApplicationWindow {
             audioErrorDialog.text = body
             audioErrorDialog.open()
         }
-        function onCanceled() { Qt.quit() }
+        function onCanceled(exitCode) { Qt.exit(exitCode) }
     }
 
     Dialog {

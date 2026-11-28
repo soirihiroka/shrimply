@@ -248,7 +248,7 @@ pub mod qobject {
         #[cxx_name = "showPlaybackError"]
         fn show_playback_error(self: Pin<&mut EditorBackend>, body: QString);
         #[qsignal]
-        fn canceled(self: Pin<&mut EditorBackend>);
+        fn canceled(self: Pin<&mut EditorBackend>, exit_code: i32);
     }
 
     impl cxx_qt::Initialize for EditorBackend {}
@@ -821,7 +821,9 @@ impl qobject::EditorBackend {
                 self.as_mut().update_player_properties();
             }
             LoadEvent::Error { heading, body } => self.emit_error(heading, &body),
-            LoadEvent::Canceled => self.as_mut().canceled(),
+            LoadEvent::Canceled => self.as_mut().canceled(i32::from(
+                shrimply_cross_ui_core::launcher::EDITOR_OPEN_CANCELED_EXIT_CODE,
+            )),
         }
     }
 

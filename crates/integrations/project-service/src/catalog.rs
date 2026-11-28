@@ -41,32 +41,43 @@ impl ProjectEntry {
         result
     }
 
-    pub fn open(&self, directory: Option<&Path>) -> Result<PathBuf, String> {
+    pub fn destination(&self, directory: Option<&Path>) -> Result<PathBuf, String> {
         if let Some(path) = &self.path {
             return Ok(path.clone());
         }
         let link = self
             .remote
             .as_ref()
-            .expect("catalog entries have a location");
+            .ok_or("catalog entry has no project location")?;
         let directory = directory
             .map(Path::to_path_buf)
             .unwrap_or_else(|| shrimply_path_core::config_directory().join("project-workspaces"))
             .join(fingerprint::digest(link.server.as_bytes()))
             .join(link.project_id.to_string());
-        std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
         let canonical = directory.join("project.shrimp");
-        if canonical.is_file()
-            && SharedWorkspace::open(&canonical)?.is_some_and(|workspace| workspace.link() == link)
+        if canonical.try_exists().map_err(|error| error.to_string())?
+            && !SharedWorkspace::open(&canonical)?.is_some_and(|workspace| workspace.link() == link)
         {
-            return Ok(canonical);
+            return Ok(directory
+                .join(Uuid::new_v4().to_string())
+                .join("project.shrimp"));
         }
-        let path = if canonical.exists() {
-            SharedWorkspace::managed_path_in(&directory, "project.shrimp")?
-        } else {
-            canonical
-        };
-        SharedWorkspace::join(&path, &link.server, link.project_id)?;
+        Ok(canonical)
+    }
+
+    pub fn open(&self, directory: Option<&Path>) -> Result<PathBuf, String> {
+        let path = self.destination(directory)?;
+        if self.path.is_none()
+            && !path.is_file()
+            && let Some(link) = &self.remote
+        {
+            std::fs::create_dir_all(
+                path.parent()
+                    .ok_or("project destination has no directory")?,
+            )
+            .map_err(|error| error.to_string())?;
+            SharedWorkspace::join(&path, &link.server, link.project_id)?;
+        }
         Ok(path)
     }
 

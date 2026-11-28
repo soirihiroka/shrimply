@@ -87,6 +87,10 @@ impl PanelSide {
     }
 }
 
+thread_local! {
+    static STARTUP_CANCELLED: Cell<bool> = const { Cell::new(false) };
+}
+
 pub fn run(project_path: PathBuf) -> glib::ExitCode {
     crash::install();
     #[cfg(target_os = "linux")]
@@ -135,7 +139,11 @@ pub fn run(project_path: PathBuf) -> glib::ExitCode {
         tracing::error!("Could not save project during shutdown: {error}");
         return glib::ExitCode::FAILURE;
     }
-    status
+    if STARTUP_CANCELLED.replace(false) {
+        glib::ExitCode::from(shrimply_cross_ui_core::launcher::EDITOR_OPEN_CANCELED_EXIT_CODE)
+    } else {
+        status
+    }
 }
 
 fn build_ui(window: &adw::ApplicationWindow, project: project::Project) {
@@ -602,7 +610,10 @@ fn handle_load_event(
             build_ui(window, *project);
         }
         LoadEvent::Error { heading, body } => show_project_load_error(app, window, heading, &body),
-        LoadEvent::Canceled => app.quit(),
+        LoadEvent::Canceled => {
+            STARTUP_CANCELLED.set(true);
+            app.quit();
+        }
     }
 }
 
