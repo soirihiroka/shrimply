@@ -78,7 +78,9 @@ private struct SettingsRow: View {
     private var accessory: some View {
         let value = parts.dropFirst(2).first
         if let view = value as? NSView {
-            AppKitControl(view: view, fullWidth: false).id(ObjectIdentifier(view))
+            let numberPicker = (view as? NSStackView)?.arrangedSubviews.last is NSStepper
+            AppKitControl(view: view, fullWidth: false)
+                .id(numberPicker ? nil : ObjectIdentifier(view))
         } else if let text = value as? String {
             Text(text)
                 .foregroundStyle(.secondary)
@@ -95,11 +97,25 @@ private struct AppKitControl: NSViewRepresentable {
     let fullWidth: Bool
 
     func makeNSView(context: Context) -> NSView { view }
-    func updateNSView(_ nsView: NSView, context: Context) {}
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        guard nsView !== view, let current = nsView as? NSStackView,
+              let next = view as? NSStackView else { return }
+        // Keep the numeric field editor and stepper tracking alive across commits.
+        for (existing, replacement) in zip(current.arrangedSubviews, next.arrangedSubviews) {
+            guard let control = existing as? NSControl, let value = replacement as? NSControl
+            else { continue }
+            if control.doubleValue != value.doubleValue {
+                control.doubleValue = value.doubleValue
+            }
+            control.isEnabled = value.isEnabled
+        }
+    }
 
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSView, context: Context) -> CGSize? {
         let size = nsView.fittingSize
-        let width = proposal.width ?? size.width
-        return CGSize(width: fullWidth ? width : min(width, size.width), height: size.height)
+        let width = proposal.width.flatMap { $0.isFinite ? $0 : nil } ?? size.width
+        return CGSize(width: max(0, fullWidth ? width : min(width, size.width)),
+                      height: max(0, size.height))
     }
 }

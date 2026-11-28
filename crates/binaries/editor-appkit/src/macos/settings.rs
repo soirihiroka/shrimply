@@ -479,9 +479,6 @@ impl PreferencesWindow {
             );
         }
         layout.compact.selectItemAtIndex(index as isize);
-        layout
-            .window
-            .setTitle(&NSString::from_str(string(&page["label"])));
         self.ivars().displayed.replace(page.clone());
         let previous_lists = self.ivars().server_lists.take();
         let selected_project_server = previous_lists
@@ -885,7 +882,6 @@ impl PreferencesWindow {
         stepper.setMaxValue(maximum);
         stepper.setIncrement(scaled(range.step));
         stepper.setValueWraps(false);
-        stepper.setAutorepeat(false);
 
         let tag = PreferenceId::ALL
             .iter()
