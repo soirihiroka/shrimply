@@ -7,7 +7,7 @@ use shrimply_components_gtk::ui::{
 };
 use shrimply_cross_ui_core::launcher::{self, Launcher, ProjectLocation};
 use std::cell::RefCell;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::rc::Rc;
 use std::sync::mpsc;
 use std::thread;
