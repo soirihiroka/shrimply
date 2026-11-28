@@ -42,7 +42,7 @@ impl Analysis {
     ) {
         match window {
             Window::Short => {
-                for (index, lines) in spectrum.chunks_exact_mut(SHORT).enumerate() {
+                for (index, lines) in spectrum.as_chunks_mut::<SHORT>().0.iter_mut().enumerate() {
                     let start = OFFSET + index * SHORT;
                     self.short
                         .run(&samples[start..start + 2 * SHORT], channel, None, lines);
@@ -163,7 +163,7 @@ pub(crate) fn transient(
     previous: &mut [f32; 2],
 ) -> [bool; 2] {
     let mut attack = [false; 2];
-    for (index, block) in samples.chunks_exact(64).enumerate() {
+    for (index, block) in samples.as_chunks::<64>().0.iter().enumerate() {
         let mut energy = [0.0; 2];
         for sample in block {
             for ((energy, previous), current) in energy.iter_mut().zip(&mut *previous).zip(sample) {
