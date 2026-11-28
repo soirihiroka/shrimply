@@ -1,10 +1,6 @@
-name: CI checks
+name: Android Skia cache
 
 on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -12,109 +8,34 @@ permissions:
 
 env:
   TZ: UTC
-  CARGO_PROFILE_DEV_DEBUG: "0"
 
 jobs:
-  check:
-    name: ${{ matrix.platform }}
-    concurrency:
-      group: ci-checks-${{ github.ref }}-${{ matrix.platform }}
-      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - platform: linux
-            runner: ubuntu-24.04
-            timeout: 240
-            command: nix develop --accept-flake-config --command make check
-          - platform: macos
-            runner: macos-26
-            command: make check
-          - platform: windows
-            runner: windows-2022
-            timeout: 180
-            command: |
-              $env:PATH += ";C:\Program Files\Git\bin;C:\Program Files\Git\usr\bin"
-              make check
-          - platform: android
-            runner: ubuntu-24.04
-            timeout: 180
-            command: make android-check ANDROID_PROFILE=release ANDROID_SDK_ROOT="${ANDROID_HOME}"
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: ${{ matrix.timeout || 360 }}
-    env:
-      CARGO_BUILD_JOBS: ${{ matrix.platform == 'windows' && '3' || '2' }}
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
-          submodules: ${{ matrix.platform != 'windows' && 'recursive' || 'false' }}
+          submodules: recursive
 
-      - name: Free space for native build dependencies
-        if: matrix.platform == 'linux'
-        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
-      - if: matrix.platform == 'linux'
-        uses: ./.github/actions/cache-cargo
-        with:
-          scope: linux
-      - name: Restore Linux Skia binaries
-        if: matrix.platform == 'linux'
-        id: linux-skia
-        uses: actions/cache@v6
-        with:
-          path: target/linux-skia.tar.gz
-          key: linux-skia-${{ runner.arch }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml', 'flake.nix', 'flake.lock', 'pkgs/**/*.nix', '.cargo/config.toml', 'Makefile', 'rust-toolchain.toml', 'packaging/cache-skia.py') }}
-      - name: Use cached Linux Skia binaries
-        if: steps.linux-skia.outputs.cache-hit == 'true'
-        run: echo "EDITOR_SKIA_BINARIES_URL=file://${GITHUB_WORKSPACE}/target/linux-skia.tar.gz" >> "${GITHUB_ENV}"
-      - if: matrix.platform == 'linux'
-        uses: cachix/install-nix-action@v30
-        with:
-          install_url: https://releases.nixos.org/nix/nix-2.35.2/install
-          extra_nix_config: |
-            accept-flake-config = true
-            extra-substituters = https://cache.nixos-cuda.org https://shrimply.cachix.org
-            extra-trusted-public-keys = cache.nixos-cuda.org:74DUi4Ye579gUqzH4ziL9IyiJBlDpMRn9MBN8oNan9M= shrimply.cachix.org-1:cAgdyBbGPgJZMWUP4PAQPVENeCYtGT7OPPkocvo+uuA=
+      - uses: ./.github/actions/setup-android
+        id: setup
 
-      - if: matrix.platform == 'macos'
-        uses: ./.github/actions/setup-macos
-        id: macos-setup
-        with:
-          profile: debug
-      - if: matrix.platform == 'windows'
-        uses: ./.github/actions/setup-windows
-      - if: matrix.platform == 'android'
-        uses: ./.github/actions/setup-android
+      - name: Build the Android native library
+        run: make android-native ANDROID_PROFILE=release ANDROID_SDK_ROOT="${ANDROID_HOME}"
 
-      - name: Check
-        run: ${{ matrix.command }}
+      - name: Archive compiled Skia binaries
+        id: skia-archive
+        if: steps.setup.outputs.skia-hit != 'true'
+        run: python3 packaging/cache-skia.py target/aarch64-linux-android/release/build "${SKIA_ARCHIVE}"
 
-      - name: Archive Linux Skia binaries
-        if: matrix.platform == 'linux' && steps.linux-skia.outputs.cache-hit != 'true'
-        run: python3 packaging/cache-skia.py target/debug/build target/linux-skia.tar.gz
-
-      - name: Save macOS check cache
-        if: matrix.platform == 'macos' && steps.macos-setup.outputs.application-hit != 'true'
+      - name: Save Android Skia binaries
+        if: steps.skia-archive.outputs.ready == 'true'
         uses: actions/cache/save@v6
         with:
-          path: target/debug
-          key: ${{ steps.macos-setup.outputs.application-key }}
+          path: ${{ env.SKIA_ARCHIVE }}
+          key: ${{ steps.setup.outputs.skia-key }}
 
-      - name: Upload build diagnostics
-        if: always() && matrix.platform == 'windows'
-        uses: actions/upload-artifact@v7
-        with:
-          name: windows-build-diagnostics
-          path: |
-            .ci/ffmpeg-validation/*.log
-            .ci/vcpkg/buildtrees/**/*.log
-          if-no-files-found: ignore
-
-      - name: Upload Android lint report
-        if: matrix.platform == 'android'
-        uses: actions/upload-artifact@v7
-        with:
-          name: android-lint
-          path: android/app/build/reports/lint-results-release.html
-          if-no-files-found: error
+      - name: Verify the Skia archive
+        run: tar -tzf "${SKIA_ARCHIVE}"
