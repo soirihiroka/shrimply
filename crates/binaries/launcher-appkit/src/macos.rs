@@ -7,22 +7,21 @@ use objc2::{DefinedClass, MainThreadOnly, Message, define_class, msg_send, sel};
 use objc2_app_kit::{
     NSAccessibility, NSAlert, NSAlertSecondButtonReturn, NSApplication,
     NSApplicationActivationPolicy, NSApplicationDelegate, NSAutoresizingMaskOptions,
-    NSBackingStoreType, NSBezelStyle, NSButton, NSCellImagePosition, NSColor, NSControlSize,
+    NSBackingStoreType, NSBezelStyle, NSButton, NSColor, NSControlSize,
     NSControlTextEditingDelegate, NSEventModifierFlags, NSFont, NSImageView, NSMenu, NSMenuItem,
-    NSModalResponseOK, NSOpenPanel, NSOpenSavePanelDelegate, NSPopUpButton, NSSavePanel,
-    NSScrollView, NSScrollerStyle, NSSearchField, NSTableColumn, NSTableView,
-    NSTableViewDataSource, NSTableViewDelegate, NSTableViewRowSizeStyle, NSTableViewStyle,
-    NSTextAlignment, NSTextField, NSTitlebarSeparatorStyle, NSToolbar, NSView, NSWindow,
+    NSModalResponseOK, NSOpenPanel, NSOpenSavePanelDelegate, NSPopUpArrowPosition, NSPopUpButton,
+    NSPopUpButtonCell, NSSavePanel, NSScrollView, NSScrollerStyle, NSSearchField, NSTableColumn,
+    NSTableView, NSTableViewColumnAutoresizingStyle, NSTableViewDataSource, NSTableViewDelegate,
+    NSTableViewRowSizeStyle, NSTableViewStyle, NSTextField, NSTitlebarSeparatorStyle, NSToolbar,
+    NSView, NSVisualEffectBlendingMode, NSVisualEffectMaterial, NSVisualEffectView, NSWindow,
     NSWindowDelegate, NSWindowStyleMask, NSWindowTitleVisibility, NSWindowToolbarStyle,
     NSWorkspace,
 };
 use objc2_foundation::{
     MainThreadMarker, NSArray, NSIndexSet, NSNotification, NSObject, NSObjectProtocol, NSPoint,
-    NSProcessInfo, NSRect, NSSize, NSString, NSTimer, NSURL, ns_string,
+    NSProcessInfo, NSRect, NSRectEdge, NSSize, NSString, NSTimer, NSURL, ns_string,
 };
-use shrimply_components_appkit::{
-    EffectRole, EffectView, bundled_symbol, column_stack, group_box, row_stack,
-};
+use shrimply_components_appkit::{bundled_symbol, column_stack, row_stack};
 use shrimply_cross_ui_core::launcher::{self, Launcher, ProjectLocation};
 use std::cell::{OnceCell, RefCell};
 use std::path::{Path, PathBuf};
@@ -104,22 +103,9 @@ define_class!(
             window.setToolbar(Some(&NSToolbar::init(NSToolbar::alloc(mtm))));
             window.setToolbarStyle(NSWindowToolbarStyle::UnifiedCompact);
             window.setContentMinSize(MINIMUM_WINDOW_SIZE);
-            window.setOpaque(false);
-            window.setBackgroundColor(Some(&NSColor::clearColor()));
             window.setMovableByWindowBackground(true);
             window.center();
             window.setDelegate(Some(ProtocolObject::from_ref(self)));
-
-            let root_effect = EffectView::new(
-                NSRect::new(NSPoint::new(0.0, 0.0), WINDOW_SIZE),
-                EffectRole::Window,
-                mtm,
-            );
-            let root_glass = root_effect.view();
-            root_glass.setAutoresizingMask(
-                NSAutoresizingMaskOptions::ViewWidthSizable
-                    | NSAutoresizingMaskOptions::ViewHeightSizable,
-            );
 
             let content = NSView::initWithFrame(
                 NSView::alloc(mtm),
@@ -129,27 +115,16 @@ define_class!(
                 NSAutoresizingMaskOptions::ViewWidthSizable
                     | NSAutoresizingMaskOptions::ViewHeightSizable,
             );
-            root_effect.set_content_view(Some(&content));
-
-            let sidebar_effect = EffectView::new(
+            let sidebar = NSVisualEffectView::initWithFrame(
+                NSVisualEffectView::alloc(mtm),
                 NSRect::new(
                     NSPoint::new(0.0, 0.0),
                     NSSize::new(SIDEBAR_WIDTH, WINDOW_SIZE.height),
                 ),
-                EffectRole::Sidebar,
-                mtm,
             );
-            let sidebar = sidebar_effect.view();
+            sidebar.setMaterial(NSVisualEffectMaterial::Sidebar);
+            sidebar.setBlendingMode(NSVisualEffectBlendingMode::BehindWindow);
             sidebar.setAutoresizingMask(NSAutoresizingMaskOptions::ViewHeightSizable);
-            let sidebar_content = NSView::initWithFrame(
-                NSView::alloc(mtm),
-                NSRect::new(
-                    NSPoint::new(0.0, 0.0),
-                    NSSize::new(SIDEBAR_WIDTH, WINDOW_SIZE.height),
-                ),
-            );
-            sidebar_content.setAutoresizingMask(NSAutoresizingMaskOptions::ViewHeightSizable);
-            sidebar_effect.set_content_view(Some(&sidebar_content));
 
             let identity = row_stack(8.0, mtm);
             let icon = NSImageView::new(mtm);
@@ -172,7 +147,7 @@ define_class!(
                 NSSize::new(SIDEBAR_WIDTH - 2.0 * CONTENT_MARGIN, SIDEBAR_ICON_SIZE),
             ));
             identity.setAutoresizingMask(NSAutoresizingMaskOptions::ViewMinYMargin);
-            sidebar_content.addSubview(&identity);
+            sidebar.addSubview(&identity);
 
             let menu = self.popup(
                 NSPoint::new(CONTENT_MARGIN, CONTENT_MARGIN),
@@ -183,7 +158,7 @@ define_class!(
                 ],
                 None,
             );
-            sidebar_content.addSubview(&menu);
+            sidebar.addSubview(&menu);
             let sources_y = CONTENT_MARGIN * 2.0 + MENU_SIZE;
             let sources_frame = NSRect::new(
                 NSPoint::new(0.0, sources_y),
@@ -191,6 +166,7 @@ define_class!(
             );
             let source_scroll = NSScrollView::initWithFrame(NSScrollView::alloc(mtm), sources_frame);
             source_scroll.setDrawsBackground(false);
+            source_scroll.contentView().setDrawsBackground(false);
             source_scroll.setHasVerticalScroller(true);
             source_scroll.setAutohidesScrollers(true);
             source_scroll.setAutoresizingMask(NSAutoresizingMaskOptions::ViewHeightSizable);
@@ -200,7 +176,8 @@ define_class!(
             sources.setAutoresizingMask(NSAutoresizingMaskOptions::ViewWidthSizable);
             sources.setBackgroundColor(&NSColor::clearColor());
             sources.setHeaderView(None);
-            sources.setStyle(NSTableViewStyle::SourceList);
+            sources.setStyle(NSTableViewStyle::Inset);
+            sources.setColumnAutoresizingStyle(NSTableViewColumnAutoresizingStyle::LastColumnOnlyAutoresizingStyle);
             let column = NSTableColumn::initWithIdentifier(NSTableColumn::alloc(mtm), ns_string!("source"));
             column.setWidth(source_scroll.contentSize().width);
             sources.addTableColumn(&column);
@@ -210,8 +187,8 @@ define_class!(
                 sources.setDelegate(Some(ProtocolObject::from_ref(self)));
             }
             source_scroll.setDocumentView(Some(&sources));
-            sidebar_content.addSubview(&source_scroll);
-            content.addSubview(sidebar);
+            sidebar.addSubview(&source_scroll);
+            content.addSubview(&sidebar);
 
             let x = SIDEBAR_WIDTH + CONTENT_MARGIN;
             let width = WINDOW_SIZE.width - x - CONTENT_MARGIN;
@@ -277,6 +254,7 @@ define_class!(
             table.setBackgroundColor(&NSColor::clearColor());
             table.setHeaderView(None);
             table.setStyle(NSTableViewStyle::Inset);
+            table.setColumnAutoresizingStyle(NSTableViewColumnAutoresizingStyle::LastColumnOnlyAutoresizingStyle);
             table.setRowSizeStyle(NSTableViewRowSizeStyle::Custom);
             table.setRowHeight(50.0);
             table.setIntercellSpacing(NSSize::new(0.0, 7.0));
@@ -291,7 +269,7 @@ define_class!(
             content.addSubview(&scroll);
             self.ivars().projects.set(table).expect("project list must only be created once");
 
-            window.setContentView(Some(root_glass));
+            window.setContentView(Some(&content));
             self.ivars().window.set(window.clone()).expect("window must only be created once");
             window.makeKeyAndOrderFront(None);
             window.makeFirstResponder(None);
@@ -377,15 +355,12 @@ define_class!(
                 let height = table.rowHeight();
                 let view = NSView::initWithFrame(NSView::alloc(self.mtm()),
                     NSRect::new(NSPoint::ZERO, NSSize::new(width, height)));
-                let card = group_box(self.mtm());
-                card.setFrame(view.bounds());
-                card.setAutoresizingMask(NSAutoresizingMaskOptions::ViewWidthSizable);
-                view.addSubview(&card);
                 let access = launcher::project_access_label(project);
                 let label_height = if access.is_some() { 19.0 } else { 0.0 };
+                let title = NSString::from_str(&project.name);
                 let button = unsafe {
                     NSButton::buttonWithTitle_target_action(
-                        &NSString::from_str(&project.name), Some(self), Some(sel!(openListedProject:)), self.mtm(),
+                        &title, Some(self), Some(sel!(openListedProject:)), self.mtm(),
                     )
                 };
                 let symbol = if let Some(remote) = &project.remote {
@@ -394,24 +369,40 @@ define_class!(
                 } else {
                     ("folder-symbolic", "Local project")
                 };
-                button.setImage(Some(&bundled_symbol(symbol.0, symbol.1)));
-                button.setImagePosition(NSCellImagePosition::ImageLeading);
-                button.setAlignment(NSTextAlignment::Left);
-                button.setBordered(false);
-                button.setTag(row);
-                button.setFrame(NSRect::new(NSPoint::new(CONTENT_MARGIN, label_height),
-                    NSSize::new((width - MENU_SIZE - 2.0 * CONTENT_MARGIN).max(0.0), height - label_height)));
-                button.setAutoresizingMask(NSAutoresizingMaskOptions::ViewWidthSizable);
-                view.addSubview(&button);
+                let icon_size = 16.0;
+                let icon = NSImageView::initWithFrame(NSImageView::alloc(self.mtm()), NSRect::new(
+                    NSPoint::new(CONTENT_MARGIN, (height - icon_size) / 2.0),
+                    NSSize::new(icon_size, icon_size),
+                ));
+                icon.setImage(Some(&bundled_symbol(symbol.0, symbol.1)));
+                icon.setContentTintColor(Some(&NSColor::secondaryLabelColor()));
+                view.addSubview(&icon);
+                let text_x = CONTENT_MARGIN + icon_size + 8.0;
+                let text_width = (width - MENU_SIZE - CONTENT_MARGIN - text_x).max(0.0);
+                let name = NSTextField::labelWithString(&title, self.mtm());
+                name.sizeToFit();
+                name.setFrame(NSRect::new(
+                    NSPoint::new(text_x, (height + label_height - name.frame().size.height) / 2.0),
+                    NSSize::new(text_width, name.frame().size.height),
+                ));
+                name.setAutoresizingMask(NSAutoresizingMaskOptions::ViewWidthSizable);
+                name.setAccessibilityElement(false);
+                view.addSubview(&name);
                 if let Some(access) = access {
                     let label = NSTextField::labelWithString(&NSString::from_str(&access), self.mtm());
                     label.setFont(Some(&NSFont::systemFontOfSize(NSFont::smallSystemFontSize())));
                     label.setTextColor(Some(&NSColor::secondaryLabelColor()));
-                    label.setFrame(NSRect::new(NSPoint::new(CONTENT_MARGIN + 26.0, 3.0),
-                        NSSize::new((width - MENU_SIZE - 2.0 * CONTENT_MARGIN - 26.0).max(0.0), label_height)));
+                    label.setFrame(NSRect::new(NSPoint::new(text_x, 3.0),
+                        NSSize::new(text_width, label_height)));
                     label.setAutoresizingMask(NSAutoresizingMaskOptions::ViewWidthSizable);
                     view.addSubview(&label);
                 }
+                button.setTransparent(true);
+                button.setTag(row);
+                button.setFrame(NSRect::new(NSPoint::ZERO,
+                    NSSize::new((width - MENU_SIZE - CONTENT_MARGIN).max(0.0), height)));
+                button.setAutoresizingMask(NSAutoresizingMaskOptions::ViewWidthSizable);
+                view.addSubview(&button);
                 let mut items = vec![("Project Information", sel!(showProjectInfo:))];
                 if project.path.is_some() {
                     items.extend([
@@ -421,7 +412,7 @@ define_class!(
                 }
                 items.push(("Delete Project…", sel!(deleteProject:)));
                 let options = self.popup(
-                    NSPoint::new(width - MENU_SIZE - CONTENT_MARGIN / 2.0, (height - MENU_SIZE) / 2.0),
+                    NSPoint::new(width - MENU_SIZE - CONTENT_MARGIN, (height - MENU_SIZE) / 2.0),
                     ("view-more-symbolic", "Project options"),
                     &items, Some(&project.key()),
                 );
@@ -743,6 +734,12 @@ impl Delegate {
             self.mtm(),
         );
         button.setBordered(false);
+        button.setPreferredEdge(NSRectEdge::MinY);
+        button
+            .cell()
+            .and_then(|cell| cell.downcast::<NSPopUpButtonCell>().ok())
+            .expect("pull-down button cell")
+            .setArrowPosition(NSPopUpArrowPosition::NoArrow);
         let icon = bundled_symbol(symbol, tooltip);
         let tooltip = NSString::from_str(tooltip);
         button.setToolTip(Some(&tooltip));
