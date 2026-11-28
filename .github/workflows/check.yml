@@ -17,7 +17,8 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y ffmpeg python3-numpy clang lld
-          make test -o native-deps -o cuda-target-check ARGS='--locked --release -p shrimply-aac --example encode --no-run --message-format=json' > build.jsonl
+          make test -o native-deps -o cuda-target-check ARGS='--release -p shrimply-aac --example encode --no-run --message-format=json' > build.jsonl
+            Cargo.lock
           encoder=$(jq -r 'select(.reason? == "compiler-artifact" and .target.name == "encode") | .executable // empty' build.jsonl)
           /usr/bin/python3 vendor/aac/benchmark.py "$encoder" --smoke > aac-smoke.json
           /usr/bin/python3 vendor/aac/benchmark.py "$encoder" --bitrates 96 128 192 256 --repeat 2 > aac-native.json
@@ -28,3 +29,4 @@ jobs:
           path: |
             aac-*.json
             build.jsonl
+            Cargo.lock
