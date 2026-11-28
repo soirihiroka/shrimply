@@ -179,6 +179,25 @@ jobs:
             exit 1
           fi
 
+      - name: Exercise native windows and capture the layout
+        run: |
+          exe="${MACOS_APP}/Contents/MacOS/shrimply"
+          "$exe" project create --project "$RUNNER_TEMP/Layout.shrimp" --name "Layout fixture" \
+            | jq -e '.success and .result.created'
+          mkdir -p "$RUNNER_TEMP/layout"
+          export SHRIMPLY_CAPTURE_WINDOWS="$RUNNER_TEMP/layout"
+          python3 -c 'import subprocess, sys; subprocess.run(sys.argv[1:], check=True, timeout=30)' "$exe"
+          for window in launcher appearance servers about; do
+            sips -g pixelWidth -g pixelHeight "$RUNNER_TEMP/layout/$window.png"
+          done
+
+      - uses: actions/upload-artifact@v7
+        name: Upload the window captures
+        if: always()
+        with:
+          name: macos-native-windows
+          path: ${{ runner.temp }}/layout
+
       - name: Create and verify archive
         run: |
           archive_name="$(basename "${MACOS_ARCHIVE}")"

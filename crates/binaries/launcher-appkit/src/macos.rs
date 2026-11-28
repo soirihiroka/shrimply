@@ -283,6 +283,9 @@ define_class!(
             self.reload_projects();
 
             app.activate();
+            if let Some(directory) = std::env::var_os("SHRIMPLY_CAPTURE_WINDOWS") {
+                self.capture_windows(directory.into());
+            }
         }
     }
 
@@ -651,6 +654,69 @@ impl Delegate {
                 objc2_foundation::NSOperationQueue::mainQueue().addOperationWithBlock(&completed)
             };
         });
+    }
+
+    fn capture_windows(&self, directory: PathBuf) {
+        let delegate = self.retain();
+        let step = std::cell::Cell::new(0);
+        let capture = block2::RcBlock::new(move |timer: std::ptr::NonNull<NSTimer>| {
+            let app = NSApplication::sharedApplication(delegate.mtm());
+            let (title, name) = [
+                ("Shrimply", "launcher"),
+                ("Settings", "appearance"),
+                ("Settings", "servers"),
+                ("About Shrimply", "about"),
+            ][step.get()];
+            let window = app
+                .windows()
+                .iter()
+                .find(|window| window.isVisible() && window.title().to_string() == title)
+                .expect("visible native window");
+            let path = directory.join(format!("{name}.png"));
+            let captured = std::process::Command::new("/usr/sbin/screencapture")
+                .args(["-x", "-l", &window.windowNumber().to_string()])
+                .arg(&path)
+                .status()
+                .is_ok_and(|status| status.success() && path.is_file());
+            if !captured {
+                eprintln!("WindowServer capture unavailable for {name}; drawing the native view");
+                let view = window.contentView().expect("window content");
+                view.layoutSubtreeIfNeeded();
+                let rect = view.bounds();
+                let bitmap = view
+                    .bitmapImageRepForCachingDisplayInRect(rect)
+                    .expect("window bitmap");
+                view.cacheDisplayInRect_toBitmapImageRep(rect, &bitmap);
+                let png = unsafe {
+                    bitmap.representationUsingType_properties(
+                        objc2_app_kit::NSBitmapImageFileType::PNG,
+                        &objc2_foundation::NSDictionary::new(),
+                    )
+                }
+                .expect("window PNG");
+                assert!(png.writeToFile_atomically(
+                    &NSString::from_str(path.to_str().expect("UTF-8 capture path")),
+                    true
+                ));
+            }
+            match step.get() {
+                0 => delegate.settings(),
+                1 => delegate
+                    .ivars()
+                    .preferences
+                    .get()
+                    .expect("preferences open")
+                    .choose_servers_for_capture(),
+                2 => shrimply_editor_appkit::show_about(delegate.mtm()),
+                _ => {
+                    unsafe { timer.as_ref() }.invalidate();
+                    app.terminate(None);
+                }
+            }
+            step.set(step.get() + 1);
+        });
+        let _ =
+            unsafe { NSTimer::scheduledTimerWithTimeInterval_repeats_block(1.0, true, &capture) };
     }
 
     fn settings(&self) {

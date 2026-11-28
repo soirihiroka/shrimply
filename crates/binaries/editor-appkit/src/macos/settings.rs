@@ -446,6 +446,20 @@ impl PreferencesWindow {
             .is_none_or(|layout| &*layout.navigation == table)
     }
 
+    pub fn choose_servers_for_capture(&self) {
+        let index = PreferencePage::ALL
+            .iter()
+            .position(|page| *page == PreferencePage::Servers)
+            .expect("Servers setting");
+        self.ivars()
+            .layout
+            .get()
+            .expect("preferences open")
+            .navigation
+            .selectRowIndexes_byExtendingSelection(&NSIndexSet::indexSetWithIndex(index), false);
+        self.select(index);
+    }
+
     fn select(&self, index: usize) {
         if self.ivars().selected.replace(index) != index {
             self.refresh();
