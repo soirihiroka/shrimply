@@ -52,11 +52,16 @@ jobs:
           trap 'kill "$launcher" 2>/dev/null || true' EXIT
           if ! window=$(timeout 20s xdotool search --sync --onlyvisible --name '^Shrimply$'); then
             cat "$RUNNER_TEMP/screenshots/launcher.log"
-            xwininfo -root -tree
-            import -window root "$RUNNER_TEMP/screenshots/startup.png"
+            xwininfo -root -tree || true
+            import -window root "$RUNNER_TEMP/screenshots/startup.png" || true
+            if ! kill -0 "$launcher" 2>/dev/null; then
+              status=0
+              wait "$launcher" || status=$?
+              printf 'Launcher exited with status %s\n' "$status"
+            fi
             instance=$(flatpak ps --columns=application,child-pid | awk '$1 == "dev.shrimply.Shrimply" {print $2; exit}')
             if [[ "$instance" =~ ^[0-9]+$ ]]; then
-              ps -p "$instance" -o pid,ppid,stat,pcpu,wchan,args
+              ps -p "$instance" -o pid,ppid,stat,pcpu,wchan,args || true
               sudo timeout 12s gdb -q -batch -ex 'thread apply all bt 16' -p "$instance" \
                 > "$RUNNER_TEMP/screenshots/backtrace.log" 2>&1 || true
             fi
