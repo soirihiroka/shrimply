@@ -189,18 +189,20 @@ runs:
       id: application-cache-key
       shell: bash
       run: |
-        sdk_commit="$(flatpak info --user --show-commit "org.gnome.Sdk//${GNOME_RUNTIME_VERSION}")"
-        native_versions="$(dpkg-query -W)"
-        # Generated FFI bindings must match the bundled native libraries.
-        native_hash="$(printf '%s\n' "${ImageOS}" "${ImageVersion}" "${sdk_commit}" "${native_versions}" "${{ steps.dependency-cache-key.outputs.hash }}" \
-          | LC_ALL=C sort | sha256sum | cut -d ' ' -f 1)"
+        sdk="$(flatpak info --user --show-commit "org.gnome.Sdk//${GNOME_RUNTIME_VERSION}")"
+        sdk_llvm="$(flatpak info --user --show-commit org.freedesktop.Sdk.Extension.llvm22//26.08)"
+        host_cxx="$(/usr/bin/g++ --version)"
+        host_packages="$(dpkg-query -W "cuda-*-${CUDA_VERSION//./-}" 'libclang*18*' \
+          clang-18 libllvm18 libc6-dev linux-libc-dev | LC_ALL=C sort)"
+        native_hash="$(printf '%s\n' "${sdk}" "${sdk_llvm}" "${host_cxx}" "${host_packages}" "${{ steps.dependency-cache-key.outputs.hash }}" \
+          | sha256sum | cut -d ' ' -f 1)"
         echo "prefix=flatpak-application-v2-ubuntu-24.04-${{ runner.arch }}-cuda-${CUDA_VERSION}-${{ hashFiles('rust-toolchain.toml') }}-${native_hash}" >> "${GITHUB_OUTPUT}"
 
     - name: Restore Flatpak application cache
       id: application-cache
       uses: actions/cache/restore@v6
       env:
-        BUILD_INPUTS: ${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/**/Cargo.toml', 'external/**/Cargo.toml', '.cargo/config.toml', 'Makefile', 'dev.shrimply.Shrimply.yml', 'packaging/flatpak/nvcc-g++', '.github/actions/setup-flatpak/action.yml') }}
+        BUILD_INPUTS: ${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/**/Cargo.toml', 'vendor/**/Cargo.toml', 'external/**/Cargo.toml', '.cargo/config.toml', 'Makefile', 'dev.shrimply.Shrimply.yml', 'packaging/flatpak/nvcc-g++', '.github/actions/setup-flatpak/action.yml') }}
       with:
         path: ${{ env.FLATPAK_STATE_DIR }}/ccache/cargo-target
         key: ${{ steps.application-cache-key.outputs.prefix }}-${{ env.BUILD_INPUTS }}-${{ github.sha }}
