@@ -54,14 +54,15 @@ def smoke(executable, server_executable, directory, alternate_servers):
         assert response["success"], response
         return response.get("result")
 
-    def start(password, path=server_executable):
+    def start(password, path=server_executable, git_hash=""):
         nonlocal server
         with server_log.open("ab") as log:
             server = subprocess.Popen(
                 [path, f"{host}:{port}", directory / "projects.sqlite"],
                 stdout=log, stderr=subprocess.STDOUT,
                 env=dict(os.environ, SHRIMPLY_PROJECT_SERVER_USERNAME="editor",
-                         SHRIMPLY_PROJECT_SERVER_PASSWORD=password),
+                         SHRIMPLY_PROJECT_SERVER_PASSWORD=password,
+                         SHRIMPLY_BUILD_GIT_HASH=git_hash),
             )
 
         def protocol():
@@ -175,6 +176,18 @@ def smoke(executable, server_executable, directory, alternate_servers):
             print("Shared media uploaded and inspected from a fresh offline daemon", flush=True)
 
         initial_revision = metadata(alice)["content_revision"]
+        if alternate_servers:
+            for git_hash in ("a" * 40, "b" * 40):
+                stop()
+                start("new-ci-password", git_hash=git_hash)
+                observed = await_state(
+                    lambda: metadata(alice),
+                    lambda result: (result["shared_project"].get("server_version") or {}).get("git_hash") == git_hash,
+                )
+                assert observed["project_name"] == "Shared" and observed["content_revision"] == initial_revision
+                assert [owner.read_bytes() for owner in owner_paths] == owners
+            print("Observed a compatible build change at the same server version without reopening", flush=True)
+
         for alternate, guidance in zip(alternate_servers, (
             "Update the project server to match Shrimply.",
             "Update Shrimply to match this project server.",
