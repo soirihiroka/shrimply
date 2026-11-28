@@ -259,16 +259,16 @@ fn build_ui(app: &adw::Application) {
         }
     }));
     for name in ["info", "show", "restart", "delete"] {
-        let action = gio::SimpleAction::new(name, Some(glib::VariantTy::UINT32));
+        let action = gio::SimpleAction::new(name, Some(glib::VariantTy::STRING));
         let (window, model, reload) = (window.downgrade(), model.clone(), reload.clone());
         action.connect_activate(move |_, value| {
-            let Some((window, index)) = window
+            let Some((window, key)) = window
                 .upgrade()
-                .zip(value.and_then(|value| value.get::<u32>()))
+                .zip(value.and_then(|value| value.get::<String>()))
             else {
                 return;
             };
-            let Some(project) = model.borrow().project(index as usize).cloned() else {
+            let Some(project) = model.borrow().project_by_key(&key).cloned() else {
                 return;
             };
             let reload = reload.clone();
@@ -382,19 +382,21 @@ fn append_projects(list: &gtk::ListBox, model: &Launcher, start: usize) {
         ] {
             if visible {
                 let item = gio::MenuItem::new(Some(tr!(label).as_ref()), None);
-                item.set_action_and_target_value(Some(action), Some(&(index as u32).to_variant()));
+                item.set_action_and_target_value(Some(action), Some(&project.key().to_variant()));
                 menu.append_item(&item);
             }
         }
-        row.add_suffix(
-            &gtk::MenuButton::builder()
-                .icon_name("view-more-symbolic")
-                .tooltip_text(tr!("Project options").as_ref())
-                .menu_model(&menu)
-                .has_frame(false)
-                .valign(gtk::Align::Center)
-                .build(),
-        );
+        let options = gtk::MenuButton::builder()
+            .icon_name("view-more-symbolic")
+            .tooltip_text(tr!("Project options").as_ref())
+            .menu_model(&menu)
+            .has_frame(false)
+            .valign(gtk::Align::Center)
+            .build();
+        if let Some(window) = list.root().and_downcast::<adw::ApplicationWindow>() {
+            adaptive_menu(&options, "win", &window);
+        }
+        row.add_suffix(&options);
         list.append(&row);
     }
 }

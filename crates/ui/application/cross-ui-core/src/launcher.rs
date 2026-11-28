@@ -94,6 +94,10 @@ impl Launcher {
             .collect();
     }
 
+    pub fn project_by_key(&self, key: &str) -> Option<&ProjectEntry> {
+        self.projects.iter().find(|project| project.key() == key)
+    }
+
     pub fn project_count(&self) -> usize {
         self.visible.len()
     }

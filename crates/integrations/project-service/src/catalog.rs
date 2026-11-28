@@ -19,6 +19,13 @@ pub struct ProjectEntry {
 }
 
 impl ProjectEntry {
+    pub fn key(&self) -> String {
+        match &self.remote {
+            Some(link) => format!("{}#{}", link.server, link.project_id),
+            None => format!("{:?}", self.path),
+        }
+    }
+
     pub fn delete(&self) -> Result<(), String> {
         if let Some(link) = &self.remote {
             return ProjectClient::configured(&link.server)?

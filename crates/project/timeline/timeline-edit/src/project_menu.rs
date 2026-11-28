@@ -43,6 +43,7 @@ actions! {
     Redo, "redo", "Redo";
     Preferences, "preferences", "Preferences";
     Shortcuts, "show-shortcuts", "Keyboard Shortcuts";
+    RestartService, "restart-service", "Restart Local Service";
     About, "about", "About Shrimply";
     Close, "close", "Close";
 }
@@ -146,7 +147,7 @@ pub fn sections(mut host_supports: impl FnMut(Action) -> bool) -> Vec<Vec<Entry>
             Item(SaveAs),
         ],
         vec![Item(Undo), Item(Redo)],
-        vec![Item(Preferences), Item(Shortcuts)],
+        vec![Item(Preferences), Item(Shortcuts), Item(RestartService)],
         vec![Item(About), Item(Close)],
     ]
     .into_iter()

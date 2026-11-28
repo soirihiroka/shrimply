@@ -107,6 +107,22 @@ fn host_action(action: Action) -> Option<HostAction> {
                 session.preferences.clone(),
             );
         },
+        Action::RestartService => |window, _, _| {
+            let window = window.downgrade();
+            let path = project::active_project_path();
+            gtk::glib::spawn_future_local(async move {
+                let result = gio::spawn_blocking(move || {
+                    shrimply_cross_ui_core::launcher::restart_local_service(&path)
+                })
+                .await
+                .expect("restart worker");
+                if let Err(error) = result
+                    && let Some(window) = window.upgrade()
+                {
+                    show_error_dialog(&window, "Could not restart the project service", &error);
+                }
+            });
+        },
         Action::About => {
             |window, _, _| shrimply_components_gtk::about::show(window, env!("CARGO_PKG_VERSION"))
         }

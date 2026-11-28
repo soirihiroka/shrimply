@@ -540,12 +540,6 @@ fn serve_connection(
             .map_err(|error| format!("could not read editing API bridge request: {error}"))?;
         let request: BridgeRequest = serde_json::from_str(&line)
             .map_err(|error| format!("malformed editing API bridge request: {error}"))?;
-        if request.project_path != project_path {
-            return Ok(bridge_response(
-                project_path,
-                Err(format!("editing service is open for {project_path}")),
-            ));
-        }
         let metadata = match request.command {
             BridgeCommand::Handshake => Some(json!({"ready":true,"mode":"headless"})),
             BridgeCommand::Version => Some(json!(
@@ -554,7 +548,12 @@ fn serve_connection(
             _ => None,
         };
         if let Some(metadata) = metadata {
-            return Ok(bridge_response(project_path, Ok(metadata)));
+            let result = if request.project_path == project_path {
+                Ok(metadata)
+            } else {
+                Err(format!("editing service is open for {project_path}"))
+            };
+            return Ok(bridge_response(project_path, result));
         }
         let sender = if matches!(request.command, BridgeCommand::SessionUpdates(_)) {
             presence_sender
