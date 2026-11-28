@@ -2,6 +2,11 @@ name: Verify packaged Flatpak remote editing
 
 on:
   workflow_dispatch:
+    inputs:
+      package-run:
+        description: Flatpak build run to verify
+        required: true
+        type: string
 
 permissions:
   actions: read
@@ -15,15 +20,17 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 22
     steps:
-      - name: Install the published Flatpak and load the project server
+      - name: Install the hosted Flatpak and load the project server
         env:
           GH_TOKEN: ${{ github.token }}
+          PACKAGE_RUN: ${{ inputs.package-run }}
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends flatpak dbus-daemon
           flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
-          flatpak remote-add --user shrimply-prerelease https://soirihiroka.github.io/shrimply/shrimply-prerelease.flatpakrepo
-          flatpak install --user --noninteractive shrimply-prerelease dev.shrimply.Shrimply
+          attempt=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$PACKAGE_RUN" --jq .run_attempt)
+          gh run download "$PACKAGE_RUN" --name "flatpak-$PACKAGE_RUN-$attempt" --repo "$GITHUB_REPOSITORY" --dir "$RUNNER_TEMP"
+          flatpak install --user --noninteractive "$RUNNER_TEMP/shrimply-gtk-x86_64.flatpak"
           flatpak info --user --show-commit dev.shrimply.Shrimply
           gh run download 46121355579 --name shrimply-project-server-image --repo "$GITHUB_REPOSITORY" --dir "$RUNNER_TEMP"
           docker load < "$RUNNER_TEMP/shrimply-project-server.tar.gz"
@@ -31,18 +38,12 @@ jobs:
         shell: bash
         run: |
           sudo install -d -o 10001 -g 10001 "$RUNNER_TEMP/server-data"
-          dbus-run-session -- bash -euo pipefail <<'BASH'
+          timeout -k 5s 90s dbus-run-session -- bash -euo pipefail <<'BASH'
           server=http://127.0.0.1:18788
           alice="$RUNNER_TEMP/alice.shrimp"
           bob="$RUNNER_TEMP/bob.shrimp"
           shrimply() {
-            # A sandbox init keeps the CLI's descriptors until its detached daemon exits.
-            local output status=0
-            output=$(mktemp "$RUNNER_TEMP/cli.XXXXXX")
-            timeout -k 5s 45s flatpak run --user --filesystem="$RUNNER_TEMP:rw" dev.shrimply.Shrimply "$@" > "$output" || status=$?
-            cat "$output"
-            rm -f "$output"
-            return "$status"
+            flatpak run --user --filesystem="$RUNNER_TEMP:rw" dev.shrimply.Shrimply "$@"
           }
           cleanup() {
             for project in "$alice" "$bob"; do
