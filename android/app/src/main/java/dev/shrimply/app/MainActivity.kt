@@ -36,6 +36,7 @@ import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.viewModelScope
 import androidx.core.view.WindowCompat
 import androidx.window.embedding.RuleController
 import java.lang.ref.WeakReference
@@ -45,6 +46,7 @@ internal class EditorModel(
 ) : ViewModel() {
     val projects = ProjectFiles(context.applicationContext)
     val timeline = TimelineSession(stress, benchmark, projects)
+    val settings = SettingsSession(timeline, viewModelScope)
     var settingsCategory by mutableStateOf<String?>(null)
 
     init { sessions[task] = WeakReference(this) }

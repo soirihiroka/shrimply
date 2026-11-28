@@ -4,7 +4,7 @@ mod desktop;
 mod project_servers;
 mod trust;
 use serde_json::{Value, json};
-use shrimply_preferences_core::{self as preferences, PreferencePage, SharedPreferences};
+use shrimply_preferences_core::{self as preferences, SharedPreferences};
 
 #[derive(Default)]
 pub struct Preferences {
@@ -39,16 +39,13 @@ impl Preferences {
 
     fn document(&mut self, store: &SharedPreferences, mut document: Value) -> Value {
         self.servers.decorate(store, &mut document);
-        let pages = document["controls"]
+        let trust = document["controls"]
             .as_array_mut()
-            .expect("preference pages");
-        pages.push(self.trust.page());
-        pages.sort_by_key(|page| {
-            PreferencePage::ALL
-                .iter()
-                .position(|id| page["id"] == format!("preferences:{}", id.id()))
-                .expect("known preference page")
-        });
+            .expect("preference pages")
+            .iter_mut()
+            .find(|page| page["id"] == "preferences:trust")
+            .expect("Trust settings page");
+        *trust = self.trust.page();
         if let Some(picker) = self.fonts.snapshot(
             &[preferences::snapshot(store).default_text_font_family],
             "preferences",

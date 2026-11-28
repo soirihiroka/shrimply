@@ -15,7 +15,6 @@ use std::time::Duration;
 
 const DEFAULT_WIDTH: i32 = 760;
 const DEFAULT_HEIGHT: i32 = 560;
-const PROJECT_PAGE_SIZE: usize = 40;
 const CREATE_PROJECT_WIDTH: i32 = 520;
 
 fn main() -> glib::ExitCode {
@@ -65,22 +64,24 @@ fn build_ui(app: &adw::Application) {
         .hexpand(true)
         .placeholder_text(tr!("Search Projects").as_ref())
         .build();
-    let list = gtk::ListBox::builder()
-        .selection_mode(gtk::SelectionMode::None)
-        .activate_on_single_click(true)
+    let entries = gio::ListStore::new::<glib::BoxedAnyObject>();
+    let factory = gtk::SignalListItemFactory::new();
+    let list = gtk::ListView::builder()
+        .model(&gtk::NoSelection::new(Some(entries.clone())))
+        .factory(&factory)
+        .single_click_activate(true)
+        .css_classes(["background"])
         .build();
-    list.set_margin_start(12);
-    list.set_margin_end(12);
-    list.set_margin_bottom(12);
     let hint = gtk::Label::new(Some(tr!("No Projects").as_ref()));
-    list.set_placeholder(Some(&hint));
+    let clamp = adw::ClampScrollable::builder().child(&list).build();
     let scroller = gtk::ScrolledWindow::builder()
         .hscrollbar_policy(gtk::PolicyType::Never)
         .overlay_scrolling(false)
-        .vexpand(true)
-        .child(&list)
+        .child(&clamp)
         .build();
-    let projects = gtk::Box::new(gtk::Orientation::Vertical, 12);
+    let project_view = gtk::Stack::new();
+    project_view.add_child(&hint);
+    project_view.add_child(&scroller);
     let create = gtk::Button::builder()
         .icon_name("list-add-symbolic")
         .tooltip_text(tr!("Create Project").as_ref())
@@ -93,6 +94,7 @@ fn build_ui(app: &adw::Application) {
     let project_tools = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     project_tools.set_margin_start(12);
     project_tools.set_margin_end(12);
+    project_tools.set_margin_bottom(8);
     for widget in [
         search.upcast_ref::<gtk::Widget>(),
         create.upcast_ref(),
@@ -100,13 +102,12 @@ fn build_ui(app: &adw::Application) {
     ] {
         project_tools.append(widget);
     }
-    projects.append(&project_tools);
-    projects.append(&scroller);
     let toolbar = adw::ToolbarView::new();
     let header = adw::HeaderBar::new();
     header.set_show_start_title_buttons(false);
     toolbar.add_top_bar(&header);
-    toolbar.set_content(Some(&projects));
+    toolbar.add_top_bar(&adw::Clamp::builder().child(&project_tools).build());
+    toolbar.set_content(Some(&project_view));
     let projects = adw::NavigationPage::builder()
         .title(tr!("Projects").as_ref())
         .child(&toolbar)
@@ -181,6 +182,26 @@ fn build_ui(app: &adw::Application) {
         .content(&split)
         .build();
     adaptive_menu(&menu_button, "win", &window);
+    factory.connect_bind({
+        let window = window.downgrade();
+        move |_, item| {
+            let item = item
+                .downcast_ref::<gtk::ListItem>()
+                .expect("project list item");
+            let entry = item
+                .item()
+                .and_downcast::<glib::BoxedAnyObject>()
+                .expect("project entry");
+            let project = entry.borrow::<launcher::ProjectEntry>();
+            item.set_accessible_label(&project.name);
+            item.set_child(Some(&project_row(&project, window.upgrade().as_ref())));
+        }
+    });
+    factory.connect_unbind(|_, item| {
+        item.downcast_ref::<gtk::ListItem>()
+            .expect("project list item")
+            .set_child(None::<&gtk::Widget>);
+    });
     let model = Rc::new(RefCell::new(Launcher::default()));
     let rebuild_sources = {
         let (sources, model) = (sources.clone(), model.clone());
@@ -218,8 +239,8 @@ fn build_ui(app: &adw::Application) {
         }
     };
     let rebuild = {
-        let (list, search, hint, model, scroller) = (
-            list.clone(),
+        let (entries, search, hint, model, scroller) = (
+            entries.clone(),
             search.clone(),
             hint.clone(),
             model.clone(),
@@ -227,10 +248,6 @@ fn build_ui(app: &adw::Application) {
         );
         move || {
             model.borrow_mut().set_search(&search.text());
-            scroller.vadjustment().set_value(0.0);
-            while let Some(row) = list.row_at_index(0) {
-                list.remove(&row);
-            }
             hint.set_label(
                 tr!(if search.text().trim().is_empty() {
                     "No Projects"
@@ -239,7 +256,20 @@ fn build_ui(app: &adw::Application) {
                 })
                 .as_ref(),
             );
-            append_projects(&list, &model.borrow(), 0);
+            let visible = {
+                let model = model.borrow();
+                (0..model.project_count())
+                    .filter_map(|index| model.project(index).cloned())
+                    .map(glib::BoxedAnyObject::new)
+                    .collect::<Vec<_>>()
+            };
+            entries.splice(0, entries.n_items(), &visible);
+            project_view.set_visible_child(if visible.is_empty() {
+                hint.upcast_ref::<gtk::Widget>()
+            } else {
+                scroller.upcast_ref()
+            });
+            scroller.vadjustment().set_value(0.0);
         }
     };
     let reload = {
@@ -301,27 +331,14 @@ fn build_ui(app: &adw::Application) {
         let rebuild = rebuild.clone();
         move |_| rebuild()
     });
-    scroller.connect_edge_reached({
-        let (list, model) = (list.clone(), model.clone());
-        move |_, edge| {
-            if edge == gtk::PositionType::Bottom {
-                append_projects(
-                    &list,
-                    &model.borrow(),
-                    list.observe_children()
-                        .iter::<gtk::Widget>()
-                        .filter_map(Result::ok)
-                        .filter(|child| child.is::<gtk::ListBoxRow>())
-                        .count(),
-                );
-            }
-        }
-    });
-    list.connect_row_activated({
-        let model = model.clone();
+    list.connect_activate({
         let (window, app) = (window.clone(), app.clone());
-        move |_, row| {
-            if let Some(entry) = model.borrow().project(row.index() as usize).cloned() {
+        move |_, position| {
+            if let Some(entry) = entries
+                .item(position)
+                .and_downcast::<glib::BoxedAnyObject>()
+            {
+                let entry = entry.borrow::<launcher::ProjectEntry>().clone();
                 open_remote(&window, &app, "Could not open project", move || {
                     launcher::launch_listed_project(&entry)
                 });
@@ -440,61 +457,64 @@ fn build_ui(app: &adw::Application) {
     window.present();
 }
 
-fn append_projects(list: &gtk::ListBox, model: &Launcher, start: usize) {
-    for index in start..model.project_count().min(start + PROJECT_PAGE_SIZE) {
-        let project = model.project(index).expect("visible project");
-        let row = adw::ActionRow::builder()
-            .title(&project.name)
-            .use_markup(false)
-            .activatable(true)
-            .css_classes(["card"])
-            .margin_bottom(8)
-            .build();
-        let icon = gtk::Image::from_icon_name(if project.remote.is_some() {
-            "folder-remote-symbolic"
-        } else {
-            "folder-symbolic"
-        });
-        row.add_prefix(&icon);
-        let subtitle = [
-            launcher::project_access_label(project),
-            project.remote.as_ref().map(|remote| remote.server.clone()),
-        ]
-        .into_iter()
-        .flatten()
-        .collect::<Vec<_>>()
-        .join(" · ");
-        row.set_subtitle(&subtitle);
-        let menu = gio::Menu::new();
-        for (visible, label, action) in [
-            (true, "Project Information", "win.info"),
-            (project.path.is_some(), "Show in Files", "win.show"),
-            (
-                project.path.is_some(),
-                "Restart Local Service",
-                "win.restart",
-            ),
-            (true, "Delete Project…", "win.delete"),
-        ] {
-            if visible {
-                let item = gio::MenuItem::new(Some(tr!(label).as_ref()), None);
-                item.set_action_and_target_value(Some(action), Some(&project.key().to_variant()));
-                menu.append_item(&item);
-            }
+fn project_row(
+    project: &launcher::ProjectEntry,
+    window: Option<&adw::ApplicationWindow>,
+) -> adw::ActionRow {
+    let row = adw::ActionRow::builder()
+        .title(&project.name)
+        .use_markup(false)
+        .css_classes(["card"])
+        .focusable(false)
+        .margin_start(12)
+        .margin_end(12)
+        .margin_top(4)
+        .margin_bottom(4)
+        .build();
+    let icon = gtk::Image::from_icon_name(if project.remote.is_some() {
+        "folder-remote-symbolic"
+    } else {
+        "folder-symbolic"
+    });
+    row.add_prefix(&icon);
+    let subtitle = [
+        launcher::project_access_label(project),
+        project.remote.as_ref().map(|remote| remote.server.clone()),
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>()
+    .join(" · ");
+    row.set_subtitle(&subtitle);
+    let menu = gio::Menu::new();
+    for (visible, label, action) in [
+        (true, "Project Information", "win.info"),
+        (project.path.is_some(), "Show in Files", "win.show"),
+        (
+            project.path.is_some(),
+            "Restart Local Service",
+            "win.restart",
+        ),
+        (true, "Delete Project…", "win.delete"),
+    ] {
+        if visible {
+            let item = gio::MenuItem::new(Some(tr!(label).as_ref()), None);
+            item.set_action_and_target_value(Some(action), Some(&project.key().to_variant()));
+            menu.append_item(&item);
         }
-        let options = gtk::MenuButton::builder()
-            .icon_name("view-more-symbolic")
-            .tooltip_text(tr!("Project options").as_ref())
-            .menu_model(&menu)
-            .has_frame(false)
-            .valign(gtk::Align::Center)
-            .build();
-        if let Some(window) = list.root().and_downcast::<adw::ApplicationWindow>() {
-            adaptive_menu(&options, "win", &window);
-        }
-        row.add_suffix(&options);
-        list.append(&row);
     }
+    let options = gtk::MenuButton::builder()
+        .icon_name("view-more-symbolic")
+        .tooltip_text(tr!("Project options").as_ref())
+        .menu_model(&menu)
+        .has_frame(false)
+        .valign(gtk::Align::Center)
+        .build();
+    if let Some(window) = window {
+        adaptive_menu(&options, "win", window);
+    }
+    row.add_suffix(&options);
+    row
 }
 
 fn show_open_project(window: &adw::ApplicationWindow, app: &adw::Application) {

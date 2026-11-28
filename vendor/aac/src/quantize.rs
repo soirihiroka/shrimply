@@ -42,6 +42,18 @@ pub(crate) struct Choice {
     pub error: f32,
 }
 
+impl Choice {
+    #[inline]
+    fn intensity(book: Codebook, sf: u8) -> Self {
+        Self {
+            sf,
+            book,
+            cost: 0,
+            error: 0.0,
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 struct SfCandidate {
     sf: u8,
@@ -134,6 +146,12 @@ pub(crate) struct Search {
     // Stage 2 tuple-RDOQ candidates for active stereo mode (0, 1).
     rdoq_bands: [Vec<BandCandidates>; 2],
     powers: [[f32; FRAME_SAMPLES]; 4],
+    // Optional low-bitrate Intensity Stereo carrier state for ch[0] and IS plan for ch[1].
+    is_bands: Vec<BandCandidates>,
+    is_spectra: [f32; FRAME_SAMPLES],
+    is_powers: [f32; FRAME_SAMPLES],
+    is_thr: Vec<f32>,
+    is_plan: Vec<Option<(Codebook, u8)>>,
     viterbi: ViterbiScratch,
     pub quantized: [[i16; FRAME_SAMPLES]; 2],
 }
@@ -156,9 +174,23 @@ impl Search {
                 (0..128).map(|_| BandCandidates::default()).collect()
             }),
             powers: [[0.0; FRAME_SAMPLES]; 4],
+            is_bands: Vec::new(),
+            is_spectra: [0.0; FRAME_SAMPLES],
+            is_powers: [0.0; FRAME_SAMPLES],
+            is_thr: Vec::new(),
+            is_plan: Vec::new(),
             viterbi: ViterbiScratch::new(),
             quantized: [[0; FRAME_SAMPLES]; 2],
         }
+    }
+
+    pub fn clear_is(&mut self) {
+        self.is_plan.clear();
+    }
+
+    #[inline]
+    fn is_choice(&self, idx: usize) -> Option<(Codebook, u8)> {
+        self.is_plan.get(idx).copied().flatten()
     }
 
     /// Analyze all four representations (L, R, M, S) with full per-codebook costs.
@@ -184,99 +216,157 @@ impl Search {
             for group in 0..layout.groups {
                 for band in 0..layout.band_count() {
                     let idx = group * layout.band_count() + band;
-                    let entry = &mut self.bands[slot_ch][idx];
-                    entry.cands.clear();
-                    let mask = masks[idx].max(1.0);
-                    let mut energy = 0.0_f32;
-                    let mut peak = 0.0_f32;
-                    let mut width = 0_usize;
-                    for i in layout.ranges(group, band).flatten() {
-                        energy += source[i] * source[i];
-                        peak = peak.max(powers[i]);
-                        width += 1;
-                    }
-                    // Smooth energy-envelope distortion weight: penalizes both spectral holes
-                    // and severe low-bitrate band energy collapse continuously (matches 1.85x at E_hat = 0).
-                    let raw_zero_err = energy / mask;
-                    let env_weight = band_env_weight(raw_zero_err);
-                    entry.zero_error = raw_zero_err * (1.0 + env_weight);
-                    if energy == 0.0 {
-                        entry.min_sf = SF_OFFSET;
-                        entry.max_sf = SF_OFFSET;
-                        continue;
-                    }
-                    let orig_norm = energy.sqrt();
-                    let sf_offset = f32::from(SF_OFFSET);
-                    let rms = (energy / width as f32).sqrt();
-                    let bin_mask = mask / width as f32;
-                    let est_scale = (6.75 * bin_mask / rms.sqrt().max(1.0e-6)).powf(2.0 / 3.0);
-                    let masked_sf = (sf_offset + 4.0 * est_scale.log2()) as i32;
-                    let min_sf = (sf_offset + (16.0 / 3.0) * (peak / MAX_QUANTIZED as f32).log2())
-                        .ceil() as i32;
-                    let max_sf = (sf_offset + (16.0 / 3.0) * (peak / 0.45).log2()).ceil() as i32;
-                    let min_sf = min_sf.clamp(0, 255);
-                    let max_sf = max_sf.clamp(min_sf, 255);
-                    entry.min_sf = min_sf as u8;
-                    entry.max_sf = max_sf as u8;
+                    analyze_band_candidates(
+                        source,
+                        powers,
+                        (layout, group, band),
+                        masks[idx].max(1.0),
+                        (&self.inverse, &self.boundaries),
+                        &mut qbuf,
+                        &mut self.bands[slot_ch][idx],
+                    );
+                }
+            }
+        }
+    }
 
-                    // Stage 1 uses step = 2 around the masked scalefactor (~20 candidates);
-                    // Stage 2 refines with exact step = 1 tuple-RDOQ around the Viterbi path.
-                    let fine_lo = (masked_sf - 24).max(min_sf).min(max_sf);
-                    let fine_hi = (masked_sf + 24).min(max_sf).max(fine_lo);
-                    let coarse_lo = (fine_lo - 24).max(min_sf);
-                    let coarse_hi = (fine_hi + 24).min(max_sf);
+    /// Select upper long-window bands (>= 9 kHz) where ISO/IEC 13818-7 Intensity Stereo
+    /// (codebooks 14/15) beats full stereo in R-D, replacing ch[0] with an energy-preserving
+    /// mono carrier and signaling exact interaural level ratio via `is_pos` on ch[1].
+    pub fn plan_intensity_stereo(
+        &mut self,
+        frame: StereoFrame<'_>,
+        sample_rate: u32,
+        ms_mode: &mut MsMode,
+        ms_mask: &mut [bool],
+        picks: &mut [Vec<Choice>; 2],
+        lambda: f32,
+    ) {
+        let layout = frame.layout;
+        let b_count = layout.band_count();
+        self.is_plan.resize(b_count, None);
+        self.is_plan.fill(None);
+        if self.is_bands.len() < b_count {
+            self.is_bands.resize_with(b_count, BandCandidates::default);
+        }
+        self.is_thr.resize(b_count, 1.0);
 
-                    let mut sfs = [0_u8; 38];
-                    let mut n_sfs = 0;
-                    let mut sf = coarse_lo;
-                    while sf <= coarse_hi && n_sfs < sfs.len() {
-                        sfs[n_sfs] = sf as u8;
-                        n_sfs += 1;
-                        sf += if sf >= fine_lo && sf < fine_hi { 2 } else { 4 };
-                    }
-                    if n_sfs > 0 && sfs[n_sfs - 1] < coarse_hi as u8 && n_sfs < sfs.len() {
-                        sfs[n_sfs] = coarse_hi as u8;
-                        n_sfs += 1;
-                    }
+        let min_bin = (9000_usize * 2 * FRAME_SAMPLES) / sample_rate as usize;
+        let mut qbuf = [0_i16; FRAME_SAMPLES];
+        let mut selected: Vec<(usize, Codebook, u8, Option<u8>)> = Vec::new();
+        let mut total_gain = 0.0_f32;
+        for band in 0..b_count {
+            let start = layout.bands[band];
+            let end = layout.bands[band + 1];
+            if start < min_bin {
+                continue;
+            }
+            let mut e_l = 0.0_f32;
+            let mut e_r = 0.0_f32;
+            let mut dot = 0.0_f32;
+            for i in start..end {
+                let l = frame.spectra_lr[0][i];
+                let r = frame.spectra_lr[1][i];
+                e_l += l * l;
+                e_r += r * r;
+                dot += l * r;
+            }
+            let norm_lr = (e_l * e_r).sqrt();
+            if e_l <= 0.0 || e_r <= 0.0 || norm_lr <= 1.0e-12 {
+                continue;
+            }
+            // Only use out-of-phase IS when strongly anti-correlated; avoids mono cancellation
+            // on uncorrelated high-frequency ambience.
+            let c_want = if dot < -0.5 * norm_lr {
+                -1.0_f32
+            } else {
+                1.0_f32
+            };
+            // Skip extreme panning (> ±28 IS steps = ±42 dB) so consecutive IS scalefactor
+            // deltas never exceed ±60 and extreme single-channel treble bands keep exact gain.
+            let raw_is_pos = (2.0 * (e_l / e_r).log2()).round();
+            if raw_is_pos.abs() > 28.0 {
+                continue;
+            }
+            let is_pos = raw_is_pos as i16;
+            let mut e_sum = 0.0_f32;
+            for i in start..end {
+                let v = frame.spectra_lr[0][i] + c_want * frame.spectra_lr[1][i];
+                self.is_spectra[i] = v;
+                e_sum += v * v;
+            }
+            if e_sum > 1.0e-12 {
+                let gain = (e_l / e_sum).sqrt();
+                for i in start..end {
+                    let v = self.is_spectra[i] * gain;
+                    self.is_spectra[i] = v;
+                    let root = v.abs().sqrt();
+                    self.is_powers[i] = root * root.sqrt();
+                }
+            } else {
+                for i in start..end {
+                    self.is_spectra[i] = frame.spectra_lr[0][i];
+                    self.is_powers[i] = self.powers[0][i];
+                }
+            }
 
-                    for &sf in &sfs[..n_sfs] {
-                        let (scale, factor) = gains(sf);
-                        let mut sq_err = 0.0_f32;
-                        let mut hat_energy = 0.0_f32;
-                        let mut high = 0_u16;
-                        for (value, i) in qbuf.iter_mut().zip(layout.ranges(group, band).flatten())
-                        {
-                            *value =
-                                quantize_scalar(source[i], powers[i], factor, &self.boundaries);
-                            let mag = value.unsigned_abs();
-                            high = high.max(mag);
-                            let deq = self.inverse[usize::from(mag)] * scale;
-                            let diff = source[i].abs() - deq;
-                            sq_err += diff * diff;
-                            hat_energy += deq * deq;
-                        }
-                        if high == 0 {
-                            break;
-                        }
-                        let costs = codebook_costs(&qbuf[..width], high);
-                        let min_cost = costs[1..].iter().copied().min().unwrap_or(u16::MAX);
-                        let env_diff = orig_norm - hat_energy.sqrt();
-                        let err = (sq_err + env_weight * env_diff * env_diff) / mask;
-                        let mut errors = [f32::INFINITY; CODEBOOK_COUNT];
-                        for cb in ACTIVE_BOOKS {
-                            let ci = cb.index();
-                            if costs[ci] != u16::MAX {
-                                errors[ci] = err;
-                            }
-                        }
-                        entry.cands.push(SfCandidate {
-                            sf,
-                            errors,
-                            costs,
-                            min_cost,
-                            min_error: err,
-                        });
-                    }
+            let tl = frame.thr_lr[0][band].max(1.0);
+            let tr = frame.thr_lr[1][band].max(1.0);
+            let thr_is = (1.0 / (1.0 / tl + (e_r / e_l) / tr)).max(1.0);
+            self.is_thr[band] = thr_is;
+            analyze_band_candidates(
+                &self.is_spectra,
+                &self.is_powers,
+                (layout, 0, band),
+                thr_is,
+                (&self.inverse, &self.boundaries),
+                &mut qbuf,
+                &mut self.is_bands[band],
+            );
+
+            let corr = (dot.abs() / norm_lr).clamp(0.0, 1.0);
+            let rd_stereo = picks[0][band].error
+                + picks[1][band].error
+                + lambda * f32::from(picks[0][band].cost + picks[1][band].cost);
+            let is_phase_penalty = (1.0 - corr) * 0.25 * (e_l / tl + e_r / tr);
+            let rd_is =
+                band_best_rd(&self.is_bands[band], lambda) + is_phase_penalty + lambda * 4.0;
+            if rd_is < rd_stereo {
+                total_gain += rd_stereo - rd_is;
+                // Keep ms_mask[band] = false on IS bands (and avoid ms_mask_present = 2)
+                // so every AAC decoder interprets IS sign identically without ambiguity.
+                let is_book = if c_want > 0.0 {
+                    Codebook::IntensityInPhase
+                } else {
+                    Codebook::IntensityOutOfPhase
+                };
+                let is_sf = (i16::from(SF_OFFSET) + is_pos) as u8;
+                let best_sf = self.is_bands[band]
+                    .cands
+                    .iter()
+                    .filter(|c| c.min_cost != u16::MAX)
+                    .min_by(|a, b| {
+                        (a.min_error + lambda * f32::from(a.min_cost))
+                            .total_cmp(&(b.min_error + lambda * f32::from(b.min_cost)))
+                    })
+                    .map(|c| c.sf);
+                selected.push((band, is_book, is_sf, best_sf));
+            }
+        }
+        if selected.is_empty() || (*ms_mode == MsMode::All && total_gain <= lambda * b_count as f32)
+        {
+            return;
+        }
+        if *ms_mode == MsMode::All {
+            *ms_mode = MsMode::PerBand;
+        }
+        for (band, is_book, is_sf, best_sf) in selected {
+            ms_mask[band] = false;
+            self.is_plan[band] = Some((is_book, is_sf));
+            if let Some(sf) = best_sf {
+                picks[0][band].sf = sf;
+                if picks[0][band].book == Codebook::Zero {
+                    picks[0][band].book = Codebook::QuadSigned1A;
                 }
             }
         }
@@ -367,9 +457,20 @@ impl Search {
                 self.rdoq_bands[ch].resize_with(total, BandCandidates::default);
             }
             for idx in 0..total {
+                let is_band = self.is_choice(idx).is_some();
+                if ch == 1 && is_band {
+                    let entry = &mut self.rdoq_bands[ch][idx];
+                    entry.zero_error = 0.0;
+                    entry.cands.clear();
+                    continue;
+                }
                 let is_ms = ms_mask[idx];
                 let src_ch = if is_ms { 2 + ch } else { ch };
-                let base = &self.bands[src_ch][idx];
+                let base = if ch == 0 && is_band {
+                    &self.is_bands[idx]
+                } else {
+                    &self.bands[src_ch][idx]
+                };
                 let (min_sf, max_sf, zero_error, has_cands) = (
                     base.min_sf,
                     base.max_sf,
@@ -386,7 +487,7 @@ impl Search {
                 }
 
                 let pick = center[ch][idx];
-                let (lo, hi) = if pick.book != Codebook::Zero {
+                let (lo, hi) = if pick.book.is_spectral() {
                     let c = i32::from(pick.sf);
                     (
                         (c - radius).max(i32::from(min_sf)),
@@ -442,6 +543,13 @@ impl Search {
                 out,
             );
         }
+        for (idx, plan) in self.is_plan.iter().enumerate() {
+            if let Some((is_book, is_sf)) = *plan
+                && output[0][idx].book.is_spectral()
+            {
+                output[1][idx] = Choice::intensity(is_book, is_sf);
+            }
+        }
     }
 
     /// Materialize the exact RDOQ-quantized `i16` spectral lines at the exact `build_lambda`
@@ -462,8 +570,8 @@ impl Search {
 
         for ch in 0..2 {
             for idx in 0..total {
-                let choice = &mut picks[ch][idx];
-                if choice.book == Codebook::Zero {
+                let choice = picks[ch][idx];
+                if !choice.book.is_spectral() {
                     continue;
                 }
                 let (width, inv_mask) =
@@ -482,16 +590,19 @@ impl Search {
                 );
                 debug_assert!(nonzero);
                 if nonzero {
-                    choice.error = err;
-                    choice.cost = bits;
+                    picks[ch][idx].error = err;
+                    picks[ch][idx].cost = bits;
                     self.scatter_band(layout, ch, idx, &qbuf[..width]);
                 } else {
-                    *choice = Choice {
+                    picks[ch][idx] = Choice {
                         sf: 0,
                         book: Codebook::Zero,
                         cost: 0,
                         error: self.rdoq_bands[ch][idx].zero_error,
                     };
+                    if ch == 0 && self.is_choice(idx).is_some() {
+                        picks[1][idx] = Choice::default();
+                    }
                 }
             }
         }
@@ -534,25 +645,34 @@ impl Search {
             if size_fn(picks) >= limit {
                 break;
             }
+            let is_choice = self.is_choice(idx);
+            if ch == 1 && is_choice.is_some() {
+                continue;
+            }
             let prev_sf = picks[ch][..idx]
                 .iter()
-                .rfind(|c| c.book != Codebook::Zero)
+                .rfind(|c| c.book.is_spectral())
                 .map(|c| c.sf);
             let next_sf = picks[ch][idx + 1..]
                 .iter()
-                .find(|c| c.book != Codebook::Zero)
+                .find(|c| c.book.is_spectral())
                 .map(|c| c.sf);
 
             let is_ms = ms_mask[idx];
             let src_ch = if is_ms { 2 + ch } else { ch };
             let (width, inv_mask) = self.gather_band(frame, ch, idx, is_ms, &mut xbuf, &mut pbuf);
 
-            let base = &self.bands[src_ch][idx];
+            let base = if ch == 0 && is_choice.is_some() {
+                &self.is_bands[idx]
+            } else {
+                &self.bands[src_ch][idx]
+            };
             let cur = picks[ch][idx];
+            let cur_r = picks[1][idx];
             let mut best = cur;
             let mut updated = false;
 
-            let sf_lo = if cur.book != Codebook::Zero {
+            let sf_lo = if cur.book.is_spectral() {
                 i32::from(cur.sf)
                     .saturating_sub(3)
                     .max(i32::from(base.min_sf))
@@ -561,7 +681,7 @@ impl Search {
                     .saturating_sub(4)
                     .max(i32::from(base.min_sf))
             };
-            let sf_hi = if cur.book != Codebook::Zero {
+            let sf_hi = if cur.book.is_spectral() {
                 i32::from(cur.sf)
             } else {
                 i32::from(base.max_sf)
@@ -596,6 +716,11 @@ impl Search {
                             error: err,
                         };
                         picks[ch][idx] = trial;
+                        if ch == 0
+                            && let Some((is_book, is_sf)) = is_choice
+                        {
+                            picks[1][idx] = Choice::intensity(is_book, is_sf);
+                        }
                         if size_fn(picks) <= limit {
                             best = trial;
                             updated = true;
@@ -604,6 +729,15 @@ impl Search {
                 }
             }
             picks[ch][idx] = best;
+            if ch == 0
+                && let Some((is_book, is_sf)) = is_choice
+            {
+                picks[1][idx] = if updated {
+                    Choice::intensity(is_book, is_sf)
+                } else {
+                    cur_r
+                };
+            }
             if updated {
                 let (err, bits, nonzero) = rdoq_single_book(
                     &RdoqCtx::new(
@@ -623,6 +757,9 @@ impl Search {
                     self.scatter_band(frame.layout, ch, idx, &qbuf[..width]);
                 } else {
                     picks[ch][idx] = cur;
+                    if ch == 0 && is_choice.is_some() {
+                        picks[1][idx] = cur_r;
+                    }
                 }
             }
         }
@@ -639,22 +776,27 @@ impl Search {
     ) -> (usize, f32) {
         let group = idx / frame.layout.band_count();
         let band = idx % frame.layout.band_count();
+        let use_is = ch == 0 && self.is_choice(idx).is_some();
         let src_ch = if is_ms { 2 + ch } else { ch };
-        let source = if is_ms {
-            &frame.spectra_ms[ch]
+        let (source, powers, mask) = if use_is {
+            (&self.is_spectra, &self.is_powers, self.is_thr[idx].max(1.0))
+        } else if is_ms {
+            (
+                &frame.spectra_ms[ch],
+                &self.powers[src_ch],
+                frame.thr_ms[idx].max(1.0),
+            )
         } else {
-            &frame.spectra_lr[ch]
+            (
+                &frame.spectra_lr[ch],
+                &self.powers[src_ch],
+                frame.thr_lr[ch][idx].max(1.0),
+            )
         };
-        let mask = if is_ms {
-            frame.thr_ms[idx]
-        } else {
-            frame.thr_lr[ch][idx]
-        }
-        .max(1.0);
         let mut width = 0;
         for i in frame.layout.ranges(group, band).flatten() {
             xs[width] = source[i];
-            ps[width] = self.powers[src_ch][i];
+            ps[width] = powers[i];
             width += 1;
         }
         (width, 1.0 / mask)
@@ -666,6 +808,105 @@ impl Search {
         for (pos, i) in layout.ranges(group, band).flatten().enumerate() {
             self.quantized[ch][i] = qbuf[pos];
         }
+    }
+}
+
+fn analyze_band_candidates(
+    source: &[f32; FRAME_SAMPLES],
+    powers: &[f32; FRAME_SAMPLES],
+    (layout, group, band): (Layout, usize, usize),
+    mask: f32,
+    (inverse, boundaries): (&[f32], &[f32]),
+    qbuf: &mut [i16; FRAME_SAMPLES],
+    entry: &mut BandCandidates,
+) {
+    entry.cands.clear();
+    let mut energy = 0.0_f32;
+    let mut peak = 0.0_f32;
+    let mut width = 0_usize;
+    for i in layout.ranges(group, band).flatten() {
+        energy += source[i] * source[i];
+        peak = peak.max(powers[i]);
+        width += 1;
+    }
+    // Smooth energy-envelope distortion weight: penalizes both spectral holes
+    // and severe low-bitrate band energy collapse continuously (matches 1.85x at E_hat = 0).
+    let raw_zero_err = energy / mask;
+    let env_weight = band_env_weight(raw_zero_err);
+    entry.zero_error = raw_zero_err * (1.0 + env_weight);
+    if energy == 0.0 {
+        entry.min_sf = SF_OFFSET;
+        entry.max_sf = SF_OFFSET;
+        return;
+    }
+    let orig_norm = energy.sqrt();
+    let sf_offset = f32::from(SF_OFFSET);
+    let rms = (energy / width as f32).sqrt();
+    let bin_mask = mask / width as f32;
+    let est_scale = (6.75 * bin_mask / rms.sqrt().max(1.0e-6)).powf(2.0 / 3.0);
+    let masked_sf = (sf_offset + 4.0 * est_scale.log2()) as i32;
+    let min_sf = (sf_offset + (16.0 / 3.0) * (peak / MAX_QUANTIZED as f32).log2()).ceil() as i32;
+    let max_sf = (sf_offset + (16.0 / 3.0) * (peak / 0.45).log2()).ceil() as i32;
+    let min_sf = min_sf.clamp(0, 255);
+    let max_sf = max_sf.clamp(min_sf, 255);
+    entry.min_sf = min_sf as u8;
+    entry.max_sf = max_sf as u8;
+
+    // Stage 1 uses step = 2 around the masked scalefactor (~20 candidates);
+    // Stage 2 refines with exact step = 1 tuple-RDOQ around the Viterbi path.
+    let fine_lo = (masked_sf - 24).max(min_sf).min(max_sf);
+    let fine_hi = (masked_sf + 24).min(max_sf).max(fine_lo);
+    let coarse_lo = (fine_lo - 24).max(min_sf);
+    let coarse_hi = (fine_hi + 24).min(max_sf);
+
+    let mut sfs = [0_u8; 38];
+    let mut n_sfs = 0;
+    let mut sf = coarse_lo;
+    while sf <= coarse_hi && n_sfs < sfs.len() {
+        sfs[n_sfs] = sf as u8;
+        n_sfs += 1;
+        sf += if sf >= fine_lo && sf < fine_hi { 2 } else { 4 };
+    }
+    if n_sfs > 0 && sfs[n_sfs - 1] < coarse_hi as u8 && n_sfs < sfs.len() {
+        sfs[n_sfs] = coarse_hi as u8;
+        n_sfs += 1;
+    }
+
+    for &sf in &sfs[..n_sfs] {
+        let (scale, factor) = gains(sf);
+        let mut sq_err = 0.0_f32;
+        let mut hat_energy = 0.0_f32;
+        let mut high = 0_u16;
+        for (value, i) in qbuf.iter_mut().zip(layout.ranges(group, band).flatten()) {
+            *value = quantize_scalar(source[i], powers[i], factor, boundaries);
+            let mag = value.unsigned_abs();
+            high = high.max(mag);
+            let deq = inverse[usize::from(mag)] * scale;
+            let diff = source[i].abs() - deq;
+            sq_err += diff * diff;
+            hat_energy += deq * deq;
+        }
+        if high == 0 {
+            break;
+        }
+        let costs = codebook_costs(&qbuf[..width], high);
+        let min_cost = costs[1..].iter().copied().min().unwrap_or(u16::MAX);
+        let env_diff = orig_norm - hat_energy.sqrt();
+        let err = (sq_err + env_weight * env_diff * env_diff) / mask;
+        let mut errors = [f32::INFINITY; CODEBOOK_COUNT];
+        for cb in ACTIVE_BOOKS {
+            let ci = cb.index();
+            if costs[ci] != u16::MAX {
+                errors[ci] = err;
+            }
+        }
+        entry.cands.push(SfCandidate {
+            sf,
+            errors,
+            costs,
+            min_cost,
+            min_error: err,
+        });
     }
 }
 

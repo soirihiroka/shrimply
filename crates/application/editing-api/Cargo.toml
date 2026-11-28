@@ -29,5 +29,8 @@ sha2.workspace = true
 regex.workspace = true
 strum = { workspace = true, features = ["derive"] }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+gio.workspace = true
+
 [target.'cfg(windows)'.dependencies]
 windows = { workspace = true, features = ["Win32_System_Threading"] }

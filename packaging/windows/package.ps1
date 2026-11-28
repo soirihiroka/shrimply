@@ -125,6 +125,9 @@ $project = $project -replace 'manimgl = \{ path = .*', "manimgl = { url = `"http
 & $uv lock --python 3.14 --project $manim
 if ($LASTEXITCODE -ne 0) { throw "Could not lock bundled Manim environment" }
 
+& (Join-Path $stage "shrimply.exe") --version
+if ($LASTEXITCODE -ne 0) { throw "Packaged Shrimply CLI exited $LASTEXITCODE" }
+
 Compress-Archive -Path (Join-Path $stage "*") -DestinationPath $archive -CompressionLevel Optimal
 $hash = (Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant()
 $checksum = "$hash  $([IO.Path]::GetFileName($archive))`n"

@@ -89,8 +89,8 @@ Options:
 * ``--fps RATE``: override the output frame rate with an integer, decimal,
   or fraction such as ``30000/1001``.
 * ``--video-bitrate KBPS``: set the video bitrate using bitrate-based encoding.
-* ``--audio-encoder aac|shrimply-aac|opus``: select the audio encoder. macOS also
-  accepts ``audiotoolbox-aac``. The encoder must be available in FFmpeg.
+* ``--audio-encoder shrimply-aac|aac|opus``: select the audio encoder
+  (defaults to ``shrimply-aac``). macOS also accepts ``audiotoolbox-aac``.
 * ``--audio-bitrate KBPS`` and ``--audio-sample-rate HZ``: set audio encoding
   parameters. GIF ignores audio parameters.
 * ``--overwrite``: allow replacing an existing output file. Otherwise the

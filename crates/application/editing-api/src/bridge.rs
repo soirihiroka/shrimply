@@ -5,7 +5,7 @@ use shrimply_project_document::project::ProjectLockOwner;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 #[cfg(not(target_os = "android"))]
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 #[cfg(not(target_os = "android"))]
 use std::time::Instant;
@@ -22,6 +22,60 @@ const FLATPAK_INSTANCE_HASH_LENGTH: usize = 16;
 pub enum BridgeError {
     Transport(String),
     Rejected(String),
+}
+
+#[cfg(target_os = "linux")]
+fn spawn_flatpak(command: &Command) -> Result<u32, BridgeError> {
+    use gio::glib::{
+        VariantDict,
+        variant::{Handle, ToVariant},
+    };
+    use std::collections::BTreeMap;
+
+    let null = || {
+        std::fs::File::options()
+            .read(true)
+            .write(true)
+            .open("/dev/null")
+            .map_err(|error| BridgeError::Transport(format!("could not open /dev/null: {error}")))
+    };
+    let fds = gio::UnixFDList::from_array([null()?, null()?, null()?]);
+    let argv: Vec<_> = std::iter::once(command.get_program())
+        .chain(command.get_args())
+        .collect();
+    let descriptors = BTreeMap::from([(0_u32, Handle(0)), (1, Handle(1)), (2, Handle(2))]);
+    // The default flags keep the calling deployment and leave the daemon running after CLI exit.
+    let parameters = (
+        Path::new("/"),
+        argv,
+        descriptors,
+        BTreeMap::<String, String>::new(),
+        0_u32,
+        VariantDict::default(),
+    )
+        .to_variant();
+    let (reply, _) = gio::bus_get_sync(gio::BusType::Session, gio::Cancellable::NONE)
+        .and_then(|bus| {
+            bus.call_with_unix_fd_list_sync(
+                Some("org.freedesktop.portal.Flatpak"),
+                "/org/freedesktop/portal/Flatpak",
+                "org.freedesktop.portal.Flatpak",
+                "Spawn",
+                Some(&parameters),
+                None,
+                gio::DBusCallFlags::NONE,
+                WRITE_TIMEOUT.as_millis() as i32,
+                Some(&fds),
+                gio::Cancellable::NONE,
+            )
+        })
+        .map_err(|error| {
+            BridgeError::Transport(format!("could not start Flatpak session: {error}"))
+        })?;
+    reply
+        .get::<(u32,)>()
+        .map(|(pid,)| pid)
+        .ok_or_else(|| BridgeError::Transport("Flatpak returned an invalid session PID".into()))
 }
 
 impl std::fmt::Display for BridgeError {
@@ -70,7 +124,7 @@ pub struct Bridge {
 impl Bridge {
     pub fn connect(path: &Path) -> Result<Self, BridgeError> {
         let path = shrimply_project_document::project::normalized_project_path(path);
-        let owner = shrimply_project_document::project::project_lock_owner(&path)
+        let owner = shrimply_project_document::project::project_lock_record(&path)
             .map_err(BridgeError::Transport)?
             .ok_or_else(|| {
                 BridgeError::Transport(format!("{} has no project session", path.display()))
@@ -101,17 +155,24 @@ impl Bridge {
 
     #[cfg(not(target_os = "android"))]
     pub fn connect_or_launch(path: &Path) -> Result<Self, BridgeError> {
-        let owner = shrimply_project_document::project::project_lock_owner;
         let deadline = Instant::now() + START_TIMEOUT;
         loop {
-            if owner(path).map_err(BridgeError::Transport)?.is_none() {
+            let error = match Self::connect(path) {
+                Ok(bridge) => return Ok(bridge),
+                Err(error) => error,
+            };
+            // A working socket is sufficient for editing. Inspect the owner before
+            // replacing an unreachable session, which can require a host Flatpak call.
+            if shrimply_project_document::project::project_lock_owner(path)
+                .map_err(BridgeError::Transport)?
+                .is_none()
+            {
                 return Self::launch(path);
             }
-            match Self::connect(path) {
-                Ok(bridge) => return Ok(bridge),
-                Err(error) if Instant::now() >= deadline => return Err(error),
-                Err(_) => std::thread::sleep(START_POLL_INTERVAL),
+            if Instant::now() >= deadline {
+                return Err(error);
             }
+            std::thread::sleep(START_POLL_INTERVAL);
         }
     }
 
@@ -123,13 +184,20 @@ impl Bridge {
     /// Start the same binary as a detached project owner; concurrent callers reuse the winner.
     #[cfg(not(target_os = "android"))]
     fn launch(path: &Path) -> Result<Self, BridgeError> {
+        let project_path =
+            std::path::absolute(path).map_err(|error| BridgeError::Transport(error.to_string()))?;
         let mut command = Command::new(Self::executable()?);
         command
             .args(["project", "serve", "--project"])
-            .arg(path)
+            .arg(project_path)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
+        #[cfg(target_os = "linux")]
+        if Path::new("/.flatpak-info").is_file() {
+            // Bubblewrap keeps the caller's stdio open until every sandbox child exits.
+            return Self::wait_for_owner(path, spawn_flatpak(&command)?, None);
+        }
         #[cfg(unix)]
         {
             use std::os::unix::process::CommandExt;
@@ -141,20 +209,27 @@ impl Bridge {
             use windows::Win32::System::Threading::{CREATE_NEW_PROCESS_GROUP, CREATE_NO_WINDOW};
             command.creation_flags(CREATE_NEW_PROCESS_GROUP.0 | CREATE_NO_WINDOW.0);
         }
-        let mut child = command.spawn().map_err(|error| {
+        let child = command.spawn().map_err(|error| {
             BridgeError::Transport(format!("could not start headless session: {error}"))
         })?;
+        Self::wait_for_owner(path, child.id(), Some(child))
+    }
+
+    #[cfg(not(target_os = "android"))]
+    fn wait_for_owner(
+        path: &Path,
+        pid: u32,
+        mut child: Option<Child>,
+    ) -> Result<Self, BridgeError> {
         let deadline = Instant::now() + START_TIMEOUT;
-        loop {
+        let result = loop {
             if let Ok(bridge) = Self::connect(path) {
-                std::thread::spawn(move || {
-                    let _ = child.wait();
-                });
-                return Ok(bridge);
+                break Ok(bridge);
             }
-            if let Some(status) = child
-                .try_wait()
-                .map_err(|error| BridgeError::Transport(error.to_string()))?
+            if let Some(child) = &mut child
+                && let Some(status) = child
+                    .try_wait()
+                    .map_err(|error| BridgeError::Transport(error.to_string()))?
             {
                 let other_owner = shrimply_project_document::project::project_lock_owner(path)
                     .ok()
@@ -165,21 +240,23 @@ impl Bridge {
                         "headless session exited with {status}; run shrimply project serve --project {} to inspect startup",
                         path.display()
                     );
-                    return Err(BridgeError::Transport(detail));
+                    break Err(BridgeError::Transport(detail));
                 }
             }
             if Instant::now() >= deadline {
-                let pid = child.id();
-                std::thread::spawn(move || {
-                    let _ = child.wait();
-                });
-                return Err(BridgeError::Transport(format!(
+                break Err(BridgeError::Transport(format!(
                     "headless session PID {pid} did not become ready within {} seconds; inspect its project state before retrying",
                     START_TIMEOUT.as_secs()
                 )));
             }
             std::thread::sleep(START_POLL_INTERVAL);
+        };
+        if let Some(mut child) = child {
+            std::thread::spawn(move || {
+                let _ = child.wait();
+            });
         }
+        result
     }
 
     /// Send one request on this connection, then close it, including on failure.

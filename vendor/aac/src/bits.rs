@@ -24,6 +24,10 @@ pub(crate) enum Codebook {
     PairUnsigned12B = 10,
     /// 2-tuples, unsigned magnitudes in [0, 16] with variable-length escape for >= 16.
     PairEscape = 11,
+    /// ISO/IEC 13818-7 Intensity Stereo out-of-phase (INTENSITY_BT2).
+    IntensityOutOfPhase = 14,
+    /// ISO/IEC 13818-7 Intensity Stereo in-phase (INTENSITY_BT).
+    IntensityInPhase = 15,
 }
 
 pub(crate) const CODEBOOK_COUNT: usize = 12;
@@ -144,8 +148,21 @@ impl Codebook {
             9 => Self::PairUnsigned12A,
             10 => Self::PairUnsigned12B,
             11 => Self::PairEscape,
+            14 => Self::IntensityOutOfPhase,
+            15 => Self::IntensityInPhase,
             _ => unreachable!(),
         }
+    }
+
+    #[inline]
+    pub const fn is_spectral(self) -> bool {
+        let id = self as u8;
+        id >= 1 && id <= 11
+    }
+
+    #[inline]
+    pub const fn is_intensity(self) -> bool {
+        matches!(self, Self::IntensityOutOfPhase | Self::IntensityInPhase)
     }
 
     #[inline]

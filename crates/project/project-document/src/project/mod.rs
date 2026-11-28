@@ -83,7 +83,7 @@ pub use lifecycle::*;
 pub use ownership::{
     ProjectLoadError, ProjectLockError, ProjectLockOwner, acquire_project_lock,
     clear_project_file_locks, current_project_lock_owner, normalized_project_path,
-    project_lock_owner, release_project_lock, terminate_project_process,
+    project_lock_owner, project_lock_record, release_project_lock, terminate_project_process,
 };
 #[cfg(feature = "preview")]
 pub use preview::{

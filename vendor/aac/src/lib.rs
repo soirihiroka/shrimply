@@ -343,7 +343,21 @@ impl Encoder {
             }
         }
 
-        // Stage 2: Exact Tuple-RDOQ around Stage 1 scalefactors + joint Viterbi refinement.
+        // Stage 2: Optional low-bitrate R-D Intensity Stereo (ISO/IEC 13818-7 codebooks 14/15)
+        // followed by exact Tuple-RDOQ around Stage 1 scalefactors + joint Viterbi refinement.
+        self.quantizer.clear_is();
+        let enable_is = (self.bitrate as f32 / self.sample_rate as f32) < 1.8;
+        if enable_is && layout.windows == 1 {
+            self.quantizer.plan_intensity_stereo(
+                frame,
+                self.sample_rate,
+                &mut best_ms_mode,
+                &mut best_ms_mask,
+                &mut picks,
+                chosen_log_lambda.exp2(),
+            );
+        }
+
         let mut rdoq_log_lambda = chosen_log_lambda;
         let mut build_lambda = 0.0_f32;
         let mut rdoq_picks = picks;
@@ -393,6 +407,11 @@ impl Encoder {
                         r_hi.exp2(),
                         &mut rdoq_picks,
                     );
+                }
+                if packet_bytes(layout, &rdoq_picks, best_ms_mode, &best_ms_mask) > limit {
+                    for channel in &mut rdoq_picks {
+                        channel.fill(Choice::default());
+                    }
                 }
                 best_log = r_hi;
             }
@@ -462,7 +481,7 @@ impl Encoder {
         for (channel, choices) in choices.iter().enumerate() {
             let global_gain = choices
                 .iter()
-                .find(|choice| choice.book != Codebook::Zero)
+                .find(|choice| choice.book.is_spectral())
                 .map_or(SF_OFFSET, |choice| choice.sf);
             bits.put(8, u32::from(global_gain));
             for section in sections(layout, choices, max_sfb) {
@@ -475,19 +494,23 @@ impl Encoder {
                 bits.put(width, (section.len() % escape) as u32);
             }
             let mut previous = global_gain;
-            for choice in choices
-                .iter()
-                .filter(|choice| choice.book != Codebook::Zero)
-            {
-                let delta = i16::from(choice.sf) - i16::from(previous);
-                bits.code(SCALEFACTORS[(delta + SF_DELTA_MAX) as usize]);
-                previous = choice.sf;
+            let mut prev_is = SF_OFFSET;
+            for choice in choices {
+                if choice.book.is_spectral() {
+                    let delta = i16::from(choice.sf) - i16::from(previous);
+                    bits.code(SCALEFACTORS[(delta + SF_DELTA_MAX) as usize]);
+                    previous = choice.sf;
+                } else if choice.book.is_intensity() {
+                    let delta = i16::from(choice.sf) - i16::from(prev_is);
+                    bits.code(SCALEFACTORS[(delta + SF_DELTA_MAX) as usize]);
+                    prev_is = choice.sf;
+                }
             }
             bits.put(3, 0); // No pulse data, TNS or gain control.
             for (index, choice) in choices
                 .iter()
                 .enumerate()
-                .filter(|(_, choice)| choice.book != Codebook::Zero)
+                .filter(|(_, choice)| choice.book.is_spectral())
             {
                 let group = index / layout.band_count();
                 let band = index % layout.band_count();
@@ -575,14 +598,18 @@ fn channel_bits(layout: Layout, choices: &[Choice], max_sfb: usize) -> usize {
         count += 4 + width * (section.len() / ((1 << width) - 1) + 1);
     }
     let mut previous = None;
-    for choice in choices
-        .iter()
-        .filter(|choice| choice.book != Codebook::Zero)
-    {
-        let delta = i16::from(choice.sf) - i16::from(previous.unwrap_or(choice.sf));
-        count += usize::from(choice.cost)
-            + usize::from(code_len(SCALEFACTORS[(delta + SF_DELTA_MAX) as usize]));
-        previous = Some(choice.sf);
+    let mut prev_is = SF_OFFSET;
+    for choice in choices {
+        if choice.book.is_spectral() {
+            let delta = i16::from(choice.sf) - i16::from(previous.unwrap_or(choice.sf));
+            count += usize::from(choice.cost)
+                + usize::from(code_len(SCALEFACTORS[(delta + SF_DELTA_MAX) as usize]));
+            previous = Some(choice.sf);
+        } else if choice.book.is_intensity() {
+            let delta = i16::from(choice.sf) - i16::from(prev_is);
+            count += usize::from(code_len(SCALEFACTORS[(delta + SF_DELTA_MAX) as usize]));
+            prev_is = choice.sf;
+        }
     }
     count
 }
