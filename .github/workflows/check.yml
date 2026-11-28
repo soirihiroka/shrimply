@@ -19,8 +19,31 @@ jobs:
           sudo apt-get install -y ffmpeg python3-numpy clang lld
           make -s test -o native-deps -o cuda-target-check ARGS='--locked --release -p shrimply-aac --example encode --no-run --message-format=json' > build.jsonl
           encoder=$(jq -r 'select(.reason? == "compiler-artifact" and .target.name == "encode") | .executable // empty' build.jsonl)
+          test -x "$encoder"
+          echo "AAC_ENCODER=$encoder" >> "$GITHUB_ENV"
           /usr/bin/python3 vendor/aac/benchmark.py "$encoder" --smoke > aac-smoke.json
-          /usr/bin/python3 vendor/aac/benchmark.py "$encoder" --bitrates 96 128 192 256 --repeat 2 > aac-native.json
+      - name: Compare pinned FFmpeg and FDK AAC
+        run: |
+          sudo apt-get install -y nasm
+          curl -fsSL --retry 3 https://github.com/mstorsjo/fdk-aac/archive/refs/tags/v2.0.3.tar.gz -o "$RUNNER_TEMP/fdk.tar.gz"
+          echo "e25671cd96b10bad896aa42ab91a695a9e573395262baed4e4a2ff178d6a3a78  $RUNNER_TEMP/fdk.tar.gz" | sha256sum -c
+          tar -xzf "$RUNNER_TEMP/fdk.tar.gz" -C "$RUNNER_TEMP"
+          cmake -S "$RUNNER_TEMP/fdk-aac-2.0.3" -B "$RUNNER_TEMP/fdk-build" -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/fdk" -DCMAKE_INSTALL_LIBDIR=lib -DBUILD_SHARED_LIBS=OFF
+          cmake --build "$RUNNER_TEMP/fdk-build" -j "$(nproc)"
+          cmake --install "$RUNNER_TEMP/fdk-build"
+          mkdir "$RUNNER_TEMP/ffmpeg"
+          (
+            cd "$RUNNER_TEMP/ffmpeg"
+            PKG_CONFIG_PATH="$RUNNER_TEMP/fdk/lib/pkgconfig" "$GITHUB_WORKSPACE/external/ffmpeg/configure" \
+              --disable-autodetect --disable-everything --disable-doc --disable-ffplay --disable-ffprobe \
+              --enable-nonfree --enable-libfdk-aac --enable-encoder=aac,libfdk_aac,pcm_f32le,pcm_s24le \
+              --enable-decoder=aac,pcm_f32le,pcm_s16le,flac --enable-parser=aac,flac \
+              --enable-muxer=adts,pcm_f32le,wav --enable-demuxer=aac,pcm_f32le,wav,flac \
+              --enable-filter=aresample,aformat,anull --enable-protocol=file,pipe
+            make -j "$(nproc)" ffmpeg
+          )
+          export PATH="$RUNNER_TEMP/ffmpeg:$PATH"
+          /usr/bin/python3 vendor/aac/benchmark.py "$AAC_ENCODER" --fdk --bitrates 64 96 128 192 256 320 --repeat 3 > aac-comparison.json
       - uses: actions/upload-artifact@v7
         if: always()
         with:
