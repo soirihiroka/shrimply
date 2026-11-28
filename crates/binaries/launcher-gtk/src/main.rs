@@ -70,8 +70,18 @@ fn build_ui(app: &adw::Application) {
         .model(&gtk::NoSelection::new(Some(entries.clone())))
         .factory(&factory)
         .single_click_activate(true)
-        .css_classes(["background"])
+        .css_classes(["background", "project-list"])
         .build();
+    let style = gtk::CssProvider::new();
+    style.load_from_string(
+        "listview.project-list > row { background: none; padding: 4px 12px; }\n\
+         listview.project-list > row > box.card { padding: 8px 12px; }",
+    );
+    gtk::style_context_add_provider_for_display(
+        &list.display(),
+        &style,
+        gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+    );
     let hint = gtk::Label::new(Some(tr!("No Projects").as_ref()));
     let clamp = adw::ClampScrollable::builder().child(&list).build();
     let scroller = gtk::ScrolledWindow::builder()
@@ -464,20 +474,8 @@ fn project_row(
     let row = gtk::Box::builder()
         .orientation(gtk::Orientation::Horizontal)
         .spacing(12)
-        .margin_start(12)
-        .margin_end(12)
-        .margin_top(8)
-        .margin_bottom(8)
+        .css_classes(["card", "activatable"])
         .build();
-    row.connect_parent_notify(|row| {
-        if let Some(item) = row.parent() {
-            item.add_css_class("card");
-            item.set_margin_start(12);
-            item.set_margin_end(12);
-            item.set_margin_top(4);
-            item.set_margin_bottom(4);
-        }
-    });
     let icon = gtk::Image::from_icon_name(if project.remote.is_some() {
         "folder-remote-symbolic"
     } else {
