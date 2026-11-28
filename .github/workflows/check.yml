@@ -63,7 +63,7 @@ jobs:
           sleep 1
           kill -0 "$launcher"
           import -window "$window" "$RUNNER_TEMP/screenshots/search.png"
-          ! grep -Fq 'panicked at' "$RUNNER_TEMP/screenshots/launcher.log"
+          ! grep -Eq 'panicked at|can only be placed into GtkListBox' "$RUNNER_TEMP/screenshots/launcher.log"
           BASH
       - uses: actions/upload-artifact@v7
         if: always()
