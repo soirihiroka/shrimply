@@ -16,7 +16,7 @@ if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT -or
 
 $root = (Resolve-Path (Join-Path $PSScriptRoot "../..")).Path
 if (!$FfmpegRoot) {
-    $FfmpegRoot = Join-Path $root "target/windows-deps/installed/x64-windows"
+    $FfmpegRoot = Join-Path $root "target/windows-deps/installed/x64-windows-release"
 }
 $FfmpegRoot = [IO.Path]::GetFullPath($FfmpegRoot)
 foreach ($path in @("include/libavutil/ffversion.h", "lib/avutil.lib", "lib/avcodec.lib", "lib/avformat.lib")) {
@@ -101,10 +101,10 @@ foreach ($package in @(
     $blocks = $status -split '(?:\r?\n){2,}' | Where-Object {
         $_ -match "(?m)^Package: $([regex]::Escape($package.Name))\r?$" -and
         $_ -match "(?m)^Version: $([regex]::Escape($package.Version))\r?$" -and
-        $_ -match '(?m)^Architecture: x64-windows\r?$'
+        $_ -match '(?m)^Architecture: x64-windows-release\r?$'
     }
     if (!$blocks) {
-        throw "Pinned package is missing: $($package.Name) $($package.Version) x64-windows"
+        throw "Pinned package is missing: $($package.Name) $($package.Version) x64-windows-release"
     }
 }
 

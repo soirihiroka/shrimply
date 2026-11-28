@@ -14,7 +14,8 @@ ifeq ($(HOST_OS),Windows_NT)
 WINDOWS_DEPS_ROOT ?= $(CURDIR)/target/windows-deps
 VCPKG_ROOT ?= $(WINDOWS_DEPS_ROOT)/vcpkg
 VCPKG_INSTALLED_DIR ?= $(WINDOWS_DEPS_ROOT)/installed
-FFMPEG_DIR := $(VCPKG_INSTALLED_DIR)/x64-windows
+export VCPKGRS_TRIPLET := x64-windows-release
+export FFMPEG_DIR := $(VCPKG_INSTALLED_DIR)/$(VCPKGRS_TRIPLET)
 endif
 ifeq ($(HOST_OS),Linux)
 CUDA_DEV_TARGETS := build dev dev-qt qt-build

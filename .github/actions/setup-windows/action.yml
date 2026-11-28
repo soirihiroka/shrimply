@@ -19,7 +19,7 @@ runs:
         "LLVM_HOME=C:\Program Files\LLVM" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
         "RUSTUP_HOME=C:\r" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
         "SKIA_ARCHIVE=target/windows-skia.tar.gz" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
-        "VCPKG_DEFAULT_TRIPLET=x64-windows" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+        "VCPKG_DEFAULT_TRIPLET=x64-windows-release" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
         "VCPKG_INSTALLED_DIR=${{ github.workspace }}\.ci\vcpkg\installed" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
         "VCPKGRS_DYNAMIC=1" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
 
@@ -143,9 +143,9 @@ runs:
       uses: actions/cache/restore@v6
       with:
         path: .ci/vcpkg/binary-cache/runtime
-        key: windows-vcpkg-runtime-v4-cuda-12.9.2-${{ steps.native-cache-abi.outputs.key }}-${{ hashFiles('packaging/windows/vcpkg/**', 'packaging/windows/build-ffmpeg.ps1', 'packaging/windows-ffmpeg.py', 'packaging/native_sources.py') }}
+        key: windows-vcpkg-runtime-v4-${{ env.VCPKG_DEFAULT_TRIPLET }}-cuda-12.9.2-${{ steps.native-cache-abi.outputs.key }}-${{ hashFiles('packaging/windows/vcpkg/**', 'packaging/windows/build-ffmpeg.ps1', 'packaging/windows-ffmpeg.py', 'packaging/native_sources.py') }}
         restore-keys: |
-          windows-vcpkg-runtime-v4-cuda-12.9.2-
+          windows-vcpkg-runtime-v4-${{ env.VCPKG_DEFAULT_TRIPLET }}-cuda-12.9.2-
 
     - name: Install native libraries
       shell: powershell
@@ -168,7 +168,7 @@ runs:
       shell: powershell
       run: |
         & packaging/windows/verify-ffmpeg.ps1 `
-          -FfmpegRoot "$env:VCPKG_INSTALLED_DIR\x64-windows" `
+          -FfmpegRoot "$env:VCPKG_INSTALLED_DIR\$env:VCPKG_DEFAULT_TRIPLET" `
           -OutputDir "$pwd\.ci\ffmpeg-validation"
 
     - name: Export native build environment
@@ -177,11 +177,11 @@ runs:
         $linker = (Get-Command link.exe -ErrorAction Stop).Source
         $linkerInfo = (Get-Item -LiteralPath $linker).VersionInfo
         if ($linkerInfo.CompanyName -notlike "Microsoft*") { throw "MSVC link.exe not found: $linker" }
-        $pkgConfig = "$env:VCPKG_INSTALLED_DIR\x64-windows\tools\pkgconf\pkgconf.exe"
+        $pkgConfig = "$env:VCPKG_INSTALLED_DIR\$env:VCPKG_DEFAULT_TRIPLET\tools\pkgconf\pkgconf.exe"
         if (!(Test-Path $pkgConfig)) { throw "vcpkg pkgconf.exe is missing: $pkgConfig" }
         $vcpkgRoot = "$pwd\.ci\vcpkg".Replace('\', '/')
         $installed = $env:VCPKG_INSTALLED_DIR.Replace('\', '/')
-        $ffmpeg = "$installed/x64-windows"
+        $ffmpeg = "$installed/$env:VCPKG_DEFAULT_TRIPLET"
         "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=$linker" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
         "VCPKG_ROOT=$vcpkgRoot" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
         "VCPKG_INSTALLED_DIR=$installed" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
@@ -191,7 +191,7 @@ runs:
         "LIBCLANG_PATH=$env:LLVM_HOME\bin" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
         "CLANG_PATH=$env:LLVM_HOME\bin\clang.exe" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
         "QT_QMAKE=qmake.exe" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
-        "$env:VCPKG_INSTALLED_DIR\x64-windows\bin" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+        "$env:VCPKG_INSTALLED_DIR\$env:VCPKG_DEFAULT_TRIPLET\bin" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
 
     - name: Restore Windows Skia binaries
       id: skia-cache

@@ -44,7 +44,8 @@ $InstalledDir = [IO.Path]::GetFullPath($InstalledDir)
 $CargoTargetDir = Resolve-ProjectPath $CargoTargetDir
 $CudaHome = [IO.Path]::GetFullPath($CudaHome)
 $OptixRoot = [IO.Path]::GetFullPath($OptixRoot)
-$ffmpegRoot = Join-Path $InstalledDir "x64-windows"
+$env:VCPKGRS_TRIPLET = "x64-windows-release"
+$ffmpegRoot = Join-Path $InstalledDir $env:VCPKGRS_TRIPLET
 $pkgConfig = Join-Path $ffmpegRoot "tools/pkgconf/pkgconf.exe"
 
 foreach ($path in @(

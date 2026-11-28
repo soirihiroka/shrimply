@@ -55,7 +55,7 @@ if (!(Test-Path $vcpkg)) {
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
 
-$env:VCPKG_DEFAULT_TRIPLET = "x64-windows"
+$env:VCPKG_DEFAULT_TRIPLET = "x64-windows-release"
 $env:VCPKG_INSTALLED_DIR = $InstalledDir
 $env:VCPKG_ROOT = $VcpkgRoot
 $env:VCPKGRS_DYNAMIC = "1"
@@ -66,12 +66,12 @@ $overlay = Join-Path $root "target/windows-deps/ports"
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 & $vcpkg install `
     --overlay-ports $overlay `
-    --triplet x64-windows `
+    --host-triplet $env:VCPKG_DEFAULT_TRIPLET `
     --x-manifest-root $manifestRoot `
     --x-install-root $InstalledDir
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-$ffmpegRoot = Join-Path $InstalledDir "x64-windows"
+$ffmpegRoot = Join-Path $InstalledDir $env:VCPKG_DEFAULT_TRIPLET
 & (Join-Path $PSScriptRoot "verify-ffmpeg.ps1") -FfmpegRoot $ffmpegRoot -DevelopmentFilesOnly
 
 Write-Host "Pinned vcpkg revision: $revision"

@@ -11,7 +11,7 @@ $installed = if ($env:VCPKG_INSTALLED_DIR) {
 } else {
     Join-Path $root "target/windows-deps/installed"
 }
-$vcpkgRoot = Join-Path $installed "x64-windows"
+$vcpkgRoot = Join-Path $installed "x64-windows-release"
 $ffmpegRoot = if ($env:FFMPEG_DIR) {
     [IO.Path]::GetFullPath($env:FFMPEG_DIR)
 } else {
