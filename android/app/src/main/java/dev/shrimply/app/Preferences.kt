@@ -36,7 +36,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.repeatOnLifecycle
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import androidx.window.embedding.SplitAttributes
 import androidx.window.embedding.SplitController
@@ -154,11 +154,7 @@ open class SettingsActivity : ComponentActivity() {
         val files = model.projects
         val context = LocalContext.current
         val scope = rememberCoroutineScope()
-        val document by produceState(model.settings.snapshot.value, model) {
-            lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
-                model.settings.snapshot.collect { value = it }
-            }
-        }
+        val document by model.settings.snapshot.collectAsStateWithLifecycle()
         var failure by remember { mutableStateOf<String?>(null) }
         var busy by remember { mutableStateOf(false) }
         var pendingSource by rememberSaveable { mutableStateOf<String?>(null) }
