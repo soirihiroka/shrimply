@@ -28,9 +28,9 @@ def ffmpeg(*args):
     return run("ffmpeg", "-hide_banner", "-v", "error", "-xerror", "-y", *args)
 
 
-def decode(file):
+def decode(file, rate=RATE):
     return np.frombuffer(
-        ffmpeg("-i", file, "-map", "0:a:0", "-f", "f32le", "-ac", "2", "-ar", str(RATE), "-"),
+        ffmpeg("-i", file, "-map", "0:a:0", "-f", "f32le", "-ac", "2", "-ar", str(rate), "-"),
         dtype="<f4",
     ).reshape(-1, 2)
 
@@ -53,14 +53,14 @@ def cases():
     return [("tones", tone, []), ("stereo", stereo, []), ("attacks", transient, onsets.tolist())]
 
 
-def payload_size(path):
+def payload_size(path, sample_index=3):
     data = path.read_bytes()
     position = overhead = 0
     while position < len(data):
         header = data[position : position + 7]
         assert len(header) == 7 and header[0] == 0xff and header[1] & 0xf6 == 0xf0
         assert header[2] >> 6 == 1, "Expected AAC-LC"
-        assert (header[2] >> 2) & 15 == 3 and ((header[2] & 1) << 2) | (header[3] >> 6) == 2
+        assert (header[2] >> 2) & 15 == sample_index and ((header[2] & 1) << 2) | (header[3] >> 6) == 2
         assert header[6] & 3 == 0, "Expected one raw data block per ADTS frame"
         frame = ((header[3] & 3) << 11) | (header[4] << 3) | (header[5] >> 5)
         header_size = 7 if header[1] & 1 else 9
@@ -154,6 +154,22 @@ def trials(command, repeat):
     return wall[1:], cpu[1:]
 
 
+def verify_sample_rates(encoder, raw, adts):
+    for index, rate in enumerate((96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050,
+                                  16000, 12000, 11025, 8000)):
+        seconds = (np.arange(rate // 4 + 59) / rate)[:, None]
+        reference = 0.3 * np.sin(2 * np.pi * seconds * np.array([733, 997]))
+        # Include two shifted onsets to exercise long and short window signaling.
+        reference[150:450] = 0.0
+        reference[1400:1800] = 0.0
+        raw.write_bytes(reference.astype("<f4").tobytes())
+        run(encoder, raw, adts, str(rate), str(min(192_000, 8 * rate)))
+        assert payload_size(adts, index) > 0
+        _, actual = align(reference, decode(adts, rate), PRIMING)
+        gain = db_ratio(np.square(actual).sum(axis=0), np.square(reference).sum(axis=0))
+        assert np.max(np.abs(gain)) < 0.5, (rate, gain)
+
+
 def matched_rates(rows):
     key = "visqol_moslqo"
     by_item = {}
@@ -165,7 +181,7 @@ def matched_rates(rows):
             continue
         low = max(min(row["payload_bps"] for row in group) for group in encoders.values())
         high = min(max(row["payload_bps"] for row in group) for group in encoders.values())
-        for rate in (96_000, 128_000, 192_000, 256_000):
+        for rate in (24_000, 32_000, 48_000, 64_000, 96_000, 128_000, 192_000, 256_000):
             if not low <= rate <= high:
                 continue
             for encoder, group in encoders.items():
@@ -198,6 +214,8 @@ def main():
     if args.repeat < 1:
         parser.error("--repeat must be positive")
     encoders = ["shrimply"] if args.smoke else ["shrimply", "aac"]
+    if args.fdk and args.smoke:
+        parser.error("--fdk and --smoke select different modes")
     if args.fdk:
         if b"libfdk_aac" not in run("ffmpeg", "-encoders"):
             parser.error("--fdk requires an FFmpeg build with libfdk_aac")
@@ -207,6 +225,8 @@ def main():
         raw, adts, aligned, source_wav, output_wav = (
             Path(folder) / name for name in ("source.f32", "output.aac", "decoded.f32", "source.wav", "decoded.wav")
         )
+        if args.smoke:
+            verify_sample_rates(args.encoder.resolve(), raw, adts)
         pcm = ("-f", "f32le", "-ar", str(RATE), "-ac", "2")
         for item, reference, onsets in cases() + [(str(file), decode(file), []) for file in args.corpus]:
             reference = np.asarray(reference, dtype="<f4")
