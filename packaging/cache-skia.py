@@ -7,7 +7,10 @@ import tarfile
 
 
 def main(build_directory: Path, archive: Path) -> None:
-    bindings = list(build_directory.glob("skia-bindings-*/out/skia/bindings.rs"))
+    bindings = [
+        *build_directory.glob("skia-bindings/*/out/skia/bindings.rs"),
+        *build_directory.glob("skia-bindings-*/out/skia/bindings.rs"),
+    ]
     if len(bindings) != 1:
         print("::notice::Expected one Skia bindings directory; skipping the binary cache.")
         return
