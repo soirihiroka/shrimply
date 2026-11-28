@@ -505,7 +505,7 @@ impl PreferencesWindow {
                 let has_server_list = list.is_some();
                 let rows: Vec<_> = list
                     .into_iter()
-                    .map(|view| NSArray::from_slice(&[(&*view).as_ref()]))
+                    .map(|view| NSArray::from_slice(&[(*view).as_ref()]))
                     .chain(
                         controls
                             .iter()
@@ -514,7 +514,7 @@ impl PreferencesWindow {
                     )
                     .collect();
                 let contents: Vec<&AnyObject> = std::iter::once(title.as_ref())
-                    .chain(rows.iter().map(|row| (&**row).as_ref()))
+                    .chain(rows.iter().map(|row| (**row).as_ref()))
                     .collect();
                 NSArray::from_slice(&contents)
             })
@@ -746,7 +746,7 @@ impl PreferencesWindow {
                 button.setBezelStyle(NSBezelStyle::Push);
                 button.setEnabled(enabled);
                 button.setLineBreakMode(NSLineBreakMode::ByTruncatingTail);
-                settings_row(title, subtitle, Some((&*button).as_ref()))
+                settings_row(title, subtitle, Some((*button).as_ref()))
             }
             "button" => {
                 let button = self.command_button(control);
@@ -756,7 +756,7 @@ impl PreferencesWindow {
             _ => settings_row(
                 title,
                 subtitle,
-                Some((&*NSString::from_str(display)).as_ref()),
+                Some((*NSString::from_str(display)).as_ref()),
             ),
         }
     }
@@ -793,7 +793,7 @@ impl PreferencesWindow {
             let value = preferences::value(&self.ivars().store, id);
             if let PreferenceValue::Integer(value) = value {
                 let picker = self.number_picker(id, value, enabled);
-                return settings_row(title, subtitle, Some((&*picker).as_ref()));
+                return settings_row(title, subtitle, Some((*picker).as_ref()));
             }
             if let PreferenceValue::Color(color) = value {
                 let command = editor["command"].clone();
