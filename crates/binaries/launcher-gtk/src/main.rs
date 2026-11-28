@@ -460,23 +460,43 @@ fn build_ui(app: &adw::Application) {
 fn project_row(
     project: &launcher::ProjectEntry,
     window: Option<&adw::ApplicationWindow>,
-) -> adw::ActionRow {
-    let row = adw::ActionRow::builder()
-        .title(&project.name)
-        .use_markup(false)
-        .css_classes(["card"])
-        .focusable(false)
+) -> gtk::Box {
+    let row = gtk::Box::builder()
+        .orientation(gtk::Orientation::Horizontal)
+        .spacing(12)
         .margin_start(12)
         .margin_end(12)
-        .margin_top(4)
-        .margin_bottom(4)
+        .margin_top(8)
+        .margin_bottom(8)
         .build();
+    row.connect_parent_notify(|row| {
+        if let Some(item) = row.parent() {
+            item.add_css_class("card");
+            item.set_margin_start(12);
+            item.set_margin_end(12);
+            item.set_margin_top(4);
+            item.set_margin_bottom(4);
+        }
+    });
     let icon = gtk::Image::from_icon_name(if project.remote.is_some() {
         "folder-remote-symbolic"
     } else {
         "folder-symbolic"
     });
-    row.add_prefix(&icon);
+    row.append(&icon);
+    let labels = gtk::Box::builder()
+        .orientation(gtk::Orientation::Vertical)
+        .spacing(2)
+        .valign(gtk::Align::Center)
+        .hexpand(true)
+        .build();
+    labels.append(
+        &gtk::Label::builder()
+            .label(&project.name)
+            .xalign(0.0)
+            .ellipsize(gtk::pango::EllipsizeMode::End)
+            .build(),
+    );
     let subtitle = [
         launcher::project_access_label(project),
         project.remote.as_ref().map(|remote| remote.server.clone()),
@@ -485,7 +505,17 @@ fn project_row(
     .flatten()
     .collect::<Vec<_>>()
     .join(" · ");
-    row.set_subtitle(&subtitle);
+    if !subtitle.is_empty() {
+        labels.append(
+            &gtk::Label::builder()
+                .label(&subtitle)
+                .xalign(0.0)
+                .ellipsize(gtk::pango::EllipsizeMode::End)
+                .css_classes(["dim-label", "caption"])
+                .build(),
+        );
+    }
+    row.append(&labels);
     let menu = gio::Menu::new();
     for (visible, label, action) in [
         (true, "Project Information", "win.info"),
@@ -513,7 +543,7 @@ fn project_row(
     if let Some(window) = window {
         adaptive_menu(&options, "win", window);
     }
-    row.add_suffix(&options);
+    row.append(&options);
     row
 }
 
