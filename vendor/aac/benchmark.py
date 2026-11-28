@@ -129,9 +129,12 @@ def calibrate_delays(encoder, raw, adts, encoders):
 
 def verify_independent_decode(reference, adts, actual, delay):
     _, independent = align(reference, decode(adts, decoder="libfdk_aac"), delay)
-    signal = max(float(np.square(actual).sum()), 1e-20)
-    error = float(db_ratio(np.square(actual - independent).sum() / signal, 1.0))
-    assert error < -60, ("Independent AAC decoder differs", error)
+    # FDK exposes signed 16-bit PCM, including its rounding and saturation.
+    actual = np.clip(actual, -1.0, 32767 / 32768)
+    signal = float(np.sqrt(np.square(actual).mean()))
+    difference = float(np.sqrt(np.square(actual - independent).mean()))
+    error = float(db_ratio((difference / max(signal, 1e-10)) ** 2, 1.0))
+    assert difference <= max(signal * 1e-3, 2 / 32768), ("Independent AAC decoder differs", error)
     return error
 
 
