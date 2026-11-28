@@ -83,8 +83,7 @@ def encode_video(
             video.pix_fmt = "yuv420p"
             sound = None
             if audio is not None:
-                codec = "libfdk_aac" if "libfdk_aac" in av.codecs_available else "aac"
-                sound = container.add_stream(codec, rate=audio[0])
+                sound = container.add_stream("aac", rate=audio[0])
                 sound.layout = "stereo"
             container.start_encoding()
             for pixels in frames:

@@ -73,18 +73,6 @@ modules:
         url: https://github.com/RenderKit/oidn/releases/download/v2.5.1/oidn-2.5.1.x86_64.linux.tar.gz
         sha256: 743c3e2aff8c220d5d70fe6cb970fb3d36f2702d2693c61d1d148e404cf37cd6
 
-  - name: fdk-aac
-    buildsystem: cmake-ninja
-    config-opts:
-      - -DCMAKE_BUILD_TYPE=Release
-      - -DCMAKE_INSTALL_LIBDIR=lib
-      - -DBUILD_SHARED_LIBS=ON
-      - -DBUILD_PROGRAMS=OFF
-    sources:
-      - type: archive
-        url: https://github.com/mstorsjo/fdk-aac/archive/refs/tags/v2.0.3.tar.gz
-        sha256: e25671cd96b10bad896aa42ab91a695a9e573395262baed4e4a2ff178d6a3a78
-
   - name: nv-codec-headers
     buildsystem: simple
     build-commands:
@@ -126,8 +114,6 @@ modules:
       - --enable-shared
       - --disable-doc
       - --disable-ffplay
-      - --enable-libfdk-aac
-      - --enable-nonfree
       - --enable-libopus
       - --enable-gpl
       - --enable-libx264

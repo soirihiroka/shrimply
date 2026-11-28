@@ -68,8 +68,6 @@
               source = builtins.path { path = src + "/external/ffmpeg"; name = "ffmpeg"; };
               codec = (prev.ffmpeg.override {
                 inherit source;
-                withUnfree = true;
-                withFdkAac = true;
                 version = final.lib.removeSuffix "\n" (builtins.readFile (source + "/RELEASE"));
               }).overrideAttrs (old: {
                 # The pinned nixpkgs recipe still configures the removed OpenGL output.

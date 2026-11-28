@@ -30,7 +30,6 @@ $ffmpegDlls = @(
     "avutil-61.dll",
     "swresample-7.dll",
     "swscale-10.dll",
-    "fdk-aac.dll",
     "opus.dll"
 )
 
@@ -78,7 +77,6 @@ $licenses = Join-Path $stage "licenses"
 New-Item -ItemType Directory -Force $licenses | Out-Null
 foreach ($license in @(
     @{ Package = "ffmpeg"; Name = "ffmpeg.txt" },
-    @{ Package = "fdk-aac"; Name = "fdk-aac.txt" },
     @{ Package = "ffnvcodec"; Name = "nv-codec-headers.txt" },
     @{ Package = "opus"; Name = "opus.txt" },
     @{ Package = "x264"; Name = "x264.txt" },

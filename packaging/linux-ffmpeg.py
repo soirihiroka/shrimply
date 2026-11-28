@@ -20,7 +20,6 @@ def main():
         "--enable-ffnvcodec", "--enable-nvdec", "--enable-nvenc", "--enable-vaapi", "--enable-libdrm",
         "--enable-vulkan", "--enable-gnutls", "--enable-libopus", "--enable-libmp3lame",
         "--enable-libvorbis", "--enable-libdav1d", "--enable-gpl", "--enable-libx264", "--enable-libx265",
-        "--enable-nonfree", "--enable-libfdk-aac",
     ]
     build_env = {k: os.environ.get(k) for k in ("CC", "CFLAGS", "CPPFLAGS", "LDFLAGS", "PKG_CONFIG", "PKG_CONFIG_PATH")}
     key = hashlib.sha256(repr((ffmpeg_revision(), options, build_env, str(cache))).encode()).hexdigest()

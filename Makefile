@@ -156,7 +156,6 @@ FEDORA_PACKAGES := \
 	libdav1d-devel \
 	x264-devel \
 	x265-devel \
-	fdk-aac-devel \
 	alsa-lib-devel \
 	gtk4-devel \
 	libadwaita-devel \

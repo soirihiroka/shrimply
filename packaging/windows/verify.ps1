@@ -17,12 +17,10 @@ $ffmpegDlls = @(
     "avutil-61.dll",
     "swresample-7.dll",
     "swscale-10.dll",
-    "fdk-aac.dll",
     "opus.dll"
 )
 $requiredNotices = @(
     "ffmpeg.txt",
-    "fdk-aac.txt",
     "nv-codec-headers.txt",
     "opus.txt",
     "ffmpeg-build-configuration.txt",
@@ -85,8 +83,6 @@ function Assert-FfmpegPackage([string]$directory) {
     $configuration = Get-Content (Join-Path $licenses "ffmpeg-build-configuration.txt") -Raw
     foreach ($value in @(
         "ffmpeg version $ffmpegVersion",
-        "--enable-nonfree",
-        "--enable-libfdk-aac",
         "--enable-libopus",
         "--enable-libx264",
         "--enable-libx265",

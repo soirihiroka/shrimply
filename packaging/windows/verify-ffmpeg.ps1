@@ -95,7 +95,6 @@ if (!(Test-Path $statusPath)) {
 $status = Get-Content $statusPath -Raw
 foreach ($package in @(
     @{ Name = "ffmpeg"; Version = $ffmpegVersion },
-    @{ Name = "fdk-aac"; Version = "2.0.3" },
     @{ Name = "ffnvcodec"; Version = "13.0.19.0" },
     @{ Name = "opus"; Version = "1.6.1" }
 )) {
@@ -115,8 +114,6 @@ foreach ($option in @(
     "--toolchain=msvc",
     "--enable-shared",
     "--disable-static",
-    "--enable-nonfree",
-    "--enable-libfdk-aac",
     "--enable-libopus",
     "--enable-libx264",
     "--enable-libx265",
@@ -129,18 +126,18 @@ foreach ($option in @(
     Assert-Contains $version ([regex]::Escape($option)) "configure option $option"
 }
 $encoders = Invoke-PinnedFfmpeg "encoders" @("-hide_banner", "-encoders")
-foreach ($encoder in @("libfdk_aac", "libopus", "h264_nvenc", "hevc_nvenc", "libx264", "libx265")) {
+foreach ($encoder in @("aac", "libopus", "h264_nvenc", "hevc_nvenc", "libx264", "libx265")) {
     Assert-Contains $encoders "(?m)\b$encoder\b" "encoder $encoder"
 }
 
 $hwaccels = Invoke-PinnedFfmpeg "hwaccels" @("-hide_banner", "-hwaccels")
 Assert-Contains $hwaccels '(?m)^cuda\r?$' "CUDA hardware acceleration"
 
-Invoke-PinnedFfmpeg "libfdk-aac" @(
+Invoke-PinnedFfmpeg "aac" @(
     "-hide_banner", "-loglevel", "verbose",
     "-f", "lavfi", "-i", "sine=frequency=1000:sample_rate=48000",
-    "-t", "1", "-c:a", "libfdk_aac", "-b:a", "128k",
-    "-y", (Join-Path $OutputDir "libfdk-aac.m4a")
+    "-t", "1", "-c:a", "aac", "-b:a", "128k",
+    "-y", (Join-Path $OutputDir "aac.m4a")
 ) | Out-Null
 Invoke-PinnedFfmpeg "libopus" @(
     "-hide_banner", "-loglevel", "verbose",
