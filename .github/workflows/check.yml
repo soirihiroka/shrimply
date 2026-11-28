@@ -173,7 +173,7 @@ jobs:
             jq -s -e 'any(.[]; .reason? == "compiler-artifact" and .target.name == "shrimply_aac" and .fresh == false)' compile.jsonl
           fi
       - uses: actions/cache/save@v6
-        if: '!inputs.warm && steps.setup.outputs.application-hit != '"'"'true'"'"''
+        if: ${{ !inputs.warm && steps.setup.outputs.application-hit != 'true' }}
         with:
           path: target/release
           key: ${{ steps.setup.outputs.application-key }}
