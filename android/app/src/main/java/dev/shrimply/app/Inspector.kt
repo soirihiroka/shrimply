@@ -19,6 +19,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -246,15 +247,6 @@ internal fun InspectorControl(timeline: TimelineSession, control: JSONObject, en
                             Text(add.getString("label"))
                         }
                     }
-                    "file_location" -> {
-                        val reveal = control.getJSONObject("reveal")
-                        ListItem(headlineContent = { Text(label) },
-                            supportingContent = { androidx.compose.foundation.text.selection.SelectionContainer { Text(control.getString("display")) } },
-                            trailingContent = { IconButton(enabled = active, onClick = { send(reveal.getJSONObject("command")) }) {
-                                Icon(iconVector(reveal.getString("icon")), reveal.getString("label"), Modifier.size(16.dp))
-                            } },
-                            modifier = Modifier.fillMaxWidth().clickable(enabled = active) { send(reveal.getJSONObject("command")) })
-                    }
                     "image" -> InspectorImage(control)
                     "toggle" -> if (settings) {
                         val checked = control.getBoolean("selected")
@@ -288,6 +280,22 @@ internal fun InspectorControl(timeline: TimelineSession, control: JSONObject, en
                         modifier = Modifier.clickable(enabled = active) { send(control.getJSONObject("command")) })
                     else TextButton(onClick = { send(control.getJSONObject("command")) }, enabled = active) { Text(label) }
                     "live_rows" -> LiveRows(timeline, control.getJSONObject("resource"), active)
+                    "property", "file_location" -> Row(Modifier.fillMaxWidth().padding(vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically) {
+                        val display = control.getString("display")
+                        Column(Modifier.weight(1f)) {
+                            if (label.isNotEmpty()) Text(label, style = MaterialTheme.typography.labelMedium)
+                            if (display.isNotEmpty()) SelectionContainer {
+                                Text(display, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    style = MaterialTheme.typography.bodyMedium)
+                            }
+                        }
+                        control.optJSONObject("reveal")?.let { reveal ->
+                            IconButton(enabled = active, onClick = { send(reveal.getJSONObject("command")) }) {
+                                Icon(iconVector(reveal.getString("icon")), reveal.getString("label"), Modifier.size(16.dp))
+                            }
+                        }
+                    }
                     "text", "loading" -> {
                         val display = control.getString("display")
                         if (settings) SettingsRow(label, display, active)
