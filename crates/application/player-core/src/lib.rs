@@ -9,7 +9,8 @@ use std::time::{Duration, Instant};
 
 use shrimply_math_core::{Fraction, frame_index, time_from_frame, time_from_signed_frame};
 use shrimply_project_document::project::{
-    ItemAddress, Project, Time, TrackAddress, default_playback_speed, scaled_time_delta,
+    ItemAddress, Project, SequenceScopeId, Time, TrackAddress, default_playback_speed,
+    scaled_time_delta,
 };
 
 pub type SharedPlayerState = Rc<RefCell<PlayerState>>;
@@ -65,6 +66,7 @@ pub struct Collaborator {
     pub name: String,
     pub position: Time,
     pub playing: bool,
+    pub scope: SequenceScopeId,
     pub selected: Vec<ItemAddress>,
     pub selected_tracks: Vec<TrackAddress>,
 }

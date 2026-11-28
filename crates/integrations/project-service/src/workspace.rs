@@ -342,42 +342,43 @@ impl SharedWorkspace {
         }
         let mut sent = Vec::new();
         let mut conflicts = BTreeMap::new();
-        if self.has_pending_uploads()? {
-            if let Some(version) = &mut update.version {
-                for (sequence, request) in pending(&self.sqlite)? {
-                    if let Some(receipt) = client.receipt(id, request.operation_id).map_err(text)? {
-                        if receipt.revision > version.revision {
-                            refresh_head(client, id, version, receipt.revision)?;
-                        }
-                        sent.push(sequence);
-                    }
-                }
-            }
-        } else {
-            let edits = pending(&self.sqlite)?;
-            let mut head = match (update.version.take(), edits.is_empty()) {
-                (Some(version), _) => Some(version),
-                (None, true) => None,
-                (None, false) => Some(ProjectVersion {
-                    revision: previous_revision,
-                    project: Arc::new(confirmed(&self.sqlite)?),
-                }),
-            };
+        let edits = pending(&self.sqlite)?;
+        let mut head = match (update.version.take(), edits.is_empty()) {
+            (Some(version), _) => Some(version),
+            (None, true) => None,
+            (None, false) => Some(ProjectVersion {
+                revision: previous_revision,
+                project: Arc::new(confirmed(&self.sqlite)?),
+            }),
+        };
+        if let Some(head) = &mut head
+            && !edits.is_empty()
+        {
+            let mut statement = self
+                .sqlite
+                .prepare("SELECT digest FROM project_media WHERE pending = 1")
+                .map_err(text)?;
+            let uploading = statement
+                .query_map([], |row| row.get::<_, String>(0))
+                .map_err(text)?
+                .collect::<Result<BTreeSet<_>, _>>()
+                .map_err(text)?;
+            let mut waiting_for_media = false;
             for (sequence, request) in edits {
-                match publish_edit(
-                    client,
-                    id,
-                    head.as_mut().expect("pending edits have a base"),
-                    &request,
-                )? {
-                    Ok(()) => sent.push(sequence),
-                    Err(conflict) => {
-                        conflicts.insert(sequence, conflict);
+                match publish_edit(client, id, head, &request, &uploading)? {
+                    Publication::Applied => sent.push(sequence),
+                    Publication::Conflict(reason) if !waiting_for_media => {
+                        conflicts.insert(sequence, reason);
+                    }
+                    // A later edit may expect changes from a preceding queued edit.
+                    // Retry that precondition once the preceding media is available.
+                    Publication::Conflict(_) | Publication::WaitingForMedia => {
+                        waiting_for_media = true
                     }
                 }
             }
-            update.version = head.filter(|head| head.revision != previous_revision);
         }
+        update.version = head.filter(|head| head.revision != previous_revision);
         let revision = if let Some(version) = &update.version {
             self.record_media(client, &version.project)?;
             version.revision
@@ -683,12 +684,19 @@ fn confirmed(connection: &Connection) -> Result<Project, String> {
     ProjectEncoding::Shrimp.decode(&snapshot)
 }
 
+enum Publication {
+    Applied,
+    WaitingForMedia,
+    Conflict(String),
+}
+
 fn publish_edit(
     client: &ProjectClient,
     project_id: Uuid,
     head: &mut ProjectVersion,
     request: &ChangeRequest,
-) -> Result<Result<(), String>, String> {
+    uploading: &BTreeSet<String>,
+) -> Result<Publication, String> {
     const MAX_ATTEMPTS: usize = 4;
     let operation_digest =
         fingerprint::digest(&serde_json::to_vec(&request.changes).map_err(text)?);
@@ -701,12 +709,12 @@ fn publish_edit(
                     .receipt(project_id, request.operation_id)
                     .map_err(text)?
                 else {
-                    return Ok(Err(text(error)));
+                    return Ok(Publication::Conflict(text(error)));
                 };
                 if receipt.revision > head.revision {
                     refresh_head(client, project_id, head, receipt.revision)?;
                 }
-                return Ok(Ok(()));
+                return Ok(Publication::Applied);
             }
         };
         let media: BTreeSet<_> = project
@@ -718,6 +726,9 @@ fn publish_edit(
                     .ok_or("shared project assets must reference immutable project media")
             })
             .collect::<Result<_, _>>()?;
+        if !media.is_disjoint(uploading) {
+            return Ok(Publication::WaitingForMedia);
+        }
         let submission = PublishRequest {
             operation_id: request.operation_id,
             operation_digest: operation_digest.clone(),
@@ -733,7 +744,7 @@ fn publish_edit(
                 } else if receipt.revision > head.revision {
                     refresh_head(client, project_id, head, receipt.revision)?;
                 }
-                return Ok(Ok(()));
+                return Ok(Publication::Applied);
             }
             Err(RequestError::Rejected {
                 revision: Some(revision),

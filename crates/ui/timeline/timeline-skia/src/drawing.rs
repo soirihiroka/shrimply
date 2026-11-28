@@ -527,17 +527,24 @@ fn draw_collaborators(
             continue;
         }
         painter.rect_filled(rect(x, 0.0, 1.0, f64::from(bounds.height())), 0, color);
-        let label_width = 110.0_f64.min(right - origin);
+        let in_sequence = project
+            .sequence_id_for_scope(&peer.scope)
+            .flatten()
+            .is_some();
+        let label_width = if in_sequence { 180.0_f64 } else { 110.0 }.min(right - origin);
         let label = rect(x.min(right - label_width), 2.0, label_width, 17.0);
         painter.rect_filled(label, 2, color);
-        let playing;
-        let name = if peer.playing {
-            playing = format!("▶ {}", peer.name);
-            &playing
+        let playback = if peer.playing { "▶ " } else { "" };
+        let name = if in_sequence {
+            format!(
+                "{playback}{} · {}",
+                peer.name,
+                shrimply_i18n::text("Folded Sequence")
+            )
         } else {
-            &peer.name
+            format!("{playback}{}", peer.name)
         };
-        shrimply_timeline_paint_skia::draw_label(painter, label, name, Color::BLACK);
+        shrimply_timeline_paint_skia::draw_label(painter, label, &name, Color::BLACK);
     }
 }
 

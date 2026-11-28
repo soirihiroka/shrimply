@@ -391,6 +391,7 @@ impl Editor {
                 name: peer.name,
                 position: peer.position,
                 playing: peer.playing,
+                scope: project::SequenceScopeId::from_instance_ids(peer.scope.sequence_path),
                 selected: peer.clips,
                 selected_tracks: peer.tracks,
             })
