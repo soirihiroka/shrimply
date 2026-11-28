@@ -296,7 +296,7 @@ fn present_frame(
 #[cfg(target_os = "linux")]
 fn acceleration_row(widget: &gtk::Widget) -> Option<adw::ComboRow> {
     if let Some(row) = widget.downcast_ref::<adw::ComboRow>()
-        && row.title() == "Acceleration device"
+        && row.widget_name() == "acceleration-device"
     {
         return Some(row.clone());
     }

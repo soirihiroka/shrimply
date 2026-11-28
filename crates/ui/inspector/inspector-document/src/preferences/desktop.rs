@@ -44,7 +44,7 @@ impl Settings {
             .and_then(|pages| {
                 pages
                     .iter_mut()
-                    .find(|page| page["id"] == "preferences:external")
+                    .find(|page| page["id"] == "preferences:integrations")
             })
             .and_then(|page| page["controls"].as_array_mut())
         else {
@@ -92,7 +92,7 @@ impl Settings {
             &mut group,
             "settings:command-line",
         );
-        groups.push(group);
+        groups.insert(0, group);
     }
 
     pub(super) fn apply(

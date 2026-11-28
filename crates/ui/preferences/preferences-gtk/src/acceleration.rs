@@ -39,12 +39,11 @@ pub fn row(preferences: store::SharedPreferences) -> adw::ComboRow {
         item.set_child(Some(&label));
     });
     let row = adw::ComboRow::builder()
-        .title(tr!("Acceleration device").as_ref())
-        .tooltip_text(tr!("Rendering, playback and export. Restart required.").as_ref())
+        .name("acceleration-device")
+        .title(tr!("Preferred device").as_ref())
+        .subtitle(tr!("Restart required after changing the device").as_ref())
         .model(&gtk::StringList::new(&labels))
         .list_factory(&factory)
-        .use_subtitle(true)
-        .subtitle_lines(0)
         .use_markup(false)
         .selected(
             choices

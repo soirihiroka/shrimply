@@ -10,8 +10,8 @@ pub fn show_settings(
 ) -> adw::Window {
     let settings = adw::Window::builder()
         .title(tr!(store::SETTINGS_TITLE).as_ref())
-        .default_width(940)
-        .default_height(630)
+        .default_width(980)
+        .default_height(640)
         .transient_for(window)
         .destroy_with_parent(true)
         .modal(true)
@@ -23,35 +23,45 @@ pub fn show_settings(
     let pages = gtk::Stack::new();
     let content_header = adw::HeaderBar::new();
     for id in PreferencePage::ALL {
-        let row = adw::ActionRow::builder()
-            .title(tr!(id.title()).as_ref())
-            .activatable(true)
+        let item = gtk::Box::builder()
+            .spacing(12)
+            .margin_top(12)
+            .margin_bottom(12)
+            .margin_start(6)
+            .margin_end(6)
             .build();
-        row.add_prefix(&gtk::Image::from_icon_name(id.icon()));
-        categories.append(&row);
+        item.append(&gtk::Image::from_icon_name(id.icon()));
+        item.append(
+            &gtk::Label::builder()
+                .label(tr!(id.title()).as_ref())
+                .wrap(true)
+                .build(),
+        );
+        categories.append(&gtk::ListBoxRow::builder().child(&item).build());
         let page = match id {
             PreferencePage::Trust => crate::trust::page(),
-            PreferencePage::External => {
-                let blender = adw::PreferencesGroup::builder()
-                    .title(tr!("Blender").as_ref())
-                    .build();
-                for option in id.options("Blender") {
-                    blender.add(&preference_row(option, &preferences));
-                }
-                server::page(preferences.clone(), &blender)
-            }
+            PreferencePage::Servers => server::page(preferences.clone()),
             _ => {
                 let page = adw::PreferencesPage::new();
                 for group in id.groups() {
                     let section = adw::PreferencesGroup::builder()
                         .title(tr!(*group).as_ref())
                         .build();
-                    #[cfg(target_os = "linux")]
-                    if id == PreferencePage::Performance {
-                        section.add(&crate::acceleration::row(preferences.clone()));
-                    }
-                    for option in id.options(group) {
-                        section.add(&preference_row(option, &preferences));
+                    match *group {
+                        "Command Line" => section.add(&crate::cli::row()),
+                        #[cfg(target_os = "linux")]
+                        "Acceleration Device" => {
+                            section.add(&crate::acceleration::row(preferences.clone()))
+                        }
+                        _ => {
+                            let mut options = id.options(group).peekable();
+                            if options.peek().is_none() {
+                                continue;
+                            }
+                            for option in options {
+                                section.add(&preference_row(option, &preferences));
+                            }
+                        }
                     }
                     page.add(&section);
                 }
@@ -63,7 +73,12 @@ pub fn show_settings(
 
     let sidebar = adw::ToolbarView::new();
     sidebar.add_top_bar(&adw::HeaderBar::new());
-    sidebar.set_content(Some(&categories));
+    sidebar.set_content(Some(
+        &gtk::ScrolledWindow::builder()
+            .hscrollbar_policy(gtk::PolicyType::Never)
+            .child(&categories)
+            .build(),
+    ));
     let sidebar = adw::NavigationPage::builder()
         .title(tr!(store::SETTINGS_TITLE).as_ref())
         .child(&sidebar)
@@ -78,9 +93,6 @@ pub fn show_settings(
     let split = adw::NavigationSplitView::builder()
         .sidebar(&sidebar)
         .content(&page)
-        .sidebar_width_unit(adw::LengthUnit::Px)
-        .min_sidebar_width(f64::from(store::SETTINGS_SIDEBAR_WIDTH))
-        .max_sidebar_width(f64::from(store::SETTINGS_SIDEBAR_WIDTH))
         .build();
     categories.select_row(categories.row_at_index(0).as_ref());
     categories.connect_row_activated({
@@ -96,8 +108,8 @@ pub fn show_settings(
     });
     let narrow = adw::Breakpoint::new(adw::BreakpointCondition::new_length(
         adw::BreakpointConditionLengthType::MaxWidth,
-        f64::from(store::SETTINGS_WIDE_WIDTH),
-        adw::LengthUnit::Px,
+        550.0,
+        adw::LengthUnit::Sp,
     ));
     narrow.add_setter(&split, "collapsed", Some(&true.to_value()));
     settings.add_breakpoint(narrow);

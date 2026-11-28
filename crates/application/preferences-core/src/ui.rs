@@ -13,15 +13,17 @@ pub enum PreferencePage {
     Appearance,
     Performance,
     Trust,
-    External,
+    Integrations,
+    Servers,
 }
 
 impl PreferencePage {
-    pub const ALL: [Self; 4] = [
+    pub const ALL: [Self; 5] = [
         Self::Appearance,
         Self::Performance,
         Self::Trust,
-        Self::External,
+        Self::Integrations,
+        Self::Servers,
     ];
 
     pub fn id(self) -> &'static str {
@@ -29,7 +31,8 @@ impl PreferencePage {
             Self::Appearance => "appearance",
             Self::Performance => "performance",
             Self::Trust => "trust",
-            Self::External => "external",
+            Self::Integrations => "integrations",
+            Self::Servers => "servers",
         }
     }
 
@@ -38,7 +41,8 @@ impl PreferencePage {
             Self::Appearance => "Appearance",
             Self::Performance => "Performance",
             Self::Trust => "Trust",
-            Self::External => "External",
+            Self::Integrations => "Integrations",
+            Self::Servers => "Servers",
         }
     }
 
@@ -47,7 +51,8 @@ impl PreferencePage {
             Self::Appearance => "appearance-symbolic",
             Self::Performance => "speedometer-symbolic",
             Self::Trust => "security-high-symbolic",
-            Self::External => "application-x-executable-symbolic",
+            Self::Integrations => "application-x-executable-symbolic",
+            Self::Servers => "network-server-symbolic",
         }
     }
 
@@ -56,7 +61,8 @@ impl PreferencePage {
             Self::Appearance => "#7956BE",
             Self::Performance => "#B95728",
             Self::Trust => "#218051",
-            Self::External => "#336AC6",
+            Self::Integrations => "#7651A6",
+            Self::Servers => "#336AC6",
         }
     }
 
@@ -70,10 +76,11 @@ impl PreferencePage {
     pub fn groups(self) -> &'static [&'static str] {
         match self {
             Self::Appearance => &["Captions", "Text", "Preview", "Timeline"],
-            Self::Performance => &["Performance"],
+            Self::Performance => &["Acceleration Device", "Decoding", "Memory"],
             Self::Trust => &["Trusted sources"],
-            Self::External => &[
-                "Blender",
+            Self::Integrations => &["Command Line", "Blender"],
+            Self::Servers => &[
+                "Project Servers",
                 "Inference Servers",
                 "Selected Server",
                 "Compute",
@@ -317,13 +324,13 @@ impl PreferenceId {
             Self::TemporalDecoderPoolSize => (
                 "Temporal Decoder Pool Size",
                 "Maximum number of active video decoder sessions",
-                "Performance",
+                "Decoding",
                 &[][..],
             ),
             Self::GpuHostMemory => (
                 "GPU Host Memory Budget",
                 "Maximum system RAM available for CUDA spill and reconstructible GPU resources",
-                "Performance",
+                "Memory",
                 &[][..],
             ),
             Self::BlenderBinary => ("Blender Binary", "", "Blender", &[][..]),

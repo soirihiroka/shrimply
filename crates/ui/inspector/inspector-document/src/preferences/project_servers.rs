@@ -35,10 +35,10 @@ impl Settings {
                     .err();
             }
         }
-        let Some(external) = document["controls"].as_array_mut().and_then(|pages| {
+        let Some(servers) = document["controls"].as_array_mut().and_then(|pages| {
             pages
                 .iter_mut()
-                .find(|page| page["id"] == "preferences:external")
+                .find(|page| page["id"] == "preferences:servers")
         }) else {
             return;
         };
@@ -62,9 +62,9 @@ impl Settings {
             &mut group,
             "settings:project-servers",
         );
-        external["controls"]
+        servers["controls"]
             .as_array_mut()
-            .expect("External settings groups")
+            .expect("Server settings groups")
             .insert(0, group);
     }
 

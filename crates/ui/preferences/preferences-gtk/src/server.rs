@@ -99,10 +99,7 @@ struct ServerRow {
     warning: gtk::Image,
 }
 
-pub fn page(
-    preferences: store::SharedPreferences,
-    blender_group: &adw::PreferencesGroup,
-) -> adw::PreferencesPage {
+pub fn page(preferences: store::SharedPreferences) -> adw::PreferencesPage {
     let spinner = adw::Spinner::new();
     spinner.set_size_request(18, 18);
     spinner.set_visible(false);
@@ -249,22 +246,19 @@ pub fn page(
     features_group.add(&rows.features);
 
     let page = adw::PreferencesPage::builder()
-        .title(tr!(store::PreferencePage::External.title()).as_ref())
-        .icon_name(store::PreferencePage::External.icon())
-        .name(store::PreferencePage::External.id())
+        .title(tr!(store::PreferencePage::Servers.title()).as_ref())
+        .icon_name(store::PreferencePage::Servers.icon())
+        .name(store::PreferencePage::Servers.id())
         .build();
-    let cli_group = adw::PreferencesGroup::new();
-    cli_group.add(&crate::cli::row());
-    page.add(&cli_group);
-    page.add(&project_server_group(preferences.clone()));
-    for name in store::PreferencePage::External.groups() {
+    let project_group = project_server_group(preferences.clone());
+    for name in store::PreferencePage::Servers.groups() {
         page.add(match *name {
-            "Blender" => blender_group,
+            "Project Servers" => &project_group,
             "Inference Servers" => &endpoint_group,
             "Selected Server" => &server_group,
             "Compute" => &compute_group,
             "Features" => &features_group,
-            _ => unreachable!("external preference group"),
+            _ => unreachable!("server preference group"),
         });
     }
 
