@@ -1,6 +1,14 @@
 name: CI checks
 
-on: workflow_dispatch
+on:
+  workflow_dispatch:
+    inputs:
+      comparison:
+        type: boolean
+        default: false
+      export:
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -17,12 +25,14 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y ffmpeg python3-numpy clang lld
+          make -s test -o native-deps -o cuda-target-check ARGS='--locked --release -p shrimply-aac --lib'
           make -s test -o native-deps -o cuda-target-check ARGS='--locked --release -p shrimply-aac --example encode --no-run --message-format=json' > build.jsonl
           encoder=$(jq -r 'select(.reason? == "compiler-artifact" and .target.name == "encode") | .executable // empty' build.jsonl)
           test -x "$encoder"
           echo "AAC_ENCODER=$encoder" >> "$GITHUB_ENV"
           /usr/bin/python3 vendor/aac/benchmark.py "$encoder" --smoke > aac-smoke.json
       - name: Compare pinned FFmpeg and FDK AAC
+        if: inputs.comparison
         run: |
           sudo apt-get install -y nasm
           curl -fsSL --retry 3 https://github.com/mstorsjo/fdk-aac/archive/refs/tags/v2.0.3.tar.gz -o "$RUNNER_TEMP/fdk.tar.gz"
@@ -48,6 +58,7 @@ jobs:
           unzip -j "$RUNNER_TEMP/sqam.zip" 27.flac 35.flac 42.flac 48.flac 49.flac 50.flac -d "$RUNNER_TEMP/sqam"
           /usr/bin/python3 vendor/aac/benchmark.py "$AAC_ENCODER" --fdk --bitrates 64 96 128 192 256 320 --repeat 3 --corpus "$RUNNER_TEMP"/sqam/*.flac > aac-comparison.json
       - name: Add ViSQOL audio scores
+        if: inputs.comparison
         run: |
           git clone --depth 1 --branch v3.3.3 https://github.com/google/visqol.git "$RUNNER_TEMP/visqol"
           curl -fsSL --retry 3 https://releases.bazel.build/5.1.0/release/bazel-5.1.0-linux-x86_64 -o "$RUNNER_TEMP/bazel"
@@ -65,3 +76,17 @@ jobs:
             aac-*.json
             build.jsonl
             Cargo.lock
+
+
+  export:
+    if: inputs.export
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          submodules: recursive
+      - uses: ./.github/actions/setup-macos
+        with:
+          profile: debug
+      - run: make appkit-ffmpeg test DEV_BUILD_ENV='$(APPKIT_BUILD_ENV)' ARGS='--locked --lib -p shrimply-export-core audio::tests::exports_all_audio_formats'
