@@ -246,17 +246,25 @@ fn inspect_uncached(asset: &AssetSnapshot) -> Result<(FileInfo, bool), String> {
         image: None,
         diagnostics: Vec::new(),
     };
-    if let Err(error) = inspect_ffmpeg(asset, &mut result) {
-        result.diagnostics.push(error);
-    }
+    let mut complete = match inspect_ffmpeg(asset, &mut result) {
+        Ok(complete) => complete,
+        Err(error) => {
+            result.diagnostics.push(error);
+            true
+        }
+    };
     // A shared range fetch wraps transport errors as io::ErrorKind::Other.
-    let mut complete = true;
     if result.streams.iter().any(|stream| stream.kind == "audio")
         && let Err(error) = inspect_audio_tags(asset, &mut result)
     {
-        complete = !std::error::Error::source(&error)
-            .and_then(|cause| cause.downcast_ref::<io::Error>())
-            .is_some_and(|error| error.kind() == io::ErrorKind::Other);
+        complete &=
+            !std::iter::successors(std::error::Error::source(&error), |&cause| cause.source()).any(
+                |cause| {
+                    cause
+                        .downcast_ref::<io::Error>()
+                        .is_some_and(|error| error.kind() == io::ErrorKind::Other)
+                },
+            );
         result
             .diagnostics
             .push(format!("audio tags were unavailable: {error}"));
@@ -282,7 +290,7 @@ fn unix_seconds(time: SystemTime) -> Option<i64> {
         .and_then(|duration| i64::try_from(duration.as_secs()).ok())
 }
 
-fn inspect_ffmpeg(asset: &AssetSnapshot, result: &mut FileInfo) -> Result<(), String> {
+fn inspect_ffmpeg(asset: &AssetSnapshot, result: &mut FileInfo) -> Result<bool, String> {
     FFMPEG
         .get_or_init(|| ffmpeg::init().map_err(|error| error.to_string()))
         .clone()
@@ -346,7 +354,12 @@ fn inspect_ffmpeg(asset: &AssetSnapshot, result: &mut FileInfo) -> Result<(), St
             tags: dictionary(chapter.metadata(), "chapter"),
         });
     }
-    Ok(())
+    // A probe may report streams even after its custom I/O hit a read error.
+    // SAFETY: the input owns the format and its optional I/O context.
+    let complete = !asset.asset().has_bound_reader()
+        || unsafe { (*input.as_ptr()).pb.as_ref() }
+            .is_none_or(|io| io.error >= 0 || ffmpeg::Error::from(io.error) == ffmpeg::Error::Eof);
+    Ok(complete)
 }
 
 fn stream_info(stream: &format::stream::Stream<'_>) -> StreamInfo {
@@ -588,14 +601,15 @@ fn inspect_image(
     result: &mut FileInfo,
 ) -> Result<(), imagesize::ImageError> {
     let mut reader = BufReader::new(asset.open_reader()?);
-    let kind = match imagesize::reader_type(&mut reader) {
-        Ok(kind) => kind,
+    let dimensions = imagesize::reader_type(&mut reader)
+        .and_then(|kind| kind.reader_size(&mut reader).map(|size| (kind, size)));
+    let (kind, size) = match dimensions {
+        Ok(dimensions) => dimensions,
         Err(imagesize::ImageError::IoError(error)) if error.kind() == io::ErrorKind::Other => {
             return Err(error.into());
         }
         Err(_) => return Ok(()),
     };
-    let size = kind.reader_size(&mut reader)?;
     let image = result.image.insert(ImageInfo {
         width: size.width,
         height: size.height,
