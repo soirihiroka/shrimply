@@ -49,6 +49,7 @@ runs:
         echo "JAVA_HOME=${JAVA_HOME}" >> "${GITHUB_ENV}"
         echo "${JAVA_HOME}/bin" >> "${GITHUB_PATH}"
         "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37.0" "build-tools;37.0.0" "ndk;${ANDROID_NDK_VERSION}"
+        echo "ANDROID_NDK_HOME=${ANDROID_HOME}/ndk/${ANDROID_NDK_VERSION}" >> "${GITHUB_ENV}"
 
     - uses: ./.github/actions/cache-cargo
       with:
@@ -75,8 +76,8 @@ runs:
         path: |
           target/android-native/arm64-v8a/release/install
           target/android-native/arm64-v8a/release/*.sha256
-        key: android-native-v1-${{ runner.os }}-arm64-v8a-release-${{ steps.ffmpeg.outputs.revision }}-${{ hashFiles('Cargo.lock', 'Makefile', 'packaging/android-*.py', 'packaging/native_sources.py', 'packaging/*.patch') }}
-        restore-keys: android-native-v1-${{ runner.os }}-arm64-v8a-release-
+        key: android-native-v1-${{ runner.os }}-arm64-v8a-release-${{ env.ANDROID_NDK_VERSION }}-${{ steps.ffmpeg.outputs.revision }}-${{ hashFiles('Cargo.lock', 'Makefile', 'packaging/android-*.py', 'packaging/native_sources.py', 'packaging/*.patch') }}
+        restore-keys: android-native-v1-${{ runner.os }}-arm64-v8a-release-${{ env.ANDROID_NDK_VERSION }}-
 
     - name: Build Android native dependencies
       shell: bash
