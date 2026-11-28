@@ -1,5 +1,6 @@
 """Exercise packaged native editors against a fresh loopback project server."""
 
+import base64
 import json
 import os
 import socket
@@ -8,7 +9,8 @@ import sys
 import tempfile
 import time
 from pathlib import Path
-from urllib.request import urlopen
+from urllib.error import HTTPError
+from urllib.request import Request, urlopen
 
 
 def await_state(read, ready):
@@ -90,6 +92,10 @@ def smoke(executable, server_executable, directory):
     try:
         start("first-ci-password")
         sign_in("first-ci-password")
+        basic = base64.b64encode(b"editor:first-ci-password").decode()
+        login = Request(f"{endpoint}/v1/login", headers={"Authorization": f"Basic {basic}"}, method="POST")
+        with urlopen(login, timeout=4) as response:
+            token = json.load(response)["token"]
         created = cli("project", "create", "--server", endpoint, "--name", "Original",
                       "--fps", "30", project=alice)
         remote_id = created["location"]["id"]
@@ -114,6 +120,13 @@ def smoke(executable, server_executable, directory):
         cli("project", "set", "--name", "Offline", project=bob)
         named(bob, "Offline")
         start("new-ci-password")
+        old_session = Request(f"{endpoint}/v1/projects", headers={"Authorization": f"Bearer {token}"})
+        try:
+            with urlopen(old_session, timeout=4) as response:
+                raise AssertionError(f"Rotated session still accepted: {response.status}")
+        except HTTPError as error:
+            with error:
+                assert error.code == 401, error.code
         assert metadata(alice)["project_name"] == "Shared"
         sign_in("new-ci-password")
         named(alice, "Offline")
