@@ -141,7 +141,7 @@ fn build_ui(app: &adw::Application) {
     labels.append(&heading);
     labels.append(&version);
     let identity = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    identity.set_margin_start(12);
+    identity.set_margin_start(18);
     identity.set_margin_end(12);
     identity.append(&icon);
     identity.append(&labels);
