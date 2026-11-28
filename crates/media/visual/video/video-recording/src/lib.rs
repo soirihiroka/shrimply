@@ -1,4 +1,4 @@
-//! Native screen capture reports the same recording events on every platform.
+//! Native video capture reports the same recording events on every platform.
 use shrimply_math_core::Time;
 use std::path::PathBuf;
 
@@ -69,6 +69,7 @@ pub struct FinishedVideoRecording {
     pub width: u32,
     pub height: u32,
     pub alpha_track_id: Option<u32>,
+    pub rotation_degrees: i32,
 }
 
 impl FinishedVideoRecording {
@@ -85,6 +86,7 @@ impl FinishedVideoRecording {
             width,
             height,
             alpha_track_id,
+            rotation_degrees: 0,
         }
     }
 

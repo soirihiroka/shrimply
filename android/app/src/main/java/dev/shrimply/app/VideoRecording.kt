@@ -8,6 +8,7 @@ import android.hardware.camera2.CameraManager
 import android.media.projection.MediaProjectionManager
 import android.os.Handler
 import android.os.Looper
+import android.view.Surface
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.LocalActivity
 import androidx.activity.result.contract.ActivityResultContracts
@@ -48,6 +49,15 @@ internal fun VideoRecordingAction(timeline: TimelineSession, onError: (String) -
             currentError(error.message ?: error.javaClass.simpleName)
         }
     } } }
+    fun startCamera(config: JSONObject) {
+        val rotation = when (activity.display?.rotation) {
+            Surface.ROTATION_90 -> 90
+            Surface.ROTATION_180 -> 180
+            Surface.ROTATION_270 -> 270
+            else -> 0
+        }
+        camera = CameraRecording(context.applicationContext, config, rotation, receive)
+    }
     DisposableEffect(timeline.identity, cameraManager) {
         fun refreshDevices() {
             scope.launch {
@@ -90,7 +100,7 @@ internal fun VideoRecordingAction(timeline: TimelineSession, onError: (String) -
             val id = config.getString("id")
             val current = timeline.snapshot.value.optJSONObject("video_recording")
             if (current?.optString("id") == id && current.optString("state") == "start") {
-                if (granted) camera = CameraRecording(context.applicationContext, config, receive)
+                if (granted) startCamera(config)
                 else receive(JSONObject().put("id", id).put("event", "failed")
                     .put("error", cameraPermissionMessage))
             }
@@ -128,7 +138,7 @@ internal fun VideoRecordingAction(timeline: TimelineSession, onError: (String) -
             requested = value.getString("id")
             if (!value.isNull("camera_id")) {
                 if (context.checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED)
-                    camera = CameraRecording(context.applicationContext, value, receive)
+                    startCamera(value)
                 else {
                     pending = value.toString()
                     permission.launch(Manifest.permission.CAMERA)

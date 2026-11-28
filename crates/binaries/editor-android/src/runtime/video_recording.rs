@@ -214,9 +214,13 @@ impl Runtime {
                             .with_file_name(format!("{}.mp4", recording.id));
                         std::fs::rename(&recording.path, &path)
                             .map_err(|error| error.to_string())?;
-                        Ok(FinishedVideoRecording::new(
-                            path, duration, width, height, None,
-                        ))
+                        let mut finished =
+                            FinishedVideoRecording::new(path, duration, width, height, None);
+                        finished.rotation_degrees = match request["rotation"].as_i64() {
+                            Some(rotation @ (90 | 180 | 270)) => rotation as i32,
+                            _ => 0,
+                        };
+                        Ok(finished)
                     })();
                     VideoRecordingEvent::Finished(result)
                 }

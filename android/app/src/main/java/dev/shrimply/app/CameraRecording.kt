@@ -18,6 +18,7 @@ import org.json.JSONObject
 internal class CameraRecording(
     private val context: Context,
     private val config: JSONObject,
+    private val deviceRotation: Int,
     private val deliver: (JSONObject) -> Unit,
 ) {
     val id: String = config.getString("id")
@@ -30,6 +31,7 @@ internal class CameraRecording(
     private var started = false
     private var finished = false
     private lateinit var size: Size
+    private var orientation = 0
 
     init { handler.post { attempt(::open) } }
 
@@ -51,13 +53,19 @@ internal class CameraRecording(
         val range = ranges.minWithOrNull(compareBy({ kotlin.math.abs(it.upper - requestedRate) }, { it.upper - it.lower }))
         val video = MediaRecorder(context)
         recorder = video
+        video.setOnErrorListener { _, what, extra ->
+            finish("Camera recording failed ($what, $extra)")
+        }
         video.setVideoSource(MediaRecorder.VideoSource.SURFACE)
         video.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
         video.setVideoEncoder(MediaRecorder.VideoEncoder.H264)
         video.setVideoSize(size.width, size.height)
         video.setVideoFrameRate(range?.upper ?: requestedRate)
         video.setVideoEncodingBitRate(config.getInt("bitrate"))
-        video.setOrientationHint(characteristics.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 0)
+        val sensorRotation = characteristics.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 0
+        val front = characteristics.get(CameraCharacteristics.LENS_FACING) == CameraCharacteristics.LENS_FACING_FRONT
+        orientation = (sensorRotation + (if (front) -deviceRotation else deviceRotation) + 360) % 360
+        video.setOrientationHint(orientation)
         video.setOutputFile(config.getString("path"))
         video.prepare()
         val surface = video.surface
@@ -124,14 +132,14 @@ internal class CameraRecording(
         if (finished) return
         finished = true
         val result = runCatching {
-            if (started) recorder?.stop()
             if (error != null) return@runCatching event("failed").put("error", error)
             if (!started) return@runCatching event("cancelled")
+            recorder?.stop()
             val duration = MediaMetadataRetriever().use {
                 it.setDataSource(config.getString("path"))
                 it.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()
             } ?: kotlin.error("The camera recording has no duration")
-            event("finished").put("duration_us", duration * 1000)
+            event("finished").put("duration_us", duration * 1000).put("rotation", orientation)
         }.getOrElse { event("failed").put("error", it.message ?: it.javaClass.simpleName) }
         session?.close()
         camera?.close()

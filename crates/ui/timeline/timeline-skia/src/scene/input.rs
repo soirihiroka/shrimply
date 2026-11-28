@@ -408,17 +408,9 @@ impl Scene {
         if key.kind != TrackKind::Audio {
             return Err("Microphone recording requires an audio track".into());
         }
-        if self.active_audio_recording.is_some() {
+        if let Some(recording) = self.active_audio_recording.take() {
             player_state::set_playing(&self.player, false);
-            let recording = self
-                .active_audio_recording
-                .take()
-                .expect("active audio recording exists");
-            let same_track = recording.key == key;
-            recording.finish(&self.project, &self.player)?;
-            if same_track {
-                return Ok(());
-            }
+            return recording.finish(&self.project, &self.player);
         }
         self.active_audio_recording = Some(crate::recording::AudioRecording::start_at(
             key,

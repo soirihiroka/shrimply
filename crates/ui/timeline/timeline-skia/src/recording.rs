@@ -248,13 +248,12 @@ impl Scene {
                 if occupied {
                     self.stop_video_recording();
                     return Err(
-                        "The recording position became occupied while selecting a screen or application"
-                            .into(),
+                        "The recording position became occupied before capture started".into(),
                     );
                 }
                 self.active_video_recording
                     .as_mut()
-                    .expect("active screen recording exists")
+                    .expect("active video recording exists")
                     .ready = true;
                 ensure_duration(&self.player, start);
                 player_state::set_playing(&self.player, true);
@@ -408,8 +407,11 @@ impl Scene {
         if crate::timeline_search::collides(&track.items, active.start, end) {
             return Err("The recording position overlaps another video item".into());
         }
-        let transform =
+        let mut transform =
             Transform::natural_size(candidate.canvas_size, finished.width, finished.height);
+        if finished.rotation_degrees != 0 {
+            transform.rotation_degrees = TimelineValue::new_const(finished.rotation_degrees as f32);
+        }
         let item = VideoItem {
             id: uuid::Uuid::new_v4(),
             start: active.start,

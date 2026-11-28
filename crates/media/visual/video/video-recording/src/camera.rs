@@ -20,54 +20,111 @@ fn input_format() -> Result<*const ffi::AVInputFormat, String> {
 }
 
 pub fn devices() -> Vec<(String, String)> {
-    fn enumerate() -> Result<Vec<(String, String)>, String> {
-        let mut list = std::ptr::null_mut();
-        let status = unsafe {
-            ffi::avdevice_list_input_sources(
-                input_format()?,
-                std::ptr::null(),
-                std::ptr::null_mut(),
-                &mut list,
-            )
-        };
-        let rows = if status > 0 && !list.is_null() {
-            unsafe {
-                std::slice::from_raw_parts((*list).devices, status as usize)
-                    .iter()
-                    .filter_map(|&device| {
-                        let device = device.as_ref()?;
-                        if device.nb_media_types > 0
-                            && !std::slice::from_raw_parts(
-                                device.media_types,
-                                device.nb_media_types as usize,
-                            )
-                            .contains(&ffi::AVMediaType::AVMEDIA_TYPE_VIDEO)
-                        {
-                            return None;
-                        }
-                        let name = CStr::from_ptr(device.device_name).to_string_lossy();
-                        let label = if device.device_description.is_null() {
-                            name.clone()
-                        } else {
-                            CStr::from_ptr(device.device_description).to_string_lossy()
-                        };
-                        Some((name.into_owned(), label.into_owned()))
-                    })
-                    .collect()
-            }
-        } else {
-            Vec::new()
-        };
-        unsafe { ffi::avdevice_free_list_devices(&mut list) };
-        if status < 0 {
-            return Err(ffmpeg::Error::from(status).to_string());
-        }
-        Ok(rows)
-    }
     enumerate().unwrap_or_else(|error| {
         tracing::warn!(%error, "Could not list cameras");
         Vec::new()
     })
+}
+
+#[cfg(target_os = "linux")]
+fn enumerate() -> Result<Vec<(String, String)>, String> {
+    let mut list = std::ptr::null_mut();
+    let status = unsafe {
+        ffi::avdevice_list_input_sources(
+            input_format()?,
+            std::ptr::null(),
+            std::ptr::null_mut(),
+            &mut list,
+        )
+    };
+    let rows = if status > 0 && !list.is_null() {
+        unsafe {
+            std::slice::from_raw_parts((*list).devices, status as usize)
+                .iter()
+                .filter_map(|&device| {
+                    let device = device.as_ref()?;
+                    let name = CStr::from_ptr(device.device_name).to_string_lossy();
+                    let label = if device.device_description.is_null() {
+                        name.clone()
+                    } else {
+                        CStr::from_ptr(device.device_description).to_string_lossy()
+                    };
+                    Some((name.into_owned(), label.into_owned()))
+                })
+                .collect()
+        }
+    } else {
+        Vec::new()
+    };
+    unsafe { ffi::avdevice_free_list_devices(&mut list) };
+    if status < 0 {
+        return Err(ffmpeg::Error::from(status).to_string());
+    }
+    Ok(rows)
+}
+
+#[cfg(windows)]
+fn enumerate() -> Result<Vec<(String, String)>, String> {
+    use windows::Win32::{
+        Foundation::RPC_E_CHANGED_MODE,
+        Media::{
+            DirectShow::ICreateDevEnum,
+            MediaFoundation::{CLSID_SystemDeviceEnum, CLSID_VideoInputDeviceCategory},
+        },
+        System::{
+            Com::{
+                CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx,
+                CoTaskMemFree, CoUninitialize, CreateBindCtx, StructuredStorage::IPropertyBag,
+            },
+            Variant::VARIANT,
+        },
+    };
+    use windows::core::{BSTR, w};
+
+    unsafe {
+        let initialized = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+        if initialized != RPC_E_CHANGED_MODE {
+            initialized.ok().map_err(|error| error.to_string())?;
+        }
+        let result: windows::core::Result<_> = (|| {
+            let devices: ICreateDevEnum =
+                CoCreateInstance(&CLSID_SystemDeviceEnum, None, CLSCTX_INPROC_SERVER)?;
+            let mut cameras = None;
+            devices.CreateClassEnumerator(&CLSID_VideoInputDeviceCategory, &mut cameras, 0)?;
+            let Some(cameras) = cameras else {
+                return Ok(Vec::new());
+            };
+            let context = CreateBindCtx(0)?;
+            let mut rows = Vec::new();
+            loop {
+                let mut next = [None];
+                cameras.Next(&mut next, None).ok()?;
+                let [Some(camera)] = next else {
+                    break;
+                };
+                let display = camera.GetDisplayName(&context, None)?;
+                let name = display.to_string();
+                CoTaskMemFree(Some(display.0.cast()));
+                let Ok(name) = name else {
+                    continue;
+                };
+                let name = name.replace(':', "_");
+                let label = (|| {
+                    let properties: IPropertyBag = camera.BindToStorage(&context, None).ok()?;
+                    let mut value = VARIANT::default();
+                    properties.Read(w!("FriendlyName"), &mut value, None).ok()?;
+                    Some(BSTR::try_from(&value).ok()?.to_string())
+                })()
+                .unwrap_or_else(|| name.clone());
+                rows.push((name, label));
+            }
+            Ok(rows)
+        })();
+        if initialized.is_ok() {
+            CoUninitialize();
+        }
+        result.map_err(|error| error.to_string())
+    }
 }
 
 pub struct CameraRecording {
@@ -121,6 +178,9 @@ fn record(
     stopped: &AtomicBool,
     events: &mpsc::Sender<VideoRecordingEvent>,
 ) -> Result<Option<super::FinishedVideoRecording>, String> {
+    if stopped.load(Ordering::Relaxed) {
+        return Ok(None);
+    }
     let input_format = input_format()?;
     let mut input = unsafe {
         let mut context = ffi::avformat_alloc_context();
