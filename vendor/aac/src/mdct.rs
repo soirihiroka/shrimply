@@ -4,60 +4,104 @@ use rustfft::{Fft, FftPlanner, num_complex::Complex32};
 
 use crate::{FRAME_SAMPLES, Window};
 
-const SHORT: usize = FRAME_SAMPLES / 8;
-const OFFSET: usize = (FRAME_SAMPLES - SHORT) / 2;
+pub(crate) const SHORT: usize = FRAME_SAMPLES / 8;
+pub(crate) const OFFSET: usize = (FRAME_SAMPLES - SHORT) / 2;
+
+#[repr(u8)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum WindowShape {
+    Sine = 0,
+    Kbd = 1,
+}
 
 pub(crate) struct Analysis {
     long: Transform,
     short: Transform,
-    start: Vec<f32>,
-    stop: Vec<f32>,
+    long_win: [[Vec<f32>; 2]; 2],
+    start_win: [[Vec<f32>; 2]; 2],
+    stop_win: [[Vec<f32>; 2]; 2],
+    short_win: [[Vec<f32>; 2]; 2],
 }
 
 impl Analysis {
     pub fn new() -> Self {
         let mut planner = FftPlanner::new();
-        let long = Transform::new(FRAME_SAMPLES, 4.0, &mut planner);
-        let short = Transform::new(SHORT, 6.0, &mut planner);
-        let mut start = long.window.clone();
-        start[FRAME_SAMPLES..FRAME_SAMPLES + OFFSET].fill(1.0);
-        start[FRAME_SAMPLES + OFFSET..FRAME_SAMPLES + OFFSET + SHORT]
-            .copy_from_slice(&short.window[SHORT..]);
-        start[FRAME_SAMPLES + OFFSET + SHORT..].fill(0.0);
-        let stop = start.iter().rev().copied().collect();
+        let long = Transform::new(FRAME_SAMPLES, &mut planner);
+        let short = Transform::new(SHORT, &mut planner);
+        let long_base = [sine_window(FRAME_SAMPLES), kbd_window(FRAME_SAMPLES, 4.0)];
+        let short_base = [sine_window(SHORT), kbd_window(SHORT, 6.0)];
+
+        let long_win = stitch_windows(&long_base, FRAME_SAMPLES);
+        let start_win = std::array::from_fn(|prev| {
+            std::array::from_fn(|curr| {
+                let mut w = vec![0.0; 2 * FRAME_SAMPLES];
+                w[..FRAME_SAMPLES].copy_from_slice(&long_base[prev][..FRAME_SAMPLES]);
+                w[FRAME_SAMPLES..FRAME_SAMPLES + OFFSET].fill(1.0);
+                w[FRAME_SAMPLES + OFFSET..FRAME_SAMPLES + OFFSET + SHORT]
+                    .copy_from_slice(&short_base[curr][SHORT..]);
+                w
+            })
+        });
+        let stop_win = std::array::from_fn(|prev| {
+            std::array::from_fn(|curr| {
+                let mut w = vec![0.0; 2 * FRAME_SAMPLES];
+                w[OFFSET..OFFSET + SHORT].copy_from_slice(&short_base[prev][..SHORT]);
+                w[OFFSET + SHORT..FRAME_SAMPLES].fill(1.0);
+                w[FRAME_SAMPLES..].copy_from_slice(&long_base[curr][FRAME_SAMPLES..]);
+                w
+            })
+        });
+        let short_win = stitch_windows(&short_base, SHORT);
+
         Self {
             long,
             short,
-            start,
-            stop,
+            long_win,
+            start_win,
+            stop_win,
+            short_win,
         }
     }
 
     pub fn transform(
         &mut self,
         window: Window,
+        prev_shape: WindowShape,
+        curr_shape: WindowShape,
         samples: &[[f32; 2]],
         channel: usize,
         spectrum: &mut [f32; FRAME_SAMPLES],
     ) {
+        let p = prev_shape as usize;
+        let c = curr_shape as usize;
         match window {
             Window::Short => {
                 for (index, lines) in spectrum.chunks_exact_mut(SHORT).enumerate() {
                     let start = OFFSET + index * SHORT;
+                    let win = if index == 0 {
+                        &self.short_win[p][c]
+                    } else {
+                        &self.short_win[c][c]
+                    };
                     self.short
-                        .run(&samples[start..start + 2 * SHORT], channel, None, lines);
+                        .run(&samples[start..start + 2 * SHORT], channel, win, lines);
                 }
             }
-            Window::Long => self.long.run(samples, channel, None, spectrum),
-            Window::Start => self.long.run(samples, channel, Some(&self.start), spectrum),
-            Window::Stop => self.long.run(samples, channel, Some(&self.stop), spectrum),
+            Window::Long => self
+                .long
+                .run(samples, channel, &self.long_win[p][c], spectrum),
+            Window::Start => self
+                .long
+                .run(samples, channel, &self.start_win[p][c], spectrum),
+            Window::Stop => self
+                .long
+                .run(samples, channel, &self.stop_win[p][c], spectrum),
         }
     }
 }
 
 struct Transform {
     fft: Arc<dyn Fft<f32>>,
-    window: Vec<f32>,
     input_rotation: Vec<Complex32>,
     output_rotation: Vec<Complex32>,
     spectrum: Vec<Complex32>,
@@ -65,7 +109,7 @@ struct Transform {
 }
 
 impl Transform {
-    fn new(size: usize, alpha: f64, planner: &mut FftPlanner<f32>) -> Self {
+    fn new(size: usize, planner: &mut FftPlanner<f32>) -> Self {
         let fft = planner.plan_fft_forward(size / 2);
         let scratch = vec![Complex32::ZERO; fft.get_inplace_scratch_len()];
         let length = size as f64;
@@ -83,7 +127,6 @@ impl Transform {
             .collect();
         Self {
             fft,
-            window: kbd_window(size, alpha),
             input_rotation,
             output_rotation,
             spectrum: vec![Complex32::ZERO; size / 2],
@@ -91,14 +134,7 @@ impl Transform {
         }
     }
 
-    fn run(
-        &mut self,
-        samples: &[[f32; 2]],
-        channel: usize,
-        window: Option<&[f32]>,
-        lines: &mut [f32],
-    ) {
-        let window = window.unwrap_or(&self.window);
+    fn run(&mut self, samples: &[[f32; 2]], channel: usize, window: &[f32], lines: &mut [f32]) {
         let size = lines.len();
         let sample = |n: usize| samples[n][channel] * window[n];
         // Fold the second and third quarters with the MDCT's cosine symmetry.
@@ -126,6 +162,24 @@ impl Transform {
             lines[size - 1 - 2 * k] = -value.im;
         }
     }
+}
+
+fn stitch_windows(base: &[Vec<f32>; 2], size: usize) -> [[Vec<f32>; 2]; 2] {
+    std::array::from_fn(|prev| {
+        std::array::from_fn(|curr| {
+            let mut w = Vec::with_capacity(2 * size);
+            w.extend_from_slice(&base[prev][..size]);
+            w.extend_from_slice(&base[curr][size..]);
+            w
+        })
+    })
+}
+
+fn sine_window(size: usize) -> Vec<f32> {
+    let denom = 2.0 * size as f64;
+    (0..2 * size)
+        .map(|n| (PI * (n as f64 + 0.5) / denom).sin() as f32)
+        .collect()
 }
 
 // ISO/IEC 13818-7 §15.3.2. The cumulative Kaiser weights reduce leakage from
@@ -157,27 +211,125 @@ fn kbd_window(size: usize, alpha: f64) -> Vec<f32> {
     window
 }
 
-pub(crate) fn transient(
-    samples: &[[f32; 2]],
-    smooth: &mut [f32; 2],
-    previous: &mut [f32; 2],
-) -> [bool; 2] {
-    let mut attack = [false; 2];
-    for (index, block) in samples.chunks_exact(64).enumerate() {
-        let mut energy = [0.0; 2];
-        for sample in block {
-            for ((energy, previous), current) in energy.iter_mut().zip(&mut *previous).zip(sample) {
-                let difference = current - *previous;
-                *energy += difference * difference;
-                *previous = *current;
+#[derive(Default)]
+pub(crate) struct TransientDetector {
+    smooth_hp: [f32; 2],
+    smooth_full: [f32; 2],
+    prev_sample: [f32; 2],
+    prev_hp: [f32; 2],
+    prev_full: [f32; 2],
+}
+
+impl TransientDetector {
+    pub fn detect(&mut self, samples: &[[f32; 2]]) -> [bool; 2] {
+        let mut attack = [false; 2];
+        for (index, block) in samples.chunks_exact(64).enumerate() {
+            let mut hp = [0.0_f32; 2];
+            let mut full = [0.0_f32; 2];
+            for sample in block {
+                for c in 0..2 {
+                    let current = sample[c];
+                    let diff = current - self.prev_sample[c];
+                    hp[c] += diff * diff;
+                    full[c] += current * current;
+                    self.prev_sample[c] = current;
+                }
+            }
+            let half = usize::from(index * 64 >= FRAME_SAMPLES / 2);
+            for c in 0..2 {
+                let hp_jump = (hp[c] > 10.0 * self.smooth_hp[c] + 0.00025
+                    && hp[c] > 3.5 * self.prev_hp[c])
+                    || hp[c] > 14.0 * self.smooth_hp[c] + 0.0004;
+                let full_jump = full[c] > 14.0 * self.smooth_full[c] + 0.0015
+                    && full[c] > 4.0 * self.prev_full[c];
+                attack[half] |= hp_jump || full_jump;
+                self.smooth_hp[c] = self.smooth_hp[c] * 0.8 + hp[c] * 0.2;
+                self.smooth_full[c] = self.smooth_full[c] * 0.85 + full[c] * 0.15;
+                self.prev_hp[c] = hp[c];
+                self.prev_full[c] = full[c];
             }
         }
-        for (long, current) in smooth.iter_mut().zip(energy) {
-            attack[usize::from(index * 64 >= FRAME_SAMPLES / 2)] |= current > 12.0 * *long + 0.0003;
-            *long = *long * 0.8 + current * 0.2;
+        attack
+    }
+}
+
+/// Partition the 8 short windows into groups of similar energy and spectral tilt.
+/// Splits at attack/decay transitions to eliminate pre-echo bleed while merging
+/// quiet or stationary windows to save scalefactor and section header bits.
+pub(crate) fn short_grouping(spectra: &[[f32; FRAME_SAMPLES]; 2]) -> (u8, usize, [usize; 8]) {
+    let floor = 1.0e7_f32;
+    let mut energies = [[floor; 8]; 2];
+    let mut low = [[0.0_f32; 8]; 2];
+    let mut high = [[0.0_f32; 8]; 2];
+    for c in 0..2 {
+        for (w, win) in spectra[c].chunks_exact(SHORT).enumerate() {
+            let mut e_low = 0.0;
+            let mut e_mid = 0.0;
+            let mut e_high = 0.0;
+            for (k, &v) in win.iter().enumerate() {
+                let p = v * v;
+                if k < 16 {
+                    e_low += p;
+                } else if k < 56 {
+                    e_mid += p;
+                } else {
+                    e_high += p;
+                }
+            }
+            low[c][w] = e_low;
+            high[c][w] = e_high;
+            energies[c][w] = (e_low + e_mid + e_high).max(floor);
         }
     }
-    attack
+
+    let mut grouping_bits = 0_u8;
+    let mut group_lens = [0_usize; 8];
+    let mut groups = 1_usize;
+    group_lens[0] = 1;
+    let mut group_min = [energies[0][0], energies[1][0]];
+    let mut group_max = group_min;
+
+    for w in 1..8 {
+        let mut split = false;
+        for c in 0..2 {
+            let cur = energies[c][w];
+            let new_min = group_min[c].min(cur);
+            let new_max = group_max[c].max(cur);
+            if new_max > 2.8 * new_min {
+                split = true;
+            }
+            // Split if high-frequency share shifts dramatically on an energetic window.
+            let prev = energies[c][w - 1];
+            if cur > 10.0 * floor && prev > 10.0 * floor {
+                let prev_hi = high[c][w - 1] / prev;
+                let cur_hi = high[c][w] / cur;
+                let prev_lo = low[c][w - 1] / prev;
+                let cur_lo = low[c][w] / cur;
+                if (cur_hi - prev_hi).abs() > 0.35 || (cur_lo - prev_lo).abs() > 0.35 {
+                    split = true;
+                }
+            }
+        }
+        // Keep group lengths <= 4 so short-window dynamics stay responsive.
+        if group_lens[groups - 1] >= 4 {
+            split = true;
+        }
+        if split {
+            group_lens[groups] = 1;
+            groups += 1;
+            group_min = [energies[0][w], energies[1][w]];
+            group_max = group_min;
+        } else {
+            grouping_bits |= 1 << (7 - w);
+            group_lens[groups - 1] += 1;
+            for c in 0..2 {
+                let cur = energies[c][w];
+                group_min[c] = group_min[c].min(cur);
+                group_max[c] = group_max[c].max(cur);
+            }
+        }
+    }
+    (grouping_bits, groups, group_lens)
 }
 
 #[cfg(test)]
@@ -187,7 +339,8 @@ mod tests {
     #[test]
     fn folded_fft_matches_the_direct_mdct() {
         for size in [SHORT, FRAME_SAMPLES] {
-            let mut transform = Transform::new(size, 4.0, &mut FftPlanner::new());
+            let mut transform = Transform::new(size, &mut FftPlanner::new());
+            let window = kbd_window(size, 4.0);
             let pcm: Vec<_> = (0..2 * size)
                 .map(|n| {
                     [
@@ -197,13 +350,13 @@ mod tests {
                 })
                 .collect();
             let mut output = vec![0.0; size];
-            transform.run(&pcm, 0, None, &mut output);
+            transform.run(&pcm, 0, &window, &mut output);
             let mut error = 0.0;
             let mut power = 0.0;
             for (k, output) in output.into_iter().enumerate() {
                 let direct = pcm
                     .iter()
-                    .zip(&transform.window)
+                    .zip(&window)
                     .enumerate()
                     .map(|(n, (sample, window))| {
                         let phase = PI / size as f64
