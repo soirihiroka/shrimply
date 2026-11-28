@@ -37,11 +37,28 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.core.view.WindowCompat
+import androidx.window.embedding.RuleController
+import java.lang.ref.WeakReference
 
-private class EditorModel(context: android.content.Context, stress: Boolean, benchmark: Boolean) : ViewModel() {
+internal class EditorModel(
+    context: android.content.Context, stress: Boolean, benchmark: Boolean, private val task: Int,
+) : ViewModel() {
     val projects = ProjectFiles(context.applicationContext)
     val timeline = TimelineSession(stress, benchmark, projects)
-    override fun onCleared() { timeline.close(); projects.close() }
+    var settingsCategory by mutableStateOf<String?>(null)
+
+    init { sessions[task] = WeakReference(this) }
+
+    override fun onCleared() {
+        if (forTask(task) === this) sessions.remove(task)
+        timeline.close()
+        projects.close()
+    }
+
+    companion object {
+        private val sessions = mutableMapOf<Int, WeakReference<EditorModel>>()
+        fun forTask(task: Int): EditorModel? = sessions[task]?.get()
+    }
 }
 
 class MainActivity : ComponentActivity() {
@@ -63,9 +80,10 @@ class MainActivity : ComponentActivity() {
         NativeI18n.initializeLocale(resources.configuration.locales.toLanguageTags())
         val stress = intent.getBooleanExtra("stress", false)
         val benchmark = intent.getBooleanExtra("benchmark", false)
+        RuleController.getInstance(this).setRules(RuleController.parseRules(this, R.xml.settings_embedding))
         val model = ViewModelProvider(this, object : ViewModelProvider.Factory {
             override fun <T : ViewModel> create(modelClass: Class<T>): T =
-                modelClass.cast(EditorModel(applicationContext, stress, benchmark))!!
+                modelClass.cast(EditorModel(applicationContext, stress, benchmark, taskId))!!
         })[EditorModel::class.java]
         timeline = model.timeline
         projects = model.projects

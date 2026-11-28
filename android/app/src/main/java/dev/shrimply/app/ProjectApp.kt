@@ -30,13 +30,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.rotate
-import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.style.TextAlign
@@ -80,7 +80,6 @@ internal fun ProjectApp(timeline: TimelineSession, files: ProjectFiles, caption:
     var exportSettings by rememberSaveable { mutableStateOf<String?>(null) }
     var pendingExport by rememberSaveable { mutableStateOf<String?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
-    var preferences by rememberSaveable { mutableStateOf(false) }
     val servers = status.optJSONArray("project_servers")?.let { values ->
         List(values.length()) { values.getString(it) }
     }.orEmpty()
@@ -88,6 +87,8 @@ internal fun ProjectApp(timeline: TimelineSession, files: ProjectFiles, caption:
     var version by remember { mutableStateOf("") }
     var projects by remember { mutableStateOf<List<JSONObject>>(emptyList()) }
     var catalogRevision by remember { mutableIntStateOf(0) }
+    val settings = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { catalogRevision++ }
+    val openSettings = { settings.launch(Intent(context, SettingsActivity::class.java)) }
     var projectServer by rememberSaveable { mutableStateOf("") }
     var create by rememberSaveable { mutableStateOf(false) }
     var name by rememberSaveable { mutableStateOf("") }
@@ -309,13 +310,13 @@ internal fun ProjectApp(timeline: TimelineSession, files: ProjectFiles, caption:
             command(operation, arrayOf("project_path" to project.getString("path"), "serial" to menu.getLong("serial"), *arguments))
         }
     }
-    val workspace: @Composable (Boolean) -> Unit = { renderOnly -> workspaceState.SaveableStateProvider(workspaceKey) {
-    Box(Modifier.fillMaxSize().then(if (project == null) Modifier.safeDrawingPadding() else Modifier).then(if (renderOnly) Modifier.clearAndSetSemantics {}.focusProperties { canFocus = false } else Modifier)) {
+    workspaceState.SaveableStateProvider(workspaceKey) {
+    Box(Modifier.fillMaxSize().then(if (project == null) Modifier.safeDrawingPadding() else Modifier)) {
         if (project == null) {
-            Launcher(projects, projectSources, version, !renderOnly && !busy && schema.has("defaults"),
+            Launcher(projects, projectSources, version, !busy && schema.has("defaults"),
                 { useSettings(schema.getJSONObject("defaults")); projectServer = ""; create = true },
                 { choicesBottomSheet = NativeLayout.menuUsesBottomSheet(menuInputSource.value); openFolder.launch(null) },
-                { preferences = true },
+                openSettings,
                 { entry -> action {
                     timeline.request("delete_project", "project" to entry)
                     catalogRevision++
@@ -328,7 +329,7 @@ internal fun ProjectApp(timeline: TimelineSession, files: ProjectFiles, caption:
                     }
                 })
         } else {
-            Editor(timeline, files, project, playback, status, !renderOnly && !busy,
+            Editor(timeline, files, project, playback, status, !busy,
                 onError = { error = it },
                 syncError = event.optString("sync_error").takeUnless { event.isNull("sync_error") },
                 selectFile = { control ->
@@ -344,7 +345,7 @@ internal fun ProjectApp(timeline: TimelineSession, files: ProjectFiles, caption:
                         "" -> Unit
                         "flush" -> files.flush(path)
                         "pick_media" -> { importTarget = defaultTarget(); importFile.launch(arrayOf("*/*")) }
-                        "show_preferences" -> preferences = true
+                        "show_preferences" -> openSettings()
                         "close_workspace" -> closeProject()
                         else -> error("Unknown Android project menu effect: $effect")
                     }
@@ -361,7 +362,7 @@ internal fun ProjectApp(timeline: TimelineSession, files: ProjectFiles, caption:
                         }
                     }
                     finally { finished() }
-                } }, pendingOperation = if (busy) progress else null, renderOnly = renderOnly, windowCaption = caption)
+                } }, pendingOperation = if (busy) progress else null, windowCaption = caption)
         }
         if (busy && project == null) {
             Surface(Modifier.align(Alignment.BottomCenter).fillMaxWidth(), color = MaterialTheme.colorScheme.surfaceContainerHigh, tonalElevation = 4.dp) {
@@ -372,11 +373,7 @@ internal fun ProjectApp(timeline: TimelineSession, files: ProjectFiles, caption:
             }
         }
     }
-    } }
-    if (preferences) PreferencesScreen(timeline, files, {
-        preferences = false
-        catalogRevision++
-    }) { workspace(true) } else workspace(false)
+    }
     versionOpen?.let { request ->
         val dismiss = { versionOpen = null; files.cancelOpen() }
         AlertDialog(onDismissRequest = dismiss, title = { Text(tr("Service Version Mismatch")) },
@@ -528,8 +525,9 @@ private fun Launcher(projects: List<JSONObject>, servers: List<JSONObject>?, ver
         Text(tr("Projects"), Modifier.padding(horizontal = 12.dp), style = MaterialTheme.typography.titleMedium)
         Row(Modifier.padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            OutlinedTextField(search, { search = it }, label = { Text(tr("Search Projects")) },
-                singleLine = true, modifier = Modifier.weight(1f))
+            val searchLabel = tr("Search Projects")
+            OutlinedTextField(search, { search = it }, placeholder = { Text(searchLabel) },
+                singleLine = true, modifier = Modifier.weight(1f).semantics { contentDescription = searchLabel })
             ActionIcon("list-add-symbolic", "Create Project", enabled, action = create)
             ActionIcon("document-open-symbolic", "Open Project", enabled, action = open)
         }
@@ -628,23 +626,22 @@ private fun ActionIcon(icon: String, description: String, enabled: Boolean = tru
 private fun Editor(timeline: TimelineSession, files: ProjectFiles, project: JSONObject, playback: JSONObject, status: JSONObject, enabled: Boolean,
     onError: (String) -> Unit, syncError: String?, selectFile: (JSONObject) -> Unit, command: (String, Array<out Pair<String, Any>>) -> Unit,
     activateProjectMenu: (String) -> Unit, export: () -> Unit, exportVideo: () -> Unit, exportCaptions: () -> Unit, viewChange: (JSONObject, () -> Unit) -> Unit,
-    pendingOperation: String? = null, renderOnly: Boolean = false, windowCaption: WindowCaption = WindowCaption()) {
+    pendingOperation: String? = null, windowCaption: WindowCaption = WindowCaption()) {
     var fullscreen by rememberSaveable(project.getString("path")) { mutableStateOf(false) }
     val inspectorState = rememberSaveableStateHolder()
     val paneDividerSize = remember { NativeLayout.panelDividerWidth().dp }
     val window = checkNotNull(LocalActivity.current).window
-    BackHandler(fullscreen && !renderOnly) { fullscreen = false }
-    DisposableEffect(window, fullscreen, renderOnly) {
-        val immersive = fullscreen && !renderOnly
+    BackHandler(fullscreen) { fullscreen = false }
+    DisposableEffect(window, fullscreen) {
         val controller = checkNotNull(window.insetsController)
         val bars = WindowInsets.Type.systemBars()
         val behavior = controller.systemBarsBehavior
-        if (immersive) {
+        if (fullscreen) {
             controller.systemBarsBehavior = WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
             controller.hide(bars)
         }
         onDispose {
-            if (immersive) {
+            if (fullscreen) {
                 controller.systemBarsBehavior = behavior
                 controller.show(bars)
             }
@@ -664,17 +661,17 @@ private fun Editor(timeline: TimelineSession, files: ProjectFiles, project: JSON
     val inspectSerial = timeline.snapshot.value.optJSONObject("timeline")?.optLong("inspect_serial") ?: 0L
     var inspectOwner by rememberSaveable { mutableStateOf(timeline.identity) }
     var consumedInspectSerial by rememberSaveable { mutableLongStateOf(inspectSerial) }
-    LaunchedEffect(inspectSerial, renderOnly, timeline.identity) {
-        if (!renderOnly && inspectOwner != timeline.identity) {
+    LaunchedEffect(inspectSerial, timeline.identity) {
+        if (inspectOwner != timeline.identity) {
             inspectOwner = timeline.identity
             consumedInspectSerial = inspectSerial
-        } else if (!renderOnly && inspectSerial > consumedInspectSerial) {
+        } else if (inspectSerial > consumedInspectSerial) {
             consumedInspectSerial = inspectSerial
             if (!inspectorOpen) viewChange(JSONObject().put("inspector_visible", true)) {}
         }
     }
-    LaunchedEffect(inspectorOpen, project.getString("path"), renderOnly) {
-        if (!renderOnly) command("inspector_visible", arrayOf("visible" to inspectorOpen, "project_path" to project.getString("path")))
+    LaunchedEffect(inspectorOpen, project.getString("path")) {
+        command("inspector_visible", arrayOf("visible" to inspectorOpen, "project_path" to project.getString("path")))
     }
     val density = LocalDensity.current.density
     val divider = MaterialTheme.colorScheme.outlineVariant
@@ -683,7 +680,7 @@ private fun Editor(timeline: TimelineSession, files: ProjectFiles, project: JSON
     val safeInsets = if (caption.height > 0) systemInsets.exclude(ComposeInsets.captionBar)
         .union(ComposeInsets.statusBars).union(ComposeInsets.displayCutout) else systemInsets
     BoxWithConstraints(Modifier.fillMaxSize().windowInsetsPadding(safeInsets).background(MaterialTheme.colorScheme.background)
-        .fileDropTarget(timeline, files, project.getString("path").takeUnless { renderOnly }, false, onError)) {
+        .fileDropTarget(timeline, files, project.getString("path"), false, onError)) {
         val availableWidth = maxWidth.value
         val minInspectorWidth = remember { NativeLayout.inspectorMinWidth() }
         val maxInspectorWidth = NativeLayout.inspectorMaxWidth(availableWidth)
@@ -693,7 +690,7 @@ private fun Editor(timeline: TimelineSession, files: ProjectFiles, project: JSON
         val toolSize = if (compact) 40.dp else 48.dp
         val toolIconSize = if (compact) 14.dp else 16.dp
         Column(Modifier.fillMaxSize()) {
-            if (!fullscreen) WindowCaptionHeader(caption, interactive = !renderOnly,
+            if (!fullscreen) WindowCaptionHeader(caption,
                 left = { modifier, targetSize -> Row(modifier) {
                     IconToggleButton(checked = inspectorOpen, onCheckedChange = { viewChange(JSONObject().put("inspector_visible", it)) {} }, enabled = enabled, modifier = Modifier.size(targetSize)) {
                         Icon(iconVector("dock-left-symbolic"), tr("Toggle Inspector"), Modifier.size(16.dp))
@@ -784,7 +781,7 @@ private fun Editor(timeline: TimelineSession, files: ProjectFiles, project: JSON
                                     }
                                     Box(Modifier.weight(1f).fillMaxHeight()) {
                                         NativeSurface(timeline, Modifier.fillMaxSize()
-                                            .fileDropTarget(timeline, files, project.getString("path").takeUnless { renderOnly }, true, onError))
+                                            .fileDropTarget(timeline, files, project.getString("path"), true, onError))
                                         CanvasButtonIndication(timeline)
                                     }
                                 }

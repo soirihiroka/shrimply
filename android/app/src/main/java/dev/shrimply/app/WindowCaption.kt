@@ -49,7 +49,7 @@ private fun captionSpan(header: Rect, controls: List<Rect>): Rect {
 /** Only the two real action groups claim caption input. Empty space keeps native window dragging. */
 @Composable
 @OptIn(ExperimentalMaterial3Api::class)
-internal fun WindowCaptionHeader(caption: WindowCaption, interactive: Boolean,
+internal fun WindowCaptionHeader(caption: WindowCaption,
     left: @Composable (Modifier, Dp) -> Unit, right: @Composable (Modifier, Dp) -> Unit) {
     val view = LocalView.current
     val density = LocalDensity.current
@@ -67,14 +67,12 @@ internal fun WindowCaptionHeader(caption: WindowCaption, interactive: Boolean,
         update(Rect(ceil(rect.left).toInt(), ceil(rect.top).toInt(), floor(rect.right).toInt(), floor(rect.bottom).toInt()))
     }
     SideEffect {
-        if (interactive) {
-            val location = IntArray(2)
-            view.getLocationInWindow(location)
-            view.systemGestureExclusionRects = if (!integrated) emptyList() else listOf(leftBounds, rightBounds)
-                .mapNotNull { source -> Rect(source).takeIf { it.intersect(span) && !it.isEmpty }?.apply { offset(-location[0], -location[1]) } }
-        }
+        val location = IntArray(2)
+        view.getLocationInWindow(location)
+        view.systemGestureExclusionRects = if (!integrated) emptyList() else listOf(leftBounds, rightBounds)
+            .mapNotNull { source -> Rect(source).takeIf { it.intersect(span) && !it.isEmpty }?.apply { offset(-location[0], -location[1]) } }
     }
-    DisposableEffect(view, interactive) { onDispose { if (interactive) view.systemGestureExclusionRects = emptyList() } }
+    DisposableEffect(view) { onDispose { view.systemGestureExclusionRects = emptyList() } }
     Box(Modifier.fillMaxWidth().height(height).then(capture { bounds = it })) {
         // Wait for real coordinates before putting controls beside the system's own controls.
         if (!integrated || !bounds.isEmpty) CompositionLocalProvider(

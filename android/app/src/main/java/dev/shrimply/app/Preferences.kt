@@ -3,14 +3,15 @@ package dev.shrimply.app
 import android.app.Activity
 import android.content.Intent
 import android.graphics.Typeface
+import android.os.Bundle
 import android.provider.DocumentsContract
-import androidx.activity.BackEventCompat
-import androidx.activity.compose.PredictiveBackHandler
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -25,23 +26,22 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.repeatOnLifecycle
+import androidx.lifecycle.viewModelScope
+import androidx.window.embedding.SplitAttributes
+import androidx.window.embedding.SplitController
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.isActive
@@ -52,237 +52,213 @@ import kotlinx.coroutines.sync.withLock
 import org.json.JSONObject
 import java.io.File
 
-private const val RootPage = "preferences:root"
-private const val BackScale = 0.1f
-private const val BackAnimationMillis = 180
-private val BackTranslation = 24.dp
+class SettingsDetailActivity : SettingsActivity()
 
-@Composable
-internal fun PreferencesScreen(timeline: TimelineSession, files: ProjectFiles, dismiss: () -> Unit, workspace: @Composable () -> Unit) {
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    var description by remember { mutableStateOf<JSONObject?>(null) }
-    var failure by remember { mutableStateOf<String?>(null) }
-    var busy by remember { mutableStateOf(false) }
-    var page by rememberSaveable { mutableStateOf<String?>(null) }
-    var section by rememberSaveable { mutableStateOf<String?>(null) }
-    var pendingSource by rememberSaveable { mutableStateOf<String?>(null) }
-    var deliveredSource by rememberSaveable { mutableStateOf<String?>(null) }
-    val pages = rememberSaveableStateHolder()
-    val progress = remember { Animatable(0f) }
-    var edge by remember { mutableIntStateOf(BackEventCompat.EDGE_LEFT) }
-    var backPage by remember { mutableStateOf<String?>(null) }
-    val requests = remember { Mutex() }
-    suspend fun request(command: JSONObject) = requests.withLock {
-        val interactive = command.optString("action") !in listOf("font_visible", "font_search")
-        if (interactive) busy = true
-        try {
-            val result = timeline.request("preferences", *command.keys().asSequence().map { it to command.get(it) }.toList().toTypedArray())
-            description = result
-            if (result.has("show_in_files")) files.showInFiles(result.getString("show_in_files"))
-            if (interactive) failure = null
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (error: Exception) {
-            failure = error.message
-        } finally {
-            if (interactive) busy = false
+open class SettingsActivity : ComponentActivity() {
+    private var editor: EditorModel? = null
+    private val home get() = this !is SettingsDetailActivity
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        val model = EditorModel.forTask(taskId) ?: run { finish(); return }
+        editor = model
+        enableEdgeToEdge()
+        val splits = SplitController.getInstance(this).splitInfoList(this)
+        val category = intent.getStringExtra("category")
+        val section = intent.getStringExtra("section")
+        val fontPicker = intent.getLongExtra("font_picker", 0)
+        setContent {
+            val colors = if (isSystemInDarkTheme()) dynamicDarkColorScheme(this)
+                else dynamicLightColorScheme(this)
+            val splitInfo by splits.collectAsState(initial = emptyList())
+            val split = splitInfo.any { it.splitAttributes.splitType != SplitAttributes.SplitType.SPLIT_TYPE_EXPAND }
+            MaterialTheme(colorScheme = colors) {
+                MenuInputScope(remember { mutableStateOf("touch") }) {
+                    PreferencesScreen(model, split, category, section, fontPicker)
+                }
+            }
         }
     }
-    val send: (JSONObject) -> Unit = { command -> scope.launch { request(command) } }
-    val sourcePicker = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-        val source = pendingSource?.let(::JSONObject)
-        pendingSource = null
-        if (source != null) scope.launch {
-            val uri = result.data?.data?.takeIf { result.resultCode == Activity.RESULT_OK }
-            if (uri == null) request(source.getJSONObject("cancel"))
-            else try {
-                request(JSONObject(source.getJSONObject("complete").toString())
-                    .put("path", files.sourcePath(uri) ?: JSONObject.NULL))
-            } catch (error: Exception) { failure = error.message }
-        }
+
+    private fun openPage(category: String, section: String? = null, fontPicker: Long = 0) {
+        startActivity(Intent(this, SettingsDetailActivity::class.java)
+            .putExtra("category", category).putExtra("section", section).putExtra("font_picker", fontPicker))
     }
-    val source = description?.optJSONObject("source_picker")
-    LaunchedEffect(source?.getString("id")) {
-        val picker = source ?: return@LaunchedEffect
-        if (deliveredSource == picker.getString("id")) return@LaunchedEffect
-        deliveredSource = picker.getString("id")
-        pendingSource = picker.toString()
-        val folder = picker.getBoolean("folder")
-        val intent = Intent(if (folder) Intent.ACTION_OPEN_DOCUMENT_TREE else Intent.ACTION_OPEN_DOCUMENT)
-            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            .putExtra(Intent.EXTRA_TITLE, picker.getString("title"))
-            .putExtra(DocumentsContract.EXTRA_INITIAL_URI, ProjectDocumentsProvider.directoryUri(context, File(context.filesDir, "projects")))
-        if (!folder) intent.addCategory(Intent.CATEGORY_OPENABLE).type = "*/*"
-        sourcePicker.launch(intent)
-    }
-    LaunchedEffect(timeline.identity) {
-        try { timeline.request("inspector_visible", "visible" to false) }
-        catch (error: Exception) { failure = error.message }
-        while (isActive) {
-            requests.withLock {
+
+    override fun onDestroy() {
+        val fontPicker = intent.getLongExtra("font_picker", 0)
+        if (isFinishing && (home || fontPicker != 0L)) editor?.let { model ->
+            model.viewModelScope.launch {
                 try {
-                    description = timeline.request("preferences_schema")
+                    if (home) model.timeline.request("preferences", "action" to "preferences_close")
+                    else model.timeline.request("preferences", "action" to "font_close", "picker" to fontPicker)
                 } catch (cancelled: CancellationException) {
                     throw cancelled
                 } catch (error: Exception) {
-                    failure = error.message
+                    android.util.Log.w("Shrimply", "Could not close Settings", error)
                 }
             }
-            delay(1_000)
         }
+        super.onDestroy()
     }
-    val model = description
-    val groups = model?.getJSONArray("controls")?.objects().orEmpty()
-    val title = model?.getString("title") ?: tr("Settings")
-    val backLabel = model?.getString("back_label") ?: tr("Back")
-    val font = model?.optJSONObject("font_picker")
-    val shift = with(LocalDensity.current) { BackTranslation.toPx() }
-    val colors = MaterialTheme.colorScheme
 
-    BoxWithConstraints(Modifier.fillMaxSize().background(colors.surfaceContainer)) {
-        val wide = model != null && maxWidth >= model.getInt("wide_width").dp
-        val category = groups.firstOrNull { it.getString("id") == page }
-            ?: groups.firstOrNull().takeIf { wide }
-        val sections = category?.getJSONArray("controls")?.objects().orEmpty()
-        val detail = sections.firstOrNull { it.getString("id") == section }
-        val back: suspend () -> Unit = {
-            when {
-                font != null -> request(font.getJSONObject("close"))
-                detail != null -> section = null
-                category != null && !wide -> page = null
-                else -> {
-                    model?.optJSONObject("close_command")?.let { request(it) }
-                    dismiss()
-                }
-            }
-        }
-        val stack = buildList {
-            if (!wide || category == null) add(RootPage to model)
-            category?.let { add(it.getString("id") to it) }
-            detail?.let { add(it.getString("id") to it) }
-            font?.let { add(it.getString("id") to it) }
-        }
-        val swiping = progress.value > 0f && backPage == stack.last().first
-        val leavingSettings = swiping && stack.size == 1
-        val transform = Modifier.graphicsLayer {
-            val fraction = progress.value
-            scaleX = 1f - BackScale * fraction
-            scaleY = scaleX
-            translationX = shift * fraction * if (edge == BackEventCompat.EDGE_LEFT) 1f else -1f
-        }
-
-        val categories: @Composable (Boolean) -> Unit = { active ->
-            SettingsGroup(modifier = Modifier.selectableGroup()) {
-                groups.forEach { group ->
-                    val id = group.getString("id")
-                    val selected = wide && id == category?.getString("id")
-                    SettingsRow(group.getString("label"), group.getString("summary"), active,
-                        modifier = Modifier
-                            .then(if (selected) Modifier.background(colors.secondaryContainer) else Modifier)
-                            .selectable(selected = selected, enabled = active, role = Role.Button) {
-                                scope.launch {
-                                    font?.let { request(it.getJSONObject("close")) }
-                                    page = id
-                                    section = null
-                                }
-                            },
-                        leading = { SettingsIcon(group.getString("icon"), group.getString("color")) })
-                }
-            }
-        }
-        val controls: @Composable (List<JSONObject>, Boolean) -> Unit = { entries, enabled ->
-            entries.forEach { control ->
-                key(control.getString("id")) {
-                    InspectorControl(timeline, control, enabled, send,
-                        { error("Preference file controls require a native picker command") }, settings = true)
-                }
-            }
-        }
-        val content: @Composable (Boolean) -> Unit = { animatePage ->
-            stack.forEachIndexed { index, (id, document) ->
-                val active = index == stack.lastIndex
-                if (active || (swiping && index == stack.lastIndex - 1)) pages.SaveableStateProvider(id) {
-                    val root = id == RootPage
-                    val fonts = document === font && font != null
-                    val enabled = active && !busy
-                    val modifier = when {
-                        !active -> Modifier.clearAndSetSemantics {}.focusProperties { canFocus = false }
-                        animatePage && swiping -> transform
-                        else -> Modifier
-                    }
-                    PreferencesPage(
-                        title = when {
-                            root -> title
-                            fonts -> document!!.getString("title")
-                            else -> document!!.getString("label")
-                        },
-                        modifier = modifier,
-                        backLabel = backLabel,
-                        back = if (!wide && active) ({ scope.launch { back() } }) else null,
-                        backEnabled = enabled,
-                        scrollable = !fonts,
-                    ) {
-                        if (active) failure?.let { Text(it, Modifier.padding(horizontal = 16.dp), color = colors.error) }
-                        when {
-                            document == null -> LinearProgressIndicator(Modifier.fillMaxWidth())
-                            root -> categories(enabled)
-                            fonts -> FontPreferences(document, enabled, send)
-                            document === detail -> {
-                                val (actions, rows) = document.getJSONArray("controls").objects()
-                                    .partition { it.optBoolean("standalone") }
-                                actions.forEach { action -> SettingsGroup { controls(listOf(action), enabled) } }
-                                if (rows.isNotEmpty()) SettingsGroup { controls(rows, enabled) }
-                            }
-                            sections.size <= 1 -> controls(sections, enabled)
-                            else -> SettingsGroup {
-                                sections.forEach { entry ->
-                                    SettingsRow(entry.getString("label"), enabled = enabled,
-                                        modifier = Modifier.clickable(enabled = enabled, role = Role.Button) {
-                                            page = id
-                                            section = entry.getString("id")
-                                        },
-                                        trailing = { Icon(iconVector("go-next-symbolic"), null, Modifier.size(16.dp)) })
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        if (leavingSettings) workspace()
-        Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) {
-            if (wide && category != null) {
-                Row(Modifier.fillMaxSize().then(if (leavingSettings) transform else Modifier)) {
-                    pages.SaveableStateProvider(RootPage) {
-                        PreferencesPage(title, Modifier.weight(0.36f), containerColor = colors.surface) {
-                            categories(!busy)
-                        }
-                    }
-                    Box(Modifier.weight(0.64f).fillMaxHeight()) { content(!leavingSettings) }
-                }
-            } else content(true)
-        }
-        PredictiveBackHandler {
-            backPage = stack.last().first
+    @Composable
+    private fun PreferencesScreen(model: EditorModel, split: Boolean, categoryId: String?, sectionId: String?, fontPicker: Long) {
+        val fontPage = fontPicker != 0L
+        val lifecycleState by lifecycle.currentStateFlow.collectAsState()
+        val handlesPrompts = !home && lifecycleState == Lifecycle.State.RESUMED
+        val timeline = model.timeline
+        val files = model.projects
+        val context = LocalContext.current
+        val scope = rememberCoroutineScope()
+        var description by remember { mutableStateOf<JSONObject?>(null) }
+        var failure by remember { mutableStateOf<String?>(null) }
+        var busy by remember { mutableStateOf(false) }
+        var pendingSource by rememberSaveable { mutableStateOf<String?>(null) }
+        var deliveredSource by rememberSaveable { mutableStateOf<String?>(null) }
+        val requests = remember { Mutex() }
+        suspend fun request(command: JSONObject) = requests.withLock {
+            val interactive = command.optString("action") !in listOf("font_visible", "font_search")
+            if (interactive) busy = true
             try {
-                it.collect { event -> edge = event.swipeEdge; progress.snapTo(event.progress) }
-                if (progress.value > 0f) progress.animateTo(1f, tween(BackAnimationMillis))
-                back()
-                progress.snapTo(0f)
+                val result = timeline.request("preferences", *command.keys().asSequence().map { it to command.get(it) }.toList().toTypedArray())
+                description = result
+                if (result.has("show_in_files")) files.showInFiles(result.getString("show_in_files"))
+                if (interactive) failure = null
+                true
             } catch (cancelled: CancellationException) {
-                withContext(NonCancellable) { progress.animateTo(0f, tween(BackAnimationMillis)) }
                 throw cancelled
+            } catch (error: Exception) {
+                failure = error.message
+                false
             } finally {
-                backPage = null
+                if (interactive) busy = false
             }
         }
-    }
-    model?.optJSONObject("dialog")?.let { dialog ->
-        val close = { send(dialog.getJSONObject("command")) }
-        AlertDialog(onDismissRequest = close, title = { Text(dialog.getString("title")) },
-            text = { Text(dialog.getString("body")) },
-            confirmButton = { TextButton(onClick = close) { Text(dialog.getString("close_label")) } })
+        val send: (JSONObject) -> Unit = { command ->
+            scope.launch {
+                if (request(command) && command.optString("action") == "font_open") {
+                    val picker = description?.optJSONObject("font_picker")?.getJSONObject("close")?.getLong("picker")
+                    val page = categoryId ?: model.settingsCategory
+                    if (page != null && picker != null) openPage(page, sectionId, picker)
+                }
+            }
+        }
+        val sourcePicker = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+            val source = pendingSource?.let(::JSONObject)
+            pendingSource = null
+            if (source != null) scope.launch {
+                val uri = result.data?.data?.takeIf { result.resultCode == Activity.RESULT_OK }
+                if (uri == null) request(source.getJSONObject("cancel"))
+                else try {
+                    request(JSONObject(source.getJSONObject("complete").toString())
+                        .put("path", files.sourcePath(uri) ?: JSONObject.NULL))
+                } catch (error: Exception) { failure = error.message }
+            }
+        }
+        val source = description?.optJSONObject("source_picker").takeIf { handlesPrompts }
+        LaunchedEffect(source?.getString("id")) {
+            val picker = source ?: return@LaunchedEffect
+            if (deliveredSource == picker.getString("id")) return@LaunchedEffect
+            deliveredSource = picker.getString("id")
+            pendingSource = picker.toString()
+            val folder = picker.getBoolean("folder")
+            val intent = Intent(if (folder) Intent.ACTION_OPEN_DOCUMENT_TREE else Intent.ACTION_OPEN_DOCUMENT)
+                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                .putExtra(Intent.EXTRA_TITLE, picker.getString("title"))
+                .putExtra(DocumentsContract.EXTRA_INITIAL_URI, ProjectDocumentsProvider.directoryUri(context, File(context.filesDir, "projects")))
+            if (!folder) intent.addCategory(Intent.CATEGORY_OPENABLE).type = "*/*"
+            sourcePicker.launch(intent)
+        }
+        LaunchedEffect(timeline.identity) {
+            lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                while (isActive) {
+                    requests.withLock {
+                        try {
+                            description = timeline.request("preferences_schema")
+                        } catch (cancelled: CancellationException) {
+                            throw cancelled
+                        } catch (error: Exception) {
+                            failure = error.message
+                        }
+                    }
+                    delay(1_000)
+                }
+            }
+        }
+        val document = description
+        val pages = document?.getJSONArray("controls")?.objects().orEmpty()
+        val category = if (home) null else pages.firstOrNull { it.getString("id") == categoryId }
+            ?: pages.firstOrNull()
+        val sections = category?.getJSONArray("controls")?.objects().orEmpty()
+        val detail = sections.firstOrNull { it.getString("id") == sectionId }
+        val font = document?.optJSONObject("font_picker")?.takeIf {
+            fontPage && it.getJSONObject("close").getLong("picker") == fontPicker
+        }
+        LaunchedEffect(document != null, font != null) {
+            if (fontPage && document != null && font == null) finish()
+        }
+        val title = font?.getString("title") ?: (detail ?: category)?.getString("label")
+            ?: document?.getString("title") ?: tr("Settings")
+        val background = if (home && split) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.surfaceContainer
+        val enabled = !busy
+        if (category != null) SideEffect { model.settingsCategory = category.getString("id") }
+        val controls: @Composable (List<JSONObject>) -> Unit = { entries ->
+            entries.forEach { control -> key(control.getString("id")) {
+                InspectorControl(timeline, control, enabled, send,
+                    { error("Preference file controls require a native picker command") }, settings = true)
+            } }
+        }
+        Surface(Modifier.fillMaxSize(), color = background) {
+            PreferencesPage(
+                title = title,
+                modifier = Modifier.windowInsetsPadding(WindowInsets.safeDrawing),
+                backLabel = document?.getString("back_label") ?: tr("Back"),
+                back = if (split) null else ::finish,
+                backEnabled = enabled,
+                scrollable = !fontPage,
+                containerColor = background,
+            ) {
+                failure?.let { Text(it, Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.error) }
+                when {
+                    document == null || fontPage && font == null -> LinearProgressIndicator(Modifier.fillMaxWidth())
+                    font != null -> FontPreferences(font, enabled, send)
+                    home -> SettingsGroup(modifier = Modifier.selectableGroup()) {
+                        pages.forEach { page ->
+                            val id = page.getString("id")
+                            val selected = split && id == model.settingsCategory
+                            SettingsRow(page.getString("label"), page.getString("summary"), enabled,
+                                modifier = Modifier
+                                    .then(if (selected) Modifier.background(MaterialTheme.colorScheme.secondaryContainer) else Modifier)
+                                    .selectable(selected = selected, enabled = enabled, role = Role.Button) { openPage(id) },
+                                leading = { SettingsIcon(page.getString("icon"), page.getString("color")) })
+                        }
+                    }
+                    detail != null -> {
+                        val (actions, rows) = detail.getJSONArray("controls").objects().partition { it.optBoolean("standalone") }
+                        actions.forEach { action -> SettingsGroup { controls(listOf(action)) } }
+                        if (rows.isNotEmpty()) SettingsGroup { controls(rows) }
+                    }
+                    sections.size <= 1 -> controls(sections)
+                    else -> SettingsGroup {
+                        val categoryKey = checkNotNull(category).getString("id")
+                        sections.forEach { section ->
+                            SettingsRow(section.getString("label"), enabled = enabled,
+                                modifier = Modifier.clickable(enabled = enabled, role = Role.Button) {
+                                    openPage(categoryKey, section.getString("id"))
+                                },
+                                trailing = { Icon(iconVector("go-next-symbolic"), null, Modifier.size(16.dp)) })
+                        }
+                    }
+                }
+            }
+        }
+        document?.optJSONObject("dialog").takeIf { handlesPrompts }?.let { dialog ->
+            val close = { send(dialog.getJSONObject("command")) }
+            AlertDialog(onDismissRequest = close, title = { Text(dialog.getString("title")) },
+                text = { Text(dialog.getString("body")) },
+                confirmButton = { TextButton(onClick = close) { Text(dialog.getString("close_label")) } })
+        }
     }
 }
 

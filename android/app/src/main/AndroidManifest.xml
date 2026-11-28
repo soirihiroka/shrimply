@@ -19,7 +19,10 @@
         <provider android:name="androidx.core.content.FileProvider" android:authorities="${applicationId}.preview-images" android:exported="false" android:grantUriPermissions="true">
             <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/preview_paths" />
         </provider>
+        <property android:name="android.window.PROPERTY_ACTIVITY_EMBEDDING_SPLITS_ENABLED" android:value="true" />
         <profileable android:shell="true" />
+        <activity android:name=".SettingsActivity" android:exported="false" android:windowSoftInputMode="adjustResize" />
+        <activity android:name=".SettingsDetailActivity" android:exported="false" android:windowSoftInputMode="adjustResize" />
         <activity android:name=".MainActivity" android:exported="true" android:launchMode="singleTop" android:resizeableActivity="true" android:windowSoftInputMode="adjustResize" android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

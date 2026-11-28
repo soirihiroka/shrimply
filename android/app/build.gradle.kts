@@ -53,6 +53,7 @@ dependencies {
     }
     implementation(verifierVersion.map { "org.rustls:rustls-platform-verifier:$it" })
     implementation("androidx.activity:activity-compose:1.13.0")
+    implementation("androidx.window:window:1.5.0")
     implementation("androidx.compose.foundation:foundation:1.12.1")
     implementation("androidx.compose.material3:material3:1.4.0")
 }
