@@ -11,7 +11,9 @@ use shrimply_preview_render_core::playback::toolbar as preview_toolbar;
 use shrimply_project_document::project::{self, CanvasSize};
 use std::cell::RefCell;
 use std::path::PathBuf;
-use std::sync::mpsc::{Receiver, TryRecvError};
+use std::sync::mpsc::Receiver;
+#[cfg(windows)]
+use std::sync::mpsc::TryRecvError;
 
 #[cxx_qt::bridge]
 pub mod qobject {
