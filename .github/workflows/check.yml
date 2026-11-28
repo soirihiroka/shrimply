@@ -15,6 +15,9 @@ on:
       cache:
         type: boolean
         default: false
+      warm:
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -152,9 +155,25 @@ jobs:
           persist-credentials: false
           submodules: recursive
       - uses: ./.github/actions/setup-macos
+        id: setup
         with:
           profile: release
-      - name: Inspect restored compiled dependencies
+      - name: Measure reused compiler artifacts
+        env:
+          EXPECT_WARM: ${{ inputs.warm }}
         run: |
-          test -d target/release/.fingerprint
-          find target/release/.fingerprint -mindepth 1 -maxdepth 1 -type d | wc -l
+          if [[ "$EXPECT_WARM" == true ]]; then
+            test -d target/release/.fingerprint
+            echo '// Changed source with unchanged dependencies.' >> vendor/aac/src/lib.rs
+          fi
+          make -s test DEV_BUILD_ENV='$(APPKIT_BUILD_ENV)' ARGS='--locked --release -p shrimply-aac --example encode --no-run --message-format=json' > compile.jsonl
+          jq -s '[.[] | select(.reason? == "compiler-artifact") | {name: .target.name, fresh}]' compile.jsonl
+          if [[ "$EXPECT_WARM" == true ]]; then
+            jq -s -e '[.[] | select(.reason? == "compiler-artifact" and .target.name != "encode" and .target.name != "shrimply_aac")] | length > 0 and all(.fresh == true)' compile.jsonl
+            jq -s -e 'any(.[]; .reason? == "compiler-artifact" and .target.name == "shrimply_aac" and .fresh == false)' compile.jsonl
+          fi
+      - uses: actions/cache/save@v6
+        if: '!inputs.warm && steps.setup.outputs.application-hit != '"'"'true'"'"''
+        with:
+          path: target/release
+          key: ${{ steps.setup.outputs.application-key }}
