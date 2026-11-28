@@ -33,7 +33,11 @@ pub mod qobject {
 
         #[qinvokable]
         #[cxx_name = "manageListedProject"]
-        fn manage_listed_project(self: Pin<&mut LauncherBackend>, key: &QString, delete: bool);
+        fn manage_listed_project(
+            self: Pin<&mut LauncherBackend>,
+            key: &QString,
+            remove_project: bool,
+        );
 
         #[qinvokable]
         #[cxx_name = "projectServers"]
@@ -119,13 +123,13 @@ impl qobject::LauncherBackend {
         shrimply_i18n_qt::text(&key.to_string())
     }
 
-    pub fn manage_listed_project(self: Pin<&mut Self>, key: &QString, delete: bool) {
+    pub fn manage_listed_project(self: Pin<&mut Self>, key: &QString, remove_project: bool) {
         let Some(project) = self.core.project_by_key(&key.to_string()).cloned() else {
             return;
         };
         let qt_thread = self.qt_thread();
         std::thread::spawn(move || {
-            let (heading, result) = if delete {
+            let (heading, result) = if remove_project {
                 (
                     "Could not delete project",
                     launcher::delete_project(&project),
@@ -140,7 +144,7 @@ impl qobject::LauncherBackend {
                 )
             };
             let _ = qt_thread.queue(move |backend| match result {
-                Ok(()) if delete => backend.reload_projects(),
+                Ok(()) if remove_project => backend.reload_projects(),
                 Ok(()) => (),
                 Err(error) => backend.emit_error(heading, &error),
             });
