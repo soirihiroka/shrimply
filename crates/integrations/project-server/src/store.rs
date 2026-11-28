@@ -276,6 +276,7 @@ impl Store {
                 .values()
                 .map(|(_, presence)| presence.clone())
                 .collect(),
+            server_version: None,
         };
         if joined {
             self.record_access(id)?;

@@ -19,6 +19,7 @@ shrimply-media-import = { workspace = true, optional = true }
 shrimply-asset.workspace = true
 shrimply-tts.workspace = true
 shrimply-project-document = { workspace = true, features = ["editor"] }
+shrimply-project-protocol.workspace = true
 shrimply-timeline-edit = { workspace = true }
 shrimply-visual-modifiers.workspace = true
 uuid = { workspace = true, features = ["serde"] }

@@ -6389,6 +6389,7 @@ dependencies = [
  "shrimply-media-info",
  "shrimply-path-core",
  "shrimply-project-document",
+ "shrimply-project-protocol",
  "shrimply-property-model",
  "shrimply-timeline-edit",
  "shrimply-tts",

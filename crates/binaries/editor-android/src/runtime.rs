@@ -823,25 +823,30 @@ impl Runtime {
         let revision = self.backend.revision;
         let changed = self.backend.changed();
         #[cfg(target_os = "android")]
-        let sync_changed = if let Some(editor) = &self.attachment {
+        let (sync_changed, version_notice) = if let Some(editor) = &self.attachment {
             let history = shrimply_project_document::history_revision();
             let player = player::snapshot(&self.player);
-            editor.poll();
+            let notice = editor.poll();
             if shrimply_project_document::history_revision() != history {
                 self.backend.revision += 1;
             }
             let error = editor.sync_error();
             let changed = self.sync_error != error || player::snapshot(&self.player) != player;
             self.sync_error = error;
-            changed
+            (changed, notice)
         } else {
-            false
+            (false, None)
         };
         #[cfg(not(target_os = "android"))]
-        let sync_changed = false;
+        let (sync_changed, version_notice) = (false, None);
         let after = self.synchronize_lifecycle()?;
         let changed = changed.map(|value| {
-            value || before || after || sync_changed || revision != self.backend.revision
+            value
+                || before
+                || after
+                || sync_changed
+                || version_notice.is_some()
+                || revision != self.backend.revision
         });
         if !matches!(changed, Ok(false)) {
             if revision != self.backend.revision {
@@ -849,7 +854,7 @@ impl Runtime {
             }
             self.status = serde_json::to_string(&self.backend.snapshot()?)
                 .map_err(|error| error.to_string())?;
-            self.error = changed.as_ref().err().cloned();
+            self.error = version_notice.or_else(|| changed.as_ref().err().cloned());
         }
         #[cfg(target_os = "android")]
         if let Some(error) = self.audio.as_ref().and_then(|audio| audio.take_failure()) {

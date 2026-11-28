@@ -175,6 +175,8 @@ pub struct SessionState {
     pub participants: Vec<Presence>,
     pub sync_error: Option<String>,
     pub server_connected: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server_version: Option<shrimply_project_protocol::ServerVersion>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

@@ -286,6 +286,14 @@ fn build_ui(window: &adw::ApplicationWindow, project: project::Project) {
             let dialog = adw::AlertDialog::new(Some("Audio playback stopped"), Some(&error));
             dialog.present(Some(&polling_window));
         }
+        if let Some(notice) = update.version_notice {
+            let dialog = adw::AlertDialog::new(
+                Some(tr!("Service Version Mismatch").as_ref()),
+                Some(&notice),
+            );
+            dialog.add_response("close", tr!("Close").as_ref());
+            dialog.present(Some(&polling_window));
+        }
         if let Some(next) = update.title {
             title.set_label(&next.text);
             title.set_tooltip_text(next.save_error.as_deref());

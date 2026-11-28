@@ -17,7 +17,7 @@ use shrimply_project_protocol::PublishRequest;
 
 use crate::{
     ChangeRequest, MediaBlob, MediaCache, Presence, ProjectClient, ProjectVersion, RequestError,
-    SyncRequest,
+    ServerVersion, SyncRequest,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
@@ -31,6 +31,7 @@ pub struct WorkspaceUpdate {
     pub draft_changed: bool,
     pub participants: Vec<Presence>,
     pub conflict: Option<String>,
+    pub server_version: Option<ServerVersion>,
 }
 
 /// Durable working state for a shared project on this device.
@@ -455,6 +456,7 @@ impl SharedWorkspace {
             draft_changed,
             participants: update.participants,
             conflict,
+            server_version: update.server_version,
         })
     }
 

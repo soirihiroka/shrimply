@@ -61,6 +61,7 @@ presence = [{"id": str(uuid4()), "name": name, "position": position}
 request("POST", project + "/sync", alice, data={"revision": 0, "presence": presence[0]})
 seen_by_bob = request("POST", project + "/sync", bob, data={"revision": 0, "presence": presence[1]})
 assert presence[0] in seen_by_bob["participants"] and seen_by_bob["version"] is None
+assert seen_by_bob["server_version"] == request("GET", "")
 
 media = b"project audio segment"
 digest = hashlib.sha256(media).hexdigest()

@@ -283,6 +283,7 @@ define_class!(
                 session.poll()
             };
             if let Some(error) = update.audio_playback_stopped { self.show_error(&error); }
+            if let Some(notice) = update.version_notice { self.show_error(&notice); }
             if let Some(title) = update.title { self.ivars().window.get().expect("window installed").setTitle(&NSString::from_str(&title.text)); }
         }
 

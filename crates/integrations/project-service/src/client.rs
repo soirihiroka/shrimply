@@ -240,6 +240,7 @@ impl ProjectClient {
         Ok(SyncResponse {
             version: reply.version.map(decode_version).transpose()?,
             participants: reply.participants,
+            server_version: reply.server_version,
         })
     }
 
