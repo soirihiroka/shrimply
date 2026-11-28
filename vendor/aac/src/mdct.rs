@@ -66,32 +66,27 @@ struct Transform {
 
 impl Transform {
     fn new(size: usize, alpha: f64, planner: &mut FftPlanner<f32>) -> Self {
-        let fft = planner.plan_fft_forward(2 * size);
+        let fft = planner.plan_fft_forward(size / 2);
         let scratch = vec![Complex32::ZERO; fft.get_inplace_scratch_len()];
         let length = size as f64;
         let rotation = |phase: f64, gain: f64| {
             let (sin, cos) = phase.sin_cos();
             Complex32::new((gain * cos) as f32, (gain * sin) as f32)
         };
-        // A half-bin FFT shift followed by the MDCT's half-window phase shift.
-        let input_rotation = (0..2 * size)
-            .map(|n| rotation(-PI * n as f64 / (2.0 * length), 1.0))
+        // Pack the even and reversed odd DCT-IV samples into a half-size FFT.
+        let input_rotation = (0..size / 2)
+            .map(|n| rotation(-PI * n as f64 / length, 1.0))
             .collect();
-        let output_rotation = (0..size)
-            .map(|k| {
-                // AAC's factor of two and the conversion from normalized PCM.
-                rotation(
-                    -PI * (k as f64 + 0.5) * (0.5 + length / 2.0) / length,
-                    65536.0,
-                )
-            })
+        let output_rotation = (0..size / 2)
+            // AAC's factor of two and conversion from normalized PCM.
+            .map(|k| rotation(-PI * (k as f64 + 0.25) / length, 65536.0))
             .collect();
         Self {
             fft,
             window: kbd_window(size, alpha),
             input_rotation,
             output_rotation,
-            spectrum: vec![Complex32::ZERO; 2 * size],
+            spectrum: vec![Complex32::ZERO; size / 2],
             scratch,
         }
     }
@@ -104,20 +99,31 @@ impl Transform {
         lines: &mut [f32],
     ) {
         let window = window.unwrap_or(&self.window);
-        for (bin, ((sample, amplitude), rotation)) in self
+        let size = lines.len();
+        let sample = |n: usize| samples[n][channel] * window[n];
+        // Fold the second and third quarters with the MDCT's cosine symmetry.
+        let fold = |n: usize| {
+            let reversed = sample(3 * size / 2 - 1 - n);
+            if n < size / 2 {
+                -reversed - sample(3 * size / 2 + n)
+            } else {
+                sample(n - size / 2) - reversed
+            }
+        };
+        for (n, (bin, rotation)) in self
             .spectrum
             .iter_mut()
-            .zip(samples.iter().zip(window).zip(&self.input_rotation))
+            .zip(&self.input_rotation)
+            .enumerate()
         {
-            *bin = rotation * (sample[channel] * amplitude);
+            *bin = Complex32::new(fold(2 * n), fold(size - 1 - 2 * n)) * rotation;
         }
         self.fft
             .process_with_scratch(&mut self.spectrum, &mut self.scratch);
-        for (line, (bin, rotation)) in lines
-            .iter_mut()
-            .zip(self.spectrum.iter().zip(&self.output_rotation))
-        {
-            *line = (bin * rotation).re;
+        for (k, (bin, rotation)) in self.spectrum.iter().zip(&self.output_rotation).enumerate() {
+            let value = bin * rotation;
+            lines[2 * k] = value.re;
+            lines[size - 1 - 2 * k] = -value.im;
         }
     }
 }
@@ -172,4 +178,43 @@ pub(crate) fn transient(
         }
     }
     attack
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn folded_fft_matches_the_direct_mdct() {
+        for size in [SHORT, FRAME_SAMPLES] {
+            let mut transform = Transform::new(size, 4.0, &mut FftPlanner::new());
+            let pcm: Vec<_> = (0..2 * size)
+                .map(|n| {
+                    [
+                        ((n as f64 * 0.717).sin() * 0.25 + (n as f64 * 0.188).cos() * 0.52) as f32,
+                        0.0,
+                    ]
+                })
+                .collect();
+            let mut output = vec![0.0; size];
+            transform.run(&pcm, 0, None, &mut output);
+            for (k, output) in output.into_iter().enumerate() {
+                let direct = pcm
+                    .iter()
+                    .zip(&transform.window)
+                    .enumerate()
+                    .map(|(n, (sample, window))| {
+                        let phase = PI / size as f64
+                            * (n as f64 + 0.5 + size as f64 / 2.0)
+                            * (k as f64 + 0.5);
+                        f64::from(sample[0] * window) * phase.cos() * 65536.0
+                    })
+                    .sum::<f64>();
+                assert!(
+                    (f64::from(output) - direct).abs() < 0.65 + direct.abs() * 2.0e-7,
+                    "{size} {k} {output} {direct}"
+                );
+            }
+        }
+    }
 }
