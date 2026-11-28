@@ -31,6 +31,8 @@ pub(crate) struct ProjectBackend {
     owner: Option<embedded::Lease>,
     #[cfg(target_os = "android")]
     remote: bool,
+    #[cfg(target_os = "android")]
+    pub(crate) forced_version: Option<VersionMismatch>,
     path: Option<PathBuf>,
     watcher: Option<watch::Watch>,
     mirror_root: Option<String>,
@@ -59,6 +61,8 @@ impl ProjectBackend {
             owner: None,
             #[cfg(target_os = "android")]
             remote: false,
+            #[cfg(target_os = "android")]
+            forced_version: None,
             path: None,
             watcher: None,
             mirror_root: None,
@@ -157,12 +161,19 @@ impl ProjectBackend {
             "open" => {
                 let path = Path::new(string(request, "path")?);
                 #[cfg(target_os = "android")]
-                if let Some(workspace) = SharedWorkspace::open(path)?
-                    && let Some(prompt) = version_prompt(&workspace.link().server, request)
-                {
-                    return Ok(prompt);
-                }
+                let forced = if let Some(workspace) = SharedWorkspace::open(path)? {
+                    match check_server_version(&workspace.link().server, request) {
+                        Ok(forced) => forced,
+                        Err(prompt) => return Ok(prompt),
+                    }
+                } else {
+                    None
+                };
                 self.open(path, request["mirror_root"].as_str().map(Path::new))?;
+                #[cfg(target_os = "android")]
+                {
+                    self.forced_version = forced;
+                }
             }
             #[cfg(target_os = "android")]
             "open_remote" => {
@@ -181,11 +192,13 @@ impl ProjectBackend {
                 {
                     return Err("Choose a server from Project Servers".into());
                 }
-                if let Some(prompt) = version_prompt(&link.server, request) {
-                    return Ok(prompt);
-                }
+                let forced = match check_server_version(&link.server, request) {
+                    Ok(forced) => forced,
+                    Err(prompt) => return Ok(prompt),
+                };
                 let path = entry.open(Some(Path::new(string(request, "directory")?)))?;
                 self.open(&path, None)?;
+                self.forced_version = forced;
             }
             #[cfg(target_os = "android")]
             "delete_project" => {
@@ -440,6 +453,7 @@ impl ProjectBackend {
             }
             let old_path = self.path.clone().ok_or("open a project first")?;
             let mirror = self.mirror_root.clone();
+            let forced_version = self.forced_version.clone();
             attached::save_copy(&path, &*self.required()?)?;
             self.close()?;
             let new_mirror = mirror
@@ -448,6 +462,7 @@ impl ProjectBackend {
                 .filter(|root| path.starts_with(root));
             if let Err(error) = self.open(&path, new_mirror) {
                 self.open(&old_path, mirror.as_deref().map(Path::new))?;
+                self.forced_version = forced_version;
                 return Err(error);
             }
             Ok(())
@@ -559,6 +574,7 @@ impl ProjectBackend {
         {
             self.owner = None;
             self.remote = false;
+            self.forced_version = None;
         }
         #[cfg(not(target_os = "android"))]
         document::release_project_lock(self.path.as_ref().expect("open project has a path"));
@@ -911,17 +927,30 @@ impl Drop for ProjectBackend {
 }
 
 #[cfg(target_os = "android")]
-fn version_prompt(server: &str, request: &Value) -> Option<Value> {
-    let prompt = VersionPrompt::remote(server)?;
+fn check_server_version(server: &str, request: &Value) -> Result<Option<VersionMismatch>, Value> {
+    let forced = &request["force_version"];
+    let Some(prompt) = VersionPrompt::remote(server) else {
+        if forced["server"] == server
+            && let Ok(service) = serde_json::from_value(forced["version"].clone())
+        {
+            return Ok(Some(VersionMismatch::Remote {
+                server: server.to_owned(),
+                service,
+            }));
+        }
+        return Ok(None);
+    };
     let VersionMismatch::Remote { server, service } = &prompt.mismatch else {
         unreachable!("remote probe returns a remote mismatch");
     };
     let identity = json!({ "server": server, "version": service });
-    (request["force_version"] != identity).then(|| {
-        json!({
+    if *forced == identity {
+        Ok(Some(prompt.mismatch))
+    } else {
+        Err(json!({
             "version_mismatch": { "body": prompt.to_string(), "identity": identity }
-        })
-    })
+        }))
+    }
 }
 
 fn string<'a>(request: &'a Value, key: &str) -> Result<&'a str, String> {

@@ -26,6 +26,10 @@ pub struct ServerVersion {
 }
 
 impl ServerVersion {
+    pub fn same_release(&self, other: &Self) -> bool {
+        self.protocol == other.protocol && self.version == other.version
+    }
+
     pub fn matches(&self, release: &str) -> bool {
         self.protocol == SERVER_PROTOCOL
             && self

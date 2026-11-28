@@ -181,7 +181,7 @@ impl Editor {
                     }
                 }
                 activate_project_session(&self.ivars().project_path, &project);
-                let session = match EditorSession::new(project) {
+                let session = match EditorSession::new(project, &forced) {
                     Ok(session) => Rc::new(session),
                     Err(error) => {
                         self.fail_startup(&error);

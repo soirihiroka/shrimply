@@ -44,6 +44,7 @@ pub enum LoadEvent {
     Ready {
         path: PathBuf,
         project: Box<Project>,
+        forced: Vec<VersionMismatch>,
     },
     Error {
         heading: &'static str,
@@ -129,7 +130,7 @@ impl EditorSession {
         Ok(None)
     }
 
-    pub fn new(project: Project) -> Result<Self, String> {
+    pub fn new(project: Project, forced: &[VersionMismatch]) -> Result<Self, String> {
         let playback_performance = shrimply_playback_performance::open(Arc::new(project.clone()));
         let project = Rc::new(RefCell::new(project));
         project.borrow().watch_assets()?;
@@ -189,6 +190,7 @@ impl EditorSession {
             project.clone(),
             player_state.clone(),
             selection_state.clone(),
+            forced,
         )?);
         Ok(Self {
             editing,
@@ -325,6 +327,7 @@ impl EditorSession {
             self.project.clone(),
             self.player_state.clone(),
             self.selection_state.clone(),
+            &[],
         )?;
         project::shutdown_history()?;
         activate_project_session(&path, &candidate);
@@ -737,6 +740,7 @@ impl ProjectLoader {
                 LoadEvent::Ready {
                     path,
                     project: Box::new(project),
+                    forced: std::mem::take(&mut self.forced_versions),
                 }
             }
             Ok(Some(ProjectValidationOutcome::FrameGridRepair(project))) => {
