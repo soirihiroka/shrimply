@@ -199,17 +199,19 @@ impl Encoder {
         };
         let mut low = -20.0_f32;
         let mut high = 40.0_f32;
-        let mut picks = self.quantizer.select(layout, high.exp2());
-        let finest = self.quantizer.select(layout, low.exp2());
-        if size(&finest) <= limit {
-            picks = finest;
+        let mut picks = std::array::from_fn(|_| Vec::new());
+        let mut candidate =
+            std::array::from_fn(|_| Vec::with_capacity(layout.groups * layout.band_count()));
+        self.quantizer.select(layout, low.exp2(), &mut candidate);
+        if size(&candidate) <= limit {
+            picks = candidate;
         } else {
             for _ in 0..11 {
                 let lambda = (low + high) / 2.0;
-                let candidate = self.quantizer.select(layout, lambda.exp2());
+                self.quantizer.select(layout, lambda.exp2(), &mut candidate);
                 if size(&candidate) <= limit {
                     high = lambda;
-                    picks = candidate;
+                    std::mem::swap(&mut picks, &mut candidate);
                 } else {
                     low = lambda;
                 }

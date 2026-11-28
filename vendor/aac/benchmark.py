@@ -2,11 +2,11 @@
 """Compare AAC-LC encoders at measured payload rates with aligned stereo PCM."""
 
 import argparse
+import csv
 import hashlib
 import json
 import os
 from pathlib import Path
-import re
 import resource
 import statistics
 import subprocess
@@ -28,9 +28,10 @@ def ffmpeg(*args):
     return run("ffmpeg", "-hide_banner", "-v", "error", "-xerror", "-y", *args)
 
 
-def decode(file, rate=RATE):
+def decode(file, rate=RATE, decoder=None):
+    codec = ("-c:a", decoder) if decoder else ()
     return np.frombuffer(
-        ffmpeg("-i", file, "-map", "0:a:0", "-f", "f32le", "-ac", "2", "-ar", str(rate), "-"),
+        ffmpeg(*codec, "-i", file, "-map", "0:a:0", "-f", "f32le", "-ac", "2", "-ar", str(rate), "-"),
         dtype="<f4",
     ).reshape(-1, 2)
 
@@ -93,6 +94,35 @@ def align(reference, decoded, known_lag):
     return lag, aligned
 
 
+def encode_command(encoder, source, target, codec, bitrate):
+    if codec == "shrimply":
+        return (encoder, source, target, str(RATE), str(bitrate))
+    options = ("-vbr", "0", "-afterburner", "1") if codec == "libfdk_aac" else ()
+    return ("ffmpeg", "-hide_banner", "-v", "error", "-xerror", "-y",
+            "-f", "f32le", "-ar", str(RATE), "-ac", "2", "-i", source,
+            "-threads", "1", "-c:a", codec, "-profile:a", "aac_low", "-b:a",
+            str(bitrate), *options, "-f", "adts", target)
+
+
+def calibrate_delays(encoder, raw, adts, encoders):
+    # Estimate delay once on independent broadband stereo PCM, outside all scored clips.
+    reference = np.zeros((2 * RATE, 2), dtype="<f4")
+    reference[1000:-1000] = np.random.default_rng(329).uniform(-0.3, 0.3, (2 * RATE - 2000, 2))
+    raw.write_bytes(reference.tobytes())
+    delays = {}
+    for codec in encoders:
+        run(*encode_command(encoder, raw, adts, codec, 192_000))
+        delay, actual = align(reference, decode(adts), None)
+        if codec == "shrimply":
+            assert delay == PRIMING
+            if b"libfdk_aac" in run("ffmpeg", "-decoders"):
+                _, independent = align(reference, decode(adts, decoder="libfdk_aac"), delay)
+                error = float(db_ratio(np.square(actual - independent).sum(), np.square(actual).sum()))
+                assert error < -60, ("Independent AAC decoder differs", error)
+        delays[codec] = delay
+    return delays
+
+
 def db_ratio(numerator, denominator):
     return 10 * np.log10(np.maximum(numerator, 1e-20) / np.maximum(denominator, 1e-20))
 
@@ -113,7 +143,7 @@ def metrics(reference, decoded, onsets):
     result = {
         "gain_db_lr_ms": db_ratio(actual_energy, ref_energy).tolist(),
         "waveform_snr_db_lr_ms": db_ratio(ref_energy, np.square(ref - actual).sum(axis=0)).tolist(),
-        "clipped_samples": int((np.abs(decoded) >= 1.0).sum()),
+        "full_scale_exceedances": int((np.abs(decoded) > 1.0).sum()),
         "stereo_balance_delta_db": float(db_ratio(*actual_energy[2:]) - db_ratio(*ref_energy[2:])),
     }
 
@@ -125,6 +155,10 @@ def metrics(reference, decoded, onsets):
         audible = x >= floor
         difference = db_ratio(np.maximum(x, floor), np.maximum(y, floor))
         weights = np.sqrt(x) * audible
+        if size == 1024:
+            result["spurious_spectral_energy_db_lr_ms"] = db_ratio(
+                (y * ~audible).sum(axis=(0, 2)), x.sum(axis=(0, 2))
+            ).tolist()
         result[f"spectral_rmse_{size}_db_lr_ms"] = np.sqrt(
             (weights * np.square(difference)).sum(axis=(0, 2))
             / np.maximum(weights.sum(axis=(0, 2)), 1e-20)
@@ -207,7 +241,8 @@ def main():
     parser.add_argument("--corpus", nargs="*", type=Path, default=[])
     parser.add_argument("--bitrates", nargs="+", type=int, default=[64, 96, 128, 192, 256, 320])
     parser.add_argument("--repeat", type=int, default=3)
-    parser.add_argument("--visqol", type=Path, help="ViSQOL CLI built with its audio model")
+    parser.add_argument("--visqol", nargs=2, type=Path, metavar=("EXECUTABLE", "AUDIO_MODEL"),
+                        help="Score real inputs with the ViSQOL v3 audio model")
     parser.add_argument("--fdk", action="store_true", help="Require libfdk_aac in the benchmark FFmpeg")
     parser.add_argument("--smoke", action="store_true", help="Verify the Shrimply codec only")
     args = parser.parse_args()
@@ -222,45 +257,47 @@ def main():
         encoders.append("libfdk_aac")
     rows = []
     with tempfile.TemporaryDirectory(prefix="shrimply-aac-") as folder:
-        raw, adts, aligned, source_wav, output_wav = (
-            Path(folder) / name for name in ("source.f32", "output.aac", "decoded.f32", "source.wav", "decoded.wav")
+        raw, adts, aligned, source_wav, output_wav, scores = (
+            Path(folder) / name for name in
+            ("source.f32", "output.aac", "decoded.f32", "source.wav", "decoded.wav", "score.csv")
         )
+        encoder = args.encoder.resolve()
+        delays = calibrate_delays(encoder, raw, adts, encoders)
         if args.smoke:
-            verify_sample_rates(args.encoder.resolve(), raw, adts)
+            verify_sample_rates(encoder, raw, adts)
         pcm = ("-f", "f32le", "-ar", str(RATE), "-ac", "2")
-        for item, reference, onsets in cases() + [(str(file), decode(file), []) for file in args.corpus]:
+        probes = [(item, audio, onsets, False) for item, audio, onsets in cases()]
+        recordings = [(file.stem, decode(file), [], True) for file in args.corpus]
+        for item, reference, onsets, recorded in probes + recordings:
             reference = np.asarray(reference, dtype="<f4")
             data = reference.tobytes()
             raw.write_bytes(data)
-            if args.visqol:
-                ffmpeg(*pcm, "-i", raw, "-c:a", "pcm_s24le", source_wav)
+            score_perceptual = args.visqol and recorded
+            if score_perceptual:
+                ffmpeg(*pcm, "-i", raw, "-c:a", "pcm_s16le", source_wav)
             seconds = len(reference) / RATE
-            for bitrate in ([192] if args.smoke else args.bitrates):
-                for codec in encoders:
-                    bps = str(bitrate * 1000)
-                    if codec == "shrimply":
-                        command = (args.encoder.resolve(), raw, adts, str(RATE), bps)
-                    else:
-                        options = ("-vbr", "0", "-afterburner", "1") if codec == "libfdk_aac" else ()
-                        command = ("ffmpeg", "-hide_banner", "-v", "error", "-xerror", "-y",
-                                   *pcm, "-i", raw, "-threads", "1", "-c:a", codec,
-                                   "-profile:a", "aac_low", "-b:a", bps, *options, "-f", "adts", adts)
+            for index, bitrate in enumerate([192] if args.smoke else args.bitrates):
+                offset = index % len(encoders)
+                for codec in encoders[offset:] + encoders[:offset]:
+                    bitrate_bps = bitrate * 1000
+                    command = encode_command(encoder, raw, adts, codec, bitrate_bps)
                     wall, cpu = trials(command, 1 if args.smoke else args.repeat)
-                    decoded = decode(adts)
-                    known_lag = PRIMING if codec in ("shrimply", "aac") else None
-                    lag, decoded = align(reference, decoded, known_lag)
+                    lag, decoded = align(reference, decode(adts), delays[codec])
                     row = dict(item=item, pcm_sha256=hashlib.sha256(data).hexdigest(),
-                               encoder=codec, target_bps=int(bps), duration_seconds=seconds,
+                               encoder=codec, target_bps=bitrate_bps, duration_seconds=seconds, recorded=recorded,
                                payload_bps=round(8 * payload_size(adts) / seconds),
                                delay_samples=lag, wall_seconds=wall, cpu_seconds=cpu,
                                realtime=seconds / statistics.median(wall),
                                **metrics(reference, decoded, onsets))
-                    if args.visqol:
+                    if score_perceptual:
+                        executable, model = [path.resolve() for path in args.visqol]
                         aligned.write_bytes(decoded.astype("<f4").tobytes())
-                        ffmpeg(*pcm, "-i", aligned, "-c:a", "pcm_s24le", output_wav)
-                        score = run(args.visqol.resolve(), "--reference_file", source_wav,
-                                    "--degraded_file", output_wav).decode()
-                        row["visqol_moslqo"] = float(re.search(r"MOS-LQO:\s*([0-9.]+)", score)[1])
+                        ffmpeg(*pcm, "-i", aligned, "-c:a", "pcm_s16le", output_wav)
+                        scores.unlink(missing_ok=True)
+                        run(executable, "--reference_file", source_wav, "--degraded_file", output_wav,
+                            "--similarity_to_quality_model", model, "--results_csv", scores)
+                        with scores.open(newline="") as handle:
+                            row["visqol_moslqo"] = float(next(csv.DictReader(handle))["moslqo"])
                     rows.append(row)
                     if args.smoke and item == "tones":
                         assert min(row["waveform_snr_db_lr_ms"][:2]) > 24, row
@@ -269,6 +306,7 @@ def main():
                         assert min(row["waveform_snr_db_lr_ms"][:2]) > 12, row
     print(json.dumps(dict(
         sample_rate=RATE,
+        calibrated_delay_samples=delays,
         ffmpeg=run("ffmpeg", "-version").decode().splitlines()[:2],
         machine=os.uname().machine,
         rows=rows,
