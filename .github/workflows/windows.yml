@@ -34,14 +34,14 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: windows-prerelease-${{ github.ref }}
-
 env:
   TZ: UTC
 
 jobs:
   build:
+    concurrency:
+      group: windows-build-${{ github.ref }}
+      cancel-in-progress: ${{ github.event_name == 'push' }}
     runs-on: windows-2022
     timeout-minutes: 180
     steps:

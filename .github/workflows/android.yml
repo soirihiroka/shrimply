@@ -35,14 +35,14 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: android-prerelease-${{ github.ref }}
-
 env:
   TZ: UTC
 
 jobs:
   build:
+    concurrency:
+      group: android-build-${{ github.ref }}
+      cancel-in-progress: ${{ github.event_name == 'push' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     steps:
@@ -53,6 +53,14 @@ jobs:
 
       - uses: ./.github/actions/setup-android
         id: setup
+
+      - name: Cache compiled Cargo artifacts
+        uses: actions/cache@v6
+        with:
+          path: |
+            target/release
+            target/aarch64-linux-android/release
+          key: android-cargo-target-v1-${{ steps.setup.outputs.skia-key }}
 
       - name: Build the release APK
         run: make android-build ANDROID_PROFILE=release ANDROID_SDK_ROOT="${ANDROID_HOME}"

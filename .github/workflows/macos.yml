@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - ".github/workflows/macos.yml"
+      - ".github/workflows/publish-zip.yml"
       - ".github/actions/cache-cargo/**"
       - ".github/actions/setup-macos/**"
       - ".github/scripts/**"
@@ -33,20 +34,20 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: macos-prerelease-${{ github.ref }}
-
 env:
   TZ: UTC
   MACOS_APP: dist/Shrimply.app
   MACOS_ARCHIVE: dist/shrimply-macos-arm64.zip
 
 jobs:
-  build-and-release:
+  build:
+    concurrency:
+      group: macos-build-${{ github.ref }}
+      cancel-in-progress: ${{ github.event_name == 'push' }}
     runs-on: macos-26
     permissions:
       actions: write
-      contents: write
+      contents: read
     steps:
       - uses: actions/checkout@v7
         with:
@@ -194,10 +195,18 @@ jobs:
           codesign --verify --deep --strict --verbose=2 "${unpacked}/Shrimply.app"
           test -s "${MACOS_ARCHIVE}.sha256"
 
-      - name: Publish prerelease
-        if: github.ref == 'refs/heads/main'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          bash .github/scripts/publish-prerelease.sh \
-            "${MACOS_ARCHIVE}"
+      - name: Upload signed application ZIP
+        uses: actions/upload-artifact@v7
+        with:
+          name: shrimply-macos-arm64
+          path: ${{ env.MACOS_ARCHIVE }}
+          compression-level: 0
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    uses: ./.github/workflows/publish-zip.yml
+    permissions:
+      contents: write
+    with:
+      artifact: shrimply-macos-arm64
