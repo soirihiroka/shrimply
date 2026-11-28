@@ -1,10 +1,6 @@
-name: CI checks
+name: AAC comparison
 
 on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -12,109 +8,80 @@ permissions:
 
 env:
   TZ: UTC
-  CARGO_PROFILE_DEV_DEBUG: "0"
 
 jobs:
-  check:
-    name: ${{ matrix.platform }}
-    concurrency:
-      group: ci-checks-${{ github.ref }}-${{ matrix.platform }}
-      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - platform: linux
-            runner: ubuntu-24.04
-            timeout: 240
-            command: nix develop --accept-flake-config --command make check
-          - platform: macos
-            runner: macos-26
-            command: make check
-          - platform: windows
-            runner: windows-2022
-            timeout: 180
-            command: |
-              $env:PATH += ";C:\Program Files\Git\bin;C:\Program Files\Git\usr\bin"
-              make check
-          - platform: android
-            runner: ubuntu-24.04
-            timeout: 180
-            command: make android-check ANDROID_PROFILE=release ANDROID_SDK_ROOT="${ANDROID_HOME}"
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: ${{ matrix.timeout || 360 }}
-    env:
-      CARGO_BUILD_JOBS: ${{ matrix.platform == 'windows' && '3' || '2' }}
+  audio:
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
-          submodules: ${{ matrix.platform != 'windows' && 'recursive' || 'false' }}
-
-      - name: Free space for native build dependencies
-        if: matrix.platform == 'linux'
-        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
-      - if: matrix.platform == 'linux'
-        uses: ./.github/actions/cache-cargo
+          submodules: recursive
+      - name: Round-trip and compare
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y ffmpeg python3-numpy clang lld
+          make -s test -o native-deps -o cuda-target-check ARGS='--locked --release -p shrimply-aac --lib'
+          make -s test -o native-deps -o cuda-target-check ARGS='--locked --release -p shrimply-aac --example encode --no-run --message-format=json' > build.jsonl
+          encoder=$(jq -r 'select(.reason? == "compiler-artifact" and .target.name == "encode") | .executable // empty' build.jsonl)
+          test -x "$encoder"
+          echo "AAC_ENCODER=$encoder" >> "$GITHUB_ENV"
+          /usr/bin/python3 vendor/aac/benchmark.py "$encoder" --smoke > aac-smoke.json
+      - name: Compare pinned FFmpeg and FDK AAC
+        run: |
+          sudo apt-get install -y nasm
+          curl -fsSL --retry 3 https://github.com/mstorsjo/fdk-aac/archive/refs/tags/v3.0.0.tar.gz -o "$RUNNER_TEMP/fdk.tar.gz"
+          echo "8538ea8f0f9915e460c106a13e1866a9e13c7ee48c1b67d0b2cf7b4e8159bd1a  $RUNNER_TEMP/fdk.tar.gz" | sha256sum -c
+          tar -xzf "$RUNNER_TEMP/fdk.tar.gz" -C "$RUNNER_TEMP"
+          cmake -S "$RUNNER_TEMP/fdk-aac-3.0.0" -B "$RUNNER_TEMP/fdk-build" -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/fdk" -DCMAKE_INSTALL_LIBDIR=lib -DBUILD_SHARED_LIBS=OFF
+          cmake --build "$RUNNER_TEMP/fdk-build" -j "$(nproc)"
+          cmake --install "$RUNNER_TEMP/fdk-build"
+          mkdir "$RUNNER_TEMP/ffmpeg"
+          (
+            cd "$RUNNER_TEMP/ffmpeg"
+            PKG_CONFIG_PATH="$RUNNER_TEMP/fdk/lib/pkgconfig" "$GITHUB_WORKSPACE/external/ffmpeg/configure" \
+              --disable-autodetect --disable-everything --disable-doc --disable-ffplay --disable-ffprobe \
+              --enable-nonfree --enable-libfdk-aac --enable-encoder=aac,libfdk_aac,pcm_f32le,pcm_s16le \
+              --enable-decoder=aac,libfdk_aac,pcm_f32le,pcm_s16le,flac --enable-parser=aac,flac \
+              --enable-muxer=adts,pcm_f32le,wav --enable-demuxer=aac,pcm_f32le,wav,flac \
+              --enable-filter=aresample,aformat,anull --enable-protocol=file,pipe
+            make -j "$(nproc)" ffmpeg
+          )
+          export PATH="$RUNNER_TEMP/ffmpeg:$PATH"
+          curl -fsSL --retry 3 'https://qc.ebu.io/testmaterials/523/1/download/' -o "$RUNNER_TEMP/sqam.zip"
+          mkdir -p "$RUNNER_TEMP/sqam" "$RUNNER_TEMP/holdout"
+          unzip -j "$RUNNER_TEMP/sqam.zip" 27.flac 35.flac 42.flac 48.flac 49.flac 50.flac -d "$RUNNER_TEMP/sqam"
+          unzip -j "$RUNNER_TEMP/sqam.zip" 40.flac 51.flac 52.flac 60.flac 66.flac 70.flac -d "$RUNNER_TEMP/holdout"
+          /usr/bin/python3 vendor/aac/benchmark.py "$AAC_ENCODER" --fdk --bitrates 64 96 128 192 256 320 --repeat 3 --corpus "$RUNNER_TEMP"/sqam/*.flac > aac-comparison.json
+          /usr/bin/python3 vendor/aac/benchmark.py "$AAC_ENCODER" --fdk --bitrates 64 96 128 192 256 320 --repeat 2 --corpus "$RUNNER_TEMP"/holdout/*.flac > aac-holdout.json
+      - uses: actions/upload-artifact@v7
         with:
-          scope: linux
-      - name: Restore Linux Skia binaries
-        if: matrix.platform == 'linux'
-        id: linux-skia
-        uses: actions/cache@v6
-        with:
-          path: target/linux-skia.tar.gz
-          key: linux-skia-${{ runner.arch }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml', 'flake.nix', 'flake.lock', 'pkgs/**/*.nix', '.cargo/config.toml', 'Makefile', 'rust-toolchain.toml', 'packaging/cache-skia.py') }}
-      - name: Use cached Linux Skia binaries
-        if: steps.linux-skia.outputs.cache-hit == 'true'
-        run: echo "EDITOR_SKIA_BINARIES_URL=file://${GITHUB_WORKSPACE}/target/linux-skia.tar.gz" >> "${GITHUB_ENV}"
-      - if: matrix.platform == 'linux'
-        uses: cachix/install-nix-action@v30
-        with:
-          install_url: https://releases.nixos.org/nix/nix-2.35.2/install
-          extra_nix_config: |
-            accept-flake-config = true
-            extra-substituters = https://cache.nixos-cuda.org https://shrimply.cachix.org
-            extra-trusted-public-keys = cache.nixos-cuda.org:74DUi4Ye579gUqzH4ziL9IyiJBlDpMRn9MBN8oNan9M= shrimply.cachix.org-1:cAgdyBbGPgJZMWUP4PAQPVENeCYtGT7OPPkocvo+uuA=
-
-      - if: matrix.platform == 'macos'
-        uses: ./.github/actions/setup-macos
-        id: macos-setup
-        with:
-          profile: debug
-      - if: matrix.platform == 'windows'
-        uses: ./.github/actions/setup-windows
-      - if: matrix.platform == 'android'
-        uses: ./.github/actions/setup-android
-
-      - name: Check
-        run: ${{ matrix.command }}
-
-      - name: Archive Linux Skia binaries
-        if: matrix.platform == 'linux' && steps.linux-skia.outputs.cache-hit != 'true'
-        run: python3 packaging/cache-skia.py target/debug/build target/linux-skia.tar.gz
-
-      - name: Save macOS check cache
-        if: matrix.platform == 'macos' && steps.macos-setup.outputs.application-hit != 'true'
-        uses: actions/cache/save@v6
-        with:
-          path: target/debug
-          key: ${{ steps.macos-setup.outputs.application-key }}
-
-      - name: Upload build diagnostics
-        if: always() && matrix.platform == 'windows'
-        uses: actions/upload-artifact@v7
-        with:
-          name: windows-build-diagnostics
+          name: aac-spectral
           path: |
-            .ci/ffmpeg-validation/*.log
-            .ci/vcpkg/buildtrees/**/*.log
-          if-no-files-found: ignore
-
-      - name: Upload Android lint report
-        if: matrix.platform == 'android'
-        uses: actions/upload-artifact@v7
+            aac-comparison.json
+            aac-holdout.json
+      - name: Add ViSQOL audio scores
+        env:
+          LC_ALL: C
+        run: |
+          git clone --depth 1 --branch v3.3.3 https://github.com/google/visqol.git "$RUNNER_TEMP/visqol"
+          sed -i 's|http://sourceforge.net/projects/arma/files/armadillo-9.860.2.tar.xz|https://distfiles.macports.org/armadillo/armadillo-9.860.2.tar.xz|' "$RUNNER_TEMP/visqol/WORKSPACE"
+          curl -fsSL --retry 3 https://releases.bazel.build/5.1.0/release/bazel-5.1.0-linux-x86_64 -o "$RUNNER_TEMP/bazel"
+          chmod +x "$RUNNER_TEMP/bazel"
+          (cd "$RUNNER_TEMP/visqol" && "$RUNNER_TEMP/bazel" --batch build :visqol -c opt --cxxopt=-include --cxxopt=cstdint --cxxopt=-DFLATBUFFERS_LOCALE_INDEPENDENT=0)
+          export PATH="$RUNNER_TEMP/ffmpeg:$PATH"
+          mkdir "$RUNNER_TEMP/excerpts"
+          for track in "$RUNNER_TEMP"/holdout/*.flac; do
+            ffmpeg -v error -ss 4 -i "$track" -t 8 -c:a pcm_s16le "$RUNNER_TEMP/excerpts/$(basename "$track" .flac).wav"
+          done
+          /usr/bin/python3 vendor/aac/benchmark.py "$AAC_ENCODER" --fdk --bitrates 96 128 192 256 --repeat 2 \
+            --corpus "$RUNNER_TEMP"/excerpts/*.wav --visqol "$RUNNER_TEMP/visqol/bazel-bin/visqol" \
+            "$RUNNER_TEMP/visqol/model/libsvm_nu_svr_model.txt" > aac-perceptual.json
+      - uses: actions/upload-artifact@v7
+        if: always()
         with:
-          name: android-lint
-          path: android/app/build/reports/lint-results-release.html
-          if-no-files-found: error
+          name: aac-results
+          path: |
+            aac-*.json
+            build.jsonl
+            Cargo.lock
