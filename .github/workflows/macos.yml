@@ -64,14 +64,14 @@ jobs:
 
       - name: Save macOS application cache
         id: save-application-cache
-        if: ${{ success() && steps.setup.outputs.application-hit != 'true' }}
+        if: ${{ github.ref == 'refs/heads/main' && success() && steps.setup.outputs.application-hit != 'true' }}
         uses: actions/cache/save@v6
         with:
           path: target/release
           key: ${{ steps.setup.outputs.application-key }}
 
       - name: Prune old macOS application caches
-        if: github.ref == 'refs/heads/main' && steps.save-application-cache.outcome == 'success'
+        if: steps.save-application-cache.outcome == 'success'
         env:
           GH_TOKEN: ${{ github.token }}
           CACHE_KEY: ${{ steps.setup.outputs.application-key }}

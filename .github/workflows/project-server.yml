@@ -45,6 +45,7 @@ jobs:
           load: true
           tags: shrimply-project-server:ci
           labels: org.opencontainers.image.revision=${{ github.sha }}
+          build-args: SHRIMPLY_BUILD_GIT_HASH=${{ github.sha }}
           cache-from: type=gha,scope=project-server
           cache-to: type=gha,scope=project-server,mode=max
 
@@ -64,7 +65,7 @@ jobs:
           endpoint="http://$(docker port project-server-smoke "${port}/tcp")/v1"
           curl --fail --silent --show-error --max-time 3 --retry 20 --retry-connrefused --retry-delay 1 \
             "${endpoint}" \
-            | python3 -c 'import json, sys; info = json.load(sys.stdin); assert info["protocol"] == 3 and info["version"] == sys.argv[1] and info["name"] == "project-server-smoke"' "${expected}"
+            | python3 -c 'import json, sys; info = json.load(sys.stdin); assert info["protocol"] == 3 and info["version"] == sys.argv[1] and info["name"] == "project-server-smoke" and info["git_hash"] == sys.argv[2]' "${expected}" "$GITHUB_SHA"
           python3 packaging/project-server-smoke.py "${endpoint}"
 
       - name: Export prerelease image

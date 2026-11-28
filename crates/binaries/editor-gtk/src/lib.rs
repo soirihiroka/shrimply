@@ -293,10 +293,8 @@ fn build_ui(
             dialog.present(Some(&polling_window));
         }
         if let Some(notice) = update.version_notice {
-            let dialog = adw::AlertDialog::new(
-                Some(tr!("Service Version Mismatch").as_ref()),
-                Some(&notice),
-            );
+            let dialog =
+                adw::AlertDialog::new(Some(tr!("Project Server Changed").as_ref()), Some(&notice));
             dialog.add_responses_i18n(&[("close", "Close")]);
             dialog.set_close_response("close");
             dialog.present(Some(&polling_window));

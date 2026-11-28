@@ -56,5 +56,7 @@ COPY --from=builder /usr/local/bin/shrimply-project-server /usr/local/bin/shrimp
 USER 10001:10001
 WORKDIR /data
 EXPOSE 8788
+ARG SHRIMPLY_BUILD_GIT_HASH
+ENV SHRIMPLY_BUILD_GIT_HASH=$SHRIMPLY_BUILD_GIT_HASH
 ENTRYPOINT ["/usr/local/bin/shrimply-project-server"]
 CMD ["0.0.0.0:8788", "/data/projects.sqlite"]

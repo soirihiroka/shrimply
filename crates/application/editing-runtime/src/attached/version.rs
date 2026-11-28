@@ -120,11 +120,8 @@ impl fmt::Display for VersionPrompt {
                 };
                 write!(
                     output,
-                    "Shrimply {} expects project server protocol {}. The server at {server} reports version {} with protocol {}.\n\n{guidance}",
-                    app.version,
-                    SERVER_PROTOCOL,
-                    service.version.as_deref().unwrap_or("unknown"),
-                    service.protocol
+                    "Shrimply {} expects project server protocol {}. The server at {server} reports version {service} with protocol {}.\n\n{guidance}",
+                    app.version, SERVER_PROTOCOL, service.protocol
                 )
             }
         }?;

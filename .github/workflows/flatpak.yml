@@ -88,14 +88,14 @@ jobs:
 
       - name: Save Flatpak application cache
         id: save-application-cache
-        if: ${{ !cancelled() && steps.setup.outcome == 'success' && steps.setup.outputs.application-hit != 'true' }}
+        if: ${{ github.ref == 'refs/heads/main' && !cancelled() && steps.setup.outcome == 'success' && steps.setup.outputs.application-hit != 'true' }}
         uses: actions/cache/save@v6
         with:
           path: ${{ env.FLATPAK_STATE_DIR }}/ccache/cargo-target
           key: ${{ steps.setup.outputs.application-key }}
 
       - name: Prune old Flatpak application caches
-        if: github.ref == 'refs/heads/main' && steps.save-application-cache.outcome == 'success'
+        if: steps.save-application-cache.outcome == 'success'
         env:
           GH_TOKEN: ${{ github.token }}
           CACHE_KEY: ${{ steps.setup.outputs.application-key }}

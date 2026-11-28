@@ -426,15 +426,24 @@ impl Editor {
                         && self
                             .server_version
                             .replace(Some(version.clone()))
-                            .is_some_and(|previous| !previous.same_release(&version))
+                            .is_some_and(|previous| !previous.same_build(&version))
                         && !self
                             .accepted_server_version
                             .as_ref()
-                            .is_some_and(|accepted| accepted.same_release(&version))
+                            .is_some_and(|accepted| accepted.same_build(&version))
                         && let Some(media) = &self.media
                     {
-                        version_notice = VersionPrompt::for_remote(&media.workspace.link().server, version)
-                            .map(|prompt| format!("The project server version changed. Reopen the project to check it.\n\n{prompt}"));
+                        let server = &media.workspace.link().server;
+                        version_notice = Some(
+                            match VersionPrompt::for_remote(server, version.clone()) {
+                                Some(prompt) => format!(
+                                    "The project server version changed. Reopen the project to check it.\n\n{prompt}"
+                                ),
+                                None => {
+                                    format!("The project server at {server} updated to {version}.")
+                                }
+                            },
+                        );
                     }
                     let recovered = self.server_connected.replace(state.server_connected)
                         == Some(false)

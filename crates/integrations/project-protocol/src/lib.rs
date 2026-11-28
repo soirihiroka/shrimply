@@ -1,4 +1,5 @@
 use std::{
+    fmt,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -22,12 +23,16 @@ pub struct ServerVersion {
     #[serde(default)]
     pub version: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub git_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
 }
 
 impl ServerVersion {
-    pub fn same_release(&self, other: &Self) -> bool {
-        self.protocol == other.protocol && self.version == other.version
+    pub fn same_build(&self, other: &Self) -> bool {
+        self.protocol == other.protocol
+            && self.version == other.version
+            && self.git_hash == other.git_hash
     }
 
     pub fn matches(&self, release: &str) -> bool {
@@ -36,6 +41,16 @@ impl ServerVersion {
                 .version
                 .as_deref()
                 .is_none_or(|version| version == release)
+    }
+}
+
+impl fmt::Display for ServerVersion {
+    fn fmt(&self, output: &mut fmt::Formatter<'_>) -> fmt::Result {
+        output.write_str(self.version.as_deref().unwrap_or("unknown"))?;
+        if let Some(hash) = &self.git_hash {
+            write!(output, " ({})", hash.get(..7).unwrap_or(hash))?;
+        }
+        Ok(())
     }
 }
 

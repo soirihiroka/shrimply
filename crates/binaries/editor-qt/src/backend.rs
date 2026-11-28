@@ -385,7 +385,7 @@ impl qobject::EditorBackend {
         }
         if let Some(notice) = session_update.version_notice {
             self.as_mut().show_error(
-                shrimply_i18n_qt::text("Service Version Mismatch"),
+                shrimply_i18n_qt::text("Project Server Changed"),
                 QString::from(notice),
             );
         }
