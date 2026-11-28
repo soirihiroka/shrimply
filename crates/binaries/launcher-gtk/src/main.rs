@@ -87,7 +87,7 @@ fn build_ui(app: &adw::Application) {
     header.set_show_start_title_buttons(false);
     let menu = gio::Menu::new();
     for (label, action) in [
-        ("Preferences", "win.preferences"),
+        ("Settings", "win.preferences"),
         ("Project Servers", "win.project-servers"),
         ("About Shrimply", "win.about"),
     ] {

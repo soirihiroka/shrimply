@@ -1,18 +1,17 @@
 mod create_project;
 
 use block2::StackBlock;
-use objc2::rc::Retained;
+use objc2::rc::{Retained, Weak};
 use objc2::runtime::{ProtocolObject, Sel};
 use objc2::{DefinedClass, MainThreadOnly, Message, define_class, msg_send, sel};
 use objc2_app_kit::{
-    NSAlert, NSAlertFirstButtonReturn, NSAlertSecondButtonReturn, NSAlertThirdButtonReturn,
-    NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate, NSAutoresizingMaskOptions,
-    NSBackingStoreType, NSBezelStyle, NSButton, NSCellImagePosition, NSColor, NSControlSize,
-    NSControlTextEditingDelegate, NSFont, NSImage, NSMenu, NSMenuItem, NSModalResponseOK,
-    NSOpenPanel, NSOpenSavePanelDelegate, NSPopUpButton, NSSavePanel, NSScrollView, NSSearchField,
-    NSSecureTextField, NSTableColumn, NSTableView, NSTableViewDataSource, NSTableViewDelegate,
-    NSTextAlignment, NSTextField, NSTitlebarSeparatorStyle, NSToolbar, NSView, NSWindow,
-    NSWindowDelegate, NSWindowStyleMask, NSWindowTitleVisibility, NSWindowToolbarStyle,
+    NSAlert, NSAlertSecondButtonReturn, NSApplication, NSApplicationActivationPolicy,
+    NSApplicationDelegate, NSAutoresizingMaskOptions, NSBackingStoreType, NSBezelStyle, NSButton,
+    NSCellImagePosition, NSColor, NSControlSize, NSControlTextEditingDelegate, NSFont, NSImage,
+    NSMenu, NSMenuItem, NSModalResponseOK, NSOpenPanel, NSOpenSavePanelDelegate, NSPopUpButton,
+    NSSavePanel, NSScrollView, NSSearchField, NSTableColumn, NSTableView, NSTableViewDataSource,
+    NSTableViewDelegate, NSTextAlignment, NSTextField, NSTitlebarSeparatorStyle, NSToolbar, NSView,
+    NSWindow, NSWindowDelegate, NSWindowStyleMask, NSWindowTitleVisibility, NSWindowToolbarStyle,
     NSWorkspace,
 };
 use objc2_foundation::{
@@ -190,7 +189,7 @@ define_class!(
                     WINDOW_SIZE.height - (TITLEBAR_HEIGHT + MENU_SIZE) / 2.0),
                 (ns_string!("line.3.horizontal"), ns_string!("Main Menu")),
                 &[
-                    ("Preferences", sel!(showPreferences:)),
+                    ("Settings", sel!(showPreferences:)),
                     ("Project Servers", sel!(projectServers:)),
                     ("About Shrimply", sel!(showAbout:)),
                 ],
@@ -406,9 +405,7 @@ define_class!(
 
         #[unsafe(method(showPreferences:))]
         fn show_preferences(&self, _sender: &NSObject) {
-            self.ivars().preferences.get_or_init(|| {
-                shrimply_editor_appkit::PreferencesWindow::new(self.mtm(), None)
-            }).present();
+            self.settings(false);
         }
 
         #[unsafe(method(showAbout:))]
@@ -466,42 +463,7 @@ define_class!(
 
         #[unsafe(method(projectServers:))]
         fn project_servers(&self, _sender: &NSObject) {
-            let mtm = self.mtm();
-            loop {
-                let servers = launcher::project_servers();
-                let alert = NSAlert::new(mtm);
-                alert.setMessageText(ns_string!("Project Servers"));
-                alert.addButtonWithTitle(ns_string!("Add"));
-                let edit = alert.addButtonWithTitle(ns_string!("Edit"));
-                let remove = alert.addButtonWithTitle(ns_string!("Remove"));
-                alert.addButtonWithTitle(ns_string!("Done"));
-                edit.setEnabled(!servers.is_empty());
-                remove.setEnabled(!servers.is_empty());
-                let selection = shrimply_components_appkit::menu::popup(
-                    NSRect::new(NSPoint::ZERO, NSSize::new(360.0, 30.0)), false, mtm,
-                );
-                for server in &servers {
-                    selection.addItemWithTitle(&NSString::from_str(server));
-                }
-                if !servers.is_empty() {
-                    alert.setAccessoryView(Some(&selection));
-                }
-                let response = alert.runModal();
-                let selected = usize::try_from(selection.indexOfSelectedItem()).ok()
-                    .and_then(|index| servers.get(index)).map(String::as_str);
-                let result = match response {
-                    value if value == NSAlertFirstButtonReturn || value == NSAlertSecondButtonReturn => {
-                        let previous = if value == NSAlertSecondButtonReturn { selected } else { None };
-                        if self.prompt_project_server(previous) { return; }
-                        continue;
-                    }
-                    value if value == NSAlertThirdButtonReturn => selected.map(|current| launcher::update_project_servers(Some(current), None)),
-                    _ => { self.reload_projects(); return; },
-                };
-                if let Some(Err(error)) = result {
-                    self.show_error("Could not update project server", &error);
-                }
-            }
+            self.settings(true);
         }
 
         #[unsafe(method(openProject:))]
@@ -597,45 +559,16 @@ impl Delegate {
         });
     }
 
-    fn prompt_project_server(&self, previous: Option<&str>) -> bool {
-        use shrimply_components_appkit::{column_append_intrinsic, column_stack};
-
-        let mtm = self.mtm();
-        let alert = NSAlert::new(mtm);
-        alert.setMessageText(ns_string!("Sign In to Project Server"));
-        alert.addButtonWithTitle(ns_string!("Sign In"));
-        alert.addButtonWithTitle(ns_string!("Cancel"));
-        let fields = column_stack(8.0, mtm);
-        fields.setFrameSize(NSSize::new(360.0, 80.0));
-        let url = NSTextField::initWithFrame(NSTextField::alloc(mtm), NSRect::ZERO);
-        let username = NSTextField::initWithFrame(NSTextField::alloc(mtm), NSRect::ZERO);
-        let password =
-            NSSecureTextField::initWithFrame(NSSecureTextField::alloc(mtm), NSRect::ZERO);
-        url.setPlaceholderString(Some(ns_string!("Server URL")));
-        username.setPlaceholderString(Some(ns_string!("Username")));
-        password.setPlaceholderString(Some(ns_string!("Password")));
-        url.setStringValue(&NSString::from_str(previous.unwrap_or_default()));
-        column_append_intrinsic(&fields, &url);
-        column_append_intrinsic(&fields, &username);
-        column_append_intrinsic(&fields, &password);
-        alert.setAccessoryView(Some(&fields));
-        if alert.runModal() != NSAlertFirstButtonReturn {
-            return false;
-        }
-        let previous = previous.map(str::to_owned);
-        let url = url.stringValue().to_string();
-        let username = username.stringValue().to_string();
-        let password = password.stringValue().to_string();
-        self.project_task(
-            move || {
-                launcher::sign_in_project_server(previous.as_deref(), &url, &username, &password)
-            },
-            |delegate, result| match result {
-                Ok(()) => delegate.reload_projects(),
-                Err(error) => delegate.show_error("Could not sign in", &error),
-            },
-        );
-        true
+    fn settings(&self, external: bool) {
+        let owner = Weak::new(self);
+        self.ivars()
+            .preferences
+            .get_or_init(|| shrimply_editor_appkit::PreferencesWindow::new(self.mtm(), None))
+            .present_from_launcher(external, move || {
+                if let Some(delegate) = owner.load() {
+                    delegate.reload_projects();
+                }
+            });
     }
 
     fn open_remote(

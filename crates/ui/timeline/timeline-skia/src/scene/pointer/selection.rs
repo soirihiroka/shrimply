@@ -17,18 +17,25 @@ pub(in crate::scene) fn activate_track_button(
         }
         TrackLabelAction::Add => {
             let selected_tracks = selected_timeline_tracks(selection_state);
+            let button_bounds = track_controls::track_button_bounds(
+                &runtime.project.borrow(),
+                runtime.view,
+                (key, action),
+            );
+            let point = button_bounds.map_or_else(
+                || {
+                    runtime
+                        .pointer_release_pos
+                        .or(runtime.pointer_pos)
+                        .unwrap_or(Vec2::ZERO)
+                },
+                |bounds| Vec2::new(bounds.center().x, bounds.max.y),
+            );
             runtime.pending_track_add_menu = Some(TrackAddMenuRequest {
                 key,
                 touch: runtime.pointer_touch,
-                point: runtime
-                    .pointer_release_pos
-                    .or(runtime.pointer_pos)
-                    .unwrap_or(Vec2::ZERO),
-                button_bounds: track_controls::track_button_bounds(
-                    &runtime.project.borrow(),
-                    runtime.view,
-                    (key, action),
-                ),
+                point,
+                button_bounds,
                 position,
                 import_targets: if selected_tracks.contains(&key) {
                     selected_tracks

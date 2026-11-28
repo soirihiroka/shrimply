@@ -55,7 +55,7 @@ pub fn page(page: PreferencePage, controls: Vec<Value>) -> Value {
         .filter_map(|group| group["label"].as_str())
         .collect::<Vec<_>>()
         .join(", ");
-    let mut document = json!({"widget":"group","label":text(page.title()),"icon":page.icon(),"summary":summary,"controls":controls});
+    let mut document = json!({"widget":"group","label":text(page.title()),"icon":page.icon(),"color":page.color(),"summary":summary,"controls":controls});
     normalize_control(&mut document, &format!("preferences:{}", page.id()));
     document
 }
@@ -151,7 +151,7 @@ impl PreferencesUi {
             let controls = id.groups().iter().filter_map(|label| groups.remove(label).map(|controls| json!({"widget":"group","label":text(label),"controls":controls}))).collect::<Vec<_>>();
             (!controls.is_empty()).then(|| page(id, controls))
         }).collect::<Vec<_>>();
-        json!({"title":text("Preferences"),"back_label":text("Back"),"close_label":text("Close"),"controls":controls})
+        json!({"title":text(SETTINGS_TITLE),"wide_width":SETTINGS_WIDE_WIDTH,"sidebar_width":SETTINGS_SIDEBAR_WIDTH,"back_label":text("Back"),"close_label":text("Close"),"controls":controls})
     }
 
     fn compute_servers(&self, store: &SharedPreferences) -> Vec<(&'static str, Vec<Value>)> {

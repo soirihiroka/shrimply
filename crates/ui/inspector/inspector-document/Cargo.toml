@@ -24,3 +24,4 @@ shrimply-preferences-core.workspace = true
 shrimply-path-core.workspace = true
 shrimply-asset.workspace = true
 shrimply-trust-core.workspace = true
+shrimply-project-service.workspace = true

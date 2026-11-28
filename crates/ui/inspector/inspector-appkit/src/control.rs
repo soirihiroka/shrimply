@@ -381,7 +381,7 @@ fn number(
         .on_commit(move |_| committing.commit(&committed_control));
     if !control.prefix_icon.is_empty() && control.prefix_icon_rotates {
         builder = builder.rotating_prefix_symbol_with_offset(
-            appkit_symbol(&control.prefix_icon),
+            &control.prefix_icon,
             control.prefix_icon_rotation_offset_degrees,
         );
     }
@@ -749,13 +749,6 @@ fn tooltip(control: &InspectorControl) -> Option<&str> {
     (!control.tooltip.is_empty())
         .then_some(control.tooltip.as_str())
         .or_else(|| (!control.subtitle.is_empty()).then_some(control.subtitle.as_str()))
-}
-
-fn appkit_symbol(icon: &str) -> &'static str {
-    match icon {
-        "arrow3-up-symbolic" => "arrow.up",
-        _ => panic!("unsupported AppKit inspector icon: {icon}"),
-    }
 }
 
 fn parse_bool(value: &str) -> bool {

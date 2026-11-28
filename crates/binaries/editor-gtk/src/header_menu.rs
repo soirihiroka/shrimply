@@ -179,10 +179,7 @@ fn show_shortcuts_dialog(window: &adw::ApplicationWindow) {
         tr!("Redo").as_ref(),
         "Ctrl+Shift+Z",
     ));
-    section.add(adw::ShortcutsItem::new(
-        tr!("Preferences").as_ref(),
-        "Ctrl+,",
-    ));
+    section.add(adw::ShortcutsItem::new(tr!("Settings").as_ref(), "Ctrl+,"));
     section.add(adw::ShortcutsItem::new(
         tr!("Show Keyboard Shortcuts").as_ref(),
         "Ctrl+?",

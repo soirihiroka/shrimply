@@ -41,7 +41,7 @@ actions! {
     Import, "import", "Import";
     Undo, "undo", "Undo";
     Redo, "redo", "Redo";
-    Preferences, "preferences", "Preferences";
+    Preferences, "preferences", "Settings";
     Shortcuts, "show-shortcuts", "Keyboard Shortcuts";
     RestartService, "restart-service", "Restart Local Service";
     About, "about", "About Shrimply";

@@ -525,6 +525,11 @@ fn search_popover(
             0.0
         } + results_height,
     );
+    content
+        .widthAnchor()
+        .constraintEqualToConstant(size.width)
+        .setActive(true);
+    controller.setPreferredContentSize(size);
     popover.setContentViewController(Some(&controller));
     popover.setContentSize(size);
 
@@ -1814,7 +1819,47 @@ fn clear_stack(stack: &NSStackView) {
     }
 }
 
+pub fn bundled_symbol(name: &str, label: &str) -> Retained<NSImage> {
+    use shrimply_components_skia::{Color, Rect, Vec2, icon};
+
+    thread_local! {
+        static PDF: RefCell<std::collections::HashMap<&'static str, Vec<u8>>> = RefCell::default();
+    }
+    const SIZE: f32 = 16.0;
+    let (name, _) = shrimply_components_core::icons::ALL
+        .iter()
+        .find(|(candidate, _)| *candidate == name)
+        .expect("bundled Adwaita icon exists");
+    let image = PDF.with_borrow_mut(|cache| {
+        let bytes = cache.entry(name).or_insert_with(|| {
+            let mut data = Vec::new();
+            let mut page =
+                skia_safe::pdf::new_document(&mut data, None).begin_page((SIZE, SIZE), None);
+            icon::draw(
+                page.canvas(),
+                icon::Icon(name),
+                Rect::from_min_size(Vec2::ZERO, Vec2::splat(SIZE)),
+                Color::from_srgba([0.0, 0.0, 0.0, 1.0]).into(),
+            );
+            page.end_page().close();
+            data
+        });
+        NSImage::initWithData(
+            NSImage::alloc(),
+            &objc2_foundation::NSData::with_bytes(bytes),
+        )
+        .expect("valid bundled Adwaita icon")
+    });
+    image.setSize(NSSize::new(f64::from(SIZE), f64::from(SIZE)));
+    image.setTemplate(true);
+    image.setAccessibilityDescription(Some(&NSString::from_str(label)));
+    image
+}
+
 pub(crate) fn symbol(name: &str, label: &str) -> Retained<NSImage> {
+    if shrimply_components_core::icons::svg(name).is_some() {
+        return bundled_symbol(name, label);
+    }
     NSImage::imageWithSystemSymbolName_accessibilityDescription(
         &NSString::from_str(name),
         Some(&NSString::from_str(label)),

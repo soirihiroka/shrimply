@@ -35,6 +35,8 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
@@ -520,11 +522,20 @@ private fun InspectorEdit(editor: JSONObject, dismiss: () -> Unit, send: (JSONOb
                     ChoiceInput(if (field.isNull("label")) "" else field.getString("label"), options.firstOrNull { it.getString("value") == values[index].value }?.getString("label").orEmpty(), options.map { it.getString("label") }) {
                         values[index].value = options[it].getString("value")
                     }
-                } else OutlinedTextField(value = values[index].value, onValueChange = { values[index].value = it },
-                modifier = Modifier.fillMaxWidth(),
-                label = if (!field.isNull("label") && field.getString("label").isNotEmpty()) { { Text(field.getString("label")) } } else null,
-                singleLine = !field.getBoolean("multiline"),
-                keyboardOptions = KeyboardOptions(keyboardType = if (field.getString("keyboard") == "decimal") KeyboardType.Decimal else KeyboardType.Text)) }
+                } else {
+                    val keyboard = when (field.getString("keyboard")) {
+                        "decimal" -> KeyboardType.Decimal
+                        "password" -> KeyboardType.Password
+                        else -> KeyboardType.Text
+                    }
+                    OutlinedTextField(value = values[index].value, onValueChange = { values[index].value = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = if (!field.isNull("label") && field.getString("label").isNotEmpty()) { { Text(field.getString("label")) } } else null,
+                        singleLine = !field.getBoolean("multiline"),
+                        visualTransformation = if (keyboard == KeyboardType.Password) PasswordVisualTransformation() else VisualTransformation.None,
+                        keyboardOptions = KeyboardOptions(keyboardType = keyboard))
+                }
+            }
         }
     }, confirmButton = { TextButton(onClick = {
         val payload = JSONObject(editor.getJSONObject("command").toString()).put("values", JSONArray(values.map { it.value }))

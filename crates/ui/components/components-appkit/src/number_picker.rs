@@ -1192,9 +1192,5 @@ fn lock_symbol(locked: bool) -> Retained<NSImage> {
 }
 
 fn system_symbol(name: &str, label: &str) -> Retained<NSImage> {
-    NSImage::imageWithSystemSymbolName_accessibilityDescription(
-        &NSString::from_str(name),
-        Some(&NSString::from_str(label)),
-    )
-    .unwrap_or_else(|| panic!("macOS must provide the {name} system symbol"))
+    crate::controls::symbol(name, label)
 }

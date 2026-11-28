@@ -46,3 +46,5 @@ shrimply-project-evaluation = { workspace = true }
 shrimply-paint-edit-skia = { workspace = true }
 shrimply-visual-core = { workspace = true }
 uuid = { workspace = true, features = ["v4"] }
+serde_json.workspace = true
+shrimply-inspector-document.workspace = true

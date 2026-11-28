@@ -373,7 +373,7 @@ impl State {
             let scroll = ScrollingColumn::new(&padded, mtm);
             tabs.push(
                 Tab::new(category.label, scroll.view().as_super().into())
-                    .symbol(category_symbol(category.icon)),
+                    .symbol(category.icon.symbolic_name()),
             );
             scrolls.push(scroll);
         }
@@ -445,7 +445,7 @@ impl State {
             let context = context.clone();
             let action = toggle.activate.clone();
             let button = shrimply_components_appkit::ActionButton::symbol_toggle(
-                action_symbol(toggle.icon),
+                toggle.icon,
                 toggle.tooltip,
                 toggle.active,
                 move |requested| {
@@ -472,7 +472,7 @@ impl State {
             let context = context.clone();
             let activate = action.activate.clone();
             let button = shrimply_components_appkit::ActionButton::symbol(
-                action_symbol(action.icon),
+                action.icon,
                 action.tooltip,
                 move || context.apply(&activate),
                 mtm,
@@ -558,30 +558,4 @@ fn same_card_structure(previous: &InspectorDocument, current: &InspectorDocument
                             _ => false,
                         })
             })
-}
-
-fn category_symbol(icon: shrimply_inspector_document::CategoryIcon) -> &'static str {
-    use shrimply_inspector_document::CategoryIcon;
-    match icon {
-        CategoryIcon::Project | CategoryIcon::Track => "slider.horizontal.3",
-        CategoryIcon::Text => "textformat",
-        CategoryIcon::Visual => "circle.lefthalf.filled",
-        CategoryIcon::Audio => "speaker.wave.2",
-        CategoryIcon::Playback => "play",
-        CategoryIcon::Info => "info.circle",
-        CategoryIcon::Performance => "speedometer",
-        CategoryIcon::Transition => "arrow.left.and.right",
-    }
-}
-
-fn action_symbol(icon: &str) -> &'static str {
-    match icon {
-        "edit-copy-symbolic" => "doc.on.doc",
-        "go-up-symbolic" => "chevron.up",
-        "go-down-symbolic" => "chevron.down",
-        "user-trash-symbolic" => "trash",
-        "select-symbolic" => "square.dashed",
-        "view-refresh-symbolic" => "arrow.clockwise",
-        _ => panic!("unsupported inspector header icon: {icon}"),
-    }
 }

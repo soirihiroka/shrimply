@@ -1,4 +1,5 @@
 //! Native preferences reuse the GTK font browser and trust operations.
+mod project_servers;
 mod trust;
 use serde_json::{Value, json};
 use shrimply_preferences_core::{self as preferences, PreferencePage, SharedPreferences};
@@ -8,9 +9,14 @@ pub struct Preferences {
     preferences: preferences::remote::PreferencesUi,
     fonts: crate::font_picker::Picker,
     trust: trust::Sources,
+    servers: project_servers::Settings,
 }
 
 impl Preferences {
+    pub fn pending_project_sign_in(&self) -> bool {
+        self.servers.pending()
+    }
+
     fn poll_fonts(&mut self, store: &SharedPreferences) {
         for family in self.fonts.poll().1 {
             preferences::set_default_text_font_family(store, family);
@@ -24,6 +30,7 @@ impl Preferences {
     }
 
     fn document(&mut self, store: &SharedPreferences, mut document: Value) -> Value {
+        self.servers.decorate(store, &mut document);
         let pages = document["controls"]
             .as_array_mut()
             .expect("preference pages");
@@ -54,6 +61,9 @@ impl Preferences {
             "preferences_close" => {
                 self.fonts.close();
                 self.trust = Default::default();
+            }
+            action if action.starts_with("project_server_") => {
+                self.servers.apply(store, request)?;
             }
             action if action.starts_with("font_") => {
                 self.fonts.apply(request)?;

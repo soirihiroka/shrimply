@@ -1,468 +1,270 @@
-use crate::{server, store as preferences_store};
+use crate::{server, store};
 use adw::prelude::*;
 use shrimply_components_gtk::tr;
 use shrimply_components_gtk::ui::ColorPicker;
+use store::{PreferenceId, PreferencePage, PreferenceValue, SharedPreferences};
 
 pub fn show_project_servers(window: &adw::ApplicationWindow) -> adw::PreferencesDialog {
     let page = adw::PreferencesPage::new();
-    page.add(&server::project_server_group(
-        preferences_store::open_with_defaults(),
-    ));
+    page.add(&server::project_server_group(store::open_with_defaults()));
     let dialog = adw::PreferencesDialog::builder()
         .title(tr!("Project Servers").as_ref())
         .search_enabled(false)
         .build();
     dialog.add(&page);
-    dialog.present(Some(window.upcast_ref::<gtk::Widget>()));
+    dialog.present(Some(window));
     dialog
 }
 
-pub fn show_preferences_dialog(
-    window: &adw::ApplicationWindow,
-    preferences: preferences_store::SharedPreferences,
-) {
-    let snapshot = preferences_store::snapshot(&preferences);
-    let caption_size_range =
-        preferences_store::integer_range(preferences_store::PreferenceId::CaptionFontSize)
-            .expect("caption font size must be numeric");
-    let duration_range =
-        preferences_store::integer_range(preferences_store::PreferenceId::DefaultVisualDuration)
-            .expect("visual duration must be numeric");
-    let snap_range =
-        preferences_store::integer_range(preferences_store::PreferenceId::TimelineSnapRadius)
-            .expect("timeline snap radius must be numeric");
-    let padding_range =
-        preferences_store::integer_range(preferences_store::PreferenceId::PreviewPadding)
-            .expect("preview padding must be numeric");
-    let shadow_range =
-        preferences_store::integer_range(preferences_store::PreferenceId::PreviewShadowSize)
-            .expect("preview shadow size must be numeric");
-    let decoder_range =
-        preferences_store::integer_range(preferences_store::PreferenceId::TemporalDecoderPoolSize)
-            .expect("decoder pool size must be numeric");
-    let memory_range =
-        preferences_store::integer_range(preferences_store::PreferenceId::GpuHostMemory)
-            .expect("GPU host memory must be numeric");
-
-    let default_font_row = adw::ActionRow::builder()
-        .title(
-            tr!(preferences_store::PreferenceId::DefaultTextFontFamily
-                .presentation()
-                .label)
-            .as_ref(),
-        )
+pub fn show_preferences_dialog(window: &adw::ApplicationWindow, preferences: SharedPreferences) {
+    let dialog = adw::Dialog::builder()
+        .title(tr!(store::SETTINGS_TITLE).as_ref())
+        .content_width(940)
+        .content_height(630)
         .build();
-    let default_font =
-        shrimply_inspector_gtk::font_family_selector(&snapshot.default_text_font_family, {
-            let preferences = preferences.clone();
-            move |family| preferences_store::set_default_text_font_family(&preferences, family)
-        });
-    default_font.set_valign(gtk::Align::Center);
-    default_font.set_width_request(260);
-    default_font_row.add_suffix(&default_font);
-    let text_group = adw::PreferencesGroup::new();
-    text_group.set_title(tr!("Text").as_ref());
-    text_group.add(&default_font_row);
-
-    let caption_font_size = adw::SpinRow::with_range(
-        caption_size_range.minimum as f64,
-        caption_size_range.maximum as f64,
-        caption_size_range.step as f64,
-    );
-    caption_font_size.set_title(
-        tr!(preferences_store::PreferenceId::CaptionFontSize
-            .presentation()
-            .label)
-        .as_ref(),
-    );
-    caption_font_size.set_digits(0);
-
-    let caption_background_color_row = adw::ActionRow::builder()
-        .title(
-            tr!(preferences_store::PreferenceId::CaptionBackgroundColor
-                .presentation()
-                .label)
-            .as_ref(),
-        )
+    let categories = gtk::ListBox::builder()
+        .selection_mode(gtk::SelectionMode::Single)
+        .css_classes(["navigation-sidebar"])
         .build();
-
-    let caption_group = adw::PreferencesGroup::new();
-    caption_group.set_title(tr!("Captions").as_ref());
-    caption_group.add(&caption_font_size);
-    caption_group.add(&caption_background_color_row);
-
-    let default_visual_duration = adw::SpinRow::with_range(
-        duration_range.minimum as f64 / duration_range.scale as f64,
-        duration_range.maximum as f64 / duration_range.scale as f64,
-        duration_range.step as f64 / duration_range.scale as f64,
-    );
-    default_visual_duration.set_title(
-        tr!(preferences_store::PreferenceId::DefaultVisualDuration
-            .presentation()
-            .label)
-        .as_ref(),
-    );
-    default_visual_duration.set_digits(1);
-
-    let snap_radius = adw::SpinRow::with_range(
-        snap_range.minimum as f64,
-        snap_range.maximum as f64,
-        snap_range.step as f64,
-    );
-    snap_radius.set_title(
-        tr!(preferences_store::PreferenceId::TimelineSnapRadius
-            .presentation()
-            .label)
-        .as_ref(),
-    );
-    snap_radius.set_subtitle(
-        tr!(preferences_store::PreferenceId::TimelineSnapRadius
-            .presentation()
-            .subtitle)
-        .as_ref(),
-    );
-    snap_radius.set_digits(0);
-
-    let timeline_group = adw::PreferencesGroup::new();
-    timeline_group.set_title(tr!("Timeline").as_ref());
-    timeline_group.add(&default_visual_duration);
-    timeline_group.add(&snap_radius);
-
-    let preview_padding = adw::SpinRow::with_range(
-        padding_range.minimum as f64,
-        padding_range.maximum as f64,
-        padding_range.step as f64,
-    );
-    preview_padding.set_title(
-        tr!(preferences_store::PreferenceId::PreviewPadding
-            .presentation()
-            .label)
-        .as_ref(),
-    );
-    preview_padding.set_subtitle(
-        tr!(preferences_store::PreferenceId::PreviewPadding
-            .presentation()
-            .subtitle)
-        .as_ref(),
-    );
-    preview_padding.set_digits(0);
-
-    let preview_shadow_size = adw::SpinRow::with_range(
-        shadow_range.minimum as f64,
-        shadow_range.maximum as f64,
-        shadow_range.step as f64,
-    );
-    preview_shadow_size.set_title(
-        tr!(preferences_store::PreferenceId::PreviewShadowSize
-            .presentation()
-            .label)
-        .as_ref(),
-    );
-    preview_shadow_size.set_subtitle(
-        tr!(preferences_store::PreferenceId::PreviewShadowSize
-            .presentation()
-            .subtitle)
-        .as_ref(),
-    );
-    preview_shadow_size.set_digits(0);
-
-    let preview_upsample_method = adw::ComboRow::new();
-    preview_upsample_method.set_title(
-        tr!(preferences_store::PreferenceId::PreviewUpsampleMethod
-            .presentation()
-            .label)
-        .as_ref(),
-    );
-    preview_upsample_method.set_subtitle(
-        tr!(preferences_store::PreferenceId::PreviewUpsampleMethod
-            .presentation()
-            .subtitle)
-        .as_ref(),
-    );
-    let upsample_labels = preferences_store::PreferenceId::PreviewUpsampleMethod
-        .presentation()
-        .choices
-        .iter()
-        .map(|label| tr!(*label))
-        .collect::<Vec<_>>();
-    preview_upsample_method.set_model(Some(&gtk::StringList::new(
-        &upsample_labels
-            .iter()
-            .map(AsRef::as_ref)
-            .collect::<Vec<_>>(),
-    )));
-
-    shrimply_components_gtk::ui::adaptive_choice(&preview_upsample_method);
-
-    let preview_downsample_method = adw::ComboRow::new();
-    preview_downsample_method.set_title(
-        tr!(preferences_store::PreferenceId::PreviewDownsampleMethod
-            .presentation()
-            .label)
-        .as_ref(),
-    );
-    preview_downsample_method.set_subtitle(
-        tr!(preferences_store::PreferenceId::PreviewDownsampleMethod
-            .presentation()
-            .subtitle)
-        .as_ref(),
-    );
-    let downsample_labels = preferences_store::PreferenceId::PreviewDownsampleMethod
-        .presentation()
-        .choices
-        .iter()
-        .map(|label| tr!(*label))
-        .collect::<Vec<_>>();
-    preview_downsample_method.set_model(Some(&gtk::StringList::new(
-        &downsample_labels
-            .iter()
-            .map(AsRef::as_ref)
-            .collect::<Vec<_>>(),
-    )));
-
-    shrimply_components_gtk::ui::adaptive_choice(&preview_downsample_method);
-
-    let preview_group = adw::PreferencesGroup::new();
-    preview_group.set_title(tr!("Preview").as_ref());
-    let preview_zoom_pan = adw::SwitchRow::builder()
-        .title(
-            tr!(preferences_store::PreferenceId::PreviewZoomPan
-                .presentation()
-                .label)
-            .as_ref(),
-        )
-        .subtitle(
-            tr!(preferences_store::PreferenceId::PreviewZoomPan
-                .presentation()
-                .subtitle)
-            .as_ref(),
-        )
-        .active(snapshot.preview_zoom_pan_enabled)
-        .build();
-    let zoom_preferences = preferences.clone();
-    preview_zoom_pan.connect_active_notify(move |row| {
-        preferences_store::set_preview_zoom_pan_enabled(&zoom_preferences, row.is_active());
-    });
-    preview_group.add(&preview_zoom_pan);
-    preview_group.add(&preview_padding);
-    preview_group.add(&preview_shadow_size);
-    preview_group.add(&preview_upsample_method);
-    preview_group.add(&preview_downsample_method);
-
-    let temporal_decoder_pool_size = adw::SpinRow::with_range(
-        decoder_range.minimum as f64,
-        decoder_range.maximum as f64,
-        decoder_range.step as f64,
-    );
-    temporal_decoder_pool_size.set_title(
-        tr!(preferences_store::PreferenceId::TemporalDecoderPoolSize
-            .presentation()
-            .label)
-        .as_ref(),
-    );
-    temporal_decoder_pool_size.set_subtitle(
-        tr!(preferences_store::PreferenceId::TemporalDecoderPoolSize
-            .presentation()
-            .subtitle)
-        .as_ref(),
-    );
-    temporal_decoder_pool_size.set_digits(0);
-
-    let gpu_host_memory = adw::SpinRow::with_range(
-        memory_range.minimum as f64 / memory_range.scale as f64,
-        memory_range.maximum as f64 / memory_range.scale as f64,
-        memory_range.step as f64 / memory_range.scale as f64,
-    );
-    gpu_host_memory.set_title(
-        tr!(preferences_store::PreferenceId::GpuHostMemory
-            .presentation()
-            .label)
-        .as_ref(),
-    );
-    gpu_host_memory.set_subtitle(
-        tr!(preferences_store::PreferenceId::GpuHostMemory
-            .presentation()
-            .subtitle)
-        .as_ref(),
-    );
-    gpu_host_memory.set_digits(2);
-
-    let performance_group = adw::PreferencesGroup::new();
-    performance_group.set_title(tr!("Performance").as_ref());
-    #[cfg(target_os = "linux")]
-    performance_group.add(&crate::acceleration::row(preferences.clone()));
-    performance_group.add(&temporal_decoder_pool_size);
-    performance_group.add(&gpu_host_memory);
-
-    let appearance_page = adw::PreferencesPage::builder()
-        .title(tr!(preferences_store::PreferencePage::Appearance.title()).as_ref())
-        .icon_name(preferences_store::PreferencePage::Appearance.icon())
-        .name(preferences_store::PreferencePage::Appearance.id())
-        .build();
-    for name in preferences_store::PreferencePage::Appearance.groups() {
-        appearance_page.add(match *name {
-            "Captions" => &caption_group,
-            "Text" => &text_group,
-            "Preview" => &preview_group,
-            "Timeline" => &timeline_group,
-            _ => unreachable!("appearance preference group"),
-        });
+    let pages = gtk::Stack::new();
+    let content_header = adw::HeaderBar::new();
+    for id in PreferencePage::ALL {
+        let row = adw::ActionRow::builder()
+            .title(tr!(id.title()).as_ref())
+            .activatable(true)
+            .build();
+        row.add_prefix(&gtk::Image::from_icon_name(id.icon()));
+        categories.append(&row);
+        let page = match id {
+            PreferencePage::Trust => crate::trust::page(),
+            PreferencePage::External => {
+                let blender = adw::PreferencesGroup::builder()
+                    .title(tr!("Blender").as_ref())
+                    .build();
+                for option in id.options("Blender") {
+                    blender.add(&preference_row(option, &preferences));
+                }
+                server::page(preferences.clone(), &blender)
+            }
+            _ => {
+                let page = adw::PreferencesPage::new();
+                for group in id.groups() {
+                    let section = adw::PreferencesGroup::builder()
+                        .title(tr!(*group).as_ref())
+                        .build();
+                    #[cfg(target_os = "linux")]
+                    if id == PreferencePage::Performance {
+                        section.add(&crate::acceleration::row(preferences.clone()));
+                    }
+                    for option in id.options(group) {
+                        section.add(&preference_row(option, &preferences));
+                    }
+                    page.add(&section);
+                }
+                page
+            }
+        };
+        pages.add_named(&page, Some(id.id()));
     }
 
-    let performance_page = adw::PreferencesPage::builder()
-        .title(tr!(preferences_store::PreferencePage::Performance.title()).as_ref())
-        .icon_name(preferences_store::PreferencePage::Performance.icon())
-        .name(preferences_store::PreferencePage::Performance.id())
+    let sidebar = adw::ToolbarView::new();
+    sidebar.add_top_bar(&adw::HeaderBar::new());
+    sidebar.set_content(Some(&categories));
+    let sidebar = adw::NavigationPage::builder()
+        .title(tr!(store::SETTINGS_TITLE).as_ref())
+        .child(&sidebar)
         .build();
-    performance_page.add(&performance_group);
+    let content = adw::ToolbarView::new();
+    content.add_top_bar(&content_header);
+    content.set_content(Some(&pages));
+    let page = adw::NavigationPage::builder()
+        .title(tr!(PreferencePage::Appearance.title()).as_ref())
+        .child(&content)
+        .build();
+    let split = adw::NavigationSplitView::builder()
+        .sidebar(&sidebar)
+        .content(&page)
+        .sidebar_width_unit(adw::LengthUnit::Px)
+        .min_sidebar_width(f64::from(store::SETTINGS_SIDEBAR_WIDTH))
+        .max_sidebar_width(f64::from(store::SETTINGS_SIDEBAR_WIDTH))
+        .build();
+    categories.select_row(categories.row_at_index(0).as_ref());
+    categories.connect_row_activated({
+        let split = split.downgrade();
+        move |_, row| {
+            let id = PreferencePage::ALL[row.index() as usize];
+            pages.set_visible_child_name(id.id());
+            page.set_title(tr!(id.title()).as_ref());
+            if let Some(split) = split.upgrade() {
+                split.set_show_content(true);
+            }
+        }
+    });
+    let narrow = adw::Breakpoint::new(adw::BreakpointCondition::new_length(
+        adw::BreakpointConditionLengthType::MaxWidth,
+        f64::from(store::SETTINGS_WIDE_WIDTH),
+        adw::LengthUnit::Px,
+    ));
+    narrow.add_setter(&split, "collapsed", Some(&true.to_value()));
+    dialog.add_breakpoint(narrow);
+    dialog.set_child(Some(&split));
+    dialog.present(Some(window));
+}
 
-    let blender_row = adw::ActionRow::builder()
-        .title(
-            tr!(preferences_store::PreferenceId::BlenderBinary
-                .presentation()
-                .label)
-            .as_ref(),
-        )
+fn preference_row(id: PreferenceId, preferences: &SharedPreferences) -> gtk::Widget {
+    let presentation = id.presentation();
+    let title = tr!(presentation.label);
+    let subtitle = tr!(presentation.subtitle);
+    let current = store::value(preferences, id);
+    let set = {
+        let preferences = preferences.clone();
+        move |value| store::set_value(&preferences, id, value).expect("settings control value")
+    };
+    match current {
+        PreferenceValue::Boolean(active) => {
+            let row = adw::SwitchRow::builder()
+                .title(title.as_ref())
+                .subtitle(subtitle.as_ref())
+                .active(active)
+                .build();
+            row.connect_active_notify(move |row| set(PreferenceValue::Boolean(row.is_active())));
+            row.upcast()
+        }
+        PreferenceValue::Integer(value) if !presentation.choices.is_empty() => {
+            let labels = presentation
+                .choices
+                .iter()
+                .map(|label| tr!(*label))
+                .collect::<Vec<_>>();
+            let labels = labels.iter().map(AsRef::as_ref).collect::<Vec<_>>();
+            let row = adw::ComboRow::builder()
+                .title(title.as_ref())
+                .subtitle(subtitle.as_ref())
+                .model(&gtk::StringList::new(&labels))
+                .selected(value as u32)
+                .build();
+            shrimply_components_gtk::ui::adaptive_choice(&row);
+            row.connect_selected_notify(move |row| {
+                set(PreferenceValue::Integer(i64::from(row.selected())))
+            });
+            row.upcast()
+        }
+        PreferenceValue::Integer(value) => {
+            let range = store::integer_range(id).expect("numeric settings range");
+            let scale = range.scale as f64;
+            let row = adw::SpinRow::with_range(
+                range.minimum as f64 / scale,
+                range.maximum as f64 / scale,
+                range.step as f64 / scale,
+            );
+            row.set_title(title.as_ref());
+            row.set_subtitle(subtitle.as_ref());
+            row.set_digits(match range.scale {
+                1 => 0,
+                10 => 1,
+                _ => 2,
+            });
+            row.set_value(value as f64 / scale);
+            row.connect_value_notify(move |row| {
+                set(PreferenceValue::Integer(
+                    (row.value() * scale).round() as i64
+                ))
+            });
+            row.upcast()
+        }
+        PreferenceValue::Color(color) => {
+            let row = adw::ActionRow::builder().title(title.as_ref()).build();
+            let picker = ColorPicker::builder(color)
+                .title(title.as_ref())
+                .on_change(move |color| set(PreferenceValue::Color(color)))
+                .build();
+            picker.set_valign(gtk::Align::Center);
+            row.add_suffix(&picker);
+            row.upcast()
+        }
+        PreferenceValue::FontFamily(family) => {
+            let row = adw::ActionRow::builder().title(title.as_ref()).build();
+            let picker = shrimply_inspector_gtk::font_family_selector(&family, move |family| {
+                set(PreferenceValue::FontFamily(family))
+            });
+            picker.set_valign(gtk::Align::Center);
+            row.add_suffix(&picker);
+            row.upcast()
+        }
+        PreferenceValue::Text(_) => blender_row(preferences.clone(), &title).upcast(),
+    }
+}
+
+fn blender_row(preferences: SharedPreferences, title: &str) -> adw::ActionRow {
+    let row = adw::ActionRow::builder()
+        .title(title)
         .subtitle(shrimply_blender_core::binary_label(
-            snapshot.blender_binary.as_deref(),
+            store::snapshot(&preferences).blender_binary.as_deref(),
         ))
         .build();
-    let clear_blender = gtk::Button::builder()
+    let clear = gtk::Button::builder()
         .icon_name("edit-clear-symbolic")
         .tooltip_text(tr!("Clear Blender binary").as_ref())
         .valign(gtk::Align::Center)
         .build();
-    let choose_blender = gtk::Button::builder()
+    let choose = gtk::Button::builder()
         .label(tr!("Choose…").as_ref())
         .valign(gtk::Align::Center)
         .build();
-    blender_row.add_suffix(&clear_blender);
-    blender_row.add_suffix(&choose_blender);
-    let blender_group = adw::PreferencesGroup::new();
-    blender_group.set_title(tr!("Blender").as_ref());
-    blender_group.add(&blender_row);
-
-    let dialog = adw::PreferencesDialog::builder()
-        .title(tr!("Preferences").as_ref())
-        .search_enabled(false)
-        .build();
-    dialog.add(&appearance_page);
-    dialog.add(&performance_page);
-    dialog.add(&crate::trust::page());
-    dialog.add(&server::page(preferences.clone(), &blender_group));
-
-    let color_store = preferences.clone();
-    let color_button = ColorPicker::builder(snapshot.caption_background_color)
-        .title(tr!("Caption background color").as_ref())
-        .on_change(move |color| {
-            preferences_store::set_value(
-                &color_store,
-                preferences_store::PreferenceId::CaptionBackgroundColor,
-                preferences_store::PreferenceValue::Color(color),
-            )
-            .expect("caption background color has a fixed color type")
-        })
-        .build();
-    color_button.set_valign(gtk::Align::Center);
-    color_button.set_hexpand(false);
-    color_button.set_vexpand(false);
-    caption_background_color_row.add_suffix(&color_button);
-
-    use preferences_store::{PreferenceId as Id, PreferenceValue as Value};
-    for (row, id) in [
-        (caption_font_size, Id::CaptionFontSize),
-        (default_visual_duration, Id::DefaultVisualDuration),
-        (snap_radius, Id::TimelineSnapRadius),
-        (preview_padding, Id::PreviewPadding),
-        (preview_shadow_size, Id::PreviewShadowSize),
-        (temporal_decoder_pool_size, Id::TemporalDecoderPoolSize),
-        (gpu_host_memory, Id::GpuHostMemory),
-    ] {
-        let store = preferences.clone();
-        let range = preferences_store::integer_range(id).expect("numeric preference range");
-        let Value::Integer(current) = preferences_store::value(&store, id) else {
-            unreachable!("numeric preference value");
-        };
-        row.set_value(current as f64 / range.scale as f64);
-        row.connect_value_notify(move |row| {
-            preferences_store::set_value(
-                &store,
-                id,
-                Value::Integer((row.value() * range.scale as f64).round() as i64),
-            )
-            .expect("numeric preference has an integer UI value");
-        });
-    }
-    for (row, id) in [
-        (preview_upsample_method, Id::PreviewUpsampleMethod),
-        (preview_downsample_method, Id::PreviewDownsampleMethod),
-    ] {
-        let store = preferences.clone();
-        let Value::Integer(current) = preferences_store::value(&store, id) else {
-            unreachable!("preference choice value");
-        };
-        row.set_selected(current.try_into().expect("nonnegative preference choice"));
-        row.connect_selected_notify(move |row| {
-            preferences_store::set_value(&store, id, Value::Integer(i64::from(row.selected())))
-                .expect("preference choice has an integer UI value");
-        });
-    }
-
-    let clear_store = preferences.clone();
-    let clear_row = blender_row.clone();
-    clear_blender.connect_clicked(move |_| {
-        preferences_store::apply_blender_binary(&clear_store, None);
-        clear_row.set_subtitle(tr!("Not configured").as_ref());
+    clear.connect_clicked({
+        let preferences = preferences.clone();
+        let row = row.downgrade();
+        move |_| {
+            store::apply_blender_binary(&preferences, None);
+            if let Some(row) = row.upgrade() {
+                row.set_subtitle(tr!("Not configured").as_ref());
+            }
+        }
     });
-
-    let choose_store = preferences.clone();
-    let choose_row = blender_row.clone();
-    let choose_dialog = dialog.clone();
-    choose_blender.connect_clicked(move |_| {
-        let picker = gtk::FileDialog::builder()
-            .title(tr!("Choose Blender Binary").as_ref())
-            .build();
-        let store = choose_store.clone();
-        let row = choose_row.clone();
-        let parent = choose_dialog.clone();
-        shrimply_components_gtk::file_picker::open(
-            "Choose Blender Binary",
-            &picker,
-            parent.root().and_downcast::<gtk::Window>().as_ref(),
-            move |result| {
-                let Some(path) = result.ok().and_then(|file| file.path()) else {
-                    return;
-                };
-                let (sender, receiver) = async_channel::bounded(1);
-                let probe_path = path.clone();
-                std::thread::spawn(move || {
-                    let result = preferences_store::validate_blender_binary(&probe_path);
-                    let _ = sender.send_blocking(result);
-                });
-                let store = store.clone();
-                let parent = parent.clone();
-                gtk::glib::spawn_future_local(async move {
-                    let Ok(result) = receiver.recv().await else {
-                        return;
-                    };
-                    match result {
-                        Ok(path) => {
-                            preferences_store::apply_blender_binary(&store, Some(path.clone()));
-                            row.set_subtitle(&path.display().to_string());
-                        }
-                        Err(error) => {
-                            let alert = adw::AlertDialog::new(
-                                Some("Incompatible Blender Binary"),
-                                Some(&error),
-                            );
-                            alert.add_response("close", tr!("Close").as_ref());
-                            alert.present(Some(parent.upcast_ref::<gtk::Widget>()));
-                        }
+    choose.connect_clicked({
+        let row = row.downgrade();
+        move |button| {
+            let picker = gtk::FileDialog::builder()
+                .title(tr!("Choose Blender Binary").as_ref())
+                .build();
+            let preferences = preferences.clone();
+            let row = row.clone();
+            shrimply_components_gtk::file_picker::open(
+                "Choose Blender Binary",
+                &picker,
+                button.root().and_downcast::<gtk::Window>().as_ref(),
+                move |result| {
+                    if let Some(path) = result.ok().and_then(|file| file.path()) {
+                        gtk::glib::spawn_future_local(async move {
+                            let result = gtk::gio::spawn_blocking(move || {
+                                store::validate_blender_binary(&path)
+                            })
+                            .await
+                            .expect("Blender probe");
+                            let Some(row) = row.upgrade() else {
+                                return;
+                            };
+                            match result {
+                                Ok(path) => {
+                                    row.set_subtitle(&path.display().to_string());
+                                    store::apply_blender_binary(&preferences, Some(path));
+                                }
+                                Err(error) => {
+                                    let alert = adw::AlertDialog::new(
+                                        Some(tr!("Incompatible Blender Binary").as_ref()),
+                                        Some(&error),
+                                    );
+                                    alert.add_response("close", tr!("Close").as_ref());
+                                    alert.present(Some(&row));
+                                }
+                            }
+                        });
                     }
-                });
-            },
-        );
+                },
+            );
+        }
     });
-
-    dialog.present(Some(window.upcast_ref::<gtk::Widget>()));
+    row.add_suffix(&clear);
+    row.add_suffix(&choose);
+    row
 }

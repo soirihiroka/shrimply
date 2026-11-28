@@ -1,5 +1,9 @@
 use super::*;
 
+pub const SETTINGS_TITLE: &str = "Settings";
+pub const SETTINGS_WIDE_WIDTH: u32 = 780;
+pub const SETTINGS_SIDEBAR_WIDTH: u32 = 200;
+
 const VISUAL_DURATION_UNITS_PER_SECOND: i64 = 10;
 const GPU_MEMORY_UNITS_PER_GIB: i64 = 4;
 const BYTES_PER_GIB: f64 = 1024.0 * 1024.0 * 1024.0;
@@ -45,6 +49,22 @@ impl PreferencePage {
             Self::Trust => "security-high-symbolic",
             Self::External => "application-x-executable-symbolic",
         }
+    }
+
+    pub fn color(self) -> &'static str {
+        match self {
+            Self::Appearance => "#7956BE",
+            Self::Performance => "#B95728",
+            Self::Trust => "#218051",
+            Self::External => "#336AC6",
+        }
+    }
+
+    pub fn options(self, group: &str) -> impl Iterator<Item = PreferenceId> + '_ {
+        PreferenceId::ALL.into_iter().filter(move |id| {
+            let presentation = id.presentation();
+            presentation.available && presentation.page == Some(self) && presentation.group == group
+        })
     }
 
     pub fn groups(self) -> &'static [&'static str] {

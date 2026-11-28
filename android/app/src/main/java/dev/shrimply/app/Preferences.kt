@@ -18,7 +18,6 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
@@ -135,15 +134,17 @@ internal fun PreferencesScreen(timeline: TimelineSession, files: ProjectFiles, d
     }
     val model = description
     val groups = model?.getJSONArray("controls")?.objects().orEmpty()
+    val wide = model?.let { LocalConfiguration.current.screenWidthDp >= it.getInt("wide_width") } ?: false
     val category = groups.firstOrNull { it.getString("id") == page }
+        ?: groups.firstOrNull().takeIf { wide }
     val font = model?.optJSONObject("font_picker")
     val back: suspend () -> Unit = {
         if (font != null) request(font.getJSONObject("close"))
-        else if (category != null) page = null
+        else if (category != null && !wide) page = null
         else { model?.optJSONObject("close_command")?.let { request(it) }; dismiss() }
     }
     val stack = buildList {
-        add(RootPage to model)
+        if (!wide || category == null) add(RootPage to model)
         category?.let { add(it.getString("id") to it) }
         font?.let { add(it.getString("id") to it) }
     }
@@ -157,25 +158,33 @@ internal fun PreferencesScreen(timeline: TimelineSession, files: ProjectFiles, d
         shape = RoundedCornerShape(BackCornerRadius * fraction)
         clip = fraction > 0f
     }
+    val categories: @Composable (Boolean) -> Unit = { active ->
+        SettingsGroup {
+            groups.forEach { group ->
+                val id = group.getString("id")
+                SettingsRow(group.getString("label"), if (wide) "" else group.getString("summary"), active,
+                    leading = { SettingsIcon(group.getString("icon"), group.getString("color")) },
+                    trailing = if (wide) null else {
+                        { Icon(iconVector("go-next-symbolic"), null, Modifier.size(20.dp)) }
+                    },
+                    modifier = Modifier
+                        .then(if (wide && id == category?.getString("id")) Modifier.background(MaterialTheme.colorScheme.secondaryContainer) else Modifier)
+                        .clickable(enabled = active) { page = id })
+            }
+        }
+    }
     val showPage: @Composable (Pair<String, JSONObject?>, Modifier, Boolean) -> Unit = { (id, document), modifier, active ->
         pages.SaveableStateProvider(id) {
             val root = id == RootPage
             val fonts = document === font && font != null
             PreferencesPage(
-                title = if (root) document?.getString("title") ?: tr("Preferences") else if (fonts) document!!.getString("title") else document!!.getString("label"),
+                title = if (root) document?.getString("title") ?: tr("Settings") else if (fonts) document!!.getString("title") else document!!.getString("label"),
                 backLabel = model?.getString("back_label") ?: tr("Back"),
                 back = { scope.launch { back() } }, modifier = modifier, enabled = active && !busy, scrollable = !fonts,
             ) {
                 if (active) failure?.let { Text(it, Modifier.padding(horizontal = 24.dp), color = MaterialTheme.colorScheme.error) }
                 if (document == null) LinearProgressIndicator(Modifier.fillMaxWidth())
-                else if (root) SettingsGroup {
-                    groups.forEach { group ->
-                        SettingsRow(group.getString("label"), group.getString("summary"), active,
-                            leading = { SettingsIcon(group.getString("icon")) },
-                            trailing = { Icon(iconVector("go-next-symbolic"), null, Modifier.size(20.dp)) },
-                            modifier = Modifier.clickable(enabled = active) { page = group.getString("id") })
-                    }
-                }
+                else if (root) categories(active)
                 else if (fonts) FontPreferences(document, active && !busy, send)
                 else document.getJSONArray("controls").objects().forEach { control -> key(control.getString("id")) {
                     InspectorControl(timeline, control, active && !busy, send,
@@ -190,6 +199,20 @@ internal fun PreferencesScreen(timeline: TimelineSession, files: ProjectFiles, d
             workspace()
             Surface(Modifier.fillMaxSize(), color = Color.Transparent) {}
         }
+        if (wide && category != null && font == null) {
+            val settings = requireNotNull(model)
+            Row(Modifier.fillMaxSize().then(if (swiping) transform else Modifier)) {
+                Column(Modifier.width(settings.getInt("sidebar_width").dp).fillMaxHeight()
+                    .background(MaterialTheme.colorScheme.surfaceContainerLow)) {
+                    Text(settings.getString("title"), Modifier.padding(20.dp), style = MaterialTheme.typography.titleLarge)
+                    categories(true)
+                }
+                VerticalDivider()
+                Box(Modifier.weight(1f).fillMaxHeight()) {
+                    showPage(stack.last(), Modifier, true)
+                }
+            }
+        } else {
         stack.forEachIndexed { index, entry ->
             val active = index == stack.lastIndex
             if (active || (swiping && index == stack.lastIndex - 1)) key(entry.first) {
@@ -198,6 +221,7 @@ internal fun PreferencesScreen(timeline: TimelineSession, files: ProjectFiles, d
                 } else Modifier.clearAndSetSemantics {}.focusProperties { canFocus = false }
                 showPage(entry, modifier, active)
             }
+        }
         }
     }
     model?.optJSONObject("dialog")?.let { dialog ->
@@ -224,14 +248,13 @@ internal fun PreferencesScreen(timeline: TimelineSession, files: ProjectFiles, d
 }
 
 @Composable
-private fun SettingsIcon(icon: String) {
+private fun SettingsIcon(icon: String, color: String) {
     Surface(
-        Modifier.size(36.dp), shape = CircleShape,
-        color = MaterialTheme.colorScheme.secondaryContainer,
-        contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        Modifier.size(28.dp), shape = RoundedCornerShape(7.dp),
+        color = Color(android.graphics.Color.parseColor(color)),
+        contentColor = Color.White,
     ) {
-        Box(contentAlignment = Alignment.Center) { Icon(iconVector(icon), null, Modifier.size(20.dp)) }
+        Box(contentAlignment = Alignment.Center) { Icon(iconVector(icon), null, Modifier.size(16.dp)) }
     }
 }
 

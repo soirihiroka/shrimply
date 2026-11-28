@@ -180,7 +180,7 @@ ApplicationWindow {
     AdaptiveMenu {
         id: mainMenu
         pointerPopupType: Qt.platform.os === "windows" ? Popup.Item : Popup.Window
-        Action { text: backend.text("Preferences"); onTriggered: preferencesWindow.openPreferences() }
+        Action { text: backend.text("Settings"); onTriggered: preferencesWindow.openPreferences() }
         Action { text: backend.text("Project Servers"); onTriggered: projectServersDialog.open() }
         Action { text: backend.text("About Shrimply"); onTriggered: aboutWindow.openAbout() }
     }
