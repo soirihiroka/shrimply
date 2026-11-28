@@ -9,12 +9,16 @@ on:
       export:
         type: boolean
         default: false
+      cache:
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 jobs:
   audio:
+    if: '!inputs.cache'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
@@ -91,3 +95,20 @@ jobs:
         with:
           profile: debug
       - run: make appkit-ffmpeg test DEV_BUILD_ENV='$(APPKIT_BUILD_ENV)' ARGS='--locked --lib -p shrimply-export-core audio::tests::exports_all_audio_formats'
+
+
+  cache:
+    if: inputs.cache
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          submodules: recursive
+      - uses: ./.github/actions/setup-macos
+        with:
+          profile: release
+      - name: Inspect restored compiled dependencies
+        run: |
+          test -d target/release/.fingerprint
+          find target/release/.fingerprint -mindepth 1 -maxdepth 1 -type d | wc -l
