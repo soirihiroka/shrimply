@@ -170,10 +170,15 @@ pub struct ProjectCatalog {
 }
 
 pub fn local_catalog() -> Result<ProjectCatalog, String> {
-    Ok(ProjectCatalog {
-        projects: local_projects()?,
-        servers: project_sources(),
-    })
+    let servers = project_sources();
+    let mut projects = local_projects()?;
+    projects.retain(|entry| {
+        entry
+            .remote
+            .as_ref()
+            .is_none_or(|link| servers.iter().any(|source| source.url == link.server))
+    });
+    Ok(ProjectCatalog { projects, servers })
 }
 
 pub fn list() -> Result<ProjectCatalog, String> {
