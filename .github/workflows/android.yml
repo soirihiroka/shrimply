@@ -63,8 +63,6 @@ jobs:
           key: android-cargo-target-v1-${{ steps.setup.outputs.skia-key }}
 
       - name: Build the release APK
-        env:
-          CARGO_UNSTABLE_CHECKSUM_FRESHNESS: "true"
         run: make android-build ANDROID_PROFILE=release ANDROID_SDK_ROOT="${ANDROID_HOME}"
 
       - name: Archive compiled Skia binaries
