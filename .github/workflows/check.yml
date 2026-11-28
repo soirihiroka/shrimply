@@ -33,17 +33,20 @@ jobs:
         if: runner.os == 'Windows'
         env:
           GH_TOKEN: ${{ github.token }}
-        shell: bash
+        shell: pwsh
         run: |
-          cd "$(cygpath -u "$RUNNER_TEMP")"
-          gh release download prerelease-20261128T034822Z-26a2667ee9e7 \
-            --repo "$GITHUB_REPOSITORY" --pattern shrimply-windows-x86_64.zip
-          unzip -q shrimply-windows-x86_64.zip -d app
-          echo "SHRIMPLY_EXE=$PWD/app/shrimply.exe" >> "$GITHUB_ENV"
+          Set-Location $env:RUNNER_TEMP
+          gh release download prerelease-20261128T034822Z-26a2667ee9e7 --repo $env:GITHUB_REPOSITORY --pattern shrimply-windows-x86_64.zip
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Expand-Archive shrimply-windows-x86_64.zip app
+          "SHRIMPLY_EXE=$PWD/app/shrimply.exe" >> $env:GITHUB_ENV
       - name: Verify shared edit, stale revision, history, and session restart
         shell: bash
         run: |
-          if [[ "$RUNNER_OS" == Windows ]]; then RUNNER_TEMP=$(cygpath -u "$RUNNER_TEMP"); fi
+          if [[ "$RUNNER_OS" == Windows ]]; then
+            RUNNER_TEMP=$(cygpath -u "$RUNNER_TEMP")
+            SHRIMPLY_EXE=$(cygpath -u "$SHRIMPLY_EXE")
+          fi
           cd "$RUNNER_TEMP"
           project=session.shrimp
           shrimply() { "$SHRIMPLY_EXE" "$@" --project "$project"; }
