@@ -332,9 +332,6 @@ impl PreferencesWindow {
                                     alert.runModal();
                                 }
                                 Err(error) => error_alert::show(window.mtm(), &error),
-                                    "Could not install command line tool",
-                                    &error,
-                                ),
                             };
                         }
                     }

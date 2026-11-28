@@ -2,7 +2,7 @@ use crate::action;
 use block2::RcBlock;
 use objc2::ffi::{OBJC_ASSOCIATION_RETAIN_NONATOMIC, objc_setAssociatedObject};
 use objc2::rc::{Retained, Weak};
-use objc2::{ClassType, DefinedClass, MainThreadOnly, define_class, msg_send};
+use objc2::{AnyThread, ClassType, DefinedClass, MainThreadOnly, define_class, msg_send};
 use objc2_app_kit::{
     NSAccessibility, NSAutoresizingMaskOptions, NSBezelStyle, NSButton, NSCellImagePosition,
     NSColor, NSColorWell, NSControlStateValueOff, NSControlStateValueOn, NSEvent, NSFont, NSImage,
