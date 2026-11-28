@@ -1,6 +1,7 @@
-use super::Editor;
-use objc2::rc::Retained;
-use objc2::{DefinedClass, MainThreadOnly, sel};
+use super::{error_alert, trust};
+use block2::RcBlock;
+use objc2::rc::{Retained, Weak};
+use objc2::{DefinedClass, MainThreadOnly, define_class, msg_send, sel};
 use objc2_app_kit::{
     NSAlert, NSAlertFirstButtonReturn, NSAutoresizingMaskOptions, NSBackingStoreType, NSButton,
     NSColor, NSColorWell, NSControl, NSFont, NSFontManager, NSImage, NSModalResponseOK,
@@ -9,8 +10,12 @@ use objc2_app_kit::{
     NSViewController, NSWindow, NSWindowButton, NSWindowStyleMask, NSWindowTabbingMode,
     NSWindowToolbarStyle,
 };
-use objc2_foundation::{MainThreadMarker, NSPoint, NSRect, NSSize, NSString, ns_string};
+use objc2_foundation::{
+    MainThreadMarker, NSObject, NSObjectProtocol, NSPoint, NSRect, NSSize, NSString, NSTimer,
+    ns_string,
+};
 use shrimply_editor_state::preferences::{self, PreferenceId, PreferenceValue, SharedPreferences};
+use std::cell::{Cell, OnceCell, RefCell};
 use std::collections::BTreeMap;
 
 const PANE_WIDTH: f64 = 660.0;
@@ -59,10 +64,429 @@ const TAG_SERVER_JOBS: isize = 220;
 const TAG_SERVER_RESERVATIONS: isize = 221;
 const TAG_SERVER_WORKERS: isize = 222;
 
-pub(super) type ServerProbe = (
+type ServerProbe = (
     String,
     Result<preferences::ComputeServerPresentation, String>,
 );
+
+pub struct PreferencesIvars {
+    store: SharedPreferences,
+    timer: OnceCell<Retained<NSTimer>>,
+    settings_window: RefCell<Option<Retained<NSWindow>>>,
+    settings_blender_probe:
+        RefCell<Option<std::sync::mpsc::Receiver<Result<std::path::PathBuf, String>>>>,
+    settings_server_probe: RefCell<Option<std::sync::mpsc::Receiver<ServerProbe>>>,
+    settings_device_probe: RefCell<Option<(u64, std::sync::mpsc::Receiver<ServerProbe>)>>,
+    settings_device_revision: Cell<u64>,
+    settings_device_error: RefCell<Option<String>>,
+    settings_server_statuses: RefCell<
+        std::collections::BTreeMap<
+            String,
+            Result<shrimply_editor_state::preferences::ComputeServerPresentation, String>,
+        >,
+    >,
+}
+
+define_class!(
+    #[unsafe(super(NSObject))]
+    #[thread_kind = MainThreadOnly]
+    #[ivars = PreferencesIvars]
+    pub struct PreferencesWindow;
+
+    unsafe impl NSObjectProtocol for PreferencesWindow {}
+
+    impl PreferencesWindow {
+        #[unsafe(method(changeNumericPreference:))]
+        fn change_numeric_preference(&self, sender: &NSControl) {
+            let store = &self.ivars().store;
+            if let Err(error) = change_numeric(store, sender) {
+                self.show_error(error);
+            }
+        }
+
+        #[unsafe(method(installCli:))]
+        fn install_cli(&self, sender: &NSButton) {
+            match preferences::cli::install() {
+                Ok(message) => {
+                    sender.setTitle(ns_string!("Overwrite"));
+                    sender.setToolTip(Some(&NSString::from_str(&message)));
+                    let alert = NSAlert::new(self.mtm());
+                    alert.setMessageText(ns_string!("CLI installed"));
+                    alert.setInformativeText(&NSString::from_str(&message));
+                    alert.runModal();
+                }
+                Err(error) => self.show_error(&error),
+            }
+        }
+
+        #[unsafe(method(manageTrustedSources:))]
+        fn manage_trusted_sources(&self, _sender: &NSButton) {
+            if let Err(error) = trust::manage(self.mtm()) { self.show_error(&error); }
+        }
+
+        #[unsafe(method(changePreviewZoomPan:))]
+        fn change_preview_zoom_pan(&self, sender: &NSButton) {
+            let store = &self.ivars().store;
+            preferences::set_preview_zoom_pan_enabled(store, sender.state() == objc2_app_kit::NSControlStateValueOn);
+        }
+
+        #[unsafe(method(changePreviewFilter:))]
+        fn change_preview_filter(&self, sender: &NSPopUpButton) {
+            let store = &self.ivars().store;
+            if let Err(error) = change_filter(store, sender) {
+                self.show_error(error);
+            }
+        }
+
+        #[unsafe(method(changeDefaultFont:))]
+        fn change_default_font(&self, sender: &NSPopUpButton) {
+            let Some(name) = sender.titleOfSelectedItem() else { return };
+            if let Err(error) = preferences::set_value(
+                &self.ivars().store,
+                preferences::PreferenceId::DefaultTextFontFamily,
+                preferences::PreferenceValue::FontFamily(
+                    preferences::FontFamily::Local { name: name.to_string() },
+                ),
+            ) {
+                self.show_error(error);
+            }
+        }
+
+        #[unsafe(method(changeCaptionColor:))]
+        fn change_caption_color(&self, sender: &NSColorWell) {
+            set_caption_color(
+                &self.ivars().store,
+                sender,
+            );
+        }
+
+        #[unsafe(method(changeComputeServer:))]
+        fn change_compute_server(&self, sender: &NSTextField) {
+            let store = &self.ivars().store;
+            let previous = preferences::snapshot(store).compute_server_url;
+            if let Err(error) = preferences::edit_compute_server(
+                store,
+                &previous,
+                &sender.stringValue().to_string(),
+            ) {
+                self.show_error(error);
+            }
+            self.refresh_compute_servers();
+        }
+
+        #[unsafe(method(addComputeServer:))]
+        fn add_compute_server(&self, _sender: &NSButton) {
+            let Some(url) = prompt_compute_server_url(self.mtm()) else { return };
+            let store = &self.ivars().store;
+            if let Err(error) = preferences::add_compute_server(store, &url) {
+                self.show_error(error);
+            }
+            self.refresh_compute_servers();
+        }
+
+        #[unsafe(method(removeComputeServer:))]
+        fn remove_compute_server(&self, _sender: &NSButton) {
+            let store = &self.ivars().store;
+            let selected = preferences::snapshot(store).compute_server_url;
+            preferences::remove_compute_server(store, &selected);
+            self.refresh_compute_servers();
+        }
+
+        #[unsafe(method(selectComputeServer:))]
+        fn select_compute_server(&self, sender: &NSPopUpButton) {
+            let (urls, _) = preferences::compute_servers(
+                &self.ivars().store,
+            );
+            let index = sender.indexOfSelectedItem();
+            let Some(url) = usize::try_from(index).ok().and_then(|index| urls.get(index)) else { return };
+            assert!(
+                preferences::select_compute_server(
+                    &self.ivars().store,
+                    url,
+                ),
+                "AppKit selected a compute server outside the shared preference list"
+            );
+            self.cancel_compute_device_probe();
+            self.sync_compute_server_settings();
+        }
+
+        #[unsafe(method(selectComputeDevice:))]
+        fn select_compute_device(&self, sender: &NSPopUpButton) {
+            if self.ivars().settings_device_probe.borrow().is_some() {
+                self.sync_compute_server_settings();
+                return;
+            }
+            let selected_url = preferences::snapshot(
+                &self.ivars().store,
+            ).compute_server_url;
+            let index = sender.indexOfSelectedItem();
+            let device = self.ivars().settings_server_statuses.borrow()
+                .get(&selected_url)
+                .and_then(|result| result.as_ref().ok())
+                .and_then(|status| usize::try_from(index).ok().and_then(|index| status.devices.get(index)))
+                .map(|device| device.id.clone());
+            let Some(device) = device else {
+                self.sync_compute_server_settings();
+                return;
+            };
+            sender.setEnabled(false);
+            self.ivars().settings_device_error.borrow_mut().take();
+            let revision = self.ivars().settings_device_revision.get().wrapping_add(1);
+            self.ivars().settings_device_revision.set(revision);
+            let (result_sender, receiver) = std::sync::mpsc::channel();
+            std::thread::spawn(move || {
+                let result = preferences::select_compute_device(&selected_url, &device)
+                    .map(|status| preferences::present_compute_server(&status));
+                let _ = result_sender.send((selected_url, result));
+            });
+            self.ivars()
+                .settings_device_probe
+                .replace(Some((revision, receiver)));
+        }
+
+        #[unsafe(method(chooseBlender:))]
+        fn choose_blender(&self, _sender: &NSButton) {
+            if self.ivars().settings_blender_probe.borrow().is_some() {
+                return;
+            }
+            match choose_blender_path(self.mtm()) {
+                Ok(Some(path)) => {
+                    let (sender, receiver) = std::sync::mpsc::channel();
+                    std::thread::spawn(move || {
+                        let _ = sender.send(preferences::validate_blender_binary(&path));
+                    });
+                    self.ivars().settings_blender_probe.replace(Some(receiver));
+                    if let Some(window) = self.ivars().settings_window.borrow().as_ref() {
+                        let current = preferences::snapshot(
+                            &self.ivars().store,
+                        );
+                        sync_blender_window(
+                            window,
+                            current.blender_binary.as_deref(),
+                            true,
+                            self.mtm(),
+                        );
+                    }
+                }
+                Ok(None) => {}
+                Err(error) => self.show_error(&error),
+            }
+        }
+
+        #[unsafe(method(clearBlender:))]
+        fn clear_blender(&self, sender: &NSButton) {
+            let store = &self.ivars().store;
+            preferences::apply_blender_binary(store, None);
+            let snapshot = preferences::snapshot(store);
+            let window = sender.window().expect("Blender button has a settings window");
+            sync_blender_window(
+                &window,
+                snapshot.blender_binary.as_deref(),
+                false,
+                self.mtm(),
+            );
+        }
+
+    }
+);
+
+impl PreferencesWindow {
+    pub fn new(mtm: MainThreadMarker, store: Option<SharedPreferences>) -> Retained<Self> {
+        let preferences = Self::alloc(mtm).set_ivars(PreferencesIvars {
+            store: store.unwrap_or_else(preferences::open_with_defaults),
+            timer: OnceCell::new(),
+            settings_window: RefCell::new(None),
+            settings_blender_probe: RefCell::new(None),
+            settings_server_probe: RefCell::new(None),
+            settings_device_probe: RefCell::new(None),
+            settings_device_revision: Cell::new(0),
+            settings_device_error: RefCell::new(None),
+            settings_server_statuses: RefCell::new(std::collections::BTreeMap::new()),
+        });
+        let preferences: Retained<Self> = unsafe { msg_send![super(preferences), init] };
+        let weak = Weak::new(&*preferences);
+        let poll = RcBlock::new(move |timer: std::ptr::NonNull<NSTimer>| {
+            if let Some(window) = weak.load() {
+                window.poll_blender_probe();
+                window.poll_compute_server_probes();
+            } else {
+                unsafe { timer.as_ref() }.invalidate();
+            }
+        });
+        preferences
+            .ivars()
+            .timer
+            .set(unsafe { NSTimer::scheduledTimerWithTimeInterval_repeats_block(0.1, true, &poll) })
+            .expect("preferences timer");
+        preferences
+    }
+
+    fn show_error(&self, error: &str) {
+        error_alert::show(self.mtm(), error);
+    }
+
+    pub fn present(&self) {
+        if let Some(window) = self.ivars().settings_window.borrow().as_ref() {
+            window.makeKeyAndOrderFront(None);
+            sync_cli_window(window, self.mtm());
+            self.refresh_compute_servers();
+            return;
+        }
+        self.ivars().settings_window.replace(Some(build(self)));
+        self.refresh_compute_servers();
+    }
+
+    fn poll_blender_probe(&self) {
+        let result = {
+            let mut pending = self.ivars().settings_blender_probe.borrow_mut();
+            let Some(receiver) = pending.as_ref() else {
+                return;
+            };
+            match receiver.try_recv() {
+                Ok(result) => {
+                    pending.take();
+                    Some(result)
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => None,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    pending.take();
+                    Some(Err("Blender validation worker stopped unexpectedly".into()))
+                }
+            }
+        };
+        let Some(result) = result else {
+            return;
+        };
+        let store = &self.ivars().store;
+        if let Ok(path) = &result {
+            preferences::apply_blender_binary(store, Some(path.clone()));
+        }
+        let snapshot = preferences::snapshot(store);
+        if let Some(window) = self.ivars().settings_window.borrow().as_ref() {
+            sync_blender_window(
+                window,
+                snapshot.blender_binary.as_deref(),
+                false,
+                self.mtm(),
+            );
+        }
+        if let Err(error) = result {
+            self.show_error(&error);
+        }
+    }
+
+    fn refresh_compute_servers(&self) {
+        self.cancel_compute_device_probe();
+        let store = &self.ivars().store;
+        let (urls, _) = preferences::compute_servers(store);
+        self.ivars()
+            .settings_server_statuses
+            .borrow_mut()
+            .retain(|url, _| urls.contains(url));
+        let (result_sender, receiver) = std::sync::mpsc::channel();
+        for url in urls {
+            let result_sender = result_sender.clone();
+            std::thread::spawn(move || {
+                let result = preferences::compute_server_status(&url)
+                    .map(|status| preferences::present_compute_server(&status));
+                let _ = result_sender.send((url, result));
+            });
+        }
+        drop(result_sender);
+        self.ivars().settings_server_probe.replace(Some(receiver));
+        self.sync_compute_server_settings();
+    }
+
+    fn poll_compute_server_probes(&self) {
+        let mut server_results = Vec::new();
+        {
+            let mut pending = self.ivars().settings_server_probe.borrow_mut();
+            if let Some(receiver) = pending.as_ref() {
+                loop {
+                    match receiver.try_recv() {
+                        Ok(result) => server_results.push(result),
+                        Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                        Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                            pending.take();
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        for (url, result) in &server_results {
+            self.ivars()
+                .settings_server_statuses
+                .borrow_mut()
+                .insert(url.clone(), result.clone());
+        }
+        let device_result = {
+            let mut pending = self.ivars().settings_device_probe.borrow_mut();
+            let received = pending
+                .as_ref()
+                .map(|(revision, receiver)| (*revision, receiver.try_recv()));
+            match received {
+                None => None,
+                Some((revision, Ok(result))) => {
+                    pending.take();
+                    (revision == self.ivars().settings_device_revision.get()).then_some(result)
+                }
+                Some((_, Err(std::sync::mpsc::TryRecvError::Empty))) => None,
+                Some((revision, Err(std::sync::mpsc::TryRecvError::Disconnected))) => {
+                    pending.take();
+                    (revision == self.ivars().settings_device_revision.get()).then(|| {
+                        (
+                            preferences::snapshot(&self.ivars().store).compute_server_url,
+                            Err("Device selection stopped unexpectedly".into()),
+                        )
+                    })
+                }
+            }
+        };
+        if let Some((url, result)) = &device_result {
+            match result {
+                Ok(status) => {
+                    self.ivars().settings_device_error.borrow_mut().take();
+                    self.ivars()
+                        .settings_server_statuses
+                        .borrow_mut()
+                        .insert(url.clone(), Ok(status.clone()));
+                }
+                Err(error) => {
+                    self.ivars()
+                        .settings_device_error
+                        .replace(Some(error.clone()));
+                }
+            }
+        }
+        if server_results.is_empty() && device_result.is_none() {
+            return;
+        }
+        self.sync_compute_server_settings();
+    }
+
+    fn sync_compute_server_settings(&self) {
+        let Some(window) = self.ivars().settings_window.borrow().as_ref().cloned() else {
+            return;
+        };
+        sync_compute_servers_window(
+            &window,
+            &self.ivars().store,
+            &self.ivars().settings_server_statuses.borrow(),
+            self.ivars().settings_device_error.borrow().as_deref(),
+            self.ivars().settings_device_probe.borrow().is_some(),
+            self.mtm(),
+        );
+    }
+
+    fn cancel_compute_device_probe(&self) {
+        self.ivars()
+            .settings_device_revision
+            .set(self.ivars().settings_device_revision.get().wrapping_add(1));
+        self.ivars().settings_device_probe.borrow_mut().take();
+        self.ivars().settings_device_error.borrow_mut().take();
+    }
+}
 
 fn numeric_preference(tag: isize) -> PreferenceId {
     match tag {
@@ -76,10 +500,7 @@ fn numeric_preference(tag: isize) -> PreferenceId {
     }
 }
 
-pub(super) fn change_numeric(
-    store: &SharedPreferences,
-    sender: &NSControl,
-) -> Result<(), &'static str> {
+fn change_numeric(store: &SharedPreferences, sender: &NSControl) -> Result<(), &'static str> {
     use shrimply_math_core::{fraction_from_integer, fraction_round_nonnegative_u64};
     let is_stepper = sender.tag() >= STEPPER_TAG_OFFSET;
     let tag = if is_stepper {
@@ -120,10 +541,7 @@ pub(super) fn change_numeric(
     result
 }
 
-pub(super) fn change_filter(
-    store: &SharedPreferences,
-    sender: &NSPopUpButton,
-) -> Result<(), &'static str> {
+fn change_filter(store: &SharedPreferences, sender: &NSPopUpButton) -> Result<(), &'static str> {
     let id = match sender.tag() {
         TAG_UPSAMPLE => PreferenceId::PreviewUpsampleMethod,
         TAG_DOWNSAMPLE => PreferenceId::PreviewDownsampleMethod,
@@ -141,7 +559,7 @@ pub(super) fn change_filter(
     result
 }
 
-pub(super) fn show(editor: &Editor) -> objc2::rc::Retained<NSWindow> {
+fn build(editor: &PreferencesWindow) -> objc2::rc::Retained<NSWindow> {
     let mtm = editor.mtm();
     let window = unsafe {
         NSWindow::initWithContentRect_styleMask_backing_defer(
@@ -165,12 +583,7 @@ pub(super) fn show(editor: &Editor) -> objc2::rc::Retained<NSWindow> {
         }
     }
 
-    let store = &editor
-        .ivars()
-        .session
-        .get()
-        .expect("project loaded")
-        .preferences;
+    let store = &editor.ivars().store;
     let snapshot = preferences::snapshot(store);
 
     let (appearance_root, appearance) = scrolling_pane(mtm, APPEARANCE_HEIGHT);
@@ -383,7 +796,7 @@ pub(super) fn show(editor: &Editor) -> objc2::rc::Retained<NSWindow> {
     window
 }
 
-pub(super) fn sync_cli_window(window: &NSWindow, mtm: MainThreadMarker) {
+fn sync_cli_window(window: &NSWindow, mtm: MainThreadMarker) {
     let content = integrations_content(window, mtm);
     let button = tagged::<NSButton>(&content, TAG_CLI_INSTALL, "CLI install button");
     let status = preferences::cli::status();
@@ -403,7 +816,7 @@ pub(super) fn sync_cli_window(window: &NSWindow, mtm: MainThreadMarker) {
 
 fn compute_server_rows(
     content: &NSView,
-    editor: &Editor,
+    editor: &PreferencesWindow,
     store: &SharedPreferences,
     y: &mut f64,
     mtm: MainThreadMarker,
@@ -624,14 +1037,9 @@ fn label(content: &NSView, title: &str, y: f64, mtm: MainThreadMarker) {
     content.addSubview(&label);
 }
 
-fn numeric_row(content: &NSView, editor: &Editor, title: &str, tag: isize, y: &mut f64) {
+fn numeric_row(content: &NSView, editor: &PreferencesWindow, title: &str, tag: isize, y: &mut f64) {
     let mtm = content.mtm();
-    let store = &editor
-        .ivars()
-        .session
-        .get()
-        .expect("project loaded")
-        .preferences;
+    let store = &editor.ivars().store;
     let id = numeric_preference(tag);
     let range = preferences::integer_range(id).expect("numeric preference range");
     let PreferenceValue::Integer(value) = preferences::value(store, id) else {
@@ -681,7 +1089,7 @@ fn numeric_row(content: &NSView, editor: &Editor, title: &str, tag: isize, y: &m
 
 fn color_row(
     content: &NSView,
-    editor: &Editor,
+    editor: &PreferencesWindow,
     color: shrimply_project_document::Color<u8>,
     y: &mut f64,
     mtm: MainThreadMarker,
@@ -709,7 +1117,13 @@ fn color_row(
     *y -= ROW_HEIGHT;
 }
 
-fn font_row(content: &NSView, editor: &Editor, current: &str, y: &mut f64, mtm: MainThreadMarker) {
+fn font_row(
+    content: &NSView,
+    editor: &PreferencesWindow,
+    current: &str,
+    y: &mut f64,
+    mtm: MainThreadMarker,
+) {
     label(content, "Default text font", *y, mtm);
     let popup = shrimply_components_appkit::menu::popup(
         NSRect::new(
@@ -736,7 +1150,7 @@ fn font_row(content: &NSView, editor: &Editor, current: &str, y: &mut f64, mtm: 
 
 fn text_row(
     content: &NSView,
-    editor: &Editor,
+    editor: &PreferencesWindow,
     title: &str,
     value: &str,
     tag: isize,
@@ -764,7 +1178,7 @@ fn text_row(
 
 fn blender_row(
     content: &NSView,
-    editor: &Editor,
+    editor: &PreferencesWindow,
     path: Option<&std::path::Path>,
     y: &mut f64,
     mtm: MainThreadMarker,
@@ -832,7 +1246,7 @@ fn sync_blender_row(content: &NSView, path: Option<&std::path::Path>, checking: 
     clear.setEnabled(path.is_some() && !checking);
 }
 
-pub(super) fn sync_blender_window(
+fn sync_blender_window(
     window: &NSWindow,
     path: Option<&std::path::Path>,
     checking: bool,
@@ -842,7 +1256,7 @@ pub(super) fn sync_blender_window(
     sync_blender_row(&content, path, checking);
 }
 
-pub(super) fn sync_compute_servers_window(
+fn sync_compute_servers_window(
     window: &NSWindow,
     store: &SharedPreferences,
     statuses: &BTreeMap<String, Result<preferences::ComputeServerPresentation, String>>,
@@ -991,7 +1405,7 @@ fn integrations_content(window: &NSWindow, mtm: MainThreadMarker) -> Retained<NS
         .unwrap_or(root)
 }
 
-pub(super) fn prompt_compute_server_url(mtm: MainThreadMarker) -> Option<String> {
+fn prompt_compute_server_url(mtm: MainThreadMarker) -> Option<String> {
     let alert = NSAlert::new(mtm);
     alert.setMessageText(ns_string!("Add Compute Server"));
     alert.setInformativeText(ns_string!("Enter the URL of a Shrimply compute server."));
@@ -1006,7 +1420,7 @@ pub(super) fn prompt_compute_server_url(mtm: MainThreadMarker) -> Option<String>
     (alert.runModal() == NSAlertFirstButtonReturn).then(|| field.stringValue().to_string())
 }
 
-pub(super) fn set_caption_color(store: &SharedPreferences, well: &NSColorWell) {
+fn set_caption_color(store: &SharedPreferences, well: &NSColorWell) {
     let mut red = 0.0;
     let mut green = 0.0;
     let mut blue = 0.0;
@@ -1028,9 +1442,7 @@ pub(super) fn set_caption_color(store: &SharedPreferences, well: &NSColorWell) {
     .expect("caption background color has a fixed color type");
 }
 
-pub(super) fn choose_blender_path(
-    mtm: MainThreadMarker,
-) -> Result<Option<std::path::PathBuf>, String> {
+fn choose_blender_path(mtm: MainThreadMarker) -> Result<Option<std::path::PathBuf>, String> {
     let panel = NSOpenPanel::openPanel(mtm);
     panel.setCanChooseDirectories(false);
     panel.setAllowsMultipleSelection(false);

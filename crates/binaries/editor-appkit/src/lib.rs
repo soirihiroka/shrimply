@@ -2,6 +2,9 @@
 mod macos;
 
 #[cfg(target_os = "macos")]
+pub use macos::{about::show as show_about, settings::PreferencesWindow};
+
+#[cfg(target_os = "macos")]
 pub fn run(project: Option<&std::path::Path>) -> std::process::ExitCode {
     shrimply_process_reporting::diagnostics::init();
     if let Some(path) = project {

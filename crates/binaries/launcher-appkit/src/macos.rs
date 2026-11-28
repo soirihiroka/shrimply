@@ -2,21 +2,22 @@ mod create_project;
 
 use block2::StackBlock;
 use objc2::rc::Retained;
-use objc2::runtime::ProtocolObject;
+use objc2::runtime::{ProtocolObject, Sel};
 use objc2::{DefinedClass, MainThreadOnly, Message, define_class, msg_send, sel};
 use objc2_app_kit::{
     NSAlert, NSAlertFirstButtonReturn, NSAlertSecondButtonReturn, NSAlertThirdButtonReturn,
     NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate, NSAutoresizingMaskOptions,
     NSBackingStoreType, NSBezelStyle, NSButton, NSCellImagePosition, NSColor, NSControlSize,
     NSControlTextEditingDelegate, NSFont, NSImage, NSMenu, NSMenuItem, NSModalResponseOK,
-    NSOpenPanel, NSOpenSavePanelDelegate, NSSavePanel, NSScrollView, NSSearchField,
+    NSOpenPanel, NSOpenSavePanelDelegate, NSPopUpButton, NSSavePanel, NSScrollView, NSSearchField,
     NSSecureTextField, NSTableColumn, NSTableView, NSTableViewDataSource, NSTableViewDelegate,
     NSTextAlignment, NSTextField, NSTitlebarSeparatorStyle, NSToolbar, NSView, NSWindow,
     NSWindowDelegate, NSWindowStyleMask, NSWindowTitleVisibility, NSWindowToolbarStyle,
+    NSWorkspace,
 };
 use objc2_foundation::{
-    MainThreadMarker, NSNotification, NSObject, NSObjectProtocol, NSPoint, NSProcessInfo, NSRect,
-    NSSize, NSString, NSTimer, NSURL, ns_string,
+    MainThreadMarker, NSArray, NSNotification, NSObject, NSObjectProtocol, NSPoint, NSProcessInfo,
+    NSRect, NSSize, NSString, NSTimer, NSURL, ns_string,
 };
 use shrimply_components_appkit::{EffectRole, EffectView};
 use shrimply_cross_ui_core::launcher::{self, Launcher, ProjectLocation};
@@ -29,6 +30,7 @@ const SIDEBAR_WIDTH: f64 = 200.0;
 const CONTENT_MARGIN: f64 = 12.0;
 const TITLEBAR_HEIGHT: f64 = 52.0;
 const SEARCH_HEIGHT: f64 = 32.0;
+const MENU_SIZE: f64 = 32.0;
 const SIDEBAR_BUTTON_WIDTH: f64 = 160.0;
 const SIDEBAR_BUTTON_HEIGHT: f64 = 32.0;
 
@@ -36,6 +38,7 @@ struct DelegateIvars {
     window: OnceCell<Retained<NSWindow>>,
     projects: OnceCell<Retained<NSTableView>>,
     model: RefCell<Launcher>,
+    preferences: OnceCell<Retained<shrimply_editor_appkit::PreferencesWindow>>,
 }
 
 define_class!(
@@ -148,7 +151,6 @@ define_class!(
             for (index, (label, action)) in [
                 ("Create Project", sel!(createProject:)),
                 ("Open Project", sel!(openProject:)),
-                ("Project Servers", sel!(projectServers:)),
             ].into_iter().enumerate() {
                 let button = unsafe {
                     NSButton::buttonWithTitle_target_action(
@@ -182,6 +184,21 @@ define_class!(
                 WINDOW_SIZE.height - (TITLEBAR_HEIGHT + title.frame().size.height) / 2.0));
             title.setAutoresizingMask(NSAutoresizingMaskOptions::ViewMinYMargin);
             content.addSubview(&title);
+
+            let menu = self.popup(
+                NSPoint::new(WINDOW_SIZE.width - CONTENT_MARGIN - MENU_SIZE,
+                    WINDOW_SIZE.height - (TITLEBAR_HEIGHT + MENU_SIZE) / 2.0),
+                (ns_string!("line.3.horizontal"), ns_string!("Main Menu")),
+                &[
+                    ("Preferences", sel!(showPreferences:)),
+                    ("Project Servers", sel!(projectServers:)),
+                    ("About Shrimply", sel!(showAbout:)),
+                ],
+                None,
+            );
+            menu.setAutoresizingMask(NSAutoresizingMaskOptions::ViewMinXMargin
+                | NSAutoresizingMaskOptions::ViewMinYMargin);
+            content.addSubview(&menu);
 
             let search = NSSearchField::initWithFrame(NSSearchField::alloc(mtm), NSRect::new(
                 NSPoint::new(x, WINDOW_SIZE.height - TITLEBAR_HEIGHT - SEARCH_HEIGHT),
@@ -268,9 +285,15 @@ define_class!(
 
     unsafe impl NSTableViewDelegate for Delegate {
         #[unsafe(method_id(tableView:viewForTableColumn:row:))]
-        fn project_row(&self, _table: &NSTableView, _column: Option<&NSTableColumn>, row: isize) -> Option<Retained<NSView>> {
+        fn project_row(&self, table: &NSTableView, column: Option<&NSTableColumn>, row: isize) -> Option<Retained<NSView>> {
             let model = self.ivars().model.borrow();
             usize::try_from(row).ok().and_then(|index| model.project(index)).map(|project| {
+                let width = column.map_or(table.bounds().size.width, NSTableColumn::width);
+                let height = table.rowHeight();
+                let view = NSView::initWithFrame(NSView::alloc(self.mtm()),
+                    NSRect::new(NSPoint::ZERO, NSSize::new(width, height)));
+                let access = launcher::project_access_label(project);
+                let label_height = if access.is_some() { height / 2.0 } else { 0.0 };
                 let button = unsafe {
                     NSButton::buttonWithTitle_target_action(
                         &NSString::from_str(&project.name), Some(self), Some(sel!(openListedProject:)), self.mtm(),
@@ -288,7 +311,35 @@ define_class!(
                 button.setAlignment(NSTextAlignment::Left);
                 button.setBordered(false);
                 button.setTag(row);
-                button.into_super().into_super()
+                button.setFrame(NSRect::new(NSPoint::new(0.0, label_height),
+                    NSSize::new((width - MENU_SIZE).max(0.0), height - label_height)));
+                button.setAutoresizingMask(NSAutoresizingMaskOptions::ViewWidthSizable);
+                view.addSubview(&button);
+                if let Some(access) = access {
+                    let label = NSTextField::labelWithString(&NSString::from_str(&access), self.mtm());
+                    label.setFont(Some(&NSFont::systemFontOfSize(NSFont::smallSystemFontSize())));
+                    label.setTextColor(Some(&NSColor::secondaryLabelColor()));
+                    label.setFrame(NSRect::new(NSPoint::new(CONTENT_MARGIN, 0.0),
+                        NSSize::new((width - MENU_SIZE - CONTENT_MARGIN).max(0.0), label_height)));
+                    label.setAutoresizingMask(NSAutoresizingMaskOptions::ViewWidthSizable);
+                    view.addSubview(&label);
+                }
+                let mut items = Vec::new();
+                if project.path.is_some() {
+                    items.extend([
+                        ("Show in Finder", sel!(revealProject:)),
+                        ("Restart Local Service", sel!(restartProjectService:)),
+                    ]);
+                }
+                items.push(("Delete Project…", sel!(deleteProject:)));
+                let options = self.popup(
+                    NSPoint::new(width - MENU_SIZE, (height - MENU_SIZE) / 2.0),
+                    (ns_string!("ellipsis"), ns_string!("Project options")),
+                    &items, Some(&project.key()),
+                );
+                options.setAutoresizingMask(NSAutoresizingMaskOptions::ViewMinXMargin);
+                view.addSubview(&options);
+                view
             })
         }
     }
@@ -353,8 +404,61 @@ define_class!(
             self.open_in_editor(&path);
         }
 
+        #[unsafe(method(showPreferences:))]
+        fn show_preferences(&self, _sender: &NSObject) {
+            self.ivars().preferences.get_or_init(|| {
+                shrimply_editor_appkit::PreferencesWindow::new(self.mtm(), None)
+            }).present();
+        }
+
+        #[unsafe(method(showAbout:))]
+        fn show_about(&self, _sender: &NSObject) {
+            shrimply_editor_appkit::show_about(self.mtm());
+        }
+
+        #[unsafe(method(revealProject:))]
+        fn reveal_project(&self, sender: &NSMenuItem) {
+            if let Some(url) = self.menu_project(sender).and_then(|project| project.path)
+                .and_then(NSURL::from_file_path) {
+                NSWorkspace::sharedWorkspace().activateFileViewerSelectingURLs(&NSArray::from_retained_slice(&[url]));
+            }
+        }
+
+        #[unsafe(method(restartProjectService:))]
+        fn restart_project_service(&self, sender: &NSMenuItem) {
+            if let Some(path) = self.menu_project(sender).and_then(|project| project.path) {
+                self.project_task(move || launcher::restart_local_service(&path), |delegate, result| {
+                    if let Err(error) = result {
+                        delegate.show_error("Could not restart the project service", &error);
+                    }
+                });
+            }
+        }
+
+        #[unsafe(method(deleteProject:))]
+        fn delete_project(&self, sender: &NSMenuItem) {
+            let Some(project) = self.menu_project(sender) else { return; };
+            let alert = NSAlert::new(self.mtm());
+            alert.setMessageText(&NSString::from_str(&project.name));
+            alert.setInformativeText(if project.remote.is_some() {
+                ns_string!("Delete this project from the server for everyone?")
+            } else {
+                ns_string!("Permanently delete this project file?")
+            });
+            alert.addButtonWithTitle(ns_string!("Cancel"));
+            alert.addButtonWithTitle(ns_string!("Delete Project")).setHasDestructiveAction(true);
+            if alert.runModal() == NSAlertSecondButtonReturn {
+                self.project_task(move || launcher::delete_project(&project), |delegate, result| {
+                    match result {
+                        Ok(()) => delegate.reload_projects(),
+                        Err(error) => delegate.show_error("Could not delete project", &error),
+                    }
+                });
+            }
+        }
+
         #[unsafe(method(projectServers:))]
-        fn project_servers(&self, _sender: &NSButton) {
+        fn project_servers(&self, _sender: &NSObject) {
             let mtm = self.mtm();
             loop {
                 let servers = launcher::project_servers();
@@ -583,6 +687,50 @@ impl Delegate {
         let _ = unsafe { NSTimer::scheduledTimerWithTimeInterval_repeats_block(0.1, true, &poll) };
     }
 
+    fn popup(
+        &self,
+        origin: NSPoint,
+        (symbol, tooltip): (&NSString, &NSString),
+        items: &[(&str, Sel)],
+        key: Option<&str>,
+    ) -> Retained<NSPopUpButton> {
+        let button = shrimply_components_appkit::menu::popup(
+            NSRect::new(origin, NSSize::new(MENU_SIZE, MENU_SIZE)),
+            true,
+            self.mtm(),
+        );
+        button.setBordered(false);
+        button.setToolTip(Some(tooltip));
+        let menu = button.menu().expect("pop-up button menu");
+        button.addItemWithTitle(ns_string!(""));
+        let heading = button.itemAtIndex(0).expect("pop-up button label");
+        let icon =
+            NSImage::imageWithSystemSymbolName_accessibilityDescription(symbol, Some(tooltip));
+        heading.setImage(icon.as_deref());
+        let key = key.map(NSString::from_str);
+        for (label, action) in items {
+            unsafe {
+                let item = menu.addItemWithTitle_action_keyEquivalent(
+                    &NSString::from_str(label),
+                    Some(*action),
+                    ns_string!(""),
+                );
+                item.setTarget(Some(self));
+                item.setRepresentedObject(key.as_deref().map(|key| key.as_ref()));
+            }
+        }
+        button
+    }
+
+    fn menu_project(&self, sender: &NSMenuItem) -> Option<launcher::ProjectEntry> {
+        let key = sender.representedObject()?.downcast::<NSString>().ok()?;
+        self.ivars()
+            .model
+            .borrow()
+            .project_by_key(&key.to_string())
+            .cloned()
+    }
+
     fn show_error(&self, heading: &str, body: &str) {
         let alert = NSAlert::new(self.mtm());
         alert.setMessageText(&NSString::from_str(heading));
@@ -595,6 +743,7 @@ impl Delegate {
             window: OnceCell::new(),
             projects: OnceCell::new(),
             model: RefCell::new(Launcher::default()),
+            preferences: OnceCell::new(),
         });
         unsafe { msg_send![super(this), init] }
     }

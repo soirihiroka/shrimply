@@ -213,10 +213,14 @@ ApplicationWindow {
         property string projectKey
         anchors.centerIn: parent
         modal: true
+        width: Math.min(460, window.width - 48)
         standardButtons: Dialog.Cancel | Dialog.Discard
         onOpened: standardButton(Dialog.Discard).text = backend.text("Delete Project")
         onDiscarded: backend.manageListedProject(projectKey, true)
-        Label { id: deleteMessage }
+        Label {
+            id: deleteMessage
+            wrapMode: Text.Wrap
+        }
     }
 
     Dialog {
