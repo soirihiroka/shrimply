@@ -128,41 +128,92 @@ impl Search {
     }
 
     pub fn select(&self, layout: Layout, lambda: f32, output: &mut [Vec<Choice>; 2]) {
+        const PATHS: usize = 3;
+        #[derive(Clone, Copy)]
+        struct Step {
+            score: f32,
+            choice: Choice,
+            sf: Option<u8>,
+            run: usize,
+            parent: usize,
+        }
+        let empty = Step {
+            score: f32::INFINITY,
+            choice: Choice::default(),
+            sf: None,
+            run: 0,
+            parent: 0,
+        };
+        let section_bits = layout.section_bits();
+        let section_escape = (1 << section_bits) - 1;
+        let count = layout.groups * layout.band_count();
         for (channel, result) in self.bands.iter().zip(output) {
-            let mut previous = None::<u8>;
-            let mut previous_book = None;
-            result.clear();
-            for group in 0..layout.groups {
-                for band in 0..layout.band_count() {
-                    let choices = &channel[group * layout.band_count() + band];
-                    let mut best = choices[0];
-                    let mut score = f32::INFINITY;
+            let mut previous = [empty; PATHS];
+            previous[0].score = 0.0;
+            let mut history = [[empty; PATHS]; 64];
+            for (index, (choices, next)) in channel.iter().zip(&mut history[..count]).enumerate() {
+                let first_in_group = index % layout.band_count() == 0;
+                let mut worst = 0;
+                for (parent, from) in previous
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, from)| from.score.is_finite())
+                {
                     for &choice in choices {
-                        let mut cost = choice.cost;
+                        let mut bits = usize::from(choice.cost);
+                        let mut sf = from.sf;
                         if choice.book != 0 {
-                            let delta =
-                                previous.map_or(0, |sf| i16::from(choice.sf) - i16::from(sf));
+                            let delta = sf.map_or(0, |sf| i16::from(choice.sf) - i16::from(sf));
                             if delta.abs() > 60 {
                                 continue;
                             }
-                            cost +=
-                                (crate::tables::SCALEFACTORS[(delta + 60) as usize] & 31) as u16;
+                            bits +=
+                                (crate::tables::SCALEFACTORS[(delta + 60) as usize] & 31) as usize;
+                            sf = Some(choice.sf);
                         }
-                        if band == 0 || previous_book != Some(choice.book) {
-                            cost += (4 + layout.section_bits()) as u16;
+                        let run = if first_in_group || from.choice.book != choice.book {
+                            bits += 4 + section_bits;
+                            1
+                        } else {
+                            let length = from.run + 1;
+                            bits += usize::from(length % section_escape == 0) * section_bits;
+                            length
+                        };
+                        let score = from.score + choice.error + lambda * bits as f32;
+                        if score >= next[worst].score {
+                            continue;
                         }
-                        let candidate = choice.error + lambda * f32::from(cost);
-                        if candidate < score {
-                            best = choice;
-                            score = candidate;
+                        let slot = next
+                            .iter()
+                            .position(|step| {
+                                step.sf == sf && step.run == run && step.choice.book == choice.book
+                            })
+                            .unwrap_or(worst);
+                        if score < next[slot].score {
+                            next[slot] = Step {
+                                score,
+                                choice,
+                                sf,
+                                run,
+                                parent,
+                            };
+                            worst = (0..PATHS)
+                                .max_by(|&a, &b| next[a].score.total_cmp(&next[b].score))
+                                .unwrap();
                         }
                     }
-                    if best.book != 0 {
-                        previous = Some(best.sf);
-                    }
-                    previous_book = Some(best.book);
-                    result.push(best);
                 }
+                previous = *next;
+            }
+            result.clear();
+            result.resize(count, Choice::default());
+            let mut path = (0..PATHS)
+                .min_by(|&a, &b| previous[a].score.total_cmp(&previous[b].score))
+                .unwrap();
+            for (choice, states) in result.iter_mut().zip(&history[..count]).rev() {
+                let step = states[path];
+                *choice = step.choice;
+                path = step.parent;
             }
         }
     }
