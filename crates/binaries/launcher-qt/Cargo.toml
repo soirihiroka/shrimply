@@ -8,6 +8,7 @@ name = "shrimply"
 path = "src/main.rs"
 
 [dependencies]
+shrimply-editor-qt = { path = "../editor-qt" }
 shrimply-cli.workspace = true
 cxx.workspace = true
 cxx-qt.workspace = true

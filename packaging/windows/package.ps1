@@ -38,30 +38,20 @@ if (Test-Path $stage) { Remove-Item -Recurse -Force $stage }
 if (Test-Path $archive) { Remove-Item -Force $archive }
 New-Item -ItemType Directory -Force $stage | Out-Null
 
-$qmlDirs = @{
-    "shrimply.exe" = @(
-        "crates/binaries/launcher-qt/qml"
-    )
-    "shrimply-editor.exe" = @(
-        "crates/binaries/editor-qt/qml"
-        "crates/ui/components/components-qt/qml"
-        "crates/ui/export/export-qt/qml"
-        "crates/ui/inspector/inspector-qt/qml"
-        "crates/ui/preferences/preferences-qt/qml"
-    )
-}
-
-foreach ($name in @("shrimply.exe", "shrimply-editor.exe")) {
-    $source = Join-Path $release $name
-    if (!(Test-Path $source)) { throw "Missing release executable: $source" }
-    Copy-Item $source $stage
-    foreach ($qmlDir in $qmlDirs[$name]) {
-        $qmlPath = Join-Path $root $qmlDir
-        & windeployqt.exe --release --qmldir $qmlPath (Join-Path $stage $name)
-        if ($LASTEXITCODE -ne 0) {
-            throw "windeployqt failed for $name while scanning $qmlPath"
-        }
-    }
+$source = Join-Path $release "shrimply.exe"
+if (!(Test-Path $source)) { throw "Missing release executable: $source" }
+Copy-Item $source $stage
+foreach ($qmlDir in @(
+    "crates/binaries/launcher-qt/qml"
+    "crates/binaries/editor-qt/qml"
+    "crates/ui/components/components-qt/qml"
+    "crates/ui/export/export-qt/qml"
+    "crates/ui/inspector/inspector-qt/qml"
+    "crates/ui/preferences/preferences-qt/qml"
+)) {
+    $qmlPath = Join-Path $root $qmlDir
+    & windeployqt.exe --release --qmldir $qmlPath (Join-Path $stage "shrimply.exe")
+    if ($LASTEXITCODE -ne 0) { throw "windeployqt failed while scanning $qmlPath" }
 }
 
 if (!(Test-Path $vcpkgBin)) { throw "Missing vcpkg runtime directory: $vcpkgBin" }

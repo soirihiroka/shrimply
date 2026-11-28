@@ -3,10 +3,6 @@ name = "shrimply-editor-qt"
 version = "0.1.0"
 edition = "2024"
 
-[[bin]]
-name = "shrimply-editor"
-path = "src/main.rs"
-
 [dependencies]
 shrimply-trust-core.workspace = true
 shrimply-visual-cuda.workspace = true

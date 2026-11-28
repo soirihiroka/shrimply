@@ -95,7 +95,6 @@ jobs:
           echo "=== Built binaries in result/bin ==="
           ls -la result/bin/
           test -x result/bin/shrimply
-          test -x result/bin/shrimply-editor
 
       - name: Explicitly push build result to Cachix
         if: ${{ env.CACHIX_CACHE != '' && env.CACHIX_AUTH_TOKEN != '' }}

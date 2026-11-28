@@ -418,7 +418,7 @@ impl qobject::EditorBackend {
         let path = std::env::args_os()
             .nth(1)
             .map(PathBuf::from)
-            .expect("shrimply-editor requires a project path");
+            .expect("Shrimply editor requires a project path");
         #[cfg(windows)]
         {
             let mut this = self;

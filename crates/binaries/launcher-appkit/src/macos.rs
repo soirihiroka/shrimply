@@ -425,7 +425,7 @@ define_class!(
 
 impl Delegate {
     fn open_in_editor(&self, path: &Path) {
-        let mut child = match launcher::launch_appkit_editor(path) {
+        let mut child = match launcher::launch_editor(path) {
             Ok(child) => child,
             Err(error) => {
                 self.show_error("Could not start editor", &error);

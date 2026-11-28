@@ -78,7 +78,6 @@ DEV_BUILD_ENV = $(BUILD_ENV) RUSTFLAGS="$(strip $(FFMPEG_LINK_FLAG) $(DEV_RUSTFL
 
 APP_NAME := Shrimply
 BIN_NAME := shrimply
-EDITOR_BIN_NAME := shrimply-editor
 EDITOR_PACKAGE := shrimply-editor-gtk
 QT_EDITOR_PACKAGE := shrimply-editor-qt
 LAUNCHER_PACKAGE := shrimply-launcher-gtk
@@ -105,8 +104,8 @@ BINARY_PACKAGES := \
 RUST_LOG ?= info,shrimply=debug,shrimply_editor=debug,shrimply_launcher=debug,shrimply_launcher_qt=debug,shrimply_timeline_gtk=debug
 DEV_LOG ?= target/$(BIN_NAME)-dev.log
 QT_DEV_LOG ?= $(QT_TARGET_DIR)/$(BIN_NAME)-dev.log
-CRASH_CORE ?= target/$(EDITOR_BIN_NAME).core
-CRASH_STACK ?= target/$(EDITOR_BIN_NAME).stack
+CRASH_CORE ?= target/$(BIN_NAME).core
+CRASH_STACK ?= target/$(BIN_NAME).stack
 CRASH_PROFILE ?= debug
 CRASH_SINCE ?= -1 day
 
@@ -270,7 +269,7 @@ appkit-components-showcase: appkit-ffmpeg
 	$(APPKIT_BUILD_ENV) $(CARGO) run -p $(APPKIT_COMPONENTS_DEMO_PACKAGE)
 
 qt-build qt-release: native-deps qt-native-deps cuda-target-check
-	$(DEV_BUILD_ENV) QMAKE=$(QT_QMAKE) $(CARGO) build --target-dir "$(QT_TARGET_DIR)" $(if $(filter qt-release,$@),--release) -p $(QT_EDITOR_PACKAGE) -p $(QT_LAUNCHER_PACKAGE) --bins
+	$(DEV_BUILD_ENV) QMAKE=$(QT_QMAKE) $(CARGO) build --target-dir "$(QT_TARGET_DIR)" $(if $(filter qt-release,$@),--release) -p $(QT_LAUNCHER_PACKAGE) --bins
 
 dev-server:
 	uv run --project server --locked server/src/main.py
@@ -283,7 +282,7 @@ docs-check:
 
 ifeq ($(HOST_OS),Linux)
 build release: native-deps cuda-target-check
-	$(if $(filter release,$@),$(BUILD_ENV),$(DEV_BUILD_ENV)) $(CARGO) build $(if $(filter release,$@),--release) -p $(EDITOR_PACKAGE) -p $(LAUNCHER_PACKAGE) --bins
+	$(if $(filter release,$@),$(BUILD_ENV),$(DEV_BUILD_ENV)) $(CARGO) build $(if $(filter release,$@),--release) -p $(LAUNCHER_PACKAGE) --bins
 
 check: fmt-check lint sanim-check project-server-check server-python-check manim-python-check docs-check
 else ifeq ($(HOST_OS),Darwin)
@@ -301,7 +300,7 @@ endif
 
 ifeq ($(HOST_OS),Windows_NT)
 windows-build: windows-native-deps cuda-target-check
-	$(BUILD_ENV) QMAKE="$(QT_QMAKE)" CARGO_TERM_COLOR=always $(CARGO) build --target-dir "$(QT_TARGET_DIR)" -p $(QT_EDITOR_PACKAGE) -p $(QT_LAUNCHER_PACKAGE) --bins
+	$(BUILD_ENV) QMAKE="$(QT_QMAKE)" CARGO_TERM_COLOR=always $(CARGO) build --target-dir "$(QT_TARGET_DIR)" -p $(QT_LAUNCHER_PACKAGE) --bins
 
 windows-dev: windows-build
 	$(BUILD_ENV) $(HOST_MEDIA_ENV) RUST_LOG="$(RUST_LOG)" $(QT_TARGET_DIR)/debug/$(BIN_NAME).exe
@@ -314,7 +313,7 @@ endif
 windows-check: override CUDA_IMAGE_FORMAT = ptx
 windows-check: override CUDA_PTX_TARGET = compute_50
 windows-check: windows-native-deps fmt-check cuda-target-check
-	$(BUILD_ENV) QMAKE=$(QT_QMAKE) $(CARGO) clippy -p $(QT_EDITOR_PACKAGE) -p $(QT_LAUNCHER_PACKAGE) --bins -- -D warnings
+	$(BUILD_ENV) QMAKE=$(QT_QMAKE) $(CARGO) clippy -p $(QT_EDITOR_PACKAGE) -p $(QT_LAUNCHER_PACKAGE) --lib --bins -- -D warnings
 
 ifeq ($(HOST_OS),Windows_NT)
 # GNU Make tracks Windows shell mode globally, so choose it once per invocation.
@@ -330,7 +329,7 @@ windows-package: override CUDA_IMAGE_FORMAT = ptx
 # Maxwell baseline; PTX is JIT-compiled for newer GPUs, including Blackwell.
 windows-package: override CUDA_PTX_TARGET = compute_50
 windows-package:
-	powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "packaging/windows/windows-release.ps1" -VcpkgRoot "$(VCPKG_ROOT)" -InstalledDir "$(VCPKG_INSTALLED_DIR)" -Qmake "$(QT_QMAKE)" -CargoTargetDir "$(CARGO_TARGET_DIR)" -CudaHome "$(CUDA_HOME)" -CudaImageFormat "$(CUDA_IMAGE_FORMAT)" -CudaTarget "$(CUDA_TARGET)" -CudaPtxTarget "$(CUDA_PTX_TARGET)" -CudaHostCxx "$(CUDA_HOST_CXX)" -CudaAllowUnsupportedCompiler "$(CUDA_ALLOW_UNSUPPORTED_COMPILER)" -OptixRoot "$(OPTIX_ROOT)" -QtEditorPackage "$(QT_EDITOR_PACKAGE)" -QtLauncherPackage "$(QT_LAUNCHER_PACKAGE)"
+	powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "packaging/windows/windows-release.ps1" -VcpkgRoot "$(VCPKG_ROOT)" -InstalledDir "$(VCPKG_INSTALLED_DIR)" -Qmake "$(QT_QMAKE)" -CargoTargetDir "$(CARGO_TARGET_DIR)" -CudaHome "$(CUDA_HOME)" -CudaImageFormat "$(CUDA_IMAGE_FORMAT)" -CudaTarget "$(CUDA_TARGET)" -CudaPtxTarget "$(CUDA_PTX_TARGET)" -CudaHostCxx "$(CUDA_HOST_CXX)" -CudaAllowUnsupportedCompiler "$(CUDA_ALLOW_UNSUPPORTED_COMPILER)" -OptixRoot "$(OPTIX_ROOT)" -QtLauncherPackage "$(QT_LAUNCHER_PACKAGE)"
 
 	powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File packaging/windows/package.ps1
 
@@ -366,8 +365,8 @@ fmt fmt-check:
 	$(CARGO) fmt $(if $(filter fmt-check,$@),--check)
 
 lint: native-deps qt-native-deps cuda-target-check
-	$(DEV_BUILD_ENV) $(CARGO) clippy -p $(EDITOR_PACKAGE) -p $(LAUNCHER_PACKAGE) --bins -- -D warnings
-	$(DEV_BUILD_ENV) QMAKE=$(QT_QMAKE) $(CARGO) clippy -p $(QT_EDITOR_PACKAGE) -p $(QT_LAUNCHER_PACKAGE) --bins -- -D warnings
+	$(DEV_BUILD_ENV) $(CARGO) clippy -p $(EDITOR_PACKAGE) -p $(LAUNCHER_PACKAGE) --lib --bins -- -D warnings
+	$(DEV_BUILD_ENV) QMAKE=$(QT_QMAKE) $(CARGO) clippy -p $(QT_EDITOR_PACKAGE) -p $(QT_LAUNCHER_PACKAGE) --lib --bins -- -D warnings
 
 test: $(if $(filter Linux,$(HOST_OS)),native-deps cuda-target-check)
 	$(DEV_BUILD_ENV) $(CARGO) test $(ARGS)
@@ -375,13 +374,13 @@ test: $(if $(filter Linux,$(HOST_OS)),native-deps cuda-target-check)
 crash-report:
 	@pid=""; \
 	for _ in $$(seq 1 50); do \
-		pid="$$(LC_ALL=C coredumpctl -q --since "$(CRASH_SINCE)" --no-legend list $(EDITOR_BIN_NAME) 2>/dev/null | awk 'END { print $$5 }')"; \
+		pid="$$(LC_ALL=C coredumpctl -q --since "$(CRASH_SINCE)" --no-legend list $(BIN_NAME) 2>/dev/null | awk 'END { print $$5 }')"; \
 		test -z "$$pid" || break; \
 		sleep 0.1; \
 	done; \
 	test -n "$$pid"; \
 	coredumpctl -q -o $(CRASH_CORE) dump "$$pid" >/dev/null 2>&1
-	@eu-stack -s -i --core=$(CRASH_CORE) --executable=target/$(CRASH_PROFILE)/$(EDITOR_BIN_NAME) > $(CRASH_STACK) 2>&1 || test $$? -eq 1
+	@eu-stack -s -i --core=$(CRASH_CORE) --executable=target/$(CRASH_PROFILE)/$(BIN_NAME) > $(CRASH_STACK) 2>&1 || test $$? -eq 1
 	@sed -n '1,80p' $(CRASH_STACK)
 	@echo "Full crash stack: $(CRASH_STACK)"
 	@echo "Core dump: $(CRASH_CORE)"
@@ -402,9 +401,8 @@ install: release
 	$(INSTALL) -Dm644 $(PROJECT_ICON) "$(DESTDIR)$(MIME_ICONDIR)/dev.shrimply.Shrimply-project.svg"
 	$(INSTALL) -Dm644 $(PROJECT_MIME) "$(DESTDIR)$(MIMEDIR)/packages/dev.shrimply.Shrimply-mime.xml"
 	$(INSTALL) -Dm755 $(CARGO_TARGET_DIR)/release/$(BIN_NAME) "$(DESTDIR)$(BINDIR)/$(BIN_NAME)"
-	$(INSTALL) -Dm755 $(CARGO_TARGET_DIR)/release/$(EDITOR_BIN_NAME) "$(DESTDIR)$(BINDIR)/$(EDITOR_BIN_NAME)"
 ifneq ($(FFMPEG_PREFIX),$(abspath $(DESTDIR)$(PREFIX)))
-	sh packaging/linux/install-ffmpeg.sh "$(FFMPEG_PREFIX)" "$(DESTDIR)$(BINDIR)" "$(DESTDIR)$(PREFIX)/lib/shrimply/ffmpeg" "$(BIN_NAME)" "$(EDITOR_BIN_NAME)"
+	sh packaging/linux/install-ffmpeg.sh "$(FFMPEG_PREFIX)" "$(DESTDIR)$(BINDIR)" "$(DESTDIR)$(PREFIX)/lib/shrimply/ffmpeg" "$(BIN_NAME)"
 endif
 	$(INSTALL) -Dm644 vendor/pocketsphinx/LICENSE "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/PocketSphinx-code.txt"
 	$(INSTALL) -Dm644 vendor/pocketsphinx/MODEL-LICENSE "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/PocketSphinx-model.txt"
@@ -424,7 +422,6 @@ endif
 uninstall:
 	rm -f "$(DESTDIR)$(BINDIR)/shrimply-ffmpeg"
 	rm -f "$(DESTDIR)$(BINDIR)/$(BIN_NAME)"
-	rm -f "$(DESTDIR)$(BINDIR)/$(EDITOR_BIN_NAME)"
 	rm -f "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/PocketSphinx-code.txt"
 	rm -f "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/PocketSphinx-model.txt"
 	rm -f "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/Rhubarb-Lip-Sync.txt"

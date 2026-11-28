@@ -87,19 +87,8 @@ impl PanelSide {
     }
 }
 
-fn main() -> glib::ExitCode {
+pub fn run(project_path: PathBuf) -> glib::ExitCode {
     crash::install();
-    shrimply_process_reporting::diagnostics::init();
-    let mut args = std::env::args_os().skip(1);
-    let project_path = match (args.next(), args.next()) {
-        (Some(path), None) => PathBuf::from(path),
-        _ => {
-            eprintln!(
-                "usage: shrimply-editor PROJECT.shrimp|PROJECT.json|TIMELINE.otio|PROJECT.kdenlive\nRun shrimply without arguments to open the start window."
-            );
-            return glib::ExitCode::FAILURE;
-        }
-    };
     #[cfg(target_os = "linux")]
     if let Err(error) = shrimply_visual_cuda::gpu::configure_gtk_backend()
         .and_then(|()| shrimply_visual_cuda::gpu::configure_gtk_presentation())
@@ -107,7 +96,6 @@ fn main() -> glib::ExitCode {
         tracing::error!(%error, "Could not select GTK GPU backend");
         return glib::ExitCode::FAILURE;
     }
-    shrimply_components_gtk::i18n::init_system_locale();
     glib::log_set_writer_func(glib::rust_log_writer);
     glib::set_print_handler(|message| {
         tracing::info!("glib print: {}", message.trim_end());
@@ -140,7 +128,7 @@ fn main() -> glib::ExitCode {
         });
         begin_project_load(app, project_path.clone());
     });
-    let status = app.run_with_args(&[env!("CARGO_BIN_NAME")]);
+    let status = app.run_with_args(&["shrimply"]);
     let save_result = project::shutdown_history();
     project::clear_project_file_locks();
     if let Err(error) = save_result {

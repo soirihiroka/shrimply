@@ -7,13 +7,13 @@ fn main() -> std::process::ExitCode {
         return std::process::ExitCode::from(status);
     }
     shrimply_process_reporting::crash::install();
-    let mut args = std::env::args_os().skip(1);
-    if let Some(path) = args.next() {
-        if args.next().is_some() {
-            eprintln!("usage: shrimply [PROJECT]");
+    match shrimply_cross_ui_core::launcher::project_path_argument() {
+        Ok(Some(path)) => return shrimply_editor_appkit::run(Some(&path)),
+        Ok(None) => (),
+        Err(error) => {
+            eprintln!("{error}");
             return std::process::ExitCode::FAILURE;
         }
-        return shrimply_editor_appkit::run(Some(std::path::Path::new(&path)));
     }
     macos::run();
     std::process::ExitCode::SUCCESS

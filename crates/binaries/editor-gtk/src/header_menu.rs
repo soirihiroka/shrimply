@@ -7,7 +7,6 @@ use shrimply_cross_ui_core::editor::{
     EditorSession,
     project_menu::{self, Action, Entry},
 };
-use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::rc::Rc;
 
@@ -93,8 +92,10 @@ type HostAction = fn(&adw::ApplicationWindow, &adw::ToastOverlay, &Rc<EditorSess
 fn host_action(action: Action) -> Option<HostAction> {
     Some(match action {
         Action::NewProject => |window, _, _| {
-            if let Err(error) = launch_sibling("shrimply", None) {
-                show_error_dialog(window, "Could not create project", &error);
+            if let Err(error) =
+                std::env::current_exe().and_then(|executable| Command::new(executable).spawn())
+            {
+                show_error_dialog(window, "Could not create project", &error.to_string());
             }
         },
         Action::OpenProject => |window, _, _| show_open_project_dialog(window),
@@ -106,7 +107,9 @@ fn host_action(action: Action) -> Option<HostAction> {
                 session.preferences.clone(),
             );
         },
-        Action::About => |window, _, _| shrimply_components_gtk::about::show(window, env!("CARGO_PKG_VERSION")),
+        Action::About => {
+            |window, _, _| shrimply_components_gtk::about::show(window, env!("CARGO_PKG_VERSION"))
+        }
         _ => return None,
     })
 }
@@ -222,7 +225,7 @@ fn show_open_project_dialog(window: &adw::ApplicationWindow) {
                 return;
             }
         };
-        if let Err(error) = launch_sibling("shrimply-editor", Some(&path)) {
+        if let Err(error) = shrimply_cross_ui_core::launcher::launch_editor(&path) {
             show_error_dialog(&window, "Could not open project", &error);
         }
     });
@@ -274,22 +277,6 @@ fn show_save_as_dialog(
             "Project saved to the new location",
         );
     });
-}
-
-fn launch_sibling(name: &str, argument: Option<&Path>) -> Result<(), String> {
-    let sibling = std::env::current_exe()
-        .map(|path| path.with_file_name(name))
-        .ok()
-        .filter(|path| path.is_file())
-        .unwrap_or_else(|| PathBuf::from(name));
-    let mut command = Command::new(&sibling);
-    if let Some(argument) = argument {
-        command.arg(argument);
-    }
-    command
-        .spawn()
-        .map(|_| ())
-        .map_err(|error| format!("could not launch {}: {error}", sibling.display()))
 }
 
 fn show_error_dialog(window: &adw::ApplicationWindow, heading: &str, body: &str) {

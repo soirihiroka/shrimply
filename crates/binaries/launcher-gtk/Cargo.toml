@@ -8,6 +8,7 @@ name = "shrimply"
 path = "src/main.rs"
 
 [dependencies]
+shrimply-editor-gtk = { path = "../editor-gtk" }
 shrimply-cli.workspace = true
 adw.workspace = true
 gtk.workspace = true

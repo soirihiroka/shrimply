@@ -169,7 +169,7 @@ impl qobject::LauncherBackend {
         std::thread::spawn(move || {
             let result = operation();
             let _ = qt_thread.queue(move |backend| match result {
-                Ok(path) => backend.start_editor(launcher::launch_qt_editor(&path)),
+                Ok(path) => backend.start_editor(launcher::launch_editor(&path)),
                 Err(error) => backend.emit_error(heading, &error),
             });
         });
@@ -204,7 +204,7 @@ impl qobject::LauncherBackend {
             );
             return;
         };
-        let editor = shrimply_cross_ui_core::launcher::launch_qt_editor(&path);
+        let editor = shrimply_cross_ui_core::launcher::launch_editor(&path);
         self.start_editor(editor);
     }
 

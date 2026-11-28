@@ -117,16 +117,7 @@ impl Bridge {
 
     #[cfg(not(target_os = "android"))]
     pub fn executable() -> Result<PathBuf, BridgeError> {
-        let mut executable =
-            std::env::current_exe().map_err(|error| BridgeError::Transport(error.to_string()))?;
-        if executable
-            .file_stem()
-            .and_then(|name| name.to_str())
-            .is_some_and(|name| name.starts_with("shrimply-editor"))
-        {
-            executable.set_file_name(format!("shrimply{}", std::env::consts::EXE_SUFFIX));
-        }
-        Ok(executable)
+        std::env::current_exe().map_err(|error| BridgeError::Transport(error.to_string()))
     }
 
     /// Start the same binary as a detached project owner; concurrent callers reuse the winner.

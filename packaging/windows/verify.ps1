@@ -143,9 +143,7 @@ function Assert-QmlStartup([string]$directory) {
     elseif (!$process.WaitForExit(2000)) { Stop-Process -Id $process.Id }
 }
 
-foreach ($name in @("shrimply.exe", "shrimply-editor.exe")) {
-    Assert-PeX64 (Join-Path $release $name)
-}
+Assert-PeX64 (Join-Path $release "shrimply.exe")
 if (!(Test-Path $archive) -or !(Test-Path $checksum)) { throw "Windows archive is missing" }
 $expected = ((Get-Content $checksum -Raw) -split '\s+')[0]
 $actual = (Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant()

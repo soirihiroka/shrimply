@@ -42,14 +42,13 @@ ENV LIBRARY_PATH=/usr/local/cuda/lib64/stubs:${LIBRARY_PATH}
 
 RUN make install qt-release DESTDIR=/stage PREFIX=/usr && \
     install -Dm755 target/qt/release/shrimply /stage/usr/libexec/shrimply/qt/shrimply && \
-    install -Dm755 target/qt/release/shrimply-editor /stage/usr/libexec/shrimply/qt/shrimply-editor && \
     sh packaging/linux/install-ffmpeg.sh target/linux-ffmpeg/install /stage/usr/libexec/shrimply/qt \
-        /stage/usr/lib/shrimply/ffmpeg shrimply shrimply-editor && \
+        /stage/usr/lib/shrimply/ffmpeg shrimply && \
     install -m644 assets/dev.shrimply.Shrimply.Qt.desktop /stage/usr/share/applications/
 
 # --- Bundle the runtime libraries
 RUN mkdir -p /stage/usr/lib/shrimply && \
-    for bin in bin/shrimply bin/shrimply-editor libexec/shrimply/qt/shrimply libexec/shrimply/qt/shrimply-editor; do \
+    for bin in bin/shrimply libexec/shrimply/qt/shrimply; do \
         ldd "/stage/usr/$bin" | awk '{print $3}' | grep '^/'; \
     done | sort -u \
       | grep -Ev '/(ld-linux[^/]*|libc|libm|libdl|libpthread|librt|libresolv)\.so' \
@@ -57,7 +56,7 @@ RUN mkdir -p /stage/usr/lib/shrimply && \
       | grep -Ev '/libcuda\.so|/libnvidia-' \
       | xargs -r -I{} cp -Ln --remove-destination {} /stage/usr/lib/shrimply/
 
-# Fixes issue shrimply-editor.bin: error while loading shared libraries: libxml2.so.2: cannot open shared object file: No such file or directory
+# Fixes issue shrimply.bin: error while loading shared libraries: libxml2.so.2: cannot open shared object file: No such file or directory
 # Adds the dependencies of dependencies to the ORIGIN
 RUN for lib in /stage/usr/lib/shrimply/*.so*; do \
         patchelf --set-rpath '$ORIGIN' "$lib"; \
@@ -108,8 +107,8 @@ RUN mkdir -p /stage/usr/lib/shrimply/girepository-1.0 /stage/usr/share/glib-2.0/
     cp -a /usr/share/icons/Adwaita /stage/usr/share/icons/ && \
     cp -a /usr/share/icons/hicolor /stage/usr/share/icons/
 
-# Bundle all previous fixes into Shrimply and shrimply-editor binaries
-RUN for bin in bin/shrimply bin/shrimply-editor libexec/shrimply/qt/shrimply libexec/shrimply/qt/shrimply-editor; do \
+# Wrap the GTK and Qt executables with their installed runtime paths
+RUN for bin in bin/shrimply libexec/shrimply/qt/shrimply; do \
         patchelf --set-rpath '$ORIGIN/../lib/shrimply:$ORIGIN/../../../lib/shrimply' "/stage/usr/$bin"; \
         mv "/stage/usr/$bin" "/stage/usr/$bin.bin"; \
         printf '#!/bin/sh\nhere="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"\nprefix="$(CDPATH= cd -- "$here/%s" && pwd)"\nexport GI_TYPELIB_PATH="$prefix/lib/shrimply/girepository-1.0"\nexport GSETTINGS_SCHEMA_DIR="$prefix/share/glib-2.0/schemas"\nexport XDG_DATA_DIRS="$prefix/share:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"\nexport FLEXIBLASRC="$prefix/lib/shrimply/flexiblasrc"\nexport FLEXIBLAS_LIBRARY_PATH="$prefix/lib/shrimply/flexiblas"\nexec "$here/%s.bin" "$@"\n' "$(case "$bin" in bin/*) echo .. ;; *) echo ../../.. ;; esac)" "${bin##*/}" > "/stage/usr/$bin"; \

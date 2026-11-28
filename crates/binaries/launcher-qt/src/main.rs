@@ -1,13 +1,24 @@
 mod backend;
 
 use cxx_qt_lib::{QGuiApplication, QQmlApplicationEngine, QString, QUrl};
-use std::path::Path;
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
+    #[cfg(windows)]
+    if std::env::var_os("CUDA_MODULE_LOADING").is_none() {
+        // This is the first operation in main, before Qt or any worker threads exist.
+        unsafe { std::env::set_var("CUDA_MODULE_LOADING", "EAGER") };
+    }
     if let Some(status) = shrimply_cli::run_if_requested() {
         return ExitCode::from(status);
     }
+    let edit = match shrimply_cross_ui_core::launcher::project_path_argument() {
+        Ok(path) => path.is_some(),
+        Err(error) => {
+            eprintln!("{error}");
+            return ExitCode::FAILURE;
+        }
+    };
     shrimply_process_reporting::diagnostics::init();
     shrimply_i18n_qt::init_system_locale();
     shrimply_components_qt::init();
@@ -26,33 +37,9 @@ fn main() -> ExitCode {
         return ExitCode::FAILURE;
     }
 
-    let mut args = std::env::args_os().skip(1);
-    if let Some(path) = args.next() {
-        if args.next().is_some() {
-            eprintln!(
-                "usage: shrimply [PROJECT.shrimp|PROJECT.json|TIMELINE.otio|PROJECT.kdenlive]"
-            );
-            return ExitCode::FAILURE;
-        }
-        return match shrimply_cross_ui_core::launcher::launch_qt_editor(Path::new(&path)).and_then(
-            |mut editor| {
-                editor
-                    .wait()
-                    .map_err(|error| format!("could not wait for editor: {error}"))
-            },
-        ) {
-            Ok(status) if status.success() => ExitCode::SUCCESS,
-            Ok(status) => {
-                eprintln!("editor exited with {status}");
-                ExitCode::FAILURE
-            }
-            Err(error) => {
-                eprintln!("{error}");
-                ExitCode::FAILURE
-            }
-        };
+    if edit {
+        shrimply_editor_qt::configure();
     }
-
     QGuiApplication::set_desktop_file_name(&QString::from("dev.shrimply.Shrimply.Qt"));
     let mut app = shrimply_application_qt::new_widget_application();
     let Some(mut app) = app.as_mut() else {
@@ -63,20 +50,29 @@ fn main() -> ExitCode {
         .set_application_name(&QString::from("shrimply"));
     app.as_mut()
         .set_application_display_name(&QString::from("Shrimply"));
+    if edit {
+        shrimply_editor_qt::register_gpu_surfaces();
+    }
     let mut engine = QQmlApplicationEngine::new();
     let Some(mut engine) = engine.as_mut() else {
         eprintln!("could not create QML engine");
         return ExitCode::FAILURE;
     };
     let failed = engine.as_mut().on_object_creation_failed(|_, url| {
-        eprintln!("could not load Qt launcher UI: {url}");
+        eprintln!("could not load Shrimply UI: {url}");
         std::process::exit(1);
     });
-    engine.as_mut().load(&QUrl::from(
-        "qrc:/qt/qml/dev/shrimply/launcher/qml/Main.qml",
-    ));
+    engine.as_mut().load(&QUrl::from(if edit {
+        shrimply_editor_qt::MAIN_QML
+    } else {
+        "qrc:/qt/qml/dev/shrimply/launcher/qml/Main.qml"
+    }));
     shrimply_application_qt::apply_windows_system_backdrop();
     let status = app.exec();
     drop(failed);
+    if edit && let Err(error) = shrimply_editor_qt::save_on_exit() {
+        tracing::error!(%error, "could not save project during shutdown");
+        return ExitCode::FAILURE;
+    }
     ExitCode::from(status.clamp(0, 255) as u8)
 }

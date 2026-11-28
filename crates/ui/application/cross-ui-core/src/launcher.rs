@@ -196,38 +196,28 @@ pub fn default_project_path(directory: &Path, name: &str) -> PathBuf {
     directory.join(default_project_filename(name))
 }
 
-pub fn launch_appkit_editor(path: &Path) -> Result<Child, String> {
+pub fn project_path_argument() -> Result<Option<PathBuf>, String> {
+    let mut args = std::env::args_os().skip(1);
+    let Some(path) = args.next().map(PathBuf::from) else {
+        return Ok(None);
+    };
+    if args.next().is_some() {
+        return Err("usage: shrimply [PROJECT]".into());
+    }
+    check_project_file(&path)?;
+    Ok(Some(path))
+}
+
+fn check_project_file(path: &Path) -> Result<(), String> {
     if !path.is_file() {
         return Err(format!("Project does not exist: {}", path.display()));
     }
-    let editor = std::env::current_exe().map_err(|error| format!("locate Shrimply: {error}"))?;
-    Command::new(&editor)
-        .arg(path)
-        .spawn()
-        .map_err(|error| format!("could not launch {}: {error}", editor.display()))
+    Ok(())
 }
 
 pub fn launch_editor(path: &Path) -> Result<Child, String> {
-    launch_sibling_editor(path, "shrimply-editor")
-}
-
-#[cfg(target_os = "macos")]
-pub fn launch_qt_editor(_path: &Path) -> Result<Child, String> {
-    panic!("the Qt editor is not available on macOS");
-}
-
-#[cfg(not(target_os = "macos"))]
-pub fn launch_qt_editor(path: &Path) -> Result<Child, String> {
-    launch_sibling_editor(path, "shrimply-editor")
-}
-
-fn launch_sibling_editor(path: &Path, binary_name: &str) -> Result<Child, String> {
-    if !path.is_file() {
-        return Err(format!("Project does not exist: {}", path.display()));
-    }
-    let editor = std::env::current_exe()
-        .map(|path| path.with_file_name(binary_name))
-        .unwrap_or_else(|_| PathBuf::from(binary_name));
+    check_project_file(path)?;
+    let editor = std::env::current_exe().map_err(|error| format!("locate Shrimply: {error}"))?;
     Command::new(&editor)
         .arg(path)
         .spawn()

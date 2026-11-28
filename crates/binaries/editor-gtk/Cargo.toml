@@ -2,11 +2,6 @@
 name = "shrimply-editor-gtk"
 version = "0.1.0"
 edition = "2024"
-default-run = "shrimply-editor"
-
-[[bin]]
-name = "shrimply-editor"
-path = "src/main.rs"
 
 [dependencies]
 shrimply-trust-core.workspace = true

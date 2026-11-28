@@ -21,8 +21,6 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$OptixRoot,
     [Parameter(Mandatory = $true)]
-    [string]$QtEditorPackage,
-    [Parameter(Mandatory = $true)]
     [string]$QtLauncherPackage
 )
 
@@ -132,7 +130,6 @@ Push-Location $root
 try {
     Invoke-Cargo @(
         "build", "--release",
-        "-p", $QtEditorPackage,
         "-p", $QtLauncherPackage
     )
 } finally {
