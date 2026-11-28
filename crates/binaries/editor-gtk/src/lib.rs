@@ -21,7 +21,9 @@ use ffmpeg_next as ffmpeg;
 use gdk_pixbuf::prelude::PixbufAnimationExtManual;
 use gtk::gdk::prelude::GdkCairoContextExt;
 use gtk::{gio, glib};
-use shrimply_cross_ui_core::editor::{EditorSession, LoadEvent, ProjectLoader, VersionChoice};
+use shrimply_cross_ui_core::editor::{
+    EditorSession, LoadEvent, ProjectLoader, VersionChoice, VersionMismatch,
+};
 use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -146,11 +148,15 @@ pub fn run(project_path: PathBuf) -> glib::ExitCode {
     }
 }
 
-fn build_ui(window: &adw::ApplicationWindow, project: project::Project) {
+fn build_ui(
+    window: &adw::ApplicationWindow,
+    project: project::Project,
+    forced: &[VersionMismatch],
+) {
     // Finish GDK's lazy Vulkan initialization before the video worker can initialize Vulkan too.
     drop(gtk::prelude::WidgetExt::display(window).dmabuf_formats());
     let session = Rc::new(
-        EditorSession::new(project)
+        EditorSession::new(project, forced)
             .unwrap_or_else(|error| panic!("could not initialize editor session: {error}")),
     );
     let project = session.project.clone();
@@ -291,7 +297,8 @@ fn build_ui(window: &adw::ApplicationWindow, project: project::Project) {
                 Some(tr!("Service Version Mismatch").as_ref()),
                 Some(&notice),
             );
-            dialog.add_response("close", tr!("Close").as_ref());
+            dialog.add_responses_i18n(&[("close", "Close")]);
+            dialog.set_close_response("close");
             dialog.present(Some(&polling_window));
         }
         if let Some(next) = update.title {
@@ -612,10 +619,12 @@ fn handle_load_event(
             suggested_name,
         } => choose_project_destination(app, window, loader, title, suggested_name),
         LoadEvent::ImportWarnings(warnings) => show_import_warnings(app, window, loader, warnings),
-        LoadEvent::Ready { project, .. } => {
+        LoadEvent::Ready {
+            project, forced, ..
+        } => {
             ffmpeg::init().expect("FFmpeg should initialize");
             ffmpeg::util::log::set_level(ffmpeg::util::log::Level::Error);
-            build_ui(window, *project);
+            build_ui(window, *project, &forced);
         }
         LoadEvent::Error { heading, body } => show_project_load_error(app, window, heading, &body),
         LoadEvent::HandedOff => app.quit(),

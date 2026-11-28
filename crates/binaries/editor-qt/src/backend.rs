@@ -385,7 +385,7 @@ impl qobject::EditorBackend {
         }
         if let Some(notice) = session_update.version_notice {
             self.as_mut().show_error(
-                QString::from("Service Version Mismatch"),
+                shrimply_i18n_qt::text("Service Version Mismatch"),
                 QString::from(notice),
             );
         }
@@ -812,10 +812,12 @@ impl qobject::EditorBackend {
             LoadEvent::ImportWarnings(warnings) => self
                 .as_mut()
                 .request_warnings(QString::from(warnings.join("\n"))),
-            LoadEvent::Ready { project, .. } => {
+            LoadEvent::Ready {
+                project, forced, ..
+            } => {
                 ffmpeg_next::init().expect("FFmpeg should initialize");
                 ffmpeg_next::util::log::set_level(ffmpeg_next::util::log::Level::Error);
-                let session = EditorSession::new(*project)
+                let session = EditorSession::new(*project, &forced)
                     .unwrap_or_else(|error| panic!("could not initialize Qt editor: {error}"));
                 shrimply_preview_qt::install(&session).unwrap_or_else(|error| {
                     panic!("could not initialize Qt GPU surfaces: {error}")

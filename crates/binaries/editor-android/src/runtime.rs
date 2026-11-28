@@ -656,6 +656,7 @@ impl Runtime {
                         self.backend.shared_project().expect("open project"),
                         self.player.clone(),
                         self.backend.selection.clone(),
+                        self.backend.forced_version.as_slice(),
                     ) {
                         Ok(editor) => Some(editor),
                         Err(error) => {

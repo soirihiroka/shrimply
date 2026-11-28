@@ -354,6 +354,7 @@ pub struct Editor {
     sync_error: RefCell<Option<String>>,
     server_connected: Cell<Option<bool>>,
     server_version: RefCell<Option<ServerVersion>>,
+    accepted_server_version: Option<ServerVersion>,
     send: async_channel::Sender<SessionUpdates>,
     receive: async_channel::Receiver<(Instant, Result<SessionState, String>)>,
 }
@@ -364,8 +365,19 @@ impl Editor {
         project: Rc<RefCell<Project>>,
         player: SharedPlayerState,
         selection: SharedSelectionState,
+        forced: &[VersionMismatch],
     ) -> Result<Self, String> {
         let media = Media::open(target)?;
+        let accepted_server_version = media.as_ref().and_then(|media| {
+            forced.iter().rev().find_map(|mismatch| match mismatch {
+                VersionMismatch::Remote { server, service }
+                    if *server == media.workspace.link().server =>
+                {
+                    Some(service.clone())
+                }
+                _ => None,
+            })
+        });
         let target = target.to_path_buf();
         let name = super::peers::local_name();
         let (send, requests) = async_channel::bounded(1);
@@ -394,6 +406,7 @@ impl Editor {
             sync_error: RefCell::new(None),
             server_connected: Cell::new(None),
             server_version: RefCell::new(None),
+            accepted_server_version,
             send,
             receive,
         })
@@ -413,10 +426,11 @@ impl Editor {
                         && self
                             .server_version
                             .replace(Some(version.clone()))
-                            .is_some_and(|previous| {
-                                previous.protocol != version.protocol
-                                    || previous.version != version.version
-                            })
+                            .is_some_and(|previous| !previous.same_release(&version))
+                        && !self
+                            .accepted_server_version
+                            .as_ref()
+                            .is_some_and(|accepted| accepted.same_release(&version))
                         && let Some(media) = &self.media
                     {
                         version_notice = VersionPrompt::for_remote(&media.workspace.link().server, version)
