@@ -134,7 +134,7 @@ define_class!(
             version.setTextColor(Some(&NSColor::secondaryLabelColor()));
             labels.addArrangedSubview(&version);
             identity.addArrangedSubview(&labels);
-            let identity_y = WINDOW_SIZE.height - TITLEBAR_HEIGHT - SIDEBAR_ICON_SIZE;
+            let identity_y = WINDOW_SIZE.height - CONTENT_MARGIN - SIDEBAR_ICON_SIZE;
             identity.setFrame(NSRect::new(
                 NSPoint::new(CONTENT_MARGIN, identity_y),
                 NSSize::new(SIDEBAR_WIDTH - 2.0 * CONTENT_MARGIN, SIDEBAR_ICON_SIZE),
@@ -154,8 +154,8 @@ define_class!(
             sidebar.addSubview(&menu);
             let sources_y = CONTENT_MARGIN * 2.0 + MENU_SIZE;
             let sources_frame = NSRect::new(
-                NSPoint::new(0.0, sources_y),
-                NSSize::new(SIDEBAR_WIDTH, identity_y - sources_y - CONTENT_MARGIN),
+                NSPoint::new(CONTENT_MARGIN, sources_y),
+                NSSize::new(SIDEBAR_WIDTH - 2.0 * CONTENT_MARGIN, identity_y - sources_y - CONTENT_MARGIN),
             );
             let source_scroll = NSScrollView::initWithFrame(NSScrollView::alloc(mtm), sources_frame);
             source_scroll.setDrawsBackground(false);
