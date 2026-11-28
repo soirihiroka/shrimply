@@ -1,6 +1,9 @@
 name: Set up Windows build
 description: Prepare the Windows toolchains, native libraries, and Skia cache.
 outputs:
+  native-cache-key:
+    description: Identity of the Windows native dependency build.
+    value: ${{ steps.runtime-cache.outputs.cache-primary-key }}
   skia-key:
     description: Cache key for the compiled Skia archive.
     value: ${{ steps.skia-cache.outputs.cache-primary-key }}
