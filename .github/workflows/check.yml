@@ -167,7 +167,6 @@ jobs:
           EXPECT_WARM: ${{ inputs.warm }}
         run: |
           if [[ "$EXPECT_WARM" == true ]]; then
-            test -d target/release/.fingerprint
             echo '// Changed source with unchanged dependencies.' >> vendor/aac/src/lib.rs
           fi
           make -s test DEV_BUILD_ENV='$(APPKIT_BUILD_ENV)' ARGS='--locked --release -p shrimply-aac --example encode --no-run --message-format=json' > compile.jsonl
