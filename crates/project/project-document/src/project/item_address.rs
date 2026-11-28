@@ -334,6 +334,15 @@ impl<'a> TrackRef<'a> {
 }
 
 impl<'a> ItemRef<'a> {
+    pub fn asset(&self) -> Option<&'a shrimply_asset::Asset> {
+        let asset = match self {
+            Self::Video(item) => &item.file,
+            Self::Audio(item) => &item.file,
+            Self::Caption(_) | Self::Comment(_) => return None,
+        };
+        (!asset.path().as_os_str().is_empty()).then_some(asset)
+    }
+
     pub fn kind(&self) -> ItemKind {
         match self {
             Self::Comment(_) => ItemKind::Comment,

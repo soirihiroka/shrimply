@@ -270,6 +270,13 @@ impl AssetSnapshot {
             .transpose()
     }
 
+    pub fn open_reader(&self) -> io::Result<Box<dyn ReadSeek>> {
+        match self.seekable_reader()? {
+            Some(reader) => Ok(reader),
+            None => Ok(Box::new(fs::File::open(self.path())?)),
+        }
+    }
+
     pub fn read(&self) -> Result<Vec<u8>, String> {
         if self.asset.reader.is_some() {
             let length = usize::try_from(self.len()).map_err(|error| error.to_string())?;
@@ -288,15 +295,11 @@ impl AssetSnapshot {
             .filter(|len| *len <= max_bytes)
             .ok_or_else(|| format!("{} exceeds its byte budget", self.path().display()))?;
         let mut bytes = Vec::with_capacity(len);
-        let mut read = |source: &mut dyn Read| {
-            source
-                .take((max_bytes as u64).saturating_add(1))
-                .read_to_end(&mut bytes)
-        };
-        self.seekable_reader()
-            .and_then(|reader| match reader {
-                Some(mut reader) => read(&mut reader),
-                None => fs::File::open(self.path()).and_then(|mut file| read(&mut file)),
+        self.open_reader()
+            .and_then(|reader| {
+                reader
+                    .take((max_bytes as u64).saturating_add(1))
+                    .read_to_end(&mut bytes)
             })
             .map_err(|error| format!("could not read {}: {error}", self.path().display()))?;
         if bytes.len() > max_bytes {

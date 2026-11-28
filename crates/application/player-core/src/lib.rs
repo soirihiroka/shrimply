@@ -37,6 +37,7 @@ pub struct ProjectChange {
     pub live_preview: bool,
     pub captions: bool,
     pub inspector: bool,
+    pub remote_media_reconnected: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -477,6 +478,7 @@ pub fn change_history(
             live_preview: false,
             captions: true,
             inspector: true,
+            ..Default::default()
         },
     );
 }

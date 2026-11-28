@@ -98,7 +98,7 @@ define_class!(
 );
 
 fn completed(path: &std::path::Path) -> Result<FinishedVideoRecording, String> {
-    let file = shrimply_media_info::inspect(path, None)?;
+    let file = shrimply_media_info::inspect(&shrimply_asset::Asset::new(path))?;
     let (stream, video) = file
         .streams
         .iter()

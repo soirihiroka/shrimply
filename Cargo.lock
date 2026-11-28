@@ -6885,6 +6885,7 @@ dependencies = [
  "serde",
  "serde_json",
  "shrimply-3dgs-core",
+ "shrimply-asset",
  "shrimply-audio-engine",
  "shrimply-audio-modifiers",
  "shrimply-blender-core",

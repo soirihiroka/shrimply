@@ -207,6 +207,7 @@ pub(super) async fn call(
                         audio_beats: true,
                         audio_waveforms: true,
                         live_preview: true,
+                        ..Default::default()
                     },
                 );
             }
