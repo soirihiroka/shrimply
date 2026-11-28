@@ -42,7 +42,8 @@ impl Search {
         layout: Layout,
         spectra: &[[f32; FRAME_SAMPLES]; 2],
         masking: &[Vec<f32>; 2],
-    ) {
+    ) -> f32 {
+        let mut demand = 0.0;
         let mut quantized = [0_i16; FRAME_SAMPLES];
         for ((channel, powers), (source, masking)) in self
             .bands
@@ -77,7 +78,9 @@ impl Search {
                     }
                     // Approximate the scalefactor whose quantization error is masked,
                     // then measure exact distortion and Huffman rate around it.
-                    let rms = (energy / width as f32).sqrt();
+                    let bins = width as f32;
+                    demand += bins * (1.0 + energy / (mask * bins)).log2();
+                    let rms = (energy / bins).sqrt();
                     let step = mask.sqrt() / (rms.sqrt().sqrt() * (4.0 / 3.0));
                     let masked = (100.0 + (16.0 / 3.0) * step.log2()) as i32;
                     let minimum =
@@ -86,7 +89,13 @@ impl Search {
                     let last = ((100.0 + (16.0 / 3.0) * (peak / 0.6).log2()).ceil() as i32)
                         .min(masked + 36)
                         .clamp(first, 255);
-                    for sf in first..=last {
+                    let rooted_rms = rms.sqrt();
+                    let step = if peak > 2.0 * rooted_rms * rooted_rms.sqrt() {
+                        1 // A few strong coefficients dominate the band's distortion.
+                    } else {
+                        2
+                    };
+                    for sf in (first..=last).step_by(step) {
                         let (scale, factor) = gains(sf as u8);
                         let mut error = 0.0;
                         let mut high = 0;
@@ -115,6 +124,7 @@ impl Search {
                 }
             }
         }
+        demand
     }
 
     pub fn select(&self, layout: Layout, lambda: f32, output: &mut [Vec<Choice>; 2]) {

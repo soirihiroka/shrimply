@@ -119,8 +119,12 @@ jobs:
           chmod +x "$RUNNER_TEMP/bazel"
           (cd "$RUNNER_TEMP/visqol" && "$RUNNER_TEMP/bazel" --batch build :visqol -c opt --cxxopt=-include --cxxopt=cstdint)
           export PATH="$RUNNER_TEMP/ffmpeg:$PATH"
+          mkdir "$RUNNER_TEMP/excerpts"
+          for track in "$RUNNER_TEMP"/holdout/*.flac; do
+            ffmpeg -v error -ss 4 -i "$track" -t 8 -c:a pcm_s16le "$RUNNER_TEMP/excerpts/$(basename "$track" .flac).wav"
+          done
           /usr/bin/python3 vendor/aac/benchmark.py "$AAC_ENCODER" --fdk --bitrates 96 128 192 256 --repeat 2 \
-            --corpus "$RUNNER_TEMP"/sqam/*.flac --visqol "$RUNNER_TEMP/visqol/bazel-bin/visqol" \
+            --corpus "$RUNNER_TEMP"/excerpts/*.wav --visqol "$RUNNER_TEMP/visqol/bazel-bin/visqol" \
             "$RUNNER_TEMP/visqol/model/libsvm_nu_svr_model.txt" > aac-perceptual.json
       - uses: actions/upload-artifact@v7
         if: always()
