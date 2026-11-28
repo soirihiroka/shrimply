@@ -2,7 +2,7 @@ pub mod demux;
 
 use std::{
     collections::HashMap,
-    io::{BufReader, Seek},
+    io::{self, BufReader, Seek},
     sync::{Arc, Mutex, OnceLock},
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -10,6 +10,7 @@ use std::{
 use ffmpeg::{codec, format, media};
 use ffmpeg_next as ffmpeg;
 use lofty::{
+    error::FileParseError,
     file::{FileType, TaggedFileExt},
     picture::PictureInformation,
     prelude::Accessor,
@@ -188,9 +189,10 @@ pub fn inspect(asset: &Asset) -> Result<Arc<FileInfo>, String> {
     {
         return Ok(info);
     }
-    let info = Arc::new(inspect_uncached(&snapshot)?);
+    let (info, cacheable) = inspect_uncached(&snapshot)?;
+    let info = Arc::new(info);
     snapshot.verify_current()?;
-    if !asset.has_bound_reader() || info.container.is_some() || info.image.is_some() {
+    if cacheable {
         CACHE
             .get_or_init(Mutex::default)
             .lock()
@@ -200,7 +202,7 @@ pub fn inspect(asset: &Asset) -> Result<Arc<FileInfo>, String> {
     Ok(info)
 }
 
-fn inspect_uncached(asset: &AssetSnapshot) -> Result<FileInfo, String> {
+fn inspect_uncached(asset: &AssetSnapshot) -> Result<(FileInfo, bool), String> {
     let path = asset.path();
     let metadata = if asset.asset().has_bound_reader() {
         None
@@ -247,16 +249,31 @@ fn inspect_uncached(asset: &AssetSnapshot) -> Result<FileInfo, String> {
     if let Err(error) = inspect_ffmpeg(asset, &mut result) {
         result.diagnostics.push(error);
     }
+    // A shared range fetch wraps transport errors as io::ErrorKind::Other.
+    let mut complete = true;
     if result.streams.iter().any(|stream| stream.kind == "audio")
         && let Err(error) = inspect_audio_tags(asset, &mut result)
     {
-        result.diagnostics.push(error);
+        complete = !std::error::Error::source(&error)
+            .and_then(|cause| cause.downcast_ref::<io::Error>())
+            .is_some_and(|error| error.kind() == io::ErrorKind::Other);
+        result
+            .diagnostics
+            .push(format!("audio tags were unavailable: {error}"));
     }
     fill_common_tags_from_container(&mut result);
     if let Err(error) = inspect_image(asset, &mut result) {
-        result.diagnostics.push(error);
+        if matches!(&error, imagesize::ImageError::IoError(error) if error.kind() == io::ErrorKind::Other)
+        {
+            complete = false;
+        }
+        result
+            .diagnostics
+            .push(format!("image metadata was unavailable: {error}"));
     }
-    Ok(result)
+    let cacheable = !asset.asset().has_bound_reader()
+        || complete && (!result.streams.is_empty() || result.image.is_some());
+    Ok((result, cacheable))
 }
 
 fn unix_seconds(time: SystemTime) -> Option<i64> {
@@ -443,22 +460,16 @@ fn dictionary(dictionary: ffmpeg::DictionaryRef<'_>, source: &str) -> Vec<TagVal
         .collect()
 }
 
-fn inspect_audio_tags(asset: &AssetSnapshot, result: &mut FileInfo) -> Result<(), String> {
-    let reader = BufReader::new(
-        asset
-            .open_reader()
-            .map_err(|error| format!("audio tags were unavailable: {error}"))?,
-    );
+fn inspect_audio_tags(asset: &AssetSnapshot, result: &mut FileInfo) -> Result<(), FileParseError> {
+    let reader = BufReader::new(asset.open_reader()?);
     let probe = match FileType::from_path(asset.path()) {
         Some(kind) => Probe::with_file_type(reader, kind),
         None => Probe::new(reader),
     }
-    .guess_file_type()
-    .map_err(|error| format!("audio tags were unavailable: {error}"))?;
+    .guess_file_type()?;
     let tagged = probe
         .options(lofty::config::ParseOptions::new().read_properties(false))
-        .read()
-        .map_err(|error| format!("audio tags were unavailable: {error}"))?;
+        .read()?;
     if let Some(tag) = tagged.primary_tag().or_else(|| tagged.first_tag()) {
         result.common_tags = CommonTags {
             title: tag.title().map(|value| value.into_owned()),
@@ -572,36 +583,41 @@ fn fill_common_tags_from_container(result: &mut FileInfo) {
     }
 }
 
-fn inspect_image(asset: &AssetSnapshot, result: &mut FileInfo) -> Result<(), String> {
-    let mut reader = BufReader::new(
-        asset
-            .open_reader()
-            .map_err(|error| format!("image metadata was unavailable: {error}"))?,
-    );
-    let Ok(kind) = imagesize::reader_type(&mut reader) else {
-        return Ok(());
+fn inspect_image(
+    asset: &AssetSnapshot,
+    result: &mut FileInfo,
+) -> Result<(), imagesize::ImageError> {
+    let mut reader = BufReader::new(asset.open_reader()?);
+    let kind = match imagesize::reader_type(&mut reader) {
+        Ok(kind) => kind,
+        Err(imagesize::ImageError::IoError(error)) if error.kind() == io::ErrorKind::Other => {
+            return Err(error.into());
+        }
+        Err(_) => return Ok(()),
     };
-    let size = kind
-        .reader_size(&mut reader)
-        .map_err(|error| format!("image metadata was unavailable: {error}"))?;
-    let mut image = ImageInfo {
+    let size = kind.reader_size(&mut reader)?;
+    let image = result.image.insert(ImageInfo {
         width: size.width,
         height: size.height,
         image_type: format!("{kind:?}"),
         exif: Vec::new(),
-    };
-    if reader.rewind().is_ok()
-        && let Ok(exif) = exif::Reader::new().read_from_container(&mut reader)
-    {
-        image.exif = exif
-            .fields()
-            .map(|field| ExifField {
-                ifd: format!("{:?}", field.ifd_num),
-                tag: field.tag.to_string(),
-                value: field.display_value().with_unit(&exif).to_string(),
-            })
-            .collect();
+    });
+    reader.rewind()?;
+    match exif::Reader::new().read_from_container(&mut reader) {
+        Ok(exif) => {
+            image.exif = exif
+                .fields()
+                .map(|field| ExifField {
+                    ifd: format!("{:?}", field.ifd_num),
+                    tag: field.tag.to_string(),
+                    value: field.display_value().with_unit(&exif).to_string(),
+                })
+                .collect();
+        }
+        Err(exif::Error::Io(error)) if error.kind() == io::ErrorKind::Other => {
+            return Err(error.into());
+        }
+        Err(_) => {}
     }
-    result.image = Some(image);
     Ok(())
 }
