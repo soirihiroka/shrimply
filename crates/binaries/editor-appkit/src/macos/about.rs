@@ -96,7 +96,12 @@ fn build(mtm: MainThreadMarker) -> Retained<NSWindow> {
     body.setCustomSpacing_afterView(16.0, &description);
 
     let metadata = version_details(mtm);
+    let metadata_width = metadata.fittingSize().width;
     body.addArrangedSubview(&metadata);
+    metadata
+        .widthAnchor()
+        .constraintEqualToConstant(metadata_width)
+        .setActive(true);
     body.setCustomSpacing_afterView(20.0, &metadata);
 
     let links = row_stack(8.0, mtm);

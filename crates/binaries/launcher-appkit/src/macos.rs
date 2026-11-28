@@ -10,12 +10,12 @@ use objc2_app_kit::{
     NSBackingStoreType, NSBezelStyle, NSButton, NSColor, NSControlSize,
     NSControlTextEditingDelegate, NSEventModifierFlags, NSFont, NSImageView, NSMenu, NSMenuItem,
     NSModalResponseOK, NSOpenPanel, NSOpenSavePanelDelegate, NSPopUpArrowPosition, NSPopUpButton,
-    NSPopUpButtonCell, NSSavePanel, NSScrollView, NSScrollerStyle, NSSearchField, NSTableColumn,
-    NSTableView, NSTableViewColumnAutoresizingStyle, NSTableViewDataSource, NSTableViewDelegate,
+    NSPopUpButtonCell, NSSavePanel, NSScrollView, NSScrollerStyle, NSSearchField,
+    NSSplitViewController, NSSplitViewItem, NSTableCellView, NSTableColumn, NSTableView,
+    NSTableViewColumnAutoresizingStyle, NSTableViewDataSource, NSTableViewDelegate,
     NSTableViewRowSizeStyle, NSTableViewStyle, NSTextField, NSTitlebarSeparatorStyle, NSToolbar,
-    NSView, NSVisualEffectBlendingMode, NSVisualEffectMaterial, NSVisualEffectView, NSWindow,
-    NSWindowDelegate, NSWindowStyleMask, NSWindowTitleVisibility, NSWindowToolbarStyle,
-    NSWorkspace,
+    NSView, NSViewController, NSWindow, NSWindowDelegate, NSWindowStyleMask,
+    NSWindowTitleVisibility, NSWindowToolbarStyle, NSWorkspace,
 };
 use objc2_foundation::{
     MainThreadMarker, NSArray, NSIndexSet, NSNotification, NSObject, NSObjectProtocol, NSPoint,
@@ -107,24 +107,15 @@ define_class!(
             window.center();
             window.setDelegate(Some(ProtocolObject::from_ref(self)));
 
+            let content_width = WINDOW_SIZE.width - SIDEBAR_WIDTH;
             let content = NSView::initWithFrame(
                 NSView::alloc(mtm),
-                NSRect::new(NSPoint::new(0.0, 0.0), WINDOW_SIZE),
+                NSRect::new(NSPoint::ZERO, NSSize::new(content_width, WINDOW_SIZE.height)),
             );
-            content.setAutoresizingMask(
-                NSAutoresizingMaskOptions::ViewWidthSizable
-                    | NSAutoresizingMaskOptions::ViewHeightSizable,
+            let sidebar = NSView::initWithFrame(
+                NSView::alloc(mtm),
+                NSRect::new(NSPoint::ZERO, NSSize::new(SIDEBAR_WIDTH, WINDOW_SIZE.height)),
             );
-            let sidebar = NSVisualEffectView::initWithFrame(
-                NSVisualEffectView::alloc(mtm),
-                NSRect::new(
-                    NSPoint::new(0.0, 0.0),
-                    NSSize::new(SIDEBAR_WIDTH, WINDOW_SIZE.height),
-                ),
-            );
-            sidebar.setMaterial(NSVisualEffectMaterial::Sidebar);
-            sidebar.setBlendingMode(NSVisualEffectBlendingMode::BehindWindow);
-            sidebar.setAutoresizingMask(NSAutoresizingMaskOptions::ViewHeightSizable);
 
             let identity = row_stack(8.0, mtm);
             let icon = NSImageView::new(mtm);
@@ -166,7 +157,6 @@ define_class!(
             );
             let source_scroll = NSScrollView::initWithFrame(NSScrollView::alloc(mtm), sources_frame);
             source_scroll.setDrawsBackground(false);
-            source_scroll.contentView().setDrawsBackground(false);
             source_scroll.setHasVerticalScroller(true);
             source_scroll.setAutohidesScrollers(true);
             source_scroll.setAutoresizingMask(NSAutoresizingMaskOptions::ViewHeightSizable);
@@ -174,9 +164,9 @@ define_class!(
                 NSTableView::alloc(mtm), NSRect::new(NSPoint::ZERO, source_scroll.contentSize())
             );
             sources.setAutoresizingMask(NSAutoresizingMaskOptions::ViewWidthSizable);
-            sources.setBackgroundColor(&NSColor::clearColor());
             sources.setHeaderView(None);
             sources.setStyle(NSTableViewStyle::Inset);
+            sources.setBackgroundColor(&NSColor::clearColor());
             sources.setColumnAutoresizingStyle(NSTableViewColumnAutoresizingStyle::LastColumnOnlyAutoresizingStyle);
             let column = NSTableColumn::initWithIdentifier(NSTableColumn::alloc(mtm), ns_string!("source"));
             column.setWidth(source_scroll.contentSize().width);
@@ -188,10 +178,9 @@ define_class!(
             }
             source_scroll.setDocumentView(Some(&sources));
             sidebar.addSubview(&source_scroll);
-            content.addSubview(&sidebar);
 
-            let x = SIDEBAR_WIDTH + CONTENT_MARGIN;
-            let width = WINDOW_SIZE.width - x - CONTENT_MARGIN;
+            let x = CONTENT_MARGIN;
+            let width = content_width - 2.0 * CONTENT_MARGIN;
             let title = NSTextField::labelWithString(ns_string!("Projects"), mtm);
             title.setFont(Some(&NSFont::titleBarFontOfSize(0.0)));
             title.sizeToFit();
@@ -216,7 +205,7 @@ define_class!(
                 button.setBezelStyle(NSBezelStyle::Push);
                 button.setControlSize(NSControlSize::Regular);
                 button.setFrame(NSRect::new(NSPoint::new(
-                    WINDOW_SIZE.width - CONTENT_MARGIN - (2 - index) as f64 * MENU_SIZE - (1 - index) as f64 * 6.0,
+                    content_width - CONTENT_MARGIN - (2 - index) as f64 * MENU_SIZE - (1 - index) as f64 * 6.0,
                     WINDOW_SIZE.height - (TITLEBAR_HEIGHT + MENU_SIZE) / 2.0
                 ), NSSize::new(MENU_SIZE, MENU_SIZE)));
                 button.setAutoresizingMask(NSAutoresizingMaskOptions::ViewMinXMargin | NSAutoresizingMaskOptions::ViewMinYMargin);
@@ -237,8 +226,8 @@ define_class!(
             }
             content.addSubview(&search);
 
-            let frame = NSRect::new(NSPoint::new(SIDEBAR_WIDTH, 0.0), NSSize::new(
-                WINDOW_SIZE.width - SIDEBAR_WIDTH, WINDOW_SIZE.height - TITLEBAR_HEIGHT - SEARCH_HEIGHT - CONTENT_MARGIN,
+            let frame = NSRect::new(NSPoint::ZERO, NSSize::new(
+                content_width, WINDOW_SIZE.height - TITLEBAR_HEIGHT - SEARCH_HEIGHT - CONTENT_MARGIN,
             ));
             let scroll = NSScrollView::initWithFrame(NSScrollView::alloc(mtm), frame);
             scroll.setDrawsBackground(false);
@@ -269,7 +258,21 @@ define_class!(
             content.addSubview(&scroll);
             self.ivars().projects.set(table).expect("project list must only be created once");
 
-            window.setContentView(Some(&content));
+            let sidebar_controller = NSViewController::new(mtm);
+            sidebar_controller.setView(&sidebar);
+            let sidebar_item = NSSplitViewItem::sidebarWithViewController(&sidebar_controller);
+            sidebar_item.setMinimumThickness(SIDEBAR_WIDTH);
+            sidebar_item.setMaximumThickness(SIDEBAR_WIDTH);
+            sidebar_item.setCanCollapse(false);
+            let content_controller = NSViewController::new(mtm);
+            content_controller.setView(&content);
+            let content_item = NSSplitViewItem::splitViewItemWithViewController(&content_controller);
+            let split = NSSplitViewController::new(mtm);
+            split.splitView().setVertical(true);
+            split.addSplitViewItem(&sidebar_item);
+            split.addSplitViewItem(&content_item);
+            split.view().setFrame(NSRect::new(NSPoint::ZERO, WINDOW_SIZE));
+            window.setContentViewController(Some(&split));
             self.ivars().window.set(window.clone()).expect("window must only be created once");
             window.makeKeyAndOrderFront(None);
             window.makeFirstResponder(None);
@@ -348,7 +351,18 @@ define_class!(
                     if url.starts_with("http") {
                         label.setToolTip(Some(&NSString::from_str(url)));
                     }
-                    return Some(label.into_super().into_super());
+                    let cell = NSTableCellView::new(self.mtm());
+                    label.setTranslatesAutoresizingMaskIntoConstraints(false);
+                    cell.addSubview(&label);
+                    unsafe { cell.setTextField(Some(&label)) };
+                    for constraint in [
+                        label.leadingAnchor().constraintEqualToAnchor_constant(&cell.leadingAnchor(), 8.0),
+                        label.trailingAnchor().constraintEqualToAnchor_constant(&cell.trailingAnchor(), -8.0),
+                        label.centerYAnchor().constraintEqualToAnchor(&cell.centerYAnchor()),
+                    ] {
+                        constraint.setActive(true);
+                    }
+                    return Some(cell.into_super());
                 }
                 let project = model.project(index)?;
                 let width = column.map_or(table.bounds().size.width, NSTableColumn::width);
