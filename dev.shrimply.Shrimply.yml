@@ -213,7 +213,7 @@ modules:
         -c 'import av, manimpango, manimlib, msgpack'
       - test ! -e /app/bin/uv
       - test ! -e /app/libexec/shrimply/qt/shrimply
-      - test ! -e /app/libexec/shrimply/qt/shrimply-editor
+      - test ! -e /app/bin/shrimply-editor
       - test ! -e /app/share/applications/dev.shrimply.Shrimply.Qt.desktop
     sources:
       - type: archive

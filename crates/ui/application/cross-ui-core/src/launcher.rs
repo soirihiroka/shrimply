@@ -162,6 +162,21 @@ pub fn project_access_label(project: &ProjectEntry) -> Option<String> {
     ))
 }
 
+pub fn project_details(project: &ProjectEntry) -> String {
+    let mut details = match &project.remote {
+        Some(link) => link.server.clone(),
+        None => project
+            .path
+            .as_ref()
+            .map_or_else(String::new, |path| path.display().to_string()),
+    };
+    if let Some(access) = project_access_label(project) {
+        details.push('\n');
+        details.push_str(&access);
+    }
+    details
+}
+
 pub fn delete_project(project: &ProjectEntry) -> Result<(), String> {
     if project.remote.is_none()
         && let Some(path) = &project.path

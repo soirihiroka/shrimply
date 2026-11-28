@@ -324,6 +324,20 @@ impl qobject::LauncherBackend {
                                 .map_or("", |remote| remote.server.as_str()),
                         )),
                     ),
+                    (
+                        "details",
+                        QVariant::from(&QString::from(launcher::project_details(project))),
+                    ),
+                    (
+                        "folder",
+                        QVariant::from(
+                            &project
+                                .path
+                                .as_deref()
+                                .and_then(Path::parent)
+                                .map_or_else(QUrl::default, local_url),
+                        ),
+                    ),
                     ("cached", QVariant::from(&project.path.is_some())),
                 ]
                 .into_iter()

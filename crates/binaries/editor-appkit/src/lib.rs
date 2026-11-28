@@ -5,11 +5,8 @@ mod macos;
 pub use macos::{about::show as show_about, settings::PreferencesWindow};
 
 #[cfg(target_os = "macos")]
-pub fn run(project: Option<&std::path::Path>) -> std::process::ExitCode {
+pub fn run(project: &std::path::Path) -> std::process::ExitCode {
     shrimply_process_reporting::diagnostics::init();
-    if let Some(path) = project {
-        assert!(path.is_file(), "project does not exist: {}", path.display());
-    }
     match macos::run(project) {
         Ok(true) => std::process::ExitCode::SUCCESS,
         Ok(false) => std::process::ExitCode::from(
@@ -20,6 +17,6 @@ pub fn run(project: Option<&std::path::Path>) -> std::process::ExitCode {
 }
 
 #[cfg(not(target_os = "macos"))]
-pub fn run(_project: Option<&std::path::Path>) -> std::process::ExitCode {
+pub fn run(_project: &std::path::Path) -> std::process::ExitCode {
     panic!("shrimply-editor-appkit requires macOS");
 }

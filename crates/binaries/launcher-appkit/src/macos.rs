@@ -324,7 +324,7 @@ define_class!(
                     label.setAutoresizingMask(NSAutoresizingMaskOptions::ViewWidthSizable);
                     view.addSubview(&label);
                 }
-                let mut items = Vec::new();
+                let mut items = vec![("Project Information", sel!(showProjectInfo:))];
                 if project.path.is_some() {
                     items.extend([
                         ("Show in Finder", sel!(revealProject:)),
@@ -414,6 +414,13 @@ define_class!(
         #[unsafe(method(showAbout:))]
         fn show_about(&self, _sender: &NSObject) {
             shrimply_editor_appkit::show_about(self.mtm());
+        }
+
+        #[unsafe(method(showProjectInfo:))]
+        fn show_project_info(&self, sender: &NSMenuItem) {
+            if let Some(project) = self.menu_project(sender) {
+                self.show_error(&project.name, &launcher::project_details(&project));
+            }
         }
 
         #[unsafe(method(revealProject:))]

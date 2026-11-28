@@ -8,7 +8,7 @@ fn main() -> std::process::ExitCode {
     }
     shrimply_process_reporting::crash::install();
     match shrimply_cross_ui_core::launcher::project_path_argument() {
-        Ok(Some(path)) => return shrimply_editor_appkit::run(Some(&path)),
+        Ok(Some(path)) => return shrimply_editor_appkit::run(&path),
         Ok(None) => (),
         Err(error) => {
             eprintln!("{error}");

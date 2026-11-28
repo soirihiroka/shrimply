@@ -191,6 +191,19 @@ ApplicationWindow {
         pointerPopupType: mainMenu.pointerPopupType
 
         Action {
+            text: backend.text("Project Information")
+            onTriggered: {
+                errorDialog.title = projectMenu.project.name
+                errorBody.text = projectMenu.project.details
+                errorDialog.open()
+            }
+        }
+        Action {
+            text: backend.text("Show in Files")
+            enabled: Boolean(projectMenu.project.cached)
+            onTriggered: Qt.openUrlExternally(projectMenu.project.folder)
+        }
+        Action {
             text: backend.text("Restart Local Service")
             enabled: Boolean(projectMenu.project.cached)
             onTriggered: backend.manageListedProject(projectMenu.project.key, false)

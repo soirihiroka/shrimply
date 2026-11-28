@@ -275,20 +275,7 @@ fn build_ui(app: &adw::Application) {
             glib::spawn_future_local(async move {
                 match name {
                     "info" => {
-                        let location = project
-                            .remote
-                            .as_ref()
-                            .map(|link| link.server.clone())
-                            .or_else(|| {
-                                project.path.as_ref().map(|path| path.display().to_string())
-                            })
-                            .unwrap_or_default();
-                        let details = [Some(location), launcher::project_access_label(&project)]
-                            .into_iter()
-                            .flatten()
-                            .collect::<Vec<_>>()
-                            .join("\n");
-                        show_error(&window, &project.name, &details);
+                        show_error(&window, &project.name, &launcher::project_details(&project));
                     }
                     "show" => {
                         if let Some(path) = project.path

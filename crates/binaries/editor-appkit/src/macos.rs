@@ -667,28 +667,12 @@ impl Editor {
     }
 }
 
-pub fn run(project: Option<&Path>) -> Result<bool, ()> {
+pub fn run(path: &Path) -> Result<bool, ()> {
     let mtm = MainThreadMarker::new().expect("AppKit must start on the main thread");
     objc2_foundation::NSProcessInfo::processInfo().setProcessName(ns_string!("Shrimply"));
     let app = NSApplication::sharedApplication(mtm);
     app.setActivationPolicy(NSApplicationActivationPolicy::Regular);
     NSWindow::setAllowsAutomaticWindowTabbing(false, mtm);
-    let chosen;
-    let path = if let Some(path) = project {
-        path
-    } else {
-        let panel = objc2_app_kit::NSOpenPanel::openPanel(mtm);
-        panel.setCanChooseDirectories(false);
-        if panel.runModal() != objc2_app_kit::NSModalResponseOK {
-            return Ok(false);
-        }
-        chosen = panel
-            .URL()
-            .expect("selected project URL")
-            .to_file_path()
-            .expect("local project file");
-        &chosen
-    };
     let editor = Editor::alloc(mtm).set_ivars(EditorIvars {
         session: OnceCell::new(),
         imports: Rc::new(RefCell::new(media::Imports::default())),

@@ -1,21 +1,21 @@
 use super::{error_alert, trust};
-use block2::RcBlock;
-use objc2::rc::{Retained, Weak};
+use objc2::rc::Retained;
+use objc2::runtime::ProtocolObject;
 use objc2::{DefinedClass, MainThreadOnly, define_class, msg_send, sel};
 use objc2_app_kit::{
     NSAlert, NSAlertFirstButtonReturn, NSAutoresizingMaskOptions, NSBackingStoreType, NSButton,
     NSColor, NSColorWell, NSControl, NSFont, NSFontManager, NSImage, NSModalResponseOK,
     NSOpenPanel, NSPopUpButton, NSScrollView, NSStepper, NSTabViewController,
     NSTabViewControllerTabStyle, NSTabViewItem, NSTextAlignment, NSTextField, NSView,
-    NSViewController, NSWindow, NSWindowButton, NSWindowStyleMask, NSWindowTabbingMode,
-    NSWindowToolbarStyle,
+    NSViewController, NSWindow, NSWindowButton, NSWindowDelegate, NSWindowStyleMask,
+    NSWindowTabbingMode, NSWindowToolbarStyle,
 };
 use objc2_foundation::{
-    MainThreadMarker, NSObject, NSObjectProtocol, NSPoint, NSRect, NSSize, NSString, NSTimer,
-    ns_string,
+    MainThreadMarker, NSNotification, NSObject, NSObjectProtocol, NSPoint, NSRect, NSSize,
+    NSString, NSTimer, ns_string,
 };
 use shrimply_editor_state::preferences::{self, PreferenceId, PreferenceValue, SharedPreferences};
-use std::cell::{Cell, OnceCell, RefCell};
+use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
 
 const PANE_WIDTH: f64 = 660.0;
@@ -71,7 +71,7 @@ type ServerProbe = (
 
 pub struct PreferencesIvars {
     store: SharedPreferences,
-    timer: OnceCell<Retained<NSTimer>>,
+    timer: RefCell<Option<Retained<NSTimer>>>,
     settings_window: RefCell<Option<Retained<NSWindow>>>,
     settings_blender_probe:
         RefCell<Option<std::sync::mpsc::Receiver<Result<std::path::PathBuf, String>>>>,
@@ -95,7 +95,22 @@ define_class!(
 
     unsafe impl NSObjectProtocol for PreferencesWindow {}
 
+    unsafe impl NSWindowDelegate for PreferencesWindow {
+        #[unsafe(method(windowWillClose:))]
+        fn window_will_close(&self, _notification: &NSNotification) {
+            if let Some(timer) = self.ivars().timer.borrow_mut().take() {
+                timer.invalidate();
+            }
+        }
+    }
+
     impl PreferencesWindow {
+        #[unsafe(method(pollPreferences:))]
+        fn poll_preferences(&self, _timer: &NSTimer) {
+            self.poll_blender_probe();
+            self.poll_compute_server_probes();
+        }
+
         #[unsafe(method(changeNumericPreference:))]
         fn change_numeric_preference(&self, sender: &NSControl) {
             let store = &self.ivars().store;
@@ -294,7 +309,7 @@ impl PreferencesWindow {
     pub fn new(mtm: MainThreadMarker, store: Option<SharedPreferences>) -> Retained<Self> {
         let preferences = Self::alloc(mtm).set_ivars(PreferencesIvars {
             store: store.unwrap_or_else(preferences::open_with_defaults),
-            timer: OnceCell::new(),
+            timer: RefCell::new(None),
             settings_window: RefCell::new(None),
             settings_blender_probe: RefCell::new(None),
             settings_server_probe: RefCell::new(None),
@@ -303,22 +318,7 @@ impl PreferencesWindow {
             settings_device_error: RefCell::new(None),
             settings_server_statuses: RefCell::new(std::collections::BTreeMap::new()),
         });
-        let preferences: Retained<Self> = unsafe { msg_send![super(preferences), init] };
-        let weak = Weak::new(&*preferences);
-        let poll = RcBlock::new(move |timer: std::ptr::NonNull<NSTimer>| {
-            if let Some(window) = weak.load() {
-                window.poll_blender_probe();
-                window.poll_compute_server_probes();
-            } else {
-                unsafe { timer.as_ref() }.invalidate();
-            }
-        });
-        preferences
-            .ivars()
-            .timer
-            .set(unsafe { NSTimer::scheduledTimerWithTimeInterval_repeats_block(0.1, true, &poll) })
-            .expect("preferences timer");
-        preferences
+        unsafe { msg_send![super(preferences), init] }
     }
 
     fn show_error(&self, error: &str) {
@@ -326,13 +326,29 @@ impl PreferencesWindow {
     }
 
     pub fn present(&self) {
-        if let Some(window) = self.ivars().settings_window.borrow().as_ref() {
-            window.makeKeyAndOrderFront(None);
-            sync_cli_window(window, self.mtm());
-            self.refresh_compute_servers();
-            return;
+        {
+            let mut slot = self.ivars().settings_window.borrow_mut();
+            if let Some(window) = slot.as_ref() {
+                window.makeKeyAndOrderFront(None);
+                sync_cli_window(window, self.mtm());
+            } else {
+                let window = build(self);
+                window.setDelegate(Some(ProtocolObject::from_ref(self)));
+                *slot = Some(window);
+            }
         }
-        self.ivars().settings_window.replace(Some(build(self)));
+        let mut timer = self.ivars().timer.borrow_mut();
+        if timer.is_none() {
+            *timer = Some(unsafe {
+                NSTimer::scheduledTimerWithTimeInterval_target_selector_userInfo_repeats(
+                    0.1,
+                    self,
+                    sel!(pollPreferences:),
+                    None,
+                    true,
+                )
+            });
+        }
         self.refresh_compute_servers();
     }
 
