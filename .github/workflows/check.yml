@@ -15,6 +15,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
+          submodules: recursive
       - name: Build the optimized encoder and prepare the same PCM
         run: |
           sudo apt-get update -qq
@@ -37,7 +38,7 @@ jobs:
       - name: Sample encoding on two matched-benchmark excerpts
         run: |
           cd "$RUNNER_TEMP"
-          perf=$(find /usr/lib/linux-tools -name perf -type f | sort -V | tail -1)
+          perf=$(find -L /usr/lib/linux-tools -name perf -type f | sort -V | tail -1)
           test -x "$perf"
           for item in 44 69; do
             for rate in 64000 192000; do
