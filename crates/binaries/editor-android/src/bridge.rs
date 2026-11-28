@@ -1459,7 +1459,11 @@ pub extern "system" fn Java_dev_shrimply_app_NativeTimeline_listProjects<'caller
                 catalog::local_projects()
             };
             let payload = match result {
-                Ok(projects) => json!({ "projects": projects }),
+                Ok(projects) => json!({
+                    "projects": projects,
+                    "daemon": shrimply_editing_api::bridge::local_service_status(),
+                    "version": env!("CARGO_PKG_VERSION"),
+                }),
                 Err(error) => json!({ "error": error }),
             };
             env.new_string(payload.to_string())

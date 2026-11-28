@@ -62,12 +62,12 @@ fn build_ui(app: &adw::Application) {
     shrimply_components_gtk::icons::register_bundled();
 
     let search = gtk::SearchEntry::builder()
+        .hexpand(true)
         .placeholder_text(tr!("Search Projects").as_ref())
         .build();
     let list = gtk::ListBox::builder()
         .selection_mode(gtk::SelectionMode::None)
         .activate_on_single_click(true)
-        .css_classes(["boxed-list"])
         .build();
     let hint = gtk::Label::new(Some(tr!("No Projects").as_ref()));
     list.set_placeholder(Some(&hint));
@@ -80,26 +80,28 @@ fn build_ui(app: &adw::Application) {
     projects.set_margin_start(12);
     projects.set_margin_end(12);
     projects.set_margin_bottom(12);
-    projects.append(&search);
+    let create = gtk::Button::builder()
+        .icon_name("list-add-symbolic")
+        .tooltip_text(tr!("Create Project").as_ref())
+        .css_classes(["suggested-action"])
+        .build();
+    let open = gtk::Button::builder()
+        .icon_name("document-open-symbolic")
+        .tooltip_text(tr!("Open Project").as_ref())
+        .build();
+    let project_tools = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    for widget in [
+        search.upcast_ref::<gtk::Widget>(),
+        create.upcast_ref(),
+        open.upcast_ref(),
+    ] {
+        project_tools.append(widget);
+    }
+    projects.append(&project_tools);
     projects.append(&scroller);
     let toolbar = adw::ToolbarView::new();
     let header = adw::HeaderBar::new();
     header.set_show_start_title_buttons(false);
-    let menu = gio::Menu::new();
-    for (label, action) in [
-        ("Settings", "win.preferences"),
-        ("Project Servers", "win.project-servers"),
-        ("About Shrimply", "win.about"),
-    ] {
-        menu.append(Some(tr!(label).as_ref()), Some(action));
-    }
-    let menu_button = gtk::MenuButton::builder()
-        .icon_name("open-menu-symbolic")
-        .tooltip_text(tr!("Main Menu").as_ref())
-        .menu_model(&menu)
-        .has_frame(false)
-        .build();
-    header.pack_end(&menu_button);
     toolbar.add_top_bar(&header);
     toolbar.set_content(Some(&projects));
     let projects = adw::NavigationPage::builder()
@@ -107,30 +109,52 @@ fn build_ui(app: &adw::Application) {
         .child(&toolbar)
         .build();
 
-    let create = gtk::Button::with_label(tr!("Create Project").as_ref());
-    create.add_css_class("suggested-action");
-    create.add_css_class("pill");
-    let open = gtk::Button::with_label(tr!("Open Project").as_ref());
-    open.add_css_class("pill");
-    let actions = gtk::Box::new(gtk::Orientation::Vertical, 12);
-    actions.set_halign(gtk::Align::Center);
-    actions.set_valign(gtk::Align::Center);
-    actions.append(&create);
-    actions.append(&open);
-    let toolbar = adw::ToolbarView::new();
-    let header = adw::HeaderBar::new();
-    header.set_show_end_title_buttons(false);
-    toolbar.add_top_bar(&header);
-    toolbar.set_content(Some(&actions));
+    let menu = gio::Menu::new();
+    menu.append(Some(tr!("Settings").as_ref()), Some("win.preferences"));
+    menu.append(Some(tr!("About Shrimply").as_ref()), Some("win.about"));
+    let menu_button = gtk::MenuButton::builder()
+        .icon_name("open-menu-symbolic")
+        .tooltip_text(tr!("Main Menu").as_ref())
+        .menu_model(&menu)
+        .has_frame(false)
+        .build();
+    let icon = gtk::Image::builder()
+        .icon_name("dev.shrimply.Shrimply")
+        .pixel_size(48)
+        .build();
+    let heading = gtk::Label::builder()
+        .label(tr!("Shrimply").as_ref())
+        .css_classes(["title-4"])
+        .build();
+    let version = gtk::Label::builder()
+        .label(env!("CARGO_PKG_VERSION"))
+        .css_classes(["dim-label", "caption"])
+        .build();
+    let daemon = gtk::Label::builder()
+        .css_classes(["dim-label", "caption"])
+        .build();
+    let actions = gtk::Box::new(gtk::Orientation::Vertical, 6);
+    actions.set_margin_top(12);
+    actions.set_margin_bottom(12);
+    actions.set_margin_start(12);
+    actions.set_margin_end(12);
+    actions.append(&icon);
+    actions.append(&heading);
+    actions.append(&version);
+    actions.append(&daemon);
+    let spacer = gtk::Box::builder().vexpand(true).build();
+    actions.append(&spacer);
+    menu_button.set_halign(gtk::Align::Start);
+    actions.append(&menu_button);
     let actions = adw::NavigationPage::builder()
         .title(tr!("Shrimply").as_ref())
-        .child(&toolbar)
+        .child(&actions)
         .build();
     let split = adw::NavigationSplitView::builder()
         .sidebar(&actions)
         .content(&projects)
-        .min_sidebar_width(200.0)
-        .max_sidebar_width(200.0)
+        .min_sidebar_width(140.0)
+        .max_sidebar_width(140.0)
         .sidebar_width_unit(adw::LengthUnit::Px)
         .build();
     let window = adw::ApplicationWindow::builder()
@@ -141,6 +165,21 @@ fn build_ui(app: &adw::Application) {
         .content(&split)
         .build();
     adaptive_menu(&menu_button, "win", &window);
+    glib::timeout_add_seconds_local(2, {
+        let daemon = daemon.downgrade();
+        move || {
+            let Some(label) = daemon.upgrade() else {
+                return glib::ControlFlow::Break;
+            };
+            glib::spawn_future_local(async move {
+                let status = gio::spawn_blocking(launcher::local_service_status)
+                    .await
+                    .expect("daemon status worker");
+                label.set_label(tr!(status).as_ref());
+            });
+            glib::ControlFlow::Continue
+        }
+    });
 
     let model = Rc::new(RefCell::new(Launcher::default()));
     let rebuild = {
@@ -230,24 +269,16 @@ fn build_ui(app: &adw::Application) {
         Err(error) => show_error(&window, "Could not load projects", &error),
     }
     reload();
-    window.add_action(&menu_action("project-servers", None, {
+    window.add_action(&menu_action("preferences", None, {
         let window = window.downgrade();
         let reload = reload.clone();
         move || {
-            let window = window.upgrade()?;
             let reload = reload.clone();
-            shrimply_preferences_gtk::page::show_project_servers(&window)
-                .connect_closed(move |_| reload());
-            None
-        }
-    }));
-    window.add_action(&menu_action("preferences", None, {
-        let window = window.downgrade();
-        move || {
             shrimply_preferences_gtk::page::show_preferences_dialog(
                 &window.upgrade()?,
                 shrimply_preferences_gtk::store::open_with_defaults(),
-            );
+            )
+            .connect_closed(move |_| reload());
             None
         }
     }));
@@ -340,6 +371,8 @@ fn append_projects(list: &gtk::ListBox, model: &Launcher, start: usize) {
             .title(&project.name)
             .use_markup(false)
             .activatable(true)
+            .css_classes(["card"])
+            .margin_bottom(8)
             .build();
         let icon = gtk::Image::from_icon_name(if project.remote.is_some() {
             "folder-remote-symbolic"

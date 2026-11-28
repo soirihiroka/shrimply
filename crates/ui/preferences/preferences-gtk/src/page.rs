@@ -4,19 +4,10 @@ use shrimply_components_gtk::tr;
 use shrimply_components_gtk::ui::ColorPicker;
 use store::{PreferenceId, PreferencePage, PreferenceValue, SharedPreferences};
 
-pub fn show_project_servers(window: &adw::ApplicationWindow) -> adw::PreferencesDialog {
-    let page = adw::PreferencesPage::new();
-    page.add(&server::project_server_group(store::open_with_defaults()));
-    let dialog = adw::PreferencesDialog::builder()
-        .title(tr!("Project Servers").as_ref())
-        .search_enabled(false)
-        .build();
-    dialog.add(&page);
-    dialog.present(Some(window));
-    dialog
-}
-
-pub fn show_preferences_dialog(window: &adw::ApplicationWindow, preferences: SharedPreferences) {
+pub fn show_preferences_dialog(
+    window: &adw::ApplicationWindow,
+    preferences: SharedPreferences,
+) -> adw::Dialog {
     let dialog = adw::Dialog::builder()
         .title(tr!(store::SETTINGS_TITLE).as_ref())
         .content_width(940)
@@ -109,6 +100,7 @@ pub fn show_preferences_dialog(window: &adw::ApplicationWindow, preferences: Sha
     dialog.add_breakpoint(narrow);
     dialog.set_child(Some(&split));
     dialog.present(Some(window));
+    dialog
 }
 
 fn preference_row(id: PreferenceId, preferences: &SharedPreferences) -> gtk::Widget {

@@ -42,6 +42,26 @@ pub fn runtime_directory() -> Result<PathBuf, String> {
     Ok(shrimply_path_core::cache_directory()?.join("run"))
 }
 
+pub fn local_service_status() -> &'static str {
+    match runtime_directory().map(|path| std::fs::read_dir(path)) {
+        Ok(Ok(entries)) => {
+            if entries.filter_map(Result::ok).any(|entry| {
+                let file = entry.file_name();
+                let name = file.to_string_lossy();
+                name.starts_with("editing-")
+                    && name.ends_with(".sock")
+                    && Stream::connect(&entry.path()).is_ok()
+            }) {
+                "Daemon running"
+            } else {
+                "Daemon idle"
+            }
+        }
+        Ok(Err(error)) if error.kind() == std::io::ErrorKind::NotFound => "Daemon idle",
+        _ => "Daemon unavailable",
+    }
+}
+
 pub fn socket_path(owner: &ProjectLockOwner) -> Result<PathBuf, String> {
     let filename = match owner {
         ProjectLockOwner::System { pid } => format!("editing-{pid}.sock"),

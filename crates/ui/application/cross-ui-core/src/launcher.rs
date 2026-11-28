@@ -1,4 +1,4 @@
-pub use shrimply_editing_runtime::attached::restart_local_service;
+pub use shrimply_editing_runtime::attached::{local_service_status, restart_local_service};
 use shrimply_math_core::Fraction;
 use shrimply_project_document::project;
 pub use shrimply_project_service::catalog::{ProjectEntry, list as load_projects, local_projects};

@@ -8,6 +8,7 @@ import android.view.WindowInsetsController
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.Orientation
@@ -29,6 +30,7 @@ import androidx.compose.ui.zIndex
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -40,6 +42,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.DpOffset
+import androidx.core.graphics.drawable.toBitmap
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -78,7 +81,8 @@ internal fun ProjectApp(timeline: TimelineSession, files: ProjectFiles, caption:
     val servers = status.optJSONArray("project_servers")?.let { values ->
         List(values.length()) { values.getString(it) }
     }.orEmpty()
-    var showServers by rememberSaveable { mutableStateOf(false) }
+    var daemon by remember { mutableStateOf("") }
+    var version by remember { mutableStateOf("") }
     var projects by remember { mutableStateOf<List<JSONObject>>(emptyList()) }
     var catalogRevision by remember { mutableIntStateOf(0) }
     var projectServer by rememberSaveable { mutableStateOf("") }
@@ -127,6 +131,8 @@ internal fun ProjectApp(timeline: TimelineSession, files: ProjectFiles, caption:
                 val response = withContext(Dispatchers.IO) { JSONObject(NativeTimeline.listProjects(includeRemote)) }
                 check(!response.has("error")) { response.getString("error") }
                 projects = response.getJSONArray("projects").objects()
+                daemon = response.getString("daemon")
+                version = response.getString("version")
             }
         } catch (cancelled: kotlinx.coroutines.CancellationException) {
             throw cancelled
@@ -303,10 +309,14 @@ internal fun ProjectApp(timeline: TimelineSession, files: ProjectFiles, caption:
     val workspace: @Composable (Boolean) -> Unit = { renderOnly -> workspaceState.SaveableStateProvider(workspaceKey) {
     Box(Modifier.fillMaxSize().then(if (project == null) Modifier.safeDrawingPadding() else Modifier).then(if (renderOnly) Modifier.clearAndSetSemantics {}.focusProperties { canFocus = false } else Modifier)) {
         if (project == null) {
-            Launcher(projects, !renderOnly && !busy && schema.has("defaults"),
+            Launcher(projects, version, daemon, !renderOnly && !busy && schema.has("defaults"),
                 { useSettings(schema.getJSONObject("defaults")); projectServer = ""; create = true },
                 { choicesBottomSheet = NativeLayout.menuUsesBottomSheet(menuInputSource.value); openFolder.launch(null) },
-                { showServers = true },
+                { preferences = true },
+                { entry -> action {
+                    timeline.request("delete_project", "project" to entry)
+                    catalogRevision++
+                } },
                 { entry ->
                     if (!entry.isNull("path")) open(entry.getString("path"))
                     else action {
@@ -360,14 +370,10 @@ internal fun ProjectApp(timeline: TimelineSession, files: ProjectFiles, caption:
         }
     }
     } }
-    if (preferences) PreferencesScreen(timeline, files, { preferences = false }) { workspace(true) } else workspace(false)
-    if (showServers) ProjectServersDialog(servers, busy, { showServers = false }) { update, complete ->
-        action {
-            timeline.request(update)
-            catalogRevision++
-            complete()
-        }
-    }
+    if (preferences) PreferencesScreen(timeline, files, {
+        preferences = false
+        catalogRevision++
+    }) { workspace(true) } else workspace(false)
     versionOpen?.let { request ->
         val dismiss = { versionOpen = null; files.cancelOpen() }
         AlertDialog(onDismissRequest = dismiss, title = { Text(tr("Service Version Mismatch")) },
@@ -479,20 +485,36 @@ private fun targetArguments(saved: String): Array<Pair<String, Any>> {
 }
 
 @Composable
-private fun Launcher(projects: List<JSONObject>, enabled: Boolean, create: () -> Unit, open: () -> Unit,
-    projectServers: () -> Unit, select: (JSONObject) -> Unit) {
-    var search by rememberSaveable { mutableStateOf("") }
-    val actions: @Composable () -> Unit = {
-        Row(Modifier.padding(12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = create, enabled = enabled) { Text(tr("Create Project")) }
-            OutlinedButton(onClick = open, enabled = enabled) { Text(tr("Open Project")) }
-        }
-        TextButton(onClick = projectServers, enabled = enabled) { Text(tr("Project Servers")) }
+private fun Launcher(projects: List<JSONObject>, version: String, daemon: String, enabled: Boolean,
+    create: () -> Unit, open: () -> Unit, settings: () -> Unit, delete: (JSONObject) -> Unit, select: (JSONObject) -> Unit) {
+    val context = LocalContext.current
+    val logo = remember(context) {
+        checkNotNull(context.getDrawable(R.mipmap.ic_launcher)).toBitmap(96, 96).asImageBitmap()
     }
-    val list: @Composable () -> Unit = {
-        Text(tr("Projects"), Modifier.padding(12.dp), style = MaterialTheme.typography.titleMedium)
-        OutlinedTextField(search, { search = it }, label = { Text(tr("Search Projects")) },
-            singleLine = true, modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp))
+    var search by rememberSaveable { mutableStateOf("") }
+    var showMenu by rememberSaveable { mutableStateOf(false) }
+    var pendingDelete by remember { mutableStateOf<JSONObject?>(null) }
+    val settingsMenu: @Composable () -> Unit = {
+        Box {
+            ActionIcon("open-menu-symbolic", "Main Menu", enabled) { showMenu = true }
+            DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
+                DropdownMenuItem(text = { Text(tr("Settings")) }, onClick = { showMenu = false; settings() })
+            }
+        }
+    }
+    val appIdentity: @Composable () -> Unit = {
+        Image(logo, contentDescription = tr("Shrimply"), modifier = Modifier.size(48.dp))
+        Text(version, style = MaterialTheme.typography.labelMedium)
+        if (daemon.isNotEmpty()) Text(tr(daemon), style = MaterialTheme.typography.labelSmall)
+    }
+    val projectsPane: @Composable ColumnScope.() -> Unit = {
+        Text(tr("Projects"), style = MaterialTheme.typography.titleMedium)
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            OutlinedTextField(search, { search = it }, label = { Text(tr("Search Projects")) },
+                singleLine = true, modifier = Modifier.weight(1f))
+            ActionIcon("list-add-symbolic", "Create Project", enabled, action = create)
+            ActionIcon("document-open-symbolic", "Open Project", enabled, action = open)
+        }
         val query = search.trim()
         val visible = remember(projects, query) { projects.filter { project ->
             sequenceOf(project.getString("name"), project.optString("path"),
@@ -503,27 +525,64 @@ private fun Launcher(projects: List<JSONObject>, enabled: Boolean, create: () ->
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text(tr(if (query.isEmpty()) "No Projects" else "No Matching Projects"))
             }
-        } else LazyColumn(Modifier.fillMaxSize()) {
+        } else LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             items(visible) { project ->
                 val server = project.optJSONObject("remote")?.getString("server")
-                ListItem(headlineContent = { Text(project.getString("name")) },
-                    leadingContent = {
-                        Icon(iconVector(if (server == null) "folder-open-symbolic" else "folder-remote-symbolic"),
-                            null, Modifier.size(16.dp))
-                    },
-                    supportingContent = server?.let { value -> { Text(value, maxLines = 1, overflow = TextOverflow.Ellipsis) } },
-                    modifier = Modifier.clickable(enabled = enabled) { select(project) })
+                val access = project.optLong("opened_at").takeIf { it > 0 }?.let {
+                    val date = java.text.DateFormat.getDateTimeInstance().format(java.util.Date(it * 1000))
+                    tr("Last opened %{date}").replace("%{date}", date)
+                }
+                val details = listOfNotNull(access, server).joinToString(" · ")
+                var rowMenu by remember(project) { mutableStateOf(false) }
+                Card(shape = MaterialTheme.shapes.medium) {
+                    ListItem(headlineContent = { Text(project.getString("name")) },
+                        leadingContent = {
+                            Icon(iconVector(if (server == null) "folder-open-symbolic" else "folder-remote-symbolic"),
+                                null, Modifier.size(16.dp))
+                        },
+                        trailingContent = {
+                            Box {
+                                ActionIcon("view-more-symbolic", "Project options", enabled) { rowMenu = true }
+                                DropdownMenu(expanded = rowMenu, onDismissRequest = { rowMenu = false }) {
+                                    DropdownMenuItem(text = { Text(tr("Delete Project…")) },
+                                        onClick = { rowMenu = false; pendingDelete = project })
+                                }
+                            }
+                        },
+                        colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
+                        supportingContent = details.takeIf { it.isNotEmpty() }?.let { value ->
+                            { Text(value, maxLines = 2, overflow = TextOverflow.Ellipsis) }
+                        },
+                        modifier = Modifier.clickable(enabled = enabled) { select(project) })
+                }
             }
         }
     }
     BoxWithConstraints(Modifier.fillMaxSize()) {
         if (maxWidth >= ExpandedWidth) Row(Modifier.fillMaxSize()) {
-            Column(Modifier.width(330.dp).fillMaxHeight(), horizontalAlignment = Alignment.CenterHorizontally) { actions() }
-            Column(Modifier.weight(1f).fillMaxHeight().background(MaterialTheme.colorScheme.surfaceContainerLow)) { list() }
-        } else Column(Modifier.fillMaxSize()) {
-            actions()
-            list()
+            Column(Modifier.width(140.dp).fillMaxHeight().padding(12.dp),
+                horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                appIdentity()
+                Spacer(Modifier.weight(1f))
+                settingsMenu()
+            }
+            Column(Modifier.weight(1f).fillMaxHeight().background(MaterialTheme.colorScheme.surfaceContainerLow).padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp), content = projectsPane)
+        } else Column(Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                appIdentity()
+                settingsMenu()
+            }
+            projectsPane()
         }
+    }
+    pendingDelete?.let { project ->
+        val cancel = { pendingDelete = null }
+        val message = if (project.optJSONObject("remote") == null) "Permanently delete this project file?"
+                      else "Delete this project from the server for everyone?"
+        AlertDialog(onDismissRequest = cancel, title = { Text(project.getString("name")) },
+            text = { Text(tr(message)) }, dismissButton = { TextButton(onClick = cancel) { Text(tr("Cancel")) } },
+            confirmButton = { TextButton(onClick = { cancel(); delete(project) }) { Text(tr("Delete Project")) } })
     }
 }
 

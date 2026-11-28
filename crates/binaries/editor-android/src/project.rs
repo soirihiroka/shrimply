@@ -13,7 +13,7 @@ use shrimply_project_document::{
     creation::{NewProject, apply_project_settings},
 };
 #[cfg(target_os = "android")]
-use shrimply_project_service::{ProjectClient, SharedWorkspace, catalog::ProjectEntry};
+use shrimply_project_service::{SharedWorkspace, catalog::ProjectEntry};
 use shrimply_timeline_edit::project_menu::{self, Action};
 use shrimply_timeline_edit::selection_state;
 use std::{
@@ -188,24 +188,13 @@ impl ProjectBackend {
                 self.open(&path, None)?;
             }
             #[cfg(target_os = "android")]
-            "update_project_server" => {
-                let previous = request["previous"].as_str();
-                let server = request["server"]
-                    .as_str()
-                    .map(shrimply_preferences_core::normalize_project_server_url)
-                    .transpose()?;
-                if let Some(server) = server.as_deref() {
-                    ProjectClient::sign_in(
-                        server,
-                        string(request, "username")?,
-                        string(request, "password")?,
-                    )?;
+            "delete_project" => {
+                if self.project.is_some() {
+                    return Err("Close the open project before deleting from the catalog".into());
                 }
-                shrimply_project_service::update_server(
-                    &self.preferences,
-                    previous,
-                    server.as_deref(),
-                )?;
+                let entry: ProjectEntry = serde_json::from_value(request["project"].clone())
+                    .map_err(|error| error.to_string())?;
+                entry.delete()?;
             }
             "close" => self.close()?,
             "save" => self.save()?,

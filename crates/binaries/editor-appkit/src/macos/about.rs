@@ -123,7 +123,7 @@ fn build(mtm: MainThreadMarker) -> Retained<NSWindow> {
     window
 }
 
-fn version_details(mtm: MainThreadMarker) -> Retained<NSGridView> {
+pub fn bundle_version() -> (String, Option<String>) {
     let bundle = NSBundle::mainBundle();
     let string = |key: &str| {
         bundle
@@ -134,7 +134,11 @@ fn version_details(mtm: MainThreadMarker) -> Retained<NSGridView> {
     };
     let version =
         string("CFBundleShortVersionString").unwrap_or_else(|| env!("CARGO_PKG_VERSION").into());
-    let build = string("CFBundleVersion");
+    (version, string("CFBundleVersion"))
+}
+
+fn version_details(mtm: MainThreadMarker) -> Retained<NSGridView> {
+    let (version, build) = bundle_version();
     let grid =
         NSGridView::gridViewWithNumberOfColumns_rows(2, 1 + isize::from(build.is_some()), mtm);
     grid.setColumnSpacing(10.0);

@@ -26,10 +26,18 @@ pub mod qobject {
         #[qobject]
         #[qml_element]
         #[qproperty(QList_QVariant, projects)]
+        #[qproperty(QString, daemon_status, cxx_name = "daemonStatus")]
         type LauncherBackend = super::LauncherBackendRust;
 
         #[qinvokable]
         fn text(self: &LauncherBackend, key: &QString) -> QString;
+
+        #[qinvokable]
+        fn version(self: &LauncherBackend) -> QString;
+
+        #[qinvokable]
+        #[cxx_name = "refreshDaemonStatus"]
+        fn refresh_daemon_status(self: Pin<&mut LauncherBackend>);
 
         #[qinvokable]
         #[cxx_name = "manageListedProject"]
@@ -95,6 +103,7 @@ pub mod qobject {
 #[derive(Default)]
 pub struct LauncherBackendRust {
     projects: QList<QVariant>,
+    daemon_status: QString,
     core: Launcher,
 }
 
@@ -111,6 +120,20 @@ impl cxx_qt::Initialize for qobject::LauncherBackend {
 impl qobject::LauncherBackend {
     pub fn text(&self, key: &QString) -> QString {
         shrimply_i18n_qt::text(&key.to_string())
+    }
+
+    pub fn version(&self) -> QString {
+        QString::from(env!("CARGO_PKG_VERSION"))
+    }
+
+    pub fn refresh_daemon_status(self: Pin<&mut Self>) {
+        let qt_thread = self.qt_thread();
+        std::thread::spawn(move || {
+            let status = launcher::local_service_status();
+            let _ = qt_thread.queue(move |backend| {
+                backend.set_daemon_status(shrimply_i18n_qt::text(status));
+            });
+        });
     }
 
     pub fn manage_listed_project(self: Pin<&mut Self>, key: &QString, remove_project: bool) {

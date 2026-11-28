@@ -1,21 +1,30 @@
 use super::error_alert;
 use objc2::rc::{Retained, Weak};
-use objc2::runtime::ProtocolObject;
+use objc2::runtime::{AnyObject, ProtocolObject};
 use objc2::{DefinedClass, MainThreadOnly, Message, define_class, msg_send, sel};
 use objc2_app_kit::{
-    NSAlert, NSAlertFirstButtonReturn, NSBackingStoreType, NSButton, NSCellImagePosition, NSColor,
-    NSFont, NSFontManager, NSLayoutAttribute, NSModalResponseOK, NSOpenPanel, NSPopUpButton,
-    NSSecureTextField, NSStackView, NSTextAlignment, NSTextField, NSView, NSWindow,
-    NSWindowDelegate, NSWindowStyleMask, NSWorkspace,
+    NSAccessibility, NSAlert, NSAlertFirstButtonReturn, NSAutoresizingMaskOptions,
+    NSBackingStoreType, NSBezelStyle, NSBox, NSBoxType, NSButton, NSColor, NSControl,
+    NSControlTextEditingDelegate, NSFont, NSFontManager, NSImageView,
+    NSLayoutConstraintOrientation, NSLayoutPriorityDefaultLow, NSLineBreakMode, NSModalResponseOK,
+    NSOpenPanel, NSPopUpButton, NSScrollView, NSSecureTextField, NSSplitViewController,
+    NSSplitViewDividerStyle, NSSplitViewItem, NSSplitViewItemCollapseBehavior, NSStackView,
+    NSTableCellView, NSTableColumn, NSTableView, NSTableViewColumnAutoresizingStyle,
+    NSTableViewDataSource, NSTableViewDelegate, NSTableViewRowSizeStyle, NSTableViewStyle,
+    NSTextAlignment, NSTextField, NSToolbar, NSToolbarDelegate, NSToolbarItem,
+    NSToolbarSidebarTrackingSeparatorItemIdentifier, NSView, NSViewController, NSWindow,
+    NSWindowDelegate, NSWindowOrderingMode, NSWindowStyleMask, NSWindowTitleVisibility,
+    NSWindowToolbarStyle, NSWorkspace,
 };
 use objc2_foundation::{
-    MainThreadMarker, NSArray, NSEdgeInsets, NSNotification, NSObject, NSObjectProtocol, NSPoint,
-    NSRect, NSSize, NSString, NSTimer, NSURL,
+    MainThreadMarker, NSArray, NSEdgeInsets, NSIndexSet, NSNotification, NSObject,
+    NSObjectProtocol, NSPoint, NSRect, NSSize, NSString, NSTimer, NSURL, ns_string,
 };
+use objc2_quartz_core::{CAGradientLayer, kCACornerCurveContinuous};
 use serde_json::{Value, json};
 use shrimply_components_appkit::{
-    ActionButton, ColorPicker, NumberPicker, ScrollingColumn, StringChoice, StringSelector,
-    bundled_symbol, column_append, column_stack, control_row, inset, row_stack, switch_row,
+    ActionButton, ColorPicker, NumberPicker, ScrollingColumn, StringChoice, StringSelector, Switch,
+    bundled_symbol, column_append, column_stack, group_box, inset, row_stack,
 };
 use shrimply_editor_state::preferences::{
     self, PreferenceId, PreferencePage, PreferenceValue, SharedPreferences,
@@ -26,9 +35,11 @@ use std::cell::{Cell, OnceCell, RefCell};
 
 struct Layout {
     window: Retained<NSWindow>,
-    sidebar: Retained<NSStackView>,
+    sidebar: Retained<NSSplitViewItem>,
+    navigation: Retained<NSTableView>,
+    header: Retained<NSStackView>,
+    title: Retained<NSTextField>,
     compact: Retained<NSPopUpButton>,
-    categories: Vec<Retained<NSButton>>,
     body: Retained<NSStackView>,
     scroll: ScrollingColumn,
 }
@@ -65,6 +76,58 @@ define_class!(
         }
     }
 
+    unsafe impl NSToolbarDelegate for PreferencesWindow {
+        #[unsafe(method_id(toolbarDefaultItemIdentifiers:))]
+        fn toolbar_items(&self, _toolbar: &NSToolbar) -> Retained<NSArray<NSString>> {
+            NSArray::from_slice(&[
+                unsafe { NSToolbarSidebarTrackingSeparatorItemIdentifier },
+                ns_string!("settings-page"),
+            ])
+        }
+
+        #[unsafe(method_id(toolbarAllowedItemIdentifiers:))]
+        fn allowed_toolbar_items(&self, toolbar: &NSToolbar) -> Retained<NSArray<NSString>> {
+            self.toolbar_items(toolbar)
+        }
+
+        #[unsafe(method_id(toolbar:itemForItemIdentifier:willBeInsertedIntoToolbar:))]
+        fn toolbar_item(&self, _toolbar: &NSToolbar, identifier: &NSString, _inserted: bool) -> Option<Retained<NSToolbarItem>> {
+            if identifier != ns_string!("settings-page") {
+                return None;
+            }
+            let layout = self.ivars().layout.get().expect("settings layout");
+            let item = NSToolbarItem::initWithItemIdentifier(NSToolbarItem::alloc(self.mtm()), identifier);
+            item.setLabel(&NSString::from_str(&text(preferences::SETTINGS_TITLE)));
+            item.setView(Some(&layout.header));
+            Some(item)
+        }
+    }
+
+    unsafe impl NSControlTextEditingDelegate for PreferencesWindow {}
+
+    unsafe impl NSTableViewDataSource for PreferencesWindow {
+        #[unsafe(method(numberOfRowsInTableView:))]
+        fn category_count(&self, _table: &NSTableView) -> isize {
+            PreferencePage::ALL.len() as isize
+        }
+    }
+
+    unsafe impl NSTableViewDelegate for PreferencesWindow {
+        #[unsafe(method_id(tableView:viewForTableColumn:row:))]
+        fn category_row(&self, _table: &NSTableView, _column: Option<&NSTableColumn>, row: isize) -> Option<Retained<NSView>> {
+            PreferencePage::ALL.get(row as usize).map(|page| sidebar_row(*page, self.mtm()))
+        }
+
+        #[unsafe(method(tableViewSelectionDidChange:))]
+        fn category_changed(&self, _notification: &NSNotification) {
+            if let Some(layout) = self.ivars().layout.get()
+                && let Ok(index) = usize::try_from(layout.navigation.selectedRow())
+            {
+                self.select(index);
+            }
+        }
+    }
+
     impl PreferencesWindow {
         #[unsafe(method(pollSettings:))]
         fn poll_settings(&self, _timer: &NSTimer) {
@@ -81,6 +144,11 @@ define_class!(
             if let Ok(index) = usize::try_from(sender.indexOfSelectedItem()) {
                 self.select(index);
             }
+        }
+
+        #[unsafe(method(chooseSettingsFont:))]
+        fn choose_settings_font(&self, sender: &NSButton) {
+            self.choose_font(sender);
         }
     }
 );
@@ -99,21 +167,20 @@ impl PreferencesWindow {
         unsafe { msg_send![super(this), init] }
     }
 
-    pub fn present_from_launcher(&self, external: bool, on_close: impl Fn() + 'static) {
+    pub fn present_from_launcher(&self, on_close: impl Fn() + 'static) {
         self.ivars().on_close.replace(Some(Box::new(on_close)));
         self.present();
-        if external {
-            self.select(
-                PreferencePage::ALL
-                    .iter()
-                    .position(|id| *id == PreferencePage::External)
-                    .expect("External settings page"),
-            );
-        }
     }
 
     pub fn present(&self) {
         let layout = self.ivars().layout.get_or_init(|| self.build());
+        if layout.window.toolbar().is_none() {
+            let toolbar =
+                NSToolbar::initWithIdentifier(NSToolbar::alloc(self.mtm()), ns_string!("Settings"));
+            toolbar.setDelegate(Some(ProtocolObject::from_ref(self)));
+            layout.window.setToolbar(Some(&toolbar));
+            layout.window.setToolbarStyle(NSWindowToolbarStyle::Unified);
+        }
         self.resize_navigation();
         self.refresh();
         layout.window.makeKeyAndOrderFront(None);
@@ -142,7 +209,7 @@ impl PreferencesWindow {
 
     fn build(&self) -> Layout {
         let mtm = self.mtm();
-        let size = NSSize::new(900.0, 610.0);
+        let size = NSSize::new(810.0, 600.0);
         let rect = NSRect::new(NSPoint::ZERO, size);
         let window = unsafe {
             NSWindow::initWithContentRect_styleMask_backing_defer(
@@ -150,105 +217,109 @@ impl PreferencesWindow {
                 rect,
                 NSWindowStyleMask::Titled
                     | NSWindowStyleMask::Closable
-                    | NSWindowStyleMask::Resizable,
+                    | NSWindowStyleMask::Miniaturizable
+                    | NSWindowStyleMask::Resizable
+                    | NSWindowStyleMask::FullSizeContentView,
                 NSBackingStoreType::Buffered,
                 false,
             )
         };
         unsafe { window.setReleasedWhenClosed(false) };
         window.setTitle(&NSString::from_str(&text(preferences::SETTINGS_TITLE)));
+        window.setTitleVisibility(NSWindowTitleVisibility::Hidden);
         window.setContentMinSize(NSSize::new(460.0, 390.0));
         window.setDelegate(Some(ProtocolObject::from_ref(self)));
 
-        let sidebar = column_stack(7.0, mtm);
+        let sidebar_width = f64::from(preferences::SETTINGS_SIDEBAR_WIDTH);
+        let sidebar_rect = NSRect::new(NSPoint::ZERO, NSSize::new(sidebar_width, size.height));
+        let navigation = NSTableView::initWithFrame(NSTableView::alloc(mtm), sidebar_rect);
+        navigation.setStyle(NSTableViewStyle::SourceList);
+        navigation.setRowSizeStyle(NSTableViewRowSizeStyle::Custom);
+        navigation.setRowHeight(30.0);
+        navigation.setHeaderView(None);
+        navigation.setBackgroundColor(&NSColor::clearColor());
+        navigation.setAllowsEmptySelection(false);
+        navigation.setColumnAutoresizingStyle(
+            NSTableViewColumnAutoresizingStyle::UniformColumnAutoresizingStyle,
+        );
+        navigation.setAutoresizingMask(NSAutoresizingMaskOptions::ViewWidthSizable);
+        let column =
+            NSTableColumn::initWithIdentifier(NSTableColumn::alloc(mtm), ns_string!("category"));
+        column.setWidth(sidebar_width);
+        navigation.addTableColumn(&column);
+        unsafe {
+            navigation.setDataSource(Some(ProtocolObject::from_ref(self)));
+            navigation.setDelegate(Some(ProtocolObject::from_ref(self)));
+        }
+        let sidebar_scroll = NSScrollView::initWithFrame(NSScrollView::alloc(mtm), sidebar_rect);
+        sidebar_scroll.setDrawsBackground(false);
+        sidebar_scroll.setDocumentView(Some(&navigation));
+        let sidebar_controller = NSViewController::new(mtm);
+        sidebar_controller.setView(&sidebar_scroll);
+        let sidebar = NSSplitViewItem::sidebarWithViewController(&sidebar_controller);
+        sidebar.setMinimumThickness(sidebar_width);
+        sidebar.setMaximumThickness(sidebar_width);
+        sidebar.setCanCollapseFromWindowResize(false);
+        sidebar.setCollapseBehavior(
+            NSSplitViewItemCollapseBehavior::PreferResizingSiblingsWithFixedSplitView,
+        );
+
         let compact = shrimply_components_appkit::menu::popup(NSRect::ZERO, false, mtm);
-        let categories = PreferencePage::ALL
-            .iter()
-            .enumerate()
-            .map(|(index, page)| {
-                let title = text(page.title());
-                compact.addItemWithTitle(&NSString::from_str(&title));
-                let image = bundled_symbol(page.icon(), &title);
-                compact
-                    .itemAtIndex(index as isize)
-                    .expect("category menu item")
-                    .setImage(Some(&image));
-                let weak = Weak::new(self);
-                let button = ActionButton::new(
-                    &title,
-                    move || {
-                        if let Some(settings) = weak.load() {
-                            settings.select(index);
-                        }
-                    },
-                    mtm,
-                );
-                button.view().setImage(Some(&image));
-                button
-                    .view()
-                    .setImagePosition(NSCellImagePosition::ImageLeading);
-                button.view().setAlignment(NSTextAlignment::Left);
-                let rgb = u32::from_str_radix(&page.color()[1..], 16).expect("settings color");
-                let color = NSColor::colorWithSRGBRed_green_blue_alpha(
-                    f64::from((rgb >> 16) & 255) / 255.0,
-                    f64::from((rgb >> 8) & 255) / 255.0,
-                    f64::from(rgb & 255) / 255.0,
-                    1.0,
-                );
-                button.view().setContentTintColor(Some(&color));
-                column_append(&sidebar, button.view());
-                Retained::from(button.view())
-            })
-            .collect();
+        for (index, page) in PreferencePage::ALL.into_iter().enumerate() {
+            let name = text(page.title());
+            compact.addItemWithTitle(&NSString::from_str(&name));
+            compact
+                .itemAtIndex(index as isize)
+                .expect("category menu item")
+                .setImage(Some(&bundled_symbol(page.icon(), &name)));
+        }
         unsafe {
             compact.setTarget(Some(self));
             compact.setAction(Some(sel!(selectSettingsPage:)));
         }
+        let title = NSTextField::labelWithString(
+            &NSString::from_str(&text(
+                PreferencePage::ALL[self.ivars().selected.get()].title(),
+            )),
+            mtm,
+        );
+        title.setFont(Some(&NSFont::titleBarFontOfSize(0.0)));
+        let header = row_stack(0.0, mtm);
+        header.addArrangedSubview(&title);
+        header.addArrangedSubview(&compact);
+        compact.setHidden(true);
+        header.setFrameSize(header.fittingSize());
 
-        let body = column_stack(16.0, mtm);
+        let body = column_stack(18.0, mtm);
         let adjusted = inset(
             &body,
             NSEdgeInsets {
                 top: 18.0,
-                left: 22.0,
+                left: 20.0,
                 bottom: 18.0,
-                right: 22.0,
+                right: 20.0,
             },
             mtm,
         );
         let scroll = ScrollingColumn::new(&adjusted, mtm);
-        let detail = column_stack(8.0, mtm);
-        column_append(&detail, &compact);
-        column_append(&detail, scroll.view());
-        let root = row_stack(10.0, mtm);
-        root.setAlignment(NSLayoutAttribute::Top);
-        sidebar
-            .widthAnchor()
-            .constraintEqualToConstant(f64::from(preferences::SETTINGS_SIDEBAR_WIDTH))
-            .setActive(true);
-        root.addArrangedSubview(&sidebar);
-        root.addArrangedSubview(&detail);
-        detail
-            .heightAnchor()
-            .constraintEqualToAnchor(&root.heightAnchor())
-            .setActive(true);
-        let content = inset(
-            &root,
-            NSEdgeInsets {
-                top: 12.0,
-                left: 12.0,
-                bottom: 12.0,
-                right: 12.0,
-            },
-            mtm,
-        );
-        window.setContentView(Some(&content));
+        scroll.view().setDrawsBackground(false);
+        let split = NSSplitViewController::new(mtm);
+        split.splitView().setVertical(true);
+        split
+            .splitView()
+            .setDividerStyle(NSSplitViewDividerStyle::Thin);
+        split.addSplitViewItem(&sidebar);
+        split.addSplitViewItem(&super::layout::split_item(scroll.view(), mtm));
+        split.view().setFrame(rect);
+        window.setContentViewController(Some(&split));
         window.center();
         Layout {
             window,
             sidebar,
+            navigation,
+            header,
+            title,
             compact,
-            categories,
             body,
             scroll,
         }
@@ -258,8 +329,12 @@ impl PreferencesWindow {
         if let Some(layout) = self.ivars().layout.get() {
             let wide =
                 layout.window.frame().size.width >= f64::from(preferences::SETTINGS_WIDE_WIDTH);
-            layout.sidebar.setHidden(!wide);
-            layout.compact.setHidden(wide);
+            if layout.sidebar.isCollapsed() == wide {
+                layout.sidebar.setCollapsed(!wide);
+                layout.title.setHidden(!wide);
+                layout.compact.setHidden(wide);
+                layout.header.setFrameSize(layout.header.fittingSize());
+            }
         }
     }
 
@@ -289,30 +364,50 @@ impl PreferencesWindow {
             .iter()
             .find(|page| page["id"] == id)
             .expect("shared settings page");
-        layout.compact.selectItemAtIndex(index as isize);
-        for (position, button) in layout.categories.iter().enumerate() {
-            button.setBordered(position == index);
-        }
         if *self.ivars().displayed.borrow() == *page {
             return;
         }
+        if layout.navigation.selectedRow() != index as isize {
+            layout.navigation.selectRowIndexes_byExtendingSelection(
+                &NSIndexSet::indexSetWithIndex(index),
+                false,
+            );
+        }
+        layout.compact.selectItemAtIndex(index as isize);
+        layout
+            .title
+            .setStringValue(&NSString::from_str(string(&page["label"])));
+        layout.header.setFrameSize(layout.header.fittingSize());
         self.ivars().displayed.replace(page.clone());
         for view in layout.body.arrangedSubviews().iter() {
             layout.body.removeArrangedSubview(&view);
             view.removeFromSuperview();
         }
         let mtm = self.mtm();
-        let title = label(&page["label"], mtm);
-        title.setFont(Some(&NSFont::boldSystemFontOfSize(21.0)));
-        column_append(&layout.body, &title);
         for section in items(&page["controls"]) {
             let group = column_stack(7.0, mtm);
-            let title = label(&section["label"], mtm);
-            title.setFont(Some(&NSFont::boldSystemFontOfSize(13.0)));
-            column_append(&group, &title);
-            for control in items(&section["controls"]) {
-                column_append(&group, &self.control(control));
+            if section["label"] != page["label"] {
+                let title = NSTextField::labelWithString(
+                    &NSString::from_str(string(&section["label"])),
+                    mtm,
+                );
+                title.setFont(Some(&NSFont::boldSystemFontOfSize(13.0)));
+                column_append(&group, &title);
             }
+            let rows = column_stack(0.0, mtm);
+            for (index, control) in items(&section["controls"]).iter().enumerate() {
+                if index != 0 {
+                    let separator = NSBox::new(mtm);
+                    separator.setBoxType(NSBoxType::Separator);
+                    separator
+                        .heightAnchor()
+                        .constraintEqualToConstant(1.0)
+                        .setActive(true);
+                    column_append(&rows, &separator);
+                }
+                column_append(&rows, &self.control(control));
+            }
+            column_append(&group, &group_background(&rows, mtm));
             column_append(&layout.body, &group);
         }
     }
@@ -331,17 +426,22 @@ impl PreferencesWindow {
         match string(&control["widget"]) {
             "toggle" => {
                 let command = control["command"].clone();
-                switch_row(
-                    title,
-                    control["subtitle"].as_str(),
+                let subtitle = string(&control["subtitle"]);
+                let toggle = Switch::new(
                     control["selected"] == true,
+                    (!subtitle.is_empty()).then_some(subtitle),
                     move |enabled| {
                         let mut command = command.clone();
                         command["value"] = json!(enabled);
                         send(command);
                     },
                     mtm,
-                )
+                );
+                toggle.view().setEnabled(enabled);
+                toggle
+                    .view()
+                    .setAccessibilityLabel(Some(&NSString::from_str(title)));
+                settings_row(title, subtitle, Some(toggle.view()), mtm)
             }
             "choice" if !items(&control["choices"]).is_empty() => {
                 let entries = items(&control["choices"]).to_vec();
@@ -380,49 +480,49 @@ impl PreferencesWindow {
                     },
                     mtm,
                 );
-                if let Some(control) = picker.view().downcast_ref::<objc2_app_kit::NSControl>() {
+                if let Some(control) = picker.view().downcast_ref::<NSControl>() {
                     control.setEnabled(enabled);
                 }
-                control_row(title, picker.view(), mtm)
+                settings_row(
+                    title,
+                    string(&control["choice_description"]),
+                    Some(picker.view()),
+                    mtm,
+                )
             }
             "editor" => self.editor_row(title, display, &control["editor"], enabled),
             "font" => {
-                let title_button = if display.is_empty() {
-                    text("Choose…").into_owned()
+                let caption = if display.is_empty() {
+                    text("Choose…")
                 } else {
                     display.into()
                 };
-                let button = ActionButton::new(
-                    &title_button,
-                    {
-                        let weak = Weak::new(self);
-                        move || {
-                            if let Some(settings) = weak.load() {
-                                settings.choose_font();
-                            }
-                        }
-                    },
-                    mtm,
-                );
-                control_row(title, button.view(), mtm)
+                let button = unsafe {
+                    NSButton::buttonWithTitle_target_action(
+                        &NSString::from_str(&caption),
+                        Some(self),
+                        Some(sel!(chooseSettingsFont:)),
+                        mtm,
+                    )
+                };
+                button.setBezelStyle(NSBezelStyle::Push);
+                button.setEnabled(enabled);
+                settings_row(title, "", Some(&button), mtm)
             }
             "button" => {
                 let command = control["command"].clone();
                 let button = ActionButton::new(title, move || send(command.clone()), mtm);
                 button.view().setEnabled(enabled);
                 let subtitle = string(&control["subtitle"]);
-                if subtitle.is_empty() {
-                    let view: &NSView = button.view();
-                    view.retain()
-                } else {
-                    control_row(subtitle, button.view(), mtm)
-                }
+                settings_row(subtitle, "", Some(button.view()), mtm)
             }
+            _ if display.is_empty() => settings_row(title, "", None, mtm),
             _ => {
-                let value = NSTextField::wrappingLabelWithString(&NSString::from_str(display), mtm);
+                let value = settings_label(display, mtm);
+                value.setAlignment(NSTextAlignment::Right);
                 value.setTextColor(Some(&NSColor::secondaryLabelColor()));
                 value.setSelectable(true);
-                control_row(title, &value, mtm)
+                settings_row(title, "", Some(&value), mtm)
             }
         }
     }
@@ -447,6 +547,7 @@ impl PreferencesWindow {
                 let scale = range.scale as f64;
                 let command = editor["command"].clone();
                 let picker = NumberPicker::builder(*value as f64 / scale)
+                    .enabled(enabled)
                     .minimum(range.minimum as f64 / scale)
                     .maximum(range.maximum as f64 / scale)
                     .drag_step(range.step as f64 / scale)
@@ -463,7 +564,11 @@ impl PreferencesWindow {
                         }
                     })
                     .build(mtm);
-                return control_row(title, &picker, mtm);
+                picker
+                    .widthAnchor()
+                    .constraintEqualToConstant(80.0)
+                    .setActive(true);
+                return settings_row(title, "", Some(&picker), mtm);
             }
             if let PreferenceValue::Color(color) = value {
                 let command = editor["command"].clone();
@@ -479,17 +584,22 @@ impl PreferencesWindow {
                     },
                     mtm,
                 );
-                return control_row(title, picker.view(), mtm);
+                picker.view().setEnabled(enabled);
+                return settings_row(title, "", Some(picker.view()), mtm);
             }
         }
-        let editor = editor.clone();
-        let button = ActionButton::new(
+        let button_title = if id.is_none() {
+            title.into()
+        } else {
             text(if display.is_empty() {
                 "Choose…"
             } else {
                 "Edit…"
             })
-            .as_ref(),
+        };
+        let editor = editor.clone();
+        let button = ActionButton::new(
+            &button_title,
             move || {
                 if let Some(settings) = weak.load() {
                     settings.edit(&editor);
@@ -498,11 +608,12 @@ impl PreferencesWindow {
             mtm,
         );
         button.view().setEnabled(enabled);
-        if display.is_empty() {
-            control_row(title, button.view(), mtm)
+        let (label, subtitle) = if id.is_some() {
+            (title, display)
         } else {
-            control_row(&format!("{title} · {display}"), button.view(), mtm)
-        }
+            (display, "")
+        };
+        settings_row(label, subtitle, Some(button.view()), mtm)
     }
 
     fn edit(&self, editor: &Value) {
@@ -541,9 +652,8 @@ impl PreferencesWindow {
         }
     }
 
-    fn choose_font(&self) {
+    fn choose_font(&self, anchor: &NSButton) {
         let mtm = self.mtm();
-        let layout = self.ivars().layout.get().expect("settings layout");
         let current = preferences::snapshot(&self.ivars().store).default_text_font_family;
         let choices = NSFontManager::sharedFontManager(mtm)
             .availableFontFamilies()
@@ -554,9 +664,13 @@ impl PreferencesWindow {
             })
             .collect();
         let weak = Weak::new(self);
+        let bounds = anchor.bounds();
         shrimply_components_appkit::show_searchable_menu_at(
-            &layout.body,
-            (NSPoint::new(20.0, 20.0), false),
+            anchor,
+            (
+                NSPoint::new(bounds.origin.x + bounds.size.width / 2.0, bounds.origin.y),
+                false,
+            ),
             &text("Search Fonts"),
             choices,
             current.name().to_owned(),
@@ -625,6 +739,140 @@ fn string(value: &Value) -> &str {
     value.as_str().unwrap_or_default()
 }
 
-fn label(value: &Value, mtm: MainThreadMarker) -> Retained<NSTextField> {
-    NSTextField::labelWithString(&NSString::from_str(string(value)), mtm)
+fn sidebar_row(page: PreferencePage, mtm: MainThreadMarker) -> Retained<NSView> {
+    const TILE_SIZE: f64 = 22.0;
+    let bounds = NSRect::new(NSPoint::ZERO, NSSize::new(TILE_SIZE, TILE_SIZE));
+    let tile = NSView::initWithFrame(NSView::alloc(mtm), bounds);
+    tile.setWantsLayer(true);
+    let gradient = CAGradientLayer::layer();
+    gradient.setFrame(bounds);
+    gradient.setCornerRadius(5.5);
+    gradient.setCornerCurve(unsafe { kCACornerCurveContinuous });
+    gradient.setMasksToBounds(true);
+    let rgb = u32::from_str_radix(&page.color()[1..], 16).expect("settings color");
+    let color = NSColor::colorWithSRGBRed_green_blue_alpha(
+        f64::from((rgb >> 16) & 255) / 255.0,
+        f64::from((rgb >> 8) & 255) / 255.0,
+        f64::from(rgb & 255) / 255.0,
+        1.0,
+    );
+    let top = color
+        .blendedColorWithFraction_ofColor(0.22, &NSColor::whiteColor())
+        .expect("sRGB blend")
+        .CGColor();
+    let bottom = color
+        .blendedColorWithFraction_ofColor(0.16, &NSColor::blackColor())
+        .expect("sRGB blend")
+        .CGColor();
+    // Core Animation takes CGColor objects bridged as Objective-C objects in its NSArray.
+    unsafe {
+        let colors = [&*top, &*bottom].map(|color| &*std::ptr::from_ref(color).cast::<AnyObject>());
+        gradient.setColors(Some(&NSArray::from_slice(&colors)));
+    }
+    tile.layer()
+        .expect("sidebar icon backing layer")
+        .addSublayer(&gradient);
+    let title = text(page.title());
+    let glyph = bundled_symbol(page.icon(), &title);
+    let image = NSImageView::imageViewWithImage(&glyph, mtm);
+    image.setContentTintColor(Some(&NSColor::whiteColor()));
+    image.setFrame(bounds);
+    image.setAccessibilityElement(false);
+    tile.addSubview(&image);
+    tile.widthAnchor()
+        .constraintEqualToConstant(TILE_SIZE)
+        .setActive(true);
+    tile.heightAnchor()
+        .constraintEqualToConstant(TILE_SIZE)
+        .setActive(true);
+
+    let row = row_stack(8.0, mtm);
+    let label = settings_label(&title, mtm);
+    row.addArrangedSubview(&tile);
+    row.addArrangedSubview(&label);
+    let cell = NSTableCellView::new(mtm);
+    cell.addSubview(&row);
+    unsafe { cell.setTextField(Some(&label)) };
+    row.setTranslatesAutoresizingMaskIntoConstraints(false);
+    for constraint in [
+        row.leadingAnchor()
+            .constraintEqualToAnchor_constant(&cell.leadingAnchor(), 5.0),
+        row.trailingAnchor()
+            .constraintEqualToAnchor_constant(&cell.trailingAnchor(), -5.0),
+        row.centerYAnchor()
+            .constraintEqualToAnchor(&cell.centerYAnchor()),
+    ] {
+        constraint.setActive(true);
+    }
+    cell.into_super()
+}
+
+fn settings_label(title: &str, mtm: MainThreadMarker) -> Retained<NSTextField> {
+    let title = NSString::from_str(title);
+    let label = NSTextField::labelWithString(&title, mtm);
+    label.setLineBreakMode(NSLineBreakMode::ByTruncatingMiddle);
+    label.setToolTip(Some(&title));
+    label
+}
+
+fn settings_row(
+    title: &str,
+    subtitle: &str,
+    control: Option<&NSView>,
+    mtm: MainThreadMarker,
+) -> Retained<NSView> {
+    let captions = column_stack(2.0, mtm);
+    if !title.is_empty() {
+        column_append(&captions, &settings_label(title, mtm));
+    }
+    if !subtitle.is_empty() {
+        let subtitle = NSTextField::wrappingLabelWithString(&NSString::from_str(subtitle), mtm);
+        subtitle.setTextColor(Some(&NSColor::secondaryLabelColor()));
+        column_append(&captions, &subtitle);
+    }
+    let row = row_stack(12.0, mtm);
+    row.addArrangedSubview(&captions);
+    captions.setHuggingPriority_forOrientation(
+        NSLayoutPriorityDefaultLow - 1.0,
+        NSLayoutConstraintOrientation::Horizontal,
+    );
+    if let Some(control) = control {
+        row.addArrangedSubview(control);
+        control
+            .widthAnchor()
+            .constraintLessThanOrEqualToAnchor_multiplier(&row.widthAnchor(), 0.60)
+            .setActive(true);
+    }
+    row.heightAnchor()
+        .constraintGreaterThanOrEqualToConstant(30.0)
+        .setActive(true);
+    inset(
+        &row,
+        NSEdgeInsets {
+            top: 4.0,
+            bottom: 4.0,
+            left: 12.0,
+            right: 12.0,
+        },
+        mtm,
+    )
+}
+
+fn group_background(rows: &NSStackView, mtm: MainThreadMarker) -> Retained<NSView> {
+    let group = inset(
+        rows,
+        NSEdgeInsets {
+            top: 0.0,
+            bottom: 0.0,
+            left: 0.0,
+            right: 0.0,
+        },
+        mtm,
+    );
+    let background = group_box(mtm);
+    background.setAutoresizingMask(
+        NSAutoresizingMaskOptions::ViewWidthSizable | NSAutoresizingMaskOptions::ViewHeightSizable,
+    );
+    group.addSubview_positioned_relativeTo(&background, NSWindowOrderingMode::Below, Some(rows));
+    group
 }

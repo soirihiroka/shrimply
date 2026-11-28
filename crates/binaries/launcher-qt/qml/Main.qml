@@ -17,11 +17,19 @@ ApplicationWindow {
     visible: true
     title: backend.text("Shrimply")
 
-    readonly property int sidebarWidth: 200
+    readonly property int sidebarWidth: 140
     readonly property int pageMargin: 12
 
     LauncherBackend {
         id: backend
+    }
+
+    Timer {
+        interval: 2000
+        running: window.active
+        repeat: true
+        triggeredOnStart: true
+        onTriggered: backend.refreshDaemonStatus()
     }
 
     Connections {
@@ -50,47 +58,73 @@ ApplicationWindow {
             Layout.preferredWidth: window.sidebarWidth
             Layout.fillHeight: true
             Layout.margins: window.pageMargin
-            Item { Layout.fillHeight: true }
-            Button {
+            Image {
                 Layout.alignment: Qt.AlignHCenter
-                text: backend.text("Create Project")
-                highlighted: true
-                onClicked: createDialog.open()
+                Layout.preferredWidth: 48
+                Layout.preferredHeight: 48
+                source: "qrc:/shrimply/icons/dev.shrimply.Shrimply.svg"
             }
-            Button {
+            Label {
                 Layout.alignment: Qt.AlignHCenter
-                text: backend.text("Open Project")
-                onClicked: backend.chooseProject()
+                text: window.title
+                font.bold: true
+            }
+            Label {
+                Layout.alignment: Qt.AlignHCenter
+                text: backend.version()
+                opacity: 0.75
+            }
+            Label {
+                Layout.alignment: Qt.AlignHCenter
+                text: backend.daemonStatus
+                opacity: 0.75
             }
             Item { Layout.fillHeight: true }
+            ToolButton {
+                id: mainMenuButton
+                text: backend.text("Main Menu")
+                display: AbstractButton.IconOnly
+                icon.source: "qrc:/shrimply/icons/open-menu-symbolic.svg"
+                ToolTip.visible: hovered
+                ToolTip.text: text
+                MenuInput { id: mainMenuInput }
+                onClicked: mainMenu.presentForInput(mainMenuButton, mainMenuInput.takeTouch())
+            }
         }
         Pane {
             Layout.fillWidth: true
             Layout.fillHeight: true
             ColumnLayout {
                 anchors.fill: parent
+                Label {
+                    text: backend.text("Projects")
+                    font.bold: true
+                }
                 RowLayout {
                     Layout.fillWidth: true
-                    Label {
+                    TextField {
+                        id: search
                         Layout.fillWidth: true
-                        text: backend.text("Projects")
-                        font.bold: true
+                        placeholderText: backend.text("Search Projects")
+                        selectByMouse: true
+                        onTextChanged: backend.setSearch(text)
                     }
                     ToolButton {
-                        id: mainMenuButton
-                        text: backend.text("Main Menu")
+                        text: backend.text("Create Project")
                         display: AbstractButton.IconOnly
-                        icon.source: "qrc:/shrimply/icons/open-menu-symbolic.svg"
-                        MenuInput { id: mainMenuInput }
-                        onClicked: mainMenu.presentForInput(mainMenuButton, mainMenuInput.takeTouch())
+                        icon.source: "qrc:/shrimply/icons/list-add-symbolic.svg"
+                        ToolTip.visible: hovered
+                        ToolTip.text: text
+                        onClicked: createDialog.open()
                     }
-                }
-                TextField {
-                    id: search
-                    Layout.fillWidth: true
-                    placeholderText: backend.text("Search Projects")
-                    selectByMouse: true
-                    onTextChanged: backend.setSearch(text)
+                    ToolButton {
+                        text: backend.text("Open Project")
+                        display: AbstractButton.IconOnly
+                        icon.source: "qrc:/shrimply/icons/document-open-symbolic.svg"
+                        ToolTip.visible: hovered
+                        ToolTip.text: text
+                        onClicked: backend.chooseProject()
+                    }
                 }
                 Item {
                     Layout.fillWidth: true
@@ -100,34 +134,42 @@ ApplicationWindow {
                         anchors.fill: parent
                         clip: true
                         model: backend.projects
-                        delegate: RowLayout {
+                        spacing: 8
+                        delegate: Rectangle {
                             required property var modelData
-                            width: projects.width
-                            spacing: 0
-
-                            ItemDelegate {
-                                Layout.fillWidth: true
-                                text: [modelData.name, modelData.access, modelData.remote].filter(value => value).join("\n")
-                                icon.source: modelData.remote
-                                    ? "qrc:/shrimply/icons/folder-remote-symbolic.svg"
-                                    : "qrc:/shrimply/icons/folder-open-symbolic.svg"
-                                icon.width: 16
-                                icon.height: 16
-                                onClicked: backend.openListedProject(modelData.key)
-                            }
-                            ToolButton {
-                                id: projectMenuButton
-                                text: backend.text("Project options")
-                                display: AbstractButton.IconOnly
-                                icon.source: "qrc:/shrimply/icons/view-more-symbolic.svg"
-                                MenuInput { id: rowMenuInput }
-                                onClicked: {
-                                    projectMenu.project = modelData
-                                    projectMenu.presentForInput(projectMenuButton, rowMenuInput.takeTouch())
+                            width: projects.width - (projectScrollBar.visible ? projectScrollBar.width : 0)
+                            height: card.implicitHeight + 8
+                            radius: 8
+                            color: window.palette.alternateBase
+                            RowLayout {
+                                id: card
+                                anchors.fill: parent
+                                anchors.margins: 4
+                                spacing: 0
+                                ItemDelegate {
+                                    Layout.fillWidth: true
+                                    text: [modelData.name, modelData.access, modelData.remote].filter(value => value).join("\n")
+                                    icon.source: modelData.remote
+                                        ? "qrc:/shrimply/icons/folder-remote-symbolic.svg"
+                                        : "qrc:/shrimply/icons/folder-open-symbolic.svg"
+                                    icon.width: 16
+                                    icon.height: 16
+                                    onClicked: backend.openListedProject(modelData.key)
+                                }
+                                ToolButton {
+                                    id: projectMenuButton
+                                    text: backend.text("Project options")
+                                    display: AbstractButton.IconOnly
+                                    icon.source: "qrc:/shrimply/icons/view-more-symbolic.svg"
+                                    MenuInput { id: rowMenuInput }
+                                    onClicked: {
+                                        projectMenu.project = modelData
+                                        projectMenu.presentForInput(projectMenuButton, rowMenuInput.takeTouch())
+                                    }
                                 }
                             }
                         }
-                        ScrollBar.vertical: ScrollBar {}
+                        ScrollBar.vertical: ScrollBar { id: projectScrollBar; policy: ScrollBar.AsNeeded }
                     }
                     Label {
                         anchors.centerIn: parent
@@ -165,7 +207,6 @@ ApplicationWindow {
         id: mainMenu
         pointerPopupType: Qt.platform.os === "windows" ? Popup.Item : Popup.Window
         Action { text: backend.text("Settings"); onTriggered: preferencesWindow.openPreferences() }
-        Action { text: backend.text("Project Servers"); onTriggered: preferencesWindow.openPreferences("preferences:external") }
         Action { text: backend.text("About Shrimply"); onTriggered: aboutWindow.openAbout() }
     }
 

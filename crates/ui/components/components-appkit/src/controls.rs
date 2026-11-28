@@ -4,13 +4,13 @@ use objc2::ffi::{OBJC_ASSOCIATION_RETAIN_NONATOMIC, objc_setAssociatedObject};
 use objc2::rc::{Retained, Weak};
 use objc2::{AnyThread, ClassType, DefinedClass, MainThreadOnly, define_class, msg_send};
 use objc2_app_kit::{
-    NSAccessibility, NSAutoresizingMaskOptions, NSBezelStyle, NSButton, NSCellImagePosition,
-    NSColor, NSColorWell, NSControlStateValueOff, NSControlStateValueOn, NSEvent, NSFont, NSImage,
-    NSImageView, NSLayoutAttribute, NSLayoutConstraintOrientation, NSLayoutPriorityDefaultLow,
-    NSLayoutPriorityRequired, NSPasteboard, NSPasteboardTypeString, NSPopover, NSPopoverBehavior,
-    NSProgressIndicator, NSProgressIndicatorStyle, NSScrollView, NSSearchField, NSSegmentedControl,
-    NSStackView, NSStackViewDistribution, NSSwitch, NSTextAlignment, NSTextField,
-    NSUserInterfaceLayoutOrientation, NSView, NSViewController,
+    NSAccessibility, NSAutoresizingMaskOptions, NSBezelStyle, NSBox, NSBoxType, NSButton,
+    NSCellImagePosition, NSColor, NSColorWell, NSControlStateValueOff, NSControlStateValueOn,
+    NSEvent, NSFont, NSImage, NSImageView, NSLayoutAttribute, NSLayoutConstraintOrientation,
+    NSLayoutPriorityDefaultLow, NSLayoutPriorityRequired, NSPasteboard, NSPasteboardTypeString,
+    NSPopover, NSPopoverBehavior, NSProgressIndicator, NSProgressIndicatorStyle, NSScrollView,
+    NSSearchField, NSSegmentedControl, NSStackView, NSStackViewDistribution, NSSwitch,
+    NSTextAlignment, NSTextField, NSUserInterfaceLayoutOrientation, NSView, NSViewController,
 };
 use objc2_foundation::{
     MainThreadMarker, NSEdgeInsets, NSObjectProtocol, NSPoint, NSRect, NSRectEdge, NSSize,
@@ -45,6 +45,15 @@ pub fn column_stack(spacing: f64, mtm: MainThreadMarker) -> Retained<NSStackView
     view.setAlignment(NSLayoutAttribute::Leading);
     view.setSpacing(spacing);
     view.setDistribution(NSStackViewDistribution::Fill);
+    view
+}
+
+pub fn group_box(mtm: MainThreadMarker) -> Retained<NSBox> {
+    let view = NSBox::new(mtm);
+    view.setBoxType(NSBoxType::Custom);
+    view.setBorderWidth(0.0);
+    view.setCornerRadius(8.0);
+    view.setFillColor(&NSColor::quaternarySystemFillColor());
     view
 }
 
