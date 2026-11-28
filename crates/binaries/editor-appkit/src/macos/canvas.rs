@@ -55,7 +55,7 @@ pub struct CanvasState {
     transcription_probe: RefCell<Option<context_menu::TranscriptionProbe>>,
     transcription_alert: RefCell<Option<Retained<objc2_app_kit::NSAlert>>>,
     frame_capture: RefCell<Option<context_frame::FrameCapture>>,
-    screen_recording: RefCell<Option<screen_recording::ScreenRecording>>,
+    video_recording: RefCell<Option<screen_recording::VideoRecording>>,
     drop_source: RefCell<Option<(std::path::PathBuf, super::media::ScopedUrl)>>,
     tools: RefCell<Vec<(super::timeline::Tool, Retained<objc2_app_kit::NSButton>)>>,
     timeline_chrome: RefCell<Option<super::timeline::Chrome>>,
@@ -962,7 +962,7 @@ impl CanvasView {
         self.poll_frame_capture()?;
         self.poll_caption_speech_probe()?;
         self.poll_transcription_probe()?;
-        self.update_screen_recording()?;
+        self.update_video_recording()?;
         let size = self.bounds().size;
         let pointer_active = self.window().is_some_and(|window| window.isKeyWindow())
             && !self.isHiddenOrHasHiddenAncestor();
@@ -1178,7 +1178,7 @@ impl CanvasView {
             chrome.update(scene.tools_progress(), scene.audio_monitor_progress());
         }
         self.handle_timeline_requests()?;
-        self.update_screen_recording()?;
+        self.update_video_recording()?;
         let (external_error, external_imports, caption_speech_updates, transcription_updates) = {
             let mut content = self.ivars().content.borrow_mut();
             match &mut *content {
@@ -1244,7 +1244,7 @@ impl CanvasView {
                 self.ivars().imports.borrow_mut().finish_external(event);
             }
         }
-        if let Err(error) = self.update_screen_recording() {
+        if let Err(error) = self.update_video_recording() {
             self.show_error(&error);
         }
     }
@@ -1313,7 +1313,7 @@ pub fn new(
         transcription_probe: RefCell::new(None),
         transcription_alert: RefCell::new(None),
         frame_capture: RefCell::new(None),
-        screen_recording: RefCell::new(None),
+        video_recording: RefCell::new(None),
         drop_source: RefCell::new(None),
         imports,
         renderer: RefCell::new(Renderer::default()),

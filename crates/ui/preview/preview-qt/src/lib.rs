@@ -773,12 +773,15 @@ pub unsafe extern "C" fn shrimply_qt_timeline_context_menu_label(
     capacity: usize,
 ) -> usize {
     let label = SURFACES.with_borrow(|surfaces| {
-        surfaces.as_ref().map_or("", |surfaces| {
+        surfaces.as_ref().map_or_else(String::new, |surfaces| {
             match surfaces.timeline_menu.entries().get(index) {
-                Some(shrimply_timeline_qt::MenuEntry::Action(item)) => item.label(),
+                Some(shrimply_timeline_qt::MenuEntry::Action(item)) => {
+                    surfaces.timeline.context_menu().label(*item)
+                }
                 Some(shrimply_timeline_qt::MenuEntry::Control(control)) => control.label(),
                 Some(shrimply_timeline_qt::MenuEntry::Separator) | None => "",
             }
+            .to_owned()
         })
     });
     let bytes = label.as_bytes();

@@ -37,11 +37,11 @@ impl CanvasView {
             {
                 let mut content = self.ivars().content.borrow_mut();
                 let Content::Timeline(scene) = &mut *content else {
-                    return Err("Screen recording requires the timeline".into());
+                    return Err("Video recording requires the timeline".into());
                 };
                 scene.toggle_video_recording_at(request.key, request.position)?;
             }
-            self.update_screen_recording()?;
+            self.update_video_recording()?;
         }
         Ok(())
     }

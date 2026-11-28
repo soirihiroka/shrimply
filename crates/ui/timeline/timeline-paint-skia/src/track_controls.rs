@@ -119,7 +119,7 @@ pub fn draw_track_label_pane(
             TrackKind::Video => (
                 TrackLabelAction::VideoRecord,
                 track_control_draw.active_video_recording_key == Some(key),
-                "screencast-recorded-symbolic",
+                "video-camera-symbolic",
             ),
             TrackKind::Audio => (
                 TrackLabelAction::AudioRecord,

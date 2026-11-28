@@ -11,9 +11,9 @@ pub fn menu_model(contract: &ContextMenu) -> gio::Menu {
         for entry in entries {
             match entry {
                 ContextMenuEntry::Action(item) => {
-                    let action = format!("timeline.{}", item.action.id());
+                    let action = format!("timeline.{}", item.key());
                     let menu_item =
-                        shrimply_components_gtk::ui::menu_item_i18n(item.label(), &action);
+                        shrimply_components_gtk::ui::menu_item_i18n(contract.label(*item), &action);
                     let icon = match item.action {
                         shrimply_timeline_skia::ContextMenuAction::Copy => {
                             Some("edit-copy-symbolic")

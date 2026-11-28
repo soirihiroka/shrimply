@@ -37,7 +37,7 @@ pub(crate) fn show_timeline_item_context_menu(
         let runtime = Rc::downgrade(runtime);
         let preferences = preferences.clone();
         let action =
-            shrimply_components_gtk::ui::menu_action(item.action.id(), item.checked, move || {
+            shrimply_components_gtk::ui::menu_action(&item.key(), item.checked, move || {
                 let (Some(runtime), Some(area)) = (runtime.upgrade(), area.upgrade()) else {
                     return None;
                 };

@@ -37,6 +37,7 @@ pub(super) struct Context {
     pub scope: project::SequenceScopeId,
     pub split_time: Option<Time>,
     pub playhead_track: Option<TrackAddress>,
+    recording_sources: Option<(TrackKind, Vec<Option<String>>)>,
 }
 
 impl Scene {
@@ -99,6 +100,15 @@ impl Scene {
     }
 
     pub fn prepare_context_menu_for_input(&mut self, point: Vec2, touch: bool) -> ContextMenu {
+        self.prepare_context_menu_with_cameras(point, touch, Vec::new)
+    }
+
+    pub fn prepare_context_menu_with_cameras(
+        &mut self,
+        point: Vec2,
+        touch: bool,
+        cameras: impl FnOnce() -> Vec<(String, String)>,
+    ) -> ContextMenu {
         self.pointer_cancelled();
         self.view.selection = None;
         self.context = Context {
@@ -106,6 +116,58 @@ impl Scene {
             touch,
             ..Context::default()
         };
+        let button = {
+            let project = self.project.borrow();
+            track_controls::track_button_at(
+                &project,
+                self.view,
+                f64::from(point.x),
+                f64::from(point.y),
+            )
+        };
+        let recording = match button {
+            Some((_, TrackLabelAction::AudioRecord)) if self.recording_available.0 => Some((
+                TrackKind::Audio,
+                "Default Audio Input",
+                &self.audio_source,
+                shrimply_audio_engine::recording::input_devices().unwrap_or_else(|error| {
+                    tracing::warn!(%error, "Could not list audio inputs");
+                    Vec::new()
+                }),
+            )),
+            Some((_, TrackLabelAction::VideoRecord)) if self.recording_available.1 => Some((
+                TrackKind::Video,
+                "Screen Recording",
+                &self.video_source,
+                cameras(),
+            )),
+            _ => None,
+        };
+        if let Some((kind, default, selected, devices)) = recording {
+            let mut names = vec![default.into()];
+            let mut sources = vec![None];
+            for (id, name) in devices {
+                sources.push(Some(id));
+                names.push(name);
+            }
+            let items = sources
+                .iter()
+                .enumerate()
+                .map(|(index, source)| {
+                    ContextMenuEntry::Action(ContextMenuItem {
+                        action: ContextMenuAction::SelectRecordingSource(index),
+                        enabled: true,
+                        checked: Some(source == selected),
+                    })
+                })
+                .collect();
+            self.context.recording_sources = Some((kind, sources));
+            self.context.menu = ContextMenu {
+                sections: vec![items],
+                source_names: names,
+            };
+            return self.context.menu.clone();
+        }
         let Some(target) = self.context_target(point) else {
             return ContextMenu::default();
         };
@@ -379,6 +441,23 @@ impl Scene {
             .any(|item| item.action == action && item.enabled)
         {
             return Err("Context-menu action is unavailable".into());
+        }
+        if let ContextMenuAction::SelectRecordingSource(index) = action {
+            let (kind, sources) = self
+                .context
+                .recording_sources
+                .take()
+                .ok_or("The recording source menu is closed")?;
+            let source = sources
+                .into_iter()
+                .nth(index)
+                .ok_or("Invalid recording source")?;
+            match kind {
+                TrackKind::Audio => self.audio_source = source,
+                TrackKind::Video => self.video_source = source,
+                _ => unreachable!("recording track kind"),
+            }
+            return Ok(None);
         }
         if !matches!(
             action,

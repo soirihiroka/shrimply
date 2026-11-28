@@ -80,6 +80,8 @@ pub struct Scene {
     pending_audio_record: Option<TrackRecordingRequest>,
     pending_video_record: Option<TrackRecordingRequest>,
     pub(crate) recording_available: (bool, bool),
+    audio_source: Option<String>,
+    video_source: Option<String>,
     active_audio_recording: Option<crate::recording::AudioRecording>,
     pub(crate) active_video_recording: Option<crate::recording::ActiveVideoRecording>,
     pub(crate) video_recording_commands:
@@ -189,6 +191,10 @@ pub struct TrackRecordingRequest {
 impl Scene {
     pub fn focused_video_address(&self) -> Option<project::ItemAddress> {
         selection_state::focused_video_address(&self.selection, &self.project.borrow())
+    }
+
+    pub fn video_source(&self) -> Option<&str> {
+        self.video_source.as_deref()
     }
 
     pub fn set_recording_available(&mut self, audio: bool, video: bool) {
@@ -356,6 +362,8 @@ impl Scene {
             pending_audio_record: None,
             pending_video_record: None,
             recording_available: (true, true),
+            audio_source: None,
+            video_source: None,
             active_audio_recording: None,
             active_video_recording: None,
             video_recording_commands: std::collections::VecDeque::new(),

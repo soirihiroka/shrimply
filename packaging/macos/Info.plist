@@ -28,5 +28,9 @@
 	<true/>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Shrimply uses the microphone when recording audio.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Shrimply uses the camera when recording video.</string>
+	<key>NSCameraUseContinuityCameraDeviceType</key>
+	<true/>
 </dict>
 </plist>

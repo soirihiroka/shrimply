@@ -1,7 +1,7 @@
 use super::error_alert;
 use objc2::rc::{Retained, Weak};
 use objc2::runtime::ProtocolObject;
-use objc2::{DefinedClass, MainThreadOnly, define_class, msg_send, sel};
+use objc2::{DefinedClass, MainThreadOnly, Message, define_class, msg_send, sel};
 use objc2_app_kit::{
     NSAlert, NSAlertFirstButtonReturn, NSBackingStoreType, NSButton, NSCellImagePosition, NSColor,
     NSFont, NSFontManager, NSLayoutAttribute, NSModalResponseOK, NSOpenPanel, NSPopUpButton,
@@ -437,7 +437,8 @@ impl PreferencesWindow {
                 button.view().setEnabled(enabled);
                 let subtitle = string(&control["subtitle"]);
                 if subtitle.is_empty() {
-                    button.view().as_super().as_super().into()
+                    let view: &NSView = button.view();
+                    view.retain()
                 } else {
                     control_row(subtitle, button.view(), mtm)
                 }

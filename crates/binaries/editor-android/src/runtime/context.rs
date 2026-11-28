@@ -20,7 +20,7 @@ pub(super) struct Menu {
 impl Menu {
     pub fn snapshot(&self) -> Value {
         let sections: Vec<_> = self.model.sections.iter().map(|section| section.iter().enumerate().map(|(index, entry)| match entry {
-            ContextMenuEntry::Action(item) => json!({"action":item.action.id(),"label":item.label(),"enabled":item.enabled,"checked":item.checked}),
+            ContextMenuEntry::Action(item) => json!({"action":item.key(),"label":self.model.label(*item),"enabled":item.enabled,"checked":item.checked}),
             ContextMenuEntry::Control(control) => json!({"control":index,"label":control.label(),"value":control.value(),"minimum":control.minimum(),"maximum":control.maximum(),"step":control.step(),"mixed":control.mixed()}),
         }).collect::<Vec<_>>()).collect();
         let clipboard = self.clipboard.map(|request| {
@@ -171,7 +171,7 @@ impl Runtime {
                 let item = menu
                     .model
                     .actions()
-                    .find(|item| request["action"] == item.action.id())
+                    .find(|item| request["action"].as_str() == Some(item.key().as_ref()))
                     .ok_or("Context action is unavailable")?;
                 pending = scene.activate_context_menu_action(item.action)?;
                 if item.action == ContextMenuAction::InspectProperties {

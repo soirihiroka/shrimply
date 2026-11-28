@@ -20,25 +20,18 @@ pub struct AudioRecording {
 }
 
 impl AudioRecording {
-    pub fn start(
-        key: TrackKey,
-        project: &Project,
-        player: &SharedPlayerState,
-    ) -> Result<Self, String> {
-        Self::start_at(key, project, player, player_state::current_time(player))
-    }
-
     pub fn start_at(
         key: TrackKey,
         project: &Project,
         player: &SharedPlayerState,
         position: Time,
+        source: Option<&str>,
     ) -> Result<Self, String> {
         if project.audio_tracks.get(key.track_index).is_none() {
             return Err("Audio track no longer exists".into());
         }
         let start = position.snapped(project.frame_step());
-        let recording = shrimply_audio_engine::recording::MicRecording::start()?;
+        let recording = shrimply_audio_engine::recording::MicRecording::start(source)?;
         ensure_duration(player, start);
         player_state::seek_time(player, start);
         player_state::set_playing(player, true);
@@ -169,10 +162,10 @@ impl Scene {
         position: Time,
     ) -> Result<(), String> {
         if !self.recording_available.1 {
-            return Err("Screen recording is unavailable".into());
+            return Err("Video recording is unavailable".into());
         }
         if key.kind != TrackKind::Video {
-            return Err("Screen recording requires a video track".into());
+            return Err("Video recording requires a video track".into());
         }
         if self.active_video_recording.is_some() {
             self.stop_video_recording();
@@ -224,10 +217,10 @@ impl Scene {
             VideoRecordingEvent::Ready { width, height } => {
                 if width == 0 || height == 0 {
                     self.stop_video_recording();
-                    return Err("Screen capture returned an empty frame size".into());
+                    return Err("Video capture returned an empty frame size".into());
                 }
                 let Some(active) = self.active_video_recording.as_ref() else {
-                    return Err("Screen capture became ready after it was cancelled".into());
+                    return Err("Video capture became ready after it was cancelled".into());
                 };
                 if active.stopping {
                     return Ok(());

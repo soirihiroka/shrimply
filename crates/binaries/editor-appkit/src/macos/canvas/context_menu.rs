@@ -52,7 +52,11 @@ impl CanvasView {
             let Content::Timeline(scene) = &mut *content else {
                 return;
             };
-            scene.prepare_context_menu_for_input(point, touch)
+            scene.prepare_context_menu_with_cameras(
+                point,
+                touch,
+                super::screen_recording::camera::devices,
+            )
         };
         if definition.sections.is_empty() {
             return;
@@ -76,7 +80,9 @@ impl CanvasView {
                         let item = unsafe {
                             NSMenuItem::initWithTitle_action_keyEquivalent(
                                 NSMenuItem::alloc(self.mtm()),
-                                &NSString::from_str(shrimply_i18n::text(action.label()).as_ref()),
+                                &NSString::from_str(
+                                    shrimply_i18n::text(definition.label(action)).as_ref(),
+                                ),
                                 Some(sel!(chooseCanvasContext:)),
                                 ns_string!(""),
                             )

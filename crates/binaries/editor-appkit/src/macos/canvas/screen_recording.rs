@@ -18,6 +18,9 @@ use std::sync::mpsc;
 
 use super::{CanvasView, Content};
 
+#[path = "camera_recording.rs"]
+pub(super) mod camera;
+
 const VIDEO_DIMENSION_ALIGNMENT: u32 = 2;
 
 struct RecordingDelegateIvars {
@@ -39,10 +42,7 @@ define_class!(
     unsafe impl SCRecordingOutputDelegate for RecordingDelegate {
         #[unsafe(method(recordingOutputDidStartRecording:))]
         unsafe fn recording_started(&self, _output: &SCRecordingOutput) {
-            let _ = self.ivars().events.send(Event::Ready {
-                width: self.ivars().width.load(Ordering::Relaxed),
-                height: self.ivars().height.load(Ordering::Relaxed),
-            });
+            self.started();
         }
 
         #[unsafe(method(recordingOutput:didFailWithError:))]
@@ -52,26 +52,49 @@ define_class!(
 
         #[unsafe(method(recordingOutputDidFinishRecording:))]
         unsafe fn recording_finished(&self, output: &SCRecordingOutput) {
-            let duration = unsafe { output.recordedDuration() };
-            if duration.value <= 0 || duration.timescale <= 0 {
-                self.fail("ScreenCaptureKit returned an invalid recording duration".into());
-                return;
-            }
-            self.finish(FinishedVideoRecording::new(
-                self.ivars().path.clone(),
-                shrimply_project_document::project::Time::from_fraction(
-                    duration.value,
-                    i64::from(duration.timescale),
-                ),
-                self.ivars().width.load(Ordering::Relaxed),
-                self.ivars().height.load(Ordering::Relaxed),
-                None,
-            ));
+            self.finish_duration(unsafe { output.recordedDuration() });
         }
     }
 );
 
 impl RecordingDelegate {
+    fn new(extension: &str) -> Result<(Retained<Self>, mpsc::Receiver<Event>), String> {
+        let directory = shrimply_project_document::project::recording_directory()?;
+        let (events, receiver) = mpsc::channel();
+        let recording = Self::alloc().set_ivars(RecordingDelegateIvars {
+            events,
+            path: directory.join(format!("{}.{extension}", uuid::Uuid::new_v4())),
+            width: AtomicU32::new(0),
+            height: AtomicU32::new(0),
+            terminal: AtomicBool::new(false),
+        });
+        Ok((unsafe { msg_send![super(recording), init] }, receiver))
+    }
+
+    fn started(&self) {
+        let _ = self.ivars().events.send(Event::Ready {
+            width: self.ivars().width.load(Ordering::Relaxed),
+            height: self.ivars().height.load(Ordering::Relaxed),
+        });
+    }
+
+    fn finish_duration(&self, duration: CMTime) {
+        if duration.value <= 0 || duration.timescale <= 0 {
+            self.fail("The recording contains no video".into());
+            return;
+        }
+        self.finish(FinishedVideoRecording::new(
+            self.ivars().path.clone(),
+            shrimply_project_document::project::Time::from_fraction(
+                duration.value,
+                i64::from(duration.timescale),
+            ),
+            self.ivars().width.load(Ordering::Relaxed),
+            self.ivars().height.load(Ordering::Relaxed),
+            None,
+        ));
+    }
+
     fn fail(&self, error: String) {
         if self.ivars().terminal.swap(true, Ordering::AcqRel) {
             return;
@@ -243,17 +266,7 @@ pub struct ScreenRecording {
 
 impl ScreenRecording {
     pub fn start(fps: shrimply_math_core::Fraction, mtm: MainThreadMarker) -> Result<Self, String> {
-        let directory = shrimply_project_document::project::recording_directory()?;
-        let path = directory.join(format!("{}.mp4", uuid::Uuid::new_v4()));
-        let (sender, events) = mpsc::channel();
-        let recording = RecordingDelegate::alloc().set_ivars(RecordingDelegateIvars {
-            events: sender,
-            path,
-            width: AtomicU32::new(0),
-            height: AtomicU32::new(0),
-            terminal: AtomicBool::new(false),
-        });
-        let recording: Retained<RecordingDelegate> = unsafe { msg_send![super(recording), init] };
+        let (recording, events) = RecordingDelegate::new("mp4")?;
         let delegate = PickerDelegate::alloc(mtm).set_ivars(PickerDelegateIvars {
             fps,
             capture: RefCell::new(None),
@@ -319,11 +332,32 @@ impl Drop for ScreenRecording {
     }
 }
 
+pub(super) enum VideoRecording {
+    Screen(ScreenRecording),
+    Camera(camera::CameraRecording),
+}
+
+impl VideoRecording {
+    fn stop(&self) {
+        match self {
+            Self::Screen(recording) => recording.stop(),
+            Self::Camera(recording) => recording.stop(),
+        }
+    }
+
+    fn try_event(&self) -> Result<Event, mpsc::TryRecvError> {
+        match self {
+            Self::Screen(recording) => recording.try_event(),
+            Self::Camera(recording) => recording.try_event(),
+        }
+    }
+}
+
 impl CanvasView {
-    pub(super) fn update_screen_recording(&self) -> Result<(), String> {
+    pub(super) fn update_video_recording(&self) -> Result<(), String> {
         let mut failure = None;
         loop {
-            let event = match self.ivars().screen_recording.borrow().as_ref() {
+            let event = match self.ivars().video_recording.borrow().as_ref() {
                 Some(recording) => match recording.try_event() {
                     Ok(event) => Some(event),
                     Err(mpsc::TryRecvError::Empty) => None,
@@ -345,7 +379,7 @@ impl CanvasView {
                 }
             };
             if terminal {
-                self.ivars().screen_recording.borrow_mut().take();
+                self.ivars().video_recording.borrow_mut().take();
             }
             if let Err(error) = result {
                 failure.get_or_insert(error);
@@ -368,14 +402,23 @@ impl CanvasView {
             };
             match command {
                 shrimply_timeline_skia::recording::VideoRecordingCommand::Start { fps } => {
-                    if self.ivars().screen_recording.borrow().is_some() {
-                        failure
-                            .get_or_insert_with(|| "A screen recording is already active".into());
+                    if self.ivars().video_recording.borrow().is_some() {
+                        failure.get_or_insert_with(|| "A video recording is already active".into());
                         continue;
                     }
-                    match ScreenRecording::start(fps, self.mtm()) {
+                    let source = match &*self.ivars().content.borrow() {
+                        Content::Timeline(scene) => scene.video_source().map(str::to_owned),
+                        _ => None,
+                    };
+                    let started = match source {
+                        Some(source) => {
+                            camera::CameraRecording::start(source).map(VideoRecording::Camera)
+                        }
+                        None => ScreenRecording::start(fps, self.mtm()).map(VideoRecording::Screen),
+                    };
+                    match started {
                         Ok(recording) => {
-                            self.ivars().screen_recording.replace(Some(recording));
+                            self.ivars().video_recording.replace(Some(recording));
                         }
                         Err(error) => {
                             let result = {
@@ -393,7 +436,7 @@ impl CanvasView {
                     }
                 }
                 shrimply_timeline_skia::recording::VideoRecordingCommand::Stop => {
-                    if let Some(recording) = self.ivars().screen_recording.borrow().as_ref() {
+                    if let Some(recording) = self.ivars().video_recording.borrow().as_ref() {
                         recording.stop();
                     }
                 }

@@ -559,7 +559,7 @@ impl NumberPickerBuilder {
         let rotating_icon: Retained<RotatingImageView> =
             unsafe { msg_send![super(rotating_icon), initWithFrame: NSRect::ZERO] };
         if let Some(name) = self.rotating_prefix_symbol.as_deref() {
-            rotating_icon.setImage(Some(&system_symbol(name, "Rotation")));
+            rotating_icon.setImage(Some(&crate::controls::symbol(name, "Rotation")));
         } else {
             rotating_icon.setHidden(true);
         }
@@ -1188,9 +1188,5 @@ fn number_row(
 
 fn lock_symbol(locked: bool) -> Retained<NSImage> {
     let name = if locked { "lock.fill" } else { "lock.open" };
-    system_symbol(name, if locked { "Locked" } else { "Unlocked" })
-}
-
-fn system_symbol(name: &str, label: &str) -> Retained<NSImage> {
-    crate::controls::symbol(name, label)
+    crate::controls::symbol(name, if locked { "Locked" } else { "Unlocked" })
 }

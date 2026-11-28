@@ -8,6 +8,7 @@ pub enum ContextMenuAction {
     AddToTrack,
     RecordAudio,
     RecordVideo,
+    SelectRecordingSource(usize),
     InspectProperties,
     DeleteTrack,
     Copy,
@@ -72,6 +73,7 @@ impl ContextMenuAction {
             Self::AddToTrack => "add-to-track",
             Self::RecordAudio => "record-audio",
             Self::RecordVideo => "record-video",
+            Self::SelectRecordingSource(_) => "recording-source",
             Self::InspectProperties => "inspect-properties",
             Self::DeleteTrack => "delete-track",
             Self::Copy => "copy",
@@ -111,7 +113,8 @@ impl ContextMenuAction {
             Self::SplitAll => "Cut all",
             Self::AddToTrack => "Add clip…",
             Self::RecordAudio => "Record audio",
-            Self::RecordVideo => "Record screen",
+            Self::RecordVideo => "Record video",
+            Self::SelectRecordingSource(_) => "Recording source",
             Self::InspectProperties => "Properties",
             Self::DeleteTrack => "Delete Track",
             Self::Copy => "Copy",
@@ -168,8 +171,13 @@ impl ContextMenuItem {
         }
     }
 
-    pub const fn label(self) -> &'static str {
-        self.action.label()
+    pub fn key(self) -> std::borrow::Cow<'static, str> {
+        match self.action {
+            ContextMenuAction::SelectRecordingSource(index) => {
+                format!("recording-source-{index}").into()
+            }
+            action => action.id().into(),
+        }
     }
 }
 
@@ -235,9 +243,17 @@ pub type ContextMenuSection = Vec<ContextMenuEntry>;
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ContextMenu {
     pub sections: Vec<ContextMenuSection>,
+    pub(crate) source_names: Vec<String>,
 }
 
 impl ContextMenu {
+    pub fn label(&self, item: ContextMenuItem) -> &str {
+        match item.action {
+            ContextMenuAction::SelectRecordingSource(index) => &self.source_names[index],
+            action => action.label(),
+        }
+    }
+
     pub fn actions(&self) -> impl Iterator<Item = ContextMenuItem> + '_ {
         self.sections
             .iter()
@@ -346,7 +362,10 @@ pub fn item_context_menu(context: ItemMenuContext) -> ContextMenu {
     if !item_actions.is_empty() {
         sections.push(item_actions);
     }
-    ContextMenu { sections }
+    ContextMenu {
+        sections,
+        ..ContextMenu::default()
+    }
 }
 
 pub fn empty_track_context_menu() -> ContextMenu {
@@ -357,6 +376,7 @@ pub fn empty_track_context_menu() -> ContextMenu {
             ContextMenuItem::new(ContextMenuAction::AddVideoTrack),
             ContextMenuItem::new(ContextMenuAction::AddAudioTrack),
         ])],
+        ..ContextMenu::default()
     }
 }
 
@@ -404,7 +424,10 @@ pub fn track_context_menu(context: TrackMenuContext) -> ContextMenu {
     sections.push(actions(&[ContextMenuItem::new(
         ContextMenuAction::DeleteTrack,
     )]));
-    ContextMenu { sections }
+    ContextMenu {
+        sections,
+        ..ContextMenu::default()
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -449,7 +472,10 @@ pub fn folded_item_context_menu(context: FoldedItemMenuContext) -> ContextMenu {
             context.can_paste_modifiers,
         ),
     ]));
-    ContextMenu { sections }
+    ContextMenu {
+        sections,
+        ..ContextMenu::default()
+    }
 }
 
 pub fn folded_track_context_menu() -> ContextMenu {
@@ -457,6 +483,7 @@ pub fn folded_track_context_menu() -> ContextMenu {
         sections: vec![actions(&[ContextMenuItem::new(
             ContextMenuAction::DeleteFoldedTrack,
         )])],
+        ..ContextMenu::default()
     }
 }
 

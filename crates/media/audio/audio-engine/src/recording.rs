@@ -46,12 +46,34 @@ pub struct MicRecordingSnapshot {
     pub sample_rate: u32,
 }
 
+pub fn input_devices() -> Result<Vec<(String, String)>, String> {
+    let host = super::host::connect()?;
+    let devices = host.input_devices().map_err(|error| error.to_string())?;
+    Ok(devices
+        .filter_map(|device| {
+            Some((
+                device.id().ok()?.to_string(),
+                device.description().ok()?.name().into(),
+            ))
+        })
+        .collect())
+}
+
 impl MicRecording {
-    pub fn start() -> Result<Self, String> {
+    pub fn start(source: Option<&str>) -> Result<Self, String> {
         let host = super::host::connect()?;
-        let device = host
-            .default_input_device()
-            .ok_or_else(|| "No default audio input device".to_string())?;
+        let device = match source {
+            Some(source) => {
+                let id = source
+                    .parse()
+                    .map_err(|error: cpal::Error| error.to_string())?;
+                host.device_by_id(&id)
+                    .ok_or("The selected audio input is unavailable")?
+            }
+            None => host
+                .default_input_device()
+                .ok_or("No default audio input device")?,
+        };
         let input_config = device
             .default_input_config()
             .map_err(|error| error.to_string())?;

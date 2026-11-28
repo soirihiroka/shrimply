@@ -425,6 +425,7 @@ impl Scene {
             &self.project.borrow(),
             &self.player,
             position,
+            self.audio_source.as_deref(),
         )?);
         Ok(())
     }

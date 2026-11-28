@@ -24,6 +24,7 @@ shrimply-inspector-appkit = { workspace = true }
 skia-safe.workspace = true
 objc2.workspace = true
 objc2-app-kit = { workspace = true, features = ["objc2-uniform-type-identifiers"] }
+objc2-av-foundation = { version = "0.3", default-features = false, features = ["std", "AVCaptureDevice", "AVCaptureInput", "AVCaptureFileOutput", "AVCaptureOutputBase", "AVCaptureSession", "AVMediaFormat", "block2", "objc2-core-media"] }
 objc2-foundation.workspace = true
 objc2-quartz-core.workspace = true
 objc2-core-graphics.workspace = true
