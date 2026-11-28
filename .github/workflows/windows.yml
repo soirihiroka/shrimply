@@ -52,6 +52,12 @@ jobs:
       - uses: ./.github/actions/setup-windows
         id: setup
 
+      - name: Cache compiled Cargo artifacts
+        uses: actions/cache@v6
+        with:
+          path: ${{ env.CARGO_TARGET_DIR }}/release
+          key: windows-cargo-target-v1-${{ steps.setup.outputs.native-cache-key }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/**/Cargo.toml', 'sanim/**/Cargo.toml', 'vendor/**/Cargo.toml', 'external/**/Cargo.toml', 'external/optix-dev/include/**', 'rust-toolchain.toml', '.cargo/config.toml', 'Makefile', 'packaging/windows/windows-release.ps1', '.github/actions/setup-windows/action.yml') }}
+
       - name: Package portable application
         shell: powershell
         run: make windows-package
