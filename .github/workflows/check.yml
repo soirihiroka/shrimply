@@ -1,4 +1,4 @@
-name: Android Rust cache experiment
+name: Android Cargo artifact cache experiment
 
 on:
   workflow_dispatch:
@@ -22,13 +22,24 @@ jobs:
       - uses: ./.github/actions/setup-android
         id: setup
 
+      - name: Cache compiled Cargo artifacts
+        uses: actions/cache@v6
+        with:
+          path: |
+            target/release
+            target/aarch64-linux-android/release
+          key: android-cargo-target-v1-${{ steps.setup.outputs.skia-key }}
+
       - name: Build the Android native library
+        env:
+          CARGO_UNSTABLE_CHECKSUM_FRESHNESS: "true"
         run: |
           # cc-rs only adopts RUSTC_WRAPPER for C compilers with a recognized basename.
           wrapper="$RUNNER_TEMP/sccache-rust"
           printf '%s\n' '#!/bin/sh' 'exec "$SCCACHE_PATH" "$@"' > "$wrapper"
           chmod +x "$wrapper"
           RUSTC_WRAPPER="$wrapper" make android-native ANDROID_PROFILE=release ANDROID_SDK_ROOT="$ANDROID_HOME"
+          du -sh target/release target/aarch64-linux-android/release
 
       - name: Archive compiled Skia binaries
         id: skia-archive
