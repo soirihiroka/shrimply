@@ -86,3 +86,55 @@ jobs:
           SERVER_ENTRY: ${{ matrix.server }}
         shell: bash
         run: python packaging/packaged-remote-smoke.py "$RUNNER_TEMP/$APP_ENTRY" "$SERVER_ENTRY"
+
+      - name: Open the packaged Windows launcher and capture its window
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $exe = Join-Path $env:RUNNER_TEMP 'shrimply.exe'
+          $capture = Join-Path $env:RUNNER_TEMP 'launcher-capture'
+          New-Item -ItemType Directory $capture | Out-Null
+          $fixture = Start-Process $exe -WorkingDirectory $env:RUNNER_TEMP -PassThru `
+            -ArgumentList @('project','create','--project','Layout.shrimp','--name','Layout-fixture') `
+            -RedirectStandardOutput "$capture/fixture.json" -RedirectStandardError "$capture/fixture.log"
+          if (!$fixture.WaitForExit(30000)) {
+            $fixture.Kill()
+            throw 'Timed out creating the launcher fixture'
+          }
+          if ($fixture.ExitCode -ne 0 -or !(Get-Content "$capture/fixture.json" -Raw | ConvertFrom-Json).result.created) {
+            throw 'Could not create the launcher fixture'
+          }
+          $launcher = Start-Process $exe -WorkingDirectory $env:RUNNER_TEMP -PassThru `
+            -RedirectStandardOutput "$capture/launcher.stdout.log" -RedirectStandardError "$capture/launcher.stderr.log"
+          try {
+            for ($i = 0; $i -lt 80; $i++) {
+              $launcher.Refresh()
+              if ($launcher.HasExited) { throw "Launcher exited with $($launcher.ExitCode)" }
+              if ($launcher.MainWindowTitle -eq 'Shrimply') { break }
+              Start-Sleep -Milliseconds 250
+            }
+            if ($launcher.MainWindowTitle -ne 'Shrimply') { throw 'No Shrimply window appeared' }
+            (New-Object -ComObject WScript.Shell).AppActivate($launcher.Id) | Out-Null
+            Start-Sleep -Milliseconds 500
+            Add-Type -AssemblyName UIAutomationClient
+            Add-Type -AssemblyName System.Drawing
+            $window = [System.Windows.Automation.AutomationElement]::FromHandle($launcher.MainWindowHandle)
+            $rect = $window.Current.BoundingRectangle
+            $bitmap = [System.Drawing.Bitmap]::new([int]$rect.Width,[int]$rect.Height)
+            try {
+              $canvas = [System.Drawing.Graphics]::FromImage($bitmap)
+              try {
+                $canvas.CopyFromScreen([int]$rect.X,[int]$rect.Y,0,0,$bitmap.Size)
+                $bitmap.Save("$capture/launcher.png",[System.Drawing.Imaging.ImageFormat]::Png)
+              } finally { $canvas.Dispose() }
+            } finally { $bitmap.Dispose() }
+          } finally {
+            if (!$launcher.HasExited) { $launcher.Kill(); $launcher.WaitForExit() }
+          }
+
+      - name: Upload the native launcher capture
+        if: always() && runner.os == 'Windows'
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-native-launcher
+          path: ${{ runner.temp }}/launcher-capture
