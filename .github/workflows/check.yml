@@ -76,10 +76,10 @@ jobs:
         if: inputs.comparison
         run: |
           sudo apt-get install -y nasm
-          curl -fsSL --retry 3 https://github.com/mstorsjo/fdk-aac/archive/refs/tags/v2.0.3.tar.gz -o "$RUNNER_TEMP/fdk.tar.gz"
-          echo "e25671cd96b10bad896aa42ab91a695a9e573395262baed4e4a2ff178d6a3a78  $RUNNER_TEMP/fdk.tar.gz" | sha256sum -c
+          curl -fsSL --retry 3 https://github.com/mstorsjo/fdk-aac/archive/refs/tags/v3.0.0.tar.gz -o "$RUNNER_TEMP/fdk.tar.gz"
+          echo "8538ea8f0f9915e460c106a13e1866a9e13c7ee48c1b67d0b2cf7b4e8159bd1a  $RUNNER_TEMP/fdk.tar.gz" | sha256sum -c
           tar -xzf "$RUNNER_TEMP/fdk.tar.gz" -C "$RUNNER_TEMP"
-          cmake -S "$RUNNER_TEMP/fdk-aac-2.0.3" -B "$RUNNER_TEMP/fdk-build" -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/fdk" -DCMAKE_INSTALL_LIBDIR=lib -DBUILD_SHARED_LIBS=OFF
+          cmake -S "$RUNNER_TEMP/fdk-aac-3.0.0" -B "$RUNNER_TEMP/fdk-build" -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/fdk" -DCMAKE_INSTALL_LIBDIR=lib -DBUILD_SHARED_LIBS=OFF
           cmake --build "$RUNNER_TEMP/fdk-build" -j "$(nproc)"
           cmake --install "$RUNNER_TEMP/fdk-build"
           mkdir "$RUNNER_TEMP/ffmpeg"
@@ -95,14 +95,18 @@ jobs:
           )
           export PATH="$RUNNER_TEMP/ffmpeg:$PATH"
           curl -fsSL --retry 3 'https://qc.ebu.io/testmaterials/523/1/download/' -o "$RUNNER_TEMP/sqam.zip"
-          mkdir "$RUNNER_TEMP/sqam"
+          mkdir -p "$RUNNER_TEMP/sqam" "$RUNNER_TEMP/holdout"
           unzip -j "$RUNNER_TEMP/sqam.zip" 27.flac 35.flac 42.flac 48.flac 49.flac 50.flac -d "$RUNNER_TEMP/sqam"
+          unzip -j "$RUNNER_TEMP/sqam.zip" 40.flac 51.flac 52.flac 60.flac 66.flac 70.flac -d "$RUNNER_TEMP/holdout"
           /usr/bin/python3 vendor/aac/benchmark.py "$AAC_ENCODER" --fdk --bitrates 64 96 128 192 256 320 --repeat 3 --corpus "$RUNNER_TEMP"/sqam/*.flac > aac-comparison.json
+          /usr/bin/python3 vendor/aac/benchmark.py "$AAC_ENCODER" --fdk --bitrates 64 96 128 192 256 320 --repeat 2 --corpus "$RUNNER_TEMP"/holdout/*.flac > aac-holdout.json
       - uses: actions/upload-artifact@v7
         if: inputs.comparison
         with:
           name: aac-spectral
-          path: aac-comparison.json
+          path: |
+            aac-comparison.json
+            aac-holdout.json
       - name: Add ViSQOL audio scores
         if: inputs.comparison
         run: |
