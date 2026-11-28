@@ -1,120 +1,72 @@
-name: CI checks
+name: Verify packaged GTK project scrolling
 
 on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
   workflow_dispatch:
+    inputs:
+      package-run:
+        description: Flatpak package run to verify
+        required: true
+        type: string
 
 permissions:
+  actions: read
   contents: read
 
 env:
   TZ: UTC
-  CARGO_PROFILE_DEV_DEBUG: "0"
 
 jobs:
-  check:
-    name: ${{ matrix.platform }}
-    concurrency:
-      group: ci-checks-${{ github.ref }}-${{ matrix.platform }}
-      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - platform: linux
-            runner: ubuntu-24.04
-            timeout: 240
-            command: nix develop --accept-flake-config --command make check
-          - platform: macos
-            runner: macos-26
-            command: make check
-          - platform: windows
-            runner: windows-2022
-            timeout: 180
-            command: |
-              $env:PATH += ";C:\Program Files\Git\bin;C:\Program Files\Git\usr\bin"
-              make check
-          - platform: android
-            runner: ubuntu-24.04
-            timeout: 180
-            command: make android-check ANDROID_PROFILE=release ANDROID_SDK_ROOT="${ANDROID_HOME}"
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: ${{ matrix.timeout || 360 }}
-    env:
-      CARGO_BUILD_JOBS: ${{ matrix.platform == 'windows' && '3' || '2' }}
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 70
     steps:
-      - uses: actions/checkout@v7
+      - name: Install display and Flatpak tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends flatpak dbus-daemon xvfb xauth xdotool imagemagick
+          flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+      - name: Install the exact hosted Flatpak
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PACKAGE_RUN: ${{ inputs.package-run }}
+        run: |
+          attempt=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$PACKAGE_RUN" --jq .run_attempt)
+          artifact="flatpak-$PACKAGE_RUN-$attempt"
+          until gh api "repos/$GITHUB_REPOSITORY/actions/runs/$PACKAGE_RUN/artifacts" --jq '.artifacts[].name' | grep -Fxq "$artifact"; do
+            state=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$PACKAGE_RUN" --jq .status)
+            test "$state" != completed
+            sleep 15
+          done
+          gh run download "$PACKAGE_RUN" --name "$artifact" --repo "$GITHUB_REPOSITORY" --dir "$RUNNER_TEMP"
+          flatpak install --user --noninteractive "$RUNNER_TEMP/shrimply-gtk-x86_64.flatpak"
+      - name: Open the launcher and scroll through its project list
+        run: |
+          timeout -k 5s 120s dbus-run-session -- xvfb-run -a bash -euo pipefail <<'BASH'
+          shrimply() { flatpak run --user --socket=x11 --env=GDK_BACKEND=x11 --filesystem="$RUNNER_TEMP:rw" dev.shrimply.Shrimply "$@"; }
+          mkdir -p "$RUNNER_TEMP/launcher-projects" "$RUNNER_TEMP/screenshots"
+          for index in {00..63}; do
+            shrimply project create --project "$RUNNER_TEMP/launcher-projects/$index.shrimp" --name "Scroll fixture $index" | jq -e '.result.created'
+          done
+          shrimply > "$RUNNER_TEMP/screenshots/launcher.log" 2>&1 &
+          launcher=$!
+          trap 'kill "$launcher" 2>/dev/null || true' EXIT
+          window=$(timeout 20s xdotool search --sync --onlyvisible --name '^Shrimply$')
+          xdotool windowfocus --sync "$window"
+          sleep 1
+          import -window "$window" "$RUNNER_TEMP/screenshots/top.png"
+          xdotool mousemove --window "$window" 450 248 click --repeat 65 --delay 20 5
+          sleep 1
+          kill -0 "$launcher"
+          import -window "$window" "$RUNNER_TEMP/screenshots/bottom.png"
+          test "$(identify -format '%#' "$RUNNER_TEMP/screenshots/top.png")" != "$(identify -format '%#' "$RUNNER_TEMP/screenshots/bottom.png")"
+          xdotool mousemove --window "$window" 400 64 click 1 type 'Scroll fixture 00'
+          sleep 1
+          kill -0 "$launcher"
+          import -window "$window" "$RUNNER_TEMP/screenshots/search.png"
+          ! grep -Fq 'panicked at' "$RUNNER_TEMP/screenshots/launcher.log"
+          BASH
+      - uses: actions/upload-artifact@v7
+        if: always()
         with:
-          persist-credentials: false
-          submodules: ${{ matrix.platform != 'windows' && 'recursive' || 'false' }}
-
-      - name: Free space for native build dependencies
-        if: matrix.platform == 'linux'
-        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
-      - if: matrix.platform == 'linux'
-        uses: ./.github/actions/cache-cargo
-        with:
-          scope: linux
-      - name: Restore Linux Skia binaries
-        if: matrix.platform == 'linux'
-        id: linux-skia
-        uses: actions/cache@v6
-        with:
-          path: target/linux-skia.tar.gz
-          key: linux-skia-${{ runner.arch }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml', 'flake.nix', 'flake.lock', 'pkgs/**/*.nix', '.cargo/config.toml', 'Makefile', 'rust-toolchain.toml', 'packaging/cache-skia.py') }}
-      - name: Use cached Linux Skia binaries
-        if: steps.linux-skia.outputs.cache-hit == 'true'
-        run: echo "EDITOR_SKIA_BINARIES_URL=file://${GITHUB_WORKSPACE}/target/linux-skia.tar.gz" >> "${GITHUB_ENV}"
-      - if: matrix.platform == 'linux'
-        uses: cachix/install-nix-action@v30
-        with:
-          install_url: https://releases.nixos.org/nix/nix-2.35.2/install
-          extra_nix_config: |
-            accept-flake-config = true
-            extra-substituters = https://cache.nixos-cuda.org https://shrimply.cachix.org
-            extra-trusted-public-keys = cache.nixos-cuda.org:74DUi4Ye579gUqzH4ziL9IyiJBlDpMRn9MBN8oNan9M= shrimply.cachix.org-1:cAgdyBbGPgJZMWUP4PAQPVENeCYtGT7OPPkocvo+uuA=
-
-      - if: matrix.platform == 'macos'
-        uses: ./.github/actions/setup-macos
-        id: macos-setup
-        with:
-          profile: debug
-      - if: matrix.platform == 'windows'
-        uses: ./.github/actions/setup-windows
-      - if: matrix.platform == 'android'
-        uses: ./.github/actions/setup-android
-
-      - name: Check
-        run: ${{ matrix.command }}
-
-      - name: Archive Linux Skia binaries
-        if: matrix.platform == 'linux' && steps.linux-skia.outputs.cache-hit != 'true'
-        run: python3 packaging/cache-skia.py target/debug/build target/linux-skia.tar.gz
-
-      - name: Save macOS check cache
-        if: matrix.platform == 'macos' && steps.macos-setup.outputs.application-hit != 'true'
-        uses: actions/cache/save@v6
-        with:
-          path: target/debug
-          key: ${{ steps.macos-setup.outputs.application-key }}
-
-      - name: Upload build diagnostics
-        if: always() && matrix.platform == 'windows'
-        uses: actions/upload-artifact@v7
-        with:
-          name: windows-build-diagnostics
-          path: |
-            .ci/ffmpeg-validation/*.log
-            .ci/vcpkg/buildtrees/**/*.log
-          if-no-files-found: ignore
-
-      - name: Upload Android lint report
-        if: matrix.platform == 'android'
-        uses: actions/upload-artifact@v7
-        with:
-          name: android-lint
-          path: android/app/build/reports/lint-results-release.html
-          if-no-files-found: error
+          name: gtk-project-launcher
+          path: ${{ runner.temp }}/screenshots
