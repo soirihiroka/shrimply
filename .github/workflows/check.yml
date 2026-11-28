@@ -36,7 +36,7 @@ jobs:
             cd "$RUNNER_TEMP/ffmpeg"
             PKG_CONFIG_PATH="$RUNNER_TEMP/fdk/lib/pkgconfig" "$GITHUB_WORKSPACE/external/ffmpeg/configure" \
               --disable-autodetect --disable-everything --disable-doc --disable-ffplay --disable-ffprobe \
-              --enable-nonfree --enable-libfdk-aac --enable-encoder=aac,libfdk_aac,pcm_f32le,pcm_s24le \
+              --enable-nonfree --enable-libfdk-aac --enable-encoder=aac,libfdk_aac,pcm_f32le,pcm_s16le \
               --enable-decoder=aac,libfdk_aac,pcm_f32le,pcm_s16le,flac --enable-parser=aac,flac \
               --enable-muxer=adts,pcm_f32le,wav --enable-demuxer=aac,pcm_f32le,wav,flac \
               --enable-filter=aresample,aformat,anull --enable-protocol=file,pipe
@@ -47,6 +47,16 @@ jobs:
           mkdir "$RUNNER_TEMP/sqam"
           unzip -j "$RUNNER_TEMP/sqam.zip" 27.flac 35.flac 42.flac 48.flac 49.flac 50.flac -d "$RUNNER_TEMP/sqam"
           /usr/bin/python3 vendor/aac/benchmark.py "$AAC_ENCODER" --fdk --bitrates 64 96 128 192 256 320 --repeat 3 --corpus "$RUNNER_TEMP"/sqam/*.flac > aac-comparison.json
+      - name: Add ViSQOL audio scores
+        run: |
+          git clone --depth 1 --branch v3.3.3 https://github.com/google/visqol.git "$RUNNER_TEMP/visqol"
+          curl -fsSL --retry 3 https://releases.bazel.build/5.1.0/release/bazel-5.1.0-linux-x86_64 -o "$RUNNER_TEMP/bazel"
+          chmod +x "$RUNNER_TEMP/bazel"
+          (cd "$RUNNER_TEMP/visqol" && "$RUNNER_TEMP/bazel" --batch build :visqol -c opt)
+          export PATH="$RUNNER_TEMP/ffmpeg:$PATH"
+          /usr/bin/python3 vendor/aac/benchmark.py "$AAC_ENCODER" --fdk --bitrates 96 128 192 256 --repeat 2 \
+            --corpus "$RUNNER_TEMP"/sqam/*.flac --visqol "$RUNNER_TEMP/visqol/bazel-bin/visqol" \
+            "$RUNNER_TEMP/visqol/model/libsvm_nu_svr_model.txt" > aac-perceptual.json
       - uses: actions/upload-artifact@v7
         if: always()
         with:
