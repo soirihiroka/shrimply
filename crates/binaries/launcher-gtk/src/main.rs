@@ -260,9 +260,9 @@ fn build_ui(app: &adw::Application) {
     }));
     for name in ["info", "show", "restart", "delete"] {
         let action = gio::SimpleAction::new(name, Some(glib::VariantTy::STRING));
-        let (window, model, reload) = (window.downgrade(), model.clone(), reload.clone());
+        let (weak_window, model, reload) = (window.downgrade(), model.clone(), reload.clone());
         action.connect_activate(move |_, value| {
-            let Some((window, key)) = window
+            let Some((window, key)) = weak_window
                 .upgrade()
                 .zip(value.and_then(|value| value.get::<String>()))
             else {
