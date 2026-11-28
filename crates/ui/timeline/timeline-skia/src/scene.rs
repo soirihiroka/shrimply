@@ -81,7 +81,7 @@ pub struct Scene {
     pending_video_record: Option<TrackRecordingRequest>,
     pub(crate) recording_available: (bool, bool),
     audio_source: Option<String>,
-    video_source: Option<String>,
+    pub(crate) video_source: Option<String>,
     active_audio_recording: Option<crate::recording::AudioRecording>,
     pub(crate) active_video_recording: Option<crate::recording::ActiveVideoRecording>,
     pub(crate) video_recording_commands:
