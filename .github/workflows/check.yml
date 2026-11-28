@@ -49,6 +49,22 @@ jobs:
           rustup toolchain install --no-self-update
           make project-server
 
+      - name: Build older and newer project-server releases for the version test
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          server=target/debug/shrimply-project-server
+          manifest=crates/integrations/project-server/Cargo.toml
+          cp "$server" "$RUNNER_TEMP/server-current"
+          for version in 0.0.99 0.1.1; do
+            git restore -- "$manifest"
+            sed -i '' "s/^version.workspace = true$/version = \"$version\"/" "$manifest"
+            make project-server
+            test "$("$server" --version)" = "shrimply-project-server $version"
+            cp "$server" "$RUNNER_TEMP/server-$version"
+          done
+          git restore -- "$manifest" Cargo.lock
+
       - name: Download the exact application package
         env:
           GH_TOKEN: ${{ github.token }}
@@ -85,4 +101,9 @@ jobs:
           APP_ENTRY: ${{ matrix.executable }}
           SERVER_ENTRY: ${{ matrix.server }}
         shell: bash
-        run: python packaging/packaged-remote-smoke.py "$RUNNER_TEMP/$APP_ENTRY" "$SERVER_ENTRY"
+        run: |
+          server_args=("$SERVER_ENTRY")
+          if [[ "$RUNNER_OS" == macOS ]]; then
+            server_args=("$RUNNER_TEMP/server-current" "$RUNNER_TEMP/server-0.0.99" "$RUNNER_TEMP/server-0.1.1")
+          fi
+          python packaging/packaged-remote-smoke.py "$RUNNER_TEMP/$APP_ENTRY" "${server_args[@]}"

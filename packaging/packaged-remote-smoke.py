@@ -1,6 +1,7 @@
 """Exercise packaged native editors against a fresh loopback project server."""
 
 import base64
+import hashlib
 import json
 import os
 import socket
@@ -8,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import wave
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
@@ -22,7 +24,7 @@ def await_state(read, ready):
     raise AssertionError(f"State did not converge: {value!r}")
 
 
-def smoke(executable, server_executable, directory):
+def smoke(executable, server_executable, directory, alternate_servers):
     with socket.socket() as listener:
         listener.bind(("127.0.0.1", 0))
         host, port = listener.getsockname()
@@ -31,7 +33,7 @@ def smoke(executable, server_executable, directory):
     server_log = directory / "server.log"
     alice, bob = (directory / f"{name}.shrimp" for name in ("Alice", "Bob"))
 
-    def cli(*args, project=None, password=None):
+    def cli(*args, project=None, password=None, expected_error=None):
         command = [executable, *args]
         if project is not None:
             command.extend(["--project", project])
@@ -41,17 +43,22 @@ def smoke(executable, server_executable, directory):
             out.seek(0)
             reply = out.read()
             err.seek(0)
+            if expected_error is not None:
+                response = json.loads(reply)
+                assert result.returncode and not response["success"], response
+                assert expected_error in response["error"]["message"], response
+                return None
             if result.returncode or not reply:
                 raise AssertionError((args[:2], result.returncode, reply, err.read()))
         response = json.loads(reply)
         assert response["success"], response
         return response.get("result")
 
-    def start(password):
+    def start(password, path=server_executable):
         nonlocal server
         with server_log.open("ab") as log:
             server = subprocess.Popen(
-                [server_executable, f"{host}:{port}", directory / "projects.sqlite"],
+                [path, f"{host}:{port}", directory / "projects.sqlite"],
                 stdout=log, stderr=subprocess.STDOUT,
                 env=dict(os.environ, SHRIMPLY_PROJECT_SERVER_USERNAME="editor",
                          SHRIMPLY_PROJECT_SERVER_PASSWORD=password),
@@ -134,6 +141,55 @@ def smoke(executable, server_executable, directory):
         named(alice, "Shared")
         assert [owner.read_bytes() for owner in owner_paths] == owners
         print("Offline edit, credential rotation, and undo verified", flush=True)
+
+        if alternate_servers:
+            audio = directory / "shared.wav"
+            with wave.open(str(audio), "wb") as source:
+                source.setparams((1, 2, 44100, 0, "NONE", "not compressed"))
+                source.writeframes(bytes(44100 * 2 * 50))
+            blob = "blobs/" + hashlib.sha256(audio.read_bytes()).hexdigest() + ".wav"
+            body = json.dumps({"files": [{"source": str(audio)}], "frame": 0, "collision": "new_track"})
+            cli("clips", "insert-files", "--body", body, "--dry-run", project=alice)
+            cli("clips", "insert-files", "--body", body, project=alice)
+            clips = await_state(lambda: cli("clips", "list", project=bob)["clips"],
+                                lambda clips: any(clip["asset_path"] == blob for clip in clips))
+            clip_id = next(clip["address"]["item_id"] for clip in clips if clip["asset_path"] == blob)
+
+            def check_media():
+                info = cli("clips", "inspect", "--item-id", clip_id, project=bob)
+                assert info["source_error"] is None, info
+                assert info["source"]["file"]["byte_size"] == audio.stat().st_size
+                assert info["source"]["file"]["canonical_path"] is None
+                streams = [stream.get("audio") or {} for stream in info["source"]["streams"]]
+                assert any(audio.get("sample_rate") == 44100 and audio.get("channels") == 1 for audio in streams)
+
+            check_media()
+            stop()
+            closed = cli("project", "close", project=bob)
+            assert closed["closed"] and closed["saved"]
+            check_media()
+            current_owners = [owner.read_bytes() for owner in owner_paths]
+            assert current_owners[0] == owners[0] and current_owners[1] != owners[1]
+            owners = current_owners
+            start("new-ci-password")
+            print("Shared media uploaded and inspected from a fresh offline daemon", flush=True)
+
+        initial_revision = metadata(alice)["content_revision"]
+        for alternate, guidance in zip(alternate_servers, (
+            "Update the project server to match Shrimply.",
+            "Update Shrimply to match this project server.",
+        ), strict=bool(alternate_servers)):
+            version = subprocess.check_output([alternate, "--version"], text=True).split()[-1]
+            stop()
+            start("new-ci-password", alternate)
+            cli("project", "get", project=alice, expected_error=guidance)
+            observed = await_state(
+                lambda: cli("project", "get", "--force-version", project=alice),
+                lambda result: (result["shared_project"].get("server_version") or {}).get("version") == version,
+            )
+            assert observed["project_name"] == "Shared" and observed["content_revision"] == initial_revision
+            assert [owner.read_bytes() for owner in owner_paths] == owners
+            print(f"Observed live server {version}, correct update guidance, and preserved Force Open", flush=True)
     finally:
         try:
             for project in (alice, bob):
@@ -147,7 +203,7 @@ def smoke(executable, server_executable, directory):
 
 
 if __name__ == "__main__":
-    app_path, server_path = (Path(arg).resolve(strict=True) for arg in sys.argv[1:])
+    app_path, server_path, *alternate_servers = (Path(arg).resolve(strict=True) for arg in sys.argv[1:])
     subprocess.run([app_path, "--version"], check=True, timeout=15)
     with tempfile.TemporaryDirectory() as temporary:
-        smoke(app_path, server_path, Path(temporary))
+        smoke(app_path, server_path, Path(temporary), alternate_servers)
