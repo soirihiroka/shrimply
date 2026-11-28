@@ -39,7 +39,10 @@ jobs:
           gh release download prerelease-20261128T034822Z-26a2667ee9e7 --repo $env:GITHUB_REPOSITORY --pattern shrimply-windows-x86_64.zip
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Expand-Archive shrimply-windows-x86_64.zip app
-          "SHRIMPLY_EXE=$PWD/app/shrimply.exe" >> $env:GITHUB_ENV
+          $exe = Join-Path $PWD app/shrimply.exe
+          & $exe --version
+          if ($LASTEXITCODE -ne 0) { throw "Packaged CLI --version exited $LASTEXITCODE" }
+          "SHRIMPLY_EXE=$exe" >> $env:GITHUB_ENV
       - name: Verify shared edit, stale revision, history, and session restart
         shell: bash
         run: |
@@ -51,7 +54,13 @@ jobs:
           project=session.shrimp
           shrimply() { "$SHRIMPLY_EXE" "$@" --project "$project"; }
           trap 'shrimply project close || true' EXIT
-          shrimply project create --name Original | jq -e '.success and .result.created'
+          if creation=$(shrimply project create --name Original); then
+            jq -e '.success and .result.created' <<<"$creation"
+          else
+            status=$?
+            printf 'Project creation exited %s\n%s\n' "$status" "$creation" >&2
+            exit "$status"
+          fi
           revision=$(shrimply project get | jq -ber '.result.content_revision')
           for name in First Second; do
             (
