@@ -7,7 +7,7 @@ use std::{
     time::Duration,
 };
 
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use shrimply_editing_api::protocol::MediaRewrites;
 use shrimply_project_document::project::{self, Project, ProjectChanges, ProjectEncoding};
 use shrimply_resource_pipeline::fingerprint;
@@ -68,7 +68,9 @@ impl SharedWorkspace {
         if !path.try_exists().map_err(text)? {
             return Ok(None);
         }
-        let sqlite = Connection::open(&path).map_err(text)?;
+        let mut sqlite = Connection::open(&path).map_err(text)?;
+        // Reserve the write before reading the draft so sync or uploads cannot invalidate it.
+        sqlite.set_transaction_behavior(TransactionBehavior::Immediate);
         configure(&sqlite)?;
         let link = sqlite
             .query_row(
