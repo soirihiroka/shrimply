@@ -1,78 +1,59 @@
-name: AAC fresh-corpus comparison
-
+name: AAC encoding CPU profile
 on:
   workflow_dispatch:
-
 permissions:
   contents: read
-
 env:
   TZ: UTC
-
 jobs:
-  audio:
+  profile:
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      CARGO_PROFILE_RELEASE_DEBUG: line-tables-only
     steps:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
-          submodules: recursive
-      - name: Round-trip and compare
+      - name: Build the optimized encoder and prepare the same PCM
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y ffmpeg python3-numpy clang lld
-          make -s test -o native-deps -o cuda-target-check ARGS='--locked --release -p shrimply-aac --lib'
+          sudo apt-get install -y ffmpeg clang lld linux-tools-generic
           make -s test -o native-deps -o cuda-target-check ARGS='--locked --release -p shrimply-aac --example encode --no-run --message-format=json' > build.jsonl
           encoder=$(jq -r 'select(.reason? == "compiler-artifact" and .target.name == "encode") | .executable // empty' build.jsonl)
           test -x "$encoder"
           echo "AAC_ENCODER=$encoder" >> "$GITHUB_ENV"
-          /usr/bin/python3 vendor/aac/benchmark.py "$encoder" --smoke > aac-smoke.json
-      - name: Compare pinned FFmpeg and FDK AAC
-        run: |
-          sudo apt-get install -y nasm
-          curl -fsSL --retry 3 https://github.com/mstorsjo/fdk-aac/archive/refs/tags/v3.0.0.tar.gz -o "$RUNNER_TEMP/fdk.tar.gz"
-          echo "8538ea8f0f9915e460c106a13e1866a9e13c7ee48c1b67d0b2cf7b4e8159bd1a  $RUNNER_TEMP/fdk.tar.gz" | sha256sum -c
-          tar -xzf "$RUNNER_TEMP/fdk.tar.gz" -C "$RUNNER_TEMP"
-          cmake -S "$RUNNER_TEMP/fdk-aac-3.0.0" -B "$RUNNER_TEMP/fdk-build" -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/fdk" -DCMAKE_INSTALL_LIBDIR=lib -DBUILD_SHARED_LIBS=OFF
-          cmake --build "$RUNNER_TEMP/fdk-build" -j "$(nproc)"
-          cmake --install "$RUNNER_TEMP/fdk-build"
-          mkdir "$RUNNER_TEMP/ffmpeg"
-          (
-            cd "$RUNNER_TEMP/ffmpeg"
-            PKG_CONFIG_PATH="$RUNNER_TEMP/fdk/lib/pkgconfig" "$GITHUB_WORKSPACE/external/ffmpeg/configure" \
-              --disable-autodetect --disable-everything --disable-doc --disable-ffplay --disable-ffprobe \
-              --enable-nonfree --enable-libfdk-aac --enable-encoder=aac,libfdk_aac,pcm_f32le,pcm_s16le \
-              --enable-decoder=aac,libfdk_aac,pcm_f32le,pcm_s16le,flac --enable-parser=aac,flac \
-              --enable-muxer=adts,pcm_f32le,wav --enable-demuxer=aac,pcm_f32le,wav,flac \
-              --enable-filter=aresample,aformat,anull --enable-protocol=file,pipe
-            make -j "$(nproc)" ffmpeg
-          )
-          export PATH="$RUNNER_TEMP/ffmpeg:$PATH"
-          curl -fsSL --retry 3 'https://qc.ebu.io/testmaterials/523/1/download/' -o "$RUNNER_TEMP/sqam.zip"
-          mkdir "$RUNNER_TEMP/fresh"
-          unzip -j "$RUNNER_TEMP/sqam.zip" 31.flac 39.flac 44.flac 54.flac 64.flac 69.flac -d "$RUNNER_TEMP/fresh"
-      - name: Add ViSQOL audio scores
-        env:
-          LC_ALL: C
-        run: |
-          git clone --depth 1 --branch v3.3.3 https://github.com/google/visqol.git "$RUNNER_TEMP/visqol"
-          sed -i 's|http://sourceforge.net/projects/arma/files/armadillo-9.860.2.tar.xz|https://distfiles.macports.org/armadillo/armadillo-9.860.2.tar.xz|' "$RUNNER_TEMP/visqol/WORKSPACE"
-          curl -fsSL --retry 3 https://releases.bazel.build/5.1.0/release/bazel-5.1.0-linux-x86_64 -o "$RUNNER_TEMP/bazel"
-          chmod +x "$RUNNER_TEMP/bazel"
-          (cd "$RUNNER_TEMP/visqol" && "$RUNNER_TEMP/bazel" --batch build :visqol -c opt --cxxopt=-include --cxxopt=cstdint --cxxopt=-DFLATBUFFERS_LOCALE_INDEPENDENT=0)
-          export PATH="$RUNNER_TEMP/ffmpeg:$PATH"
-          mkdir "$RUNNER_TEMP/excerpts"
-          for track in "$RUNNER_TEMP"/fresh/*.flac; do
-            ffmpeg -v error -ss 4 -i "$track" -t 8 -c:a pcm_s16le "$RUNNER_TEMP/excerpts/$(basename "$track" .flac).wav"
+          cd "$RUNNER_TEMP"
+          curl -fsSL --retry 3 'https://qc.ebu.io/testmaterials/523/1/download/' -o sqam.zip
+          unzip -j sqam.zip 44.flac 69.flac
+          for item in 44 69; do
+            ffmpeg -v error -ss 4 -i "$item.flac" -t 8 -c:a pcm_s16le "$item.wav"
+            ffmpeg -v error -i "$item.wav" -map 0:a:0 -f f32le -ac 2 -ar 48000 "$item.f32"
           done
-          /usr/bin/python3 vendor/aac/benchmark.py "$AAC_ENCODER" --fdk --bitrates 48 64 80 96 128 192 256 320 --repeat 2 \
-            --corpus "$RUNNER_TEMP"/excerpts/*.wav --visqol "$RUNNER_TEMP/visqol/bazel-bin/visqol" \
-            "$RUNNER_TEMP/visqol/model/libsvm_nu_svr_model.txt" > aac-perceptual.json
+          sha256sum -c <<'CHECKSUM'
+          9d7f39e72ab1062efbbce878fd0c5a2091c5b3534c5b28c36a0e12c571403f31  44.f32
+          b51a9482618ba7ff675adae42108ba12cd333cd1e7d8d7a4c718f44e0bb2128a  69.f32
+          CHECKSUM
+      - name: Sample encoding on two matched-benchmark excerpts
+        run: |
+          cd "$RUNNER_TEMP"
+          perf=$(find /usr/lib/linux-tools -name perf -type f | sort -V | tail -1)
+          test -x "$perf"
+          for item in 44 69; do
+            for rate in 64000 192000; do
+              sudo "$perf" record -q -e cpu-clock:u -F 499 --call-graph dwarf -o "$item-$rate.data" -- \
+                "$AAC_ENCODER" "$item.f32" "$item-$rate.aac" 48000 "$rate"
+              sudo "$perf" report --stdio --no-children --percent-limit 0.5 --call-graph none -i "$item-$rate.data" \
+                > "$item-$rate-leaves.txt"
+              sudo "$perf" report --stdio --percent-limit 2 -i "$item-$rate.data" > "$item-$rate-stacks.txt"
+              grep -q 'shrimply_aac' "$item-$rate-leaves.txt"
+              head -30 "$item-$rate-leaves.txt"
+            done
+          done
       - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: aac-results
+          name: aac-cpu-profile
           path: |
-            aac-*.json
-            build.jsonl
-            Cargo.lock
+            ${{ runner.temp }}/*-leaves.txt
+            ${{ runner.temp }}/*-stacks.txt
