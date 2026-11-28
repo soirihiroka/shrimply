@@ -78,7 +78,7 @@ fn build_ui(app: &adw::Application) {
          listview.project-list > row > box.card { padding: 8px 12px; }",
     );
     gtk::style_context_add_provider_for_display(
-        &list.display(),
+        &gtk::gdk::Display::default().expect("GTK display must exist"),
         &style,
         gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
     );
