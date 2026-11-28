@@ -19,7 +19,7 @@ jobs:
     name: ${{ matrix.platform }}
     concurrency:
       group: ci-checks-${{ github.ref }}-${{ matrix.platform }}
-      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+      cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
     strategy:
       fail-fast: false
       matrix:

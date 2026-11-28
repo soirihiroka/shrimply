@@ -35,14 +35,14 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: android-prerelease-${{ github.ref }}
-
 env:
   TZ: UTC
 
 jobs:
   build:
+    concurrency:
+      group: android-build-${{ github.ref }}
+      cancel-in-progress: ${{ github.event_name == 'push' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     steps:
