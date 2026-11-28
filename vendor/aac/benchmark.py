@@ -122,20 +122,20 @@ def calibrate_delays(encoder, raw, adts, encoders):
         if codec == "shrimply":
             assert delay == PRIMING
             if b"libfdk_aac" in run("ffmpeg", "-decoders"):
-                verify_independent_decode(reference, adts, actual, delay)
+                error, difference, limit = independent_decoder_difference(reference, adts, actual, delay)
+                assert difference <= limit, ("Independent AAC decoder differs on calibration", error)
         delays[codec] = delay
     return delays
 
 
-def verify_independent_decode(reference, adts, actual, delay):
+def independent_decoder_difference(reference, adts, actual, delay):
     _, independent = align(reference, decode(adts, decoder="libfdk_aac"), delay)
     # FDK exposes signed 16-bit PCM, including its rounding and saturation.
     actual = np.clip(actual, -1.0, 32767 / 32768)
     signal = float(np.sqrt(np.square(actual).mean()))
     difference = float(np.sqrt(np.square(actual - independent).mean()))
     error = float(db_ratio((difference / max(signal, 1e-10)) ** 2, 1.0))
-    assert difference <= max(signal * 1e-3, 2 / 32768), ("Independent AAC decoder differs", error)
-    return error
+    return error, difference, max(signal * 1e-3, 2 / 32768)
 
 
 def db_ratio(numerator, denominator):
@@ -275,7 +275,7 @@ def main():
         if b"libfdk_aac" not in run("ffmpeg", "-encoders"):
             parser.error("--fdk requires an FFmpeg build with libfdk_aac")
         encoders.append("libfdk_aac")
-    rows = []
+    rows, decoder_failures = [], []
     with tempfile.TemporaryDirectory(prefix="shrimply-aac-") as folder:
         raw, adts, aligned, source_wav, output_wav, scores = (
             Path(folder) / name for name in
@@ -311,9 +311,12 @@ def main():
                                median_cpu_seconds=statistics.median(cpu),
                                **metrics(reference, decoded, onsets))
                     if args.fdk and codec == "shrimply":
-                        row["independent_decoder_error_db"] = verify_independent_decode(
-                            reference, adts, decoded, lag,
-                        )
+                        error, difference, limit = independent_decoder_difference(reference, adts, decoded, lag)
+                        row.update(independent_decoder_error_db=error, independent_decoder_rms=difference,
+                                   independent_decoder_limit_rms=limit)
+                        if difference > limit:
+                            decoder_failures.append(f"{item} at {bitrate} kb/s: {error:.2f} dB "
+                                                    f"({difference:.3g} RMS vs {limit:.3g})")
                     if score_perceptual:
                         executable, model = [path.resolve() for path in args.visqol]
                         aligned.write_bytes(decoded.astype("<f4").tobytes())
@@ -337,6 +340,8 @@ def main():
         rows=rows,
         matched_rates=matched_rates(rows),
     ), indent=2, allow_nan=False))
+    if decoder_failures:
+        raise SystemExit("Independent AAC decoder differences:\n" + "\n".join(decoder_failures))
 
 
 if __name__ == "__main__":
