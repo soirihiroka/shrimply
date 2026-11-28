@@ -101,7 +101,8 @@ jobs:
             $fixture.Kill()
             throw 'Timed out creating the launcher fixture'
           }
-          if ($fixture.ExitCode -ne 0 -or !(Get-Content "$capture/fixture.json" -Raw | ConvertFrom-Json).result.created) {
+          $receipt = Get-Content "$capture/fixture.json" -Raw | ConvertFrom-Json
+          if (!$receipt.success -or !$receipt.result.created -or !(Test-Path -LiteralPath "$env:RUNNER_TEMP/Layout.shrimp")) {
             throw 'Could not create the launcher fixture'
           }
           $launcher = Start-Process $exe -WorkingDirectory $env:RUNNER_TEMP -PassThru `
@@ -113,7 +114,7 @@ jobs:
               if ($launcher.MainWindowTitle -eq 'Shrimply') { break }
               Start-Sleep -Milliseconds 250
             }
-            if ($launcher.MainWindowTitle -ne 'Shrimply') { throw 'No Shrimply window appeared' }
+            if ($launcher.MainWindowTitle -ne 'Shrimply') { throw "Expected the Shrimply launcher, found '$($launcher.MainWindowTitle)'" }
             (New-Object -ComObject WScript.Shell).AppActivate($launcher.Id) | Out-Null
             Start-Sleep -Milliseconds 500
             Add-Type -AssemblyName UIAutomationClient
