@@ -23,6 +23,7 @@ pub fn finish_track_import(
             live_preview: false,
             captions: result.captions,
             inspector: true,
+            ..Default::default()
         },
     );
     Ok(())

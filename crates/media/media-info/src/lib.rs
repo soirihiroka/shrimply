@@ -2,9 +2,7 @@ pub mod demux;
 
 use std::{
     collections::HashMap,
-    fs::File,
-    io::BufReader,
-    path::{Path, PathBuf},
+    io::{BufReader, Seek},
     sync::{Arc, Mutex, OnceLock},
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -12,13 +10,17 @@ use std::{
 use ffmpeg::{codec, format, media};
 use ffmpeg_next as ffmpeg;
 use lofty::{
-    file::TaggedFileExt, picture::PictureInformation, prelude::Accessor, probe::Probe,
+    file::{FileType, TaggedFileExt},
+    picture::PictureInformation,
+    prelude::Accessor,
+    probe::Probe,
     tag::ItemValue,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use shrimply_asset::{Asset, AssetSnapshot};
 
-type Cache = Mutex<HashMap<(PathBuf, Option<u64>), Arc<FileInfo>>>;
+type Cache = Mutex<HashMap<String, Arc<FileInfo>>>;
 
 static CACHE: OnceLock<Cache> = OnceLock::new();
 static FFMPEG: OnceLock<Result<(), String>> = OnceLock::new();
@@ -174,8 +176,9 @@ pub struct FileInfo {
     pub diagnostics: Vec<String>,
 }
 
-pub fn inspect(path: &Path, revision: Option<u64>) -> Result<Arc<FileInfo>, String> {
-    let key = (path.to_path_buf(), revision);
+pub fn inspect(asset: &Asset) -> Result<Arc<FileInfo>, String> {
+    let snapshot = asset.snapshot()?;
+    let key = snapshot.cache_key();
     if let Some(info) = CACHE
         .get_or_init(Mutex::default)
         .lock()
@@ -185,28 +188,37 @@ pub fn inspect(path: &Path, revision: Option<u64>) -> Result<Arc<FileInfo>, Stri
     {
         return Ok(info);
     }
-    let info = Arc::new(inspect_uncached(path)?);
-    CACHE
-        .get_or_init(Mutex::default)
-        .lock()
-        .expect("media info cache lock poisoned")
-        .insert(key, info.clone());
+    let info = Arc::new(inspect_uncached(&snapshot)?);
+    snapshot.verify_current()?;
+    if !asset.has_bound_reader() || info.container.is_some() || info.image.is_some() {
+        CACHE
+            .get_or_init(Mutex::default)
+            .lock()
+            .expect("media info cache lock poisoned")
+            .insert(key, info.clone());
+    }
     Ok(info)
 }
 
-fn inspect_uncached(path: &Path) -> Result<FileInfo, String> {
-    let metadata = path
-        .metadata()
-        .map_err(|error| format!("could not inspect {}: {error}", path.display()))?;
-    if !metadata.is_file() {
-        return Err(format!("media source is not a file: {}", path.display()));
-    }
+fn inspect_uncached(asset: &AssetSnapshot) -> Result<FileInfo, String> {
+    let path = asset.path();
+    let metadata = if asset.asset().has_bound_reader() {
+        None
+    } else {
+        let metadata = path
+            .metadata()
+            .map_err(|error| format!("could not inspect {}: {error}", path.display()))?;
+        if !metadata.is_file() {
+            return Err(format!("media source is not a file: {}", path.display()));
+        }
+        Some(metadata)
+    };
     let mut result = FileInfo {
         file: FileSystemInfo {
             path: path.to_string_lossy().into_owned(),
-            canonical_path: path
-                .canonicalize()
-                .ok()
+            canonical_path: metadata
+                .as_ref()
+                .and_then(|_| path.canonicalize().ok())
                 .map(|path| path.to_string_lossy().into_owned()),
             file_name: path
                 .file_name()
@@ -214,9 +226,14 @@ fn inspect_uncached(path: &Path) -> Result<FileInfo, String> {
             extension: path
                 .extension()
                 .map(|extension| extension.to_string_lossy().into_owned()),
-            byte_size: metadata.len(),
-            created_unix_seconds: metadata.created().ok().and_then(unix_seconds),
-            modified_unix_seconds: metadata.modified().ok().and_then(unix_seconds),
+            byte_size: asset.len(),
+            created_unix_seconds: metadata
+                .as_ref()
+                .and_then(|metadata| metadata.created().ok())
+                .and_then(unix_seconds),
+            modified_unix_seconds: metadata
+                .and_then(|metadata| metadata.modified().ok())
+                .and_then(unix_seconds),
         },
         container: None,
         streams: Vec::new(),
@@ -227,18 +244,16 @@ fn inspect_uncached(path: &Path) -> Result<FileInfo, String> {
         image: None,
         diagnostics: Vec::new(),
     };
-    if let Err(error) = inspect_ffmpeg(path, &mut result) {
+    if let Err(error) = inspect_ffmpeg(asset, &mut result) {
         result.diagnostics.push(error);
     }
     if result.streams.iter().any(|stream| stream.kind == "audio")
-        && let Err(error) = inspect_audio_tags(path, &mut result)
+        && let Err(error) = inspect_audio_tags(asset, &mut result)
     {
         result.diagnostics.push(error);
     }
     fill_common_tags_from_container(&mut result);
-    if imagesize::size(path).is_ok()
-        && let Err(error) = inspect_image(path, &mut result)
-    {
+    if let Err(error) = inspect_image(asset, &mut result) {
         result.diagnostics.push(error);
     }
     Ok(result)
@@ -250,13 +265,17 @@ fn unix_seconds(time: SystemTime) -> Option<i64> {
         .and_then(|duration| i64::try_from(duration.as_secs()).ok())
 }
 
-fn inspect_ffmpeg(path: &Path, result: &mut FileInfo) -> Result<(), String> {
+fn inspect_ffmpeg(asset: &AssetSnapshot, result: &mut FileInfo) -> Result<(), String> {
     FFMPEG
         .get_or_init(|| ffmpeg::init().map_err(|error| error.to_string()))
         .clone()
         .map_err(|error| format!("could not initialize FFmpeg: {error}"))?;
-    let input = demux::open(path)
-        .map_err(|error| format!("FFmpeg could not inspect {}: {error}", path.display()))?;
+    let input = demux::open_asset_with_interrupt(asset, || false).map_err(|error| {
+        format!(
+            "FFmpeg could not inspect {}: {error}",
+            asset.path().display()
+        )
+    })?;
     let detected = input.format();
     result.container = Some(ContainerInfo {
         format_names: detected.name().split(',').map(str::to_string).collect(),
@@ -424,11 +443,18 @@ fn dictionary(dictionary: ffmpeg::DictionaryRef<'_>, source: &str) -> Vec<TagVal
         .collect()
 }
 
-fn inspect_audio_tags(path: &Path, result: &mut FileInfo) -> Result<(), String> {
-    let probe = Probe::open(path)
-        .map_err(|error| format!("audio tags were unavailable: {error}"))?
-        .guess_file_type()
-        .map_err(|error| format!("audio tags were unavailable: {error}"))?;
+fn inspect_audio_tags(asset: &AssetSnapshot, result: &mut FileInfo) -> Result<(), String> {
+    let reader = BufReader::new(
+        asset
+            .open_reader()
+            .map_err(|error| format!("audio tags were unavailable: {error}"))?,
+    );
+    let probe = match FileType::from_path(asset.path()) {
+        Some(kind) => Probe::with_file_type(reader, kind),
+        None => Probe::new(reader),
+    }
+    .guess_file_type()
+    .map_err(|error| format!("audio tags were unavailable: {error}"))?;
     let tagged = probe
         .options(lofty::config::ParseOptions::new().read_properties(false))
         .read()
@@ -546,22 +572,26 @@ fn fill_common_tags_from_container(result: &mut FileInfo) {
     }
 }
 
-fn inspect_image(path: &Path, result: &mut FileInfo) -> Result<(), String> {
-    let size = imagesize::size(path)
+fn inspect_image(asset: &AssetSnapshot, result: &mut FileInfo) -> Result<(), String> {
+    let mut reader = BufReader::new(
+        asset
+            .open_reader()
+            .map_err(|error| format!("image metadata was unavailable: {error}"))?,
+    );
+    let Ok(kind) = imagesize::reader_type(&mut reader) else {
+        return Ok(());
+    };
+    let size = kind
+        .reader_size(&mut reader)
         .map_err(|error| format!("image metadata was unavailable: {error}"))?;
-    let image_type = File::open(path)
-        .ok()
-        .and_then(|file| imagesize::reader_type(BufReader::new(file)).ok())
-        .map(|kind| format!("{kind:?}"))
-        .unwrap_or_else(|| "Unknown".to_string());
     let mut image = ImageInfo {
         width: size.width,
         height: size.height,
-        image_type,
+        image_type: format!("{kind:?}"),
         exif: Vec::new(),
     };
-    if let Ok(file) = File::open(path)
-        && let Ok(exif) = exif::Reader::new().read_from_container(&mut BufReader::new(file))
+    if reader.rewind().is_ok()
+        && let Ok(exif) = exif::Reader::new().read_from_container(&mut reader)
     {
         image.exif = exif
             .fields()

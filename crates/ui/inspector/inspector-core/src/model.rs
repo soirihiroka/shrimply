@@ -286,6 +286,21 @@ impl InspectorController {
         player_state: SharedPlayerState,
         selection_state: SharedSelectionState,
     ) -> Self {
+        let media_metadata = Rc::new(RefCell::new(crate::info::metadata::Metadata::default()));
+        let metadata = Rc::downgrade(&media_metadata);
+        let alive = metadata.clone();
+        player_state::connect_while_alive_named(
+            &player_state,
+            "inspect reconnected remote media",
+            move || alive.strong_count() != 0,
+            move |event| {
+                if matches!(event, player_state::PlayerEvent::Project(change) if change.remote_media_reconnected)
+                    && let Some(metadata) = metadata.upgrade()
+                {
+                    metadata.borrow_mut().remote_reconnected();
+                }
+            },
+        );
         Self {
             project,
             player_state,
@@ -311,7 +326,7 @@ impl InspectorController {
             voice_models: Rc::new(RefCell::new(Default::default())),
             tts_runtime: Rc::new(RefCell::new(Default::default())),
             video_generation_runtime: Rc::new(RefCell::new(Default::default())),
-            media_metadata: Rc::new(RefCell::new(Default::default())),
+            media_metadata,
             visual_sources: Rc::new(RefCell::new(Default::default())),
             project_settings: Rc::new(RefCell::new(None)),
             sanim_reflection: Rc::new(RefCell::new(Default::default())),

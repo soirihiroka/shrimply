@@ -1,5 +1,4 @@
-use std::path::PathBuf;
-
+use shrimply_asset::Asset;
 use shrimply_media_info::{ExactRatio, ExactTime, FileInfo, StreamInfo};
 use shrimply_project_document::project::{AudioSource, ItemRef, Project, VideoItemContent};
 
@@ -43,8 +42,8 @@ pub enum SourceMetadata {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct InspectorMedia {
-    pub path: PathBuf,
-    pub revision: Option<u64>,
+    pub asset: Asset,
+    pub fingerprint: Option<String>,
     pub selected: SourceMetadata,
 }
 
@@ -342,28 +341,29 @@ pub(crate) fn target_media(project: &Project, target: &InspectorTarget) -> Optio
     let InspectorTarget::Item(address) = target else {
         return None;
     };
-    let (file, selected) = match project.item(address)? {
+    let item = project.item(address)?;
+    let file = item.asset()?;
+    let selected = match item {
         ItemRef::Audio(item) if matches!(item.source, AudioSource::Media | AudioSource::Tts(_)) => {
-            (&item.file, SourceMetadata::Audio(item.track_id))
+            SourceMetadata::Audio(item.track_id)
         }
         ItemRef::Video(item) if !matches!(item.content, VideoItemContent::FoldedSequence(_)) => {
-            let selected = if matches!(
+            if matches!(
                 item.content,
                 VideoItemContent::Media | VideoItemContent::Gif | VideoItemContent::AnimatedImage
             ) {
                 SourceMetadata::Video(item.track_id)
             } else {
                 SourceMetadata::None
-            };
-            (&item.file, selected)
+            }
         }
         ItemRef::Comment(_) | ItemRef::Caption(_) | ItemRef::Audio(_) | ItemRef::Video(_) => {
             return None;
         }
     };
-    (!file.path().as_os_str().is_empty()).then(|| InspectorMedia {
-        path: file.path().to_path_buf(),
-        revision: file.snapshot().ok().map(|snapshot| snapshot.revision()),
+    Some(InspectorMedia {
+        asset: file.clone(),
+        fingerprint: file.snapshot().ok().map(|snapshot| snapshot.cache_key()),
         selected,
     })
 }

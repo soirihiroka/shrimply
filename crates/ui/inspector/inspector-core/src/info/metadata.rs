@@ -65,7 +65,8 @@ pub enum MetadataState {
 #[derive(Clone, PartialEq, Eq)]
 struct Key {
     path: PathBuf,
-    revision: Option<u64>,
+    fingerprint: Option<String>,
+    remote_generation: Option<u64>,
 }
 
 type Response = (Key, Result<Arc<CachedMetadata>, String>);
@@ -76,6 +77,7 @@ pub struct Metadata {
     active: Option<Key>,
     pending: Vec<Key>,
     state: MetadataState,
+    remote_generation: u64,
 }
 
 impl Default for Metadata {
@@ -87,11 +89,16 @@ impl Default for Metadata {
             active: None,
             pending: Vec::new(),
             state: MetadataState::Loading,
+            remote_generation: 0,
         }
     }
 }
 
 impl Metadata {
+    pub fn remote_reconnected(&mut self) {
+        self.remote_generation = self.remote_generation.wrapping_add(1);
+    }
+
     pub fn poll(&mut self) -> bool {
         let mut changed = false;
         while let Ok((key, result)) = self.receiver.try_recv() {
@@ -118,8 +125,12 @@ impl Metadata {
             return None;
         };
         let key = Key {
-            path: media.path.clone(),
-            revision: media.revision,
+            path: media.asset.path().to_path_buf(),
+            fingerprint: media.fingerprint.clone(),
+            remote_generation: media
+                .asset
+                .has_bound_reader()
+                .then_some(self.remote_generation),
         };
         if self.active.as_ref() != Some(&key) {
             self.active = Some(key.clone());
@@ -128,8 +139,9 @@ impl Metadata {
         if matches!(self.state, MetadataState::Loading) && !self.pending.contains(&key) {
             self.pending.push(key.clone());
             let sender = self.sender.clone();
+            let asset = media.asset.clone();
             thread::spawn(move || {
-                let result = shrimply_media_info::inspect(&key.path, key.revision).map(|info| {
+                let result = shrimply_media_info::inspect(&asset).map(|info| {
                     let mut presentation = super::media_info_presentation(&info, format_date);
                     let artwork = presentation
                         .artwork

@@ -2,6 +2,7 @@ use std::collections::HashSet;
 use std::path::Path;
 
 use serde_json::{Value, json};
+use shrimply_asset::Asset;
 use shrimply_math_core::{
     Fraction, Time, fraction_denominator, fraction_numerator, time_from_frame,
 };
@@ -19,14 +20,12 @@ struct Presentation<'a> {
     summary: ClipSummary,
     projected_start: Time,
     projected_end: Time,
-    source_path: Option<String>,
     item: ItemRef<'a>,
 }
 
 struct PresentationData {
     enabled: bool,
     source_kind: String,
-    source_path: Option<String>,
     label: String,
     state: Value,
 }
@@ -173,7 +172,7 @@ pub fn query_clips(
         })
         .filter(|clip| {
             request.source_filename.as_ref().is_none_or(|needle| {
-                clip.source_path.as_ref().is_some_and(|path| {
+                clip.summary.asset_path.as_ref().is_some_and(|path| {
                     Path::new(path)
                         .file_name()
                         .is_some_and(|name| name.to_string_lossy().contains(needle))
@@ -308,9 +307,10 @@ pub fn get_clip(
         metadata: serde_json::to_value(&first.item).map_err(|error| error.to_string())?,
         owning_track,
         asset: asset_metadata(
-            first.source_path.as_deref(),
+            first.item.asset(),
             first
-                .source_path
+                .summary
+                .asset_path
                 .as_ref()
                 .and_then(|path| snapshot.asset_revisions.get(path))
                 .copied(),
@@ -326,7 +326,12 @@ pub fn get_clip_info(
     item_id: Option<Uuid>,
 ) -> Result<ClipInfo, String> {
     let clip = get_clip(snapshot, address, item_id)?;
-    let Some(asset) = &clip.asset else {
+    let asset = clip
+        .presentations
+        .first()
+        .and_then(|summary| snapshot.project.item(&summary.address))
+        .and_then(|item| item.asset());
+    let Some(asset) = asset else {
         return Ok(ClipInfo {
             clip,
             source: None,
@@ -334,8 +339,7 @@ pub fn get_clip_info(
             source_error: None,
         });
     };
-    let revision = asset.asset_revision;
-    let source = match shrimply_media_info::inspect(Path::new(&asset.path), revision) {
+    let source = match shrimply_media_info::inspect(asset) {
         Ok(source) => source,
         Err(error) => {
             return Ok(ClipInfo {
@@ -520,14 +524,23 @@ fn time_span(project: &Project, start: Time, end: Time) -> TimeSpan {
 }
 
 fn asset_metadata(
-    path: Option<&str>,
+    asset: Option<&Asset>,
     revision: Option<u64>,
     project_path: &Path,
 ) -> Option<AssetMetadata> {
-    let path = path.filter(|path| !path.is_empty())?;
-    let path = Path::new(path);
-    let canonical = path.canonicalize().ok();
-    let metadata = path.metadata().ok();
+    let asset = asset?;
+    let path = asset.path();
+    let (canonical, metadata, size) = if asset.has_bound_reader() {
+        (
+            None,
+            None,
+            asset.snapshot().ok().map(|snapshot| snapshot.len()),
+        )
+    } else {
+        let metadata = path.metadata().ok();
+        let size = metadata.as_ref().map(std::fs::Metadata::len);
+        (path.canonicalize().ok(), metadata, size)
+    };
     let project_media = project_path
         .parent()
         .unwrap_or_else(|| Path::new("."))
@@ -538,8 +551,8 @@ fn asset_metadata(
         canonical_path: canonical
             .as_ref()
             .map(|path| path.to_string_lossy().into_owned()),
-        exists: metadata.is_some(),
-        size: metadata.as_ref().map(std::fs::Metadata::len),
+        exists: size.is_some(),
+        size,
         modified_unix_seconds: metadata
             .and_then(|metadata| metadata.modified().ok())
             .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
@@ -665,7 +678,6 @@ fn presentations(project: &Project) -> Result<Vec<Presentation<'_>>, String> {
                 PresentationData {
                     enabled: track.enabled,
                     source_kind: "comment".to_string(),
-                    source_path: None,
                     label: item.text.clone(),
                     state: json!({ "text": item.text, "color": item.color }),
                 },
@@ -682,7 +694,6 @@ fn presentations(project: &Project) -> Result<Vec<Presentation<'_>>, String> {
                 PresentationData {
                     enabled: track.enabled,
                     source_kind: "caption".to_string(),
-                    source_path: None,
                     label: item.text.clone(),
                     state: json!({ "text": item.text }),
                 },
@@ -706,8 +717,6 @@ fn collect_video<'a>(
         let enabled = parent_enabled && track.enabled;
         for item in &track.items {
             let source_kind = video_source_kind(&item.content);
-            let source_path = (!item.file.as_os_str().is_empty())
-                .then(|| item.file.path().to_string_lossy().into_owned());
             let address = TrackAddress::Video {
                 sequence_path: path.to_vec(),
                 track_id: track.id,
@@ -719,7 +728,6 @@ fn collect_video<'a>(
                 PresentationData {
                     enabled,
                     source_kind: source_kind.to_string(),
-                    source_path,
                     label: item
                         .file
                         .path()
@@ -758,8 +766,6 @@ fn collect_audio<'a>(
         for item in &track.items {
             let enabled = track_enabled && item.enabled;
             let source_kind = audio_source_kind(&item.source);
-            let source_path = (!item.file.as_os_str().is_empty())
-                .then(|| item.file.path().to_string_lossy().into_owned());
             let address = TrackAddress::Audio {
                 sequence_path: path.to_vec(),
                 track_id: track.id,
@@ -771,7 +777,6 @@ fn collect_audio<'a>(
                 PresentationData {
                     enabled,
                     source_kind: source_kind.to_string(),
-                    source_path,
                     label: item
                         .file
                         .path()
@@ -819,7 +824,9 @@ fn push_presentation<'a>(
             address: address.clone(),
             label: data.label,
             source_kind: data.source_kind,
-            asset_path: data.source_path.clone(),
+            asset_path: item
+                .asset()
+                .map(|asset| asset.path().to_string_lossy().into_owned()),
             enabled: data.enabled,
             local,
             projected,
@@ -827,7 +834,6 @@ fn push_presentation<'a>(
         },
         projected_start,
         projected_end,
-        source_path: data.source_path,
         item,
     });
     Ok(())

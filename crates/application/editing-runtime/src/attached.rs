@@ -420,6 +420,8 @@ impl Editor {
                                 audio_beats: true,
                                 audio_waveforms: true,
                                 video: true,
+                                inspector: true,
+                                remote_media_reconnected: true,
                                 ..Default::default()
                             },
                         );

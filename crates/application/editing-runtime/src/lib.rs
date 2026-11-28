@@ -942,6 +942,7 @@ fn replace_live_project(
             live_preview: true,
             captions: true,
             inspector: true,
+            ..Default::default()
         },
     );
 }
