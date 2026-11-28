@@ -58,6 +58,16 @@ jobs:
         uses: ./.github/actions/cache-cargo
         with:
           scope: linux
+      - name: Restore Linux Skia binaries
+        if: matrix.platform == 'linux'
+        id: linux-skia
+        uses: actions/cache@v6
+        with:
+          path: target/linux-skia.tar.gz
+          key: linux-skia-${{ runner.arch }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml', 'flake.nix', 'flake.lock', 'pkgs/**/*.nix', '.cargo/config.toml', 'Makefile', 'rust-toolchain.toml', 'packaging/cache-skia.py') }}
+      - name: Use cached Linux Skia binaries
+        if: steps.linux-skia.outputs.cache-hit == 'true'
+        run: echo "EDITOR_SKIA_BINARIES_URL=file://${GITHUB_WORKSPACE}/target/linux-skia.tar.gz" >> "${GITHUB_ENV}"
       - if: matrix.platform == 'linux'
         uses: cachix/install-nix-action@v30
         with:
@@ -79,6 +89,10 @@ jobs:
 
       - name: Check
         run: ${{ matrix.command }}
+
+      - name: Archive Linux Skia binaries
+        if: matrix.platform == 'linux' && steps.linux-skia.outputs.cache-hit != 'true'
+        run: python3 packaging/cache-skia.py target/debug/build target/linux-skia.tar.gz
 
       - name: Save macOS check cache
         if: matrix.platform == 'macos' && steps.macos-setup.outputs.application-hit != 'true'

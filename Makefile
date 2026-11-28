@@ -363,6 +363,9 @@ manim-python-check:
 fmt fmt-check:
 	$(CARGO) fmt $(if $(filter fmt-check,$@),--check)
 
+ifdef EDITOR_SKIA_BINARIES_URL
+lint: private export SKIA_BINARIES_URL := $(EDITOR_SKIA_BINARIES_URL)
+endif
 lint: native-deps qt-native-deps cuda-target-check
 	$(DEV_BUILD_ENV) $(CARGO) clippy -p $(EDITOR_PACKAGE) -p $(LAUNCHER_PACKAGE) --lib --bins -- -D warnings
 	$(DEV_BUILD_ENV) QMAKE=$(QT_QMAKE) $(CARGO) clippy -p $(QT_EDITOR_PACKAGE) -p $(QT_LAUNCHER_PACKAGE) --lib --bins -- -D warnings
