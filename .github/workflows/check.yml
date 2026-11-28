@@ -32,16 +32,24 @@ jobs:
           trap 'shrimply project close || true' EXIT
           shrimply project create --name Original | jq -e '.success and .result.created'
           revision=$(shrimply project get | jq -er '.result.content_revision')
-          shrimply project set --name Updated --if-revision "$revision" | jq -e '.success'
-          if conflict=$(shrimply project set --name Stale --if-revision "$revision"); then
-            echo "A stale project edit unexpectedly succeeded" >&2
-            exit 1
-          fi
-          jq -e '.success == false and .error.code == "revision_conflict"' <<< "$conflict"
-          shrimply project get | jq -e '.result.project_name == "Updated"'
+          for name in First Second; do
+            (
+              if shrimply project set --name "$name" --if-revision "$revision" > "$RUNNER_TEMP/$name.json"; then
+                jq -e '.success' "$RUNNER_TEMP/$name.json"
+              else
+                jq -e '.success == false and .error.code == "revision_conflict"' "$RUNNER_TEMP/$name.json"
+              fi
+            ) &
+            if [[ "$name" == First ]]; then first=$!; else second=$!; fi
+          done
+          wait "$first"
+          wait "$second"
+          jq -e -s 'map(select(.success)) | length == 1' "$RUNNER_TEMP"/{First,Second}.json
+          if jq -e '.success' "$RUNNER_TEMP/First.json" >/dev/null; then winner=First; else winner=Second; fi
+          shrimply project get | jq -e --arg name "$winner" '.result.project_name == $name'
           shrimply history undo | jq -e '.success and .result.changed'
           shrimply project get | jq -e '.result.project_name == "Original"'
           shrimply history redo | jq -e '.success and .result.changed'
-          shrimply project get | jq -e '.result.project_name == "Updated"'
-          shrimply project close | jq -e '.success'
-          shrimply project get | jq -e '.result.project_name == "Updated"'
+          shrimply project get | jq -e --arg name "$winner" '.result.project_name == $name'
+          shrimply project close | jq -e '.success and .result.saved and .result.closed and (.result.already_closed != true)'
+          shrimply project get | jq -e --arg name "$winner" '.result.project_name == $name'
