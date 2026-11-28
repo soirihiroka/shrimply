@@ -1,5 +1,5 @@
 use super::*;
-use objc2_app_kit::NSScrollView;
+use objc2_app_kit::{NSScrollView, NSTextField};
 use objc2_foundation::NSSize;
 use shrimply_trust_core::{Kind, Review};
 

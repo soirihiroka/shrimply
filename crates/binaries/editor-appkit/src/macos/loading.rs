@@ -2,7 +2,7 @@ use super::*;
 use objc2_app_kit::{
     NSAutoresizingMaskOptions, NSColor, NSEvent, NSEventModifierFlags, NSEventType, NSFont,
     NSGraphicsContext, NSImage, NSImageInterpolation, NSImageScaling, NSImageView,
-    NSLayoutConstraint, NSStackView, NSUserInterfaceLayoutOrientation, NSView,
+    NSLayoutConstraint, NSStackView, NSTextField, NSUserInterfaceLayoutOrientation, NSView,
 };
 use objc2_foundation::{NSData, NSSize};
 use shrimply_cross_ui_core::editor::{
