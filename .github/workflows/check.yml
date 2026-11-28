@@ -61,6 +61,7 @@ jobs:
         if: inputs.comparison
         run: |
           git clone --depth 1 --branch v3.3.3 https://github.com/google/visqol.git "$RUNNER_TEMP/visqol"
+          sed -i 's|http://sourceforge.net/projects/arma/files/armadillo-9.860.2.tar.xz|https://distfiles.macports.org/armadillo/armadillo-9.860.2.tar.xz|' "$RUNNER_TEMP/visqol/WORKSPACE"
           curl -fsSL --retry 3 https://releases.bazel.build/5.1.0/release/bazel-5.1.0-linux-x86_64 -o "$RUNNER_TEMP/bazel"
           chmod +x "$RUNNER_TEMP/bazel"
           (cd "$RUNNER_TEMP/visqol" && "$RUNNER_TEMP/bazel" --batch build :visqol -c opt)
