@@ -7,6 +7,10 @@ on:
         description: Flatpak build run to verify
         required: true
         type: string
+      media:
+        description: Verify automatic media upload and offline metadata reads
+        type: boolean
+        default: false
 
 permissions:
   actions: read
@@ -14,6 +18,7 @@ permissions:
 
 env:
   TZ: UTC
+  CHECK_MEDIA: ${{ inputs.media }}
 
 jobs:
   session:
@@ -27,6 +32,7 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends flatpak dbus-daemon
+          if [[ "$CHECK_MEDIA" == true ]]; then sudo apt-get install -y --no-install-recommends ffmpeg; fi
           flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
           attempt=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$PACKAGE_RUN" --jq .run_attempt)
           gh run download "$PACKAGE_RUN" --name "flatpak-$PACKAGE_RUN-$attempt" --repo "$GITHUB_REPOSITORY" --dir "$RUNNER_TEMP"
@@ -38,7 +44,7 @@ jobs:
         shell: bash
         run: |
           sudo install -d -o 10001 -g 10001 "$RUNNER_TEMP/server-data"
-          timeout -k 5s 90s dbus-run-session -- bash -euo pipefail <<'BASH'
+          timeout -k 5s 150s dbus-run-session -- bash -euo pipefail <<'BASH'
           server=http://127.0.0.1:18788
           alice="$RUNNER_TEMP/alice.shrimp"
           bob="$RUNNER_TEMP/bob.shrimp"
@@ -65,11 +71,11 @@ jobs:
           login() {
             printf '%s\n' "$1" | shrimply project login --server "$server" --username editor | jq -e '.success'
           }
-          await_project() {
-            local path=$1
-            shift
+          await_result() {
+            local path=$1 group=$2 verb=$3
+            shift 3
             for _ in {1..30}; do
-              if shrimply project get --project "$path" | jq -e "$@"; then
+              if shrimply "$group" "$verb" --project "$path" | jq -e "$@"; then
                 return
               fi
               sleep 1
@@ -77,7 +83,7 @@ jobs:
             return 1
           }
           await_name() {
-            await_project "$1" --arg name "$2" '.success and .result.project_name == $name'
+            await_result "$1" project get --arg name "$2" '.success and .result.project_name == $name'
           }
           start_server first-ci-password
           old_token=$(curl -fsS -u editor:first-ci-password -X POST "$server/v1/login" | jq -er '.token')
@@ -90,7 +96,7 @@ jobs:
           await_name "$bob" Shared
           revision=$(shrimply project get --project "$alice" | jq -er '.result.content_revision')
           shrimply player seek --project "$bob" --frame 30 | jq -e '.success'
-          await_project "$alice" --arg revision "$revision" '
+          await_result "$alice" project get --arg revision "$revision" '
             .success and .result.content_revision == $revision
             and any(.result.shared_project.participants[]; .position.seconds == {numerator: 1, denominator: 1})'
           alice_owner=$(cat "$alice.lock")
@@ -107,4 +113,38 @@ jobs:
           await_name "$alice" Shared
           test "$(cat "$alice.lock")" = "$alice_owner"
           test "$(cat "$bob.lock")" = "$bob_owner"
+          if [[ "$CHECK_MEDIA" == true ]]; then
+            video="$RUNNER_TEMP/shared.mp4"
+            ffmpeg -v error -f lavfi -i 'nullsrc=s=640x360:r=24,noise=alls=100:allf=t+u' \
+              -t 2 -c:v libx264 -preset ultrafast -qp 0 -movflags +faststart "$video"
+            read -r digest _ < <(sha256sum "$video")
+            size=$(stat -c %s "$video")
+            test "$size" -gt 4194304
+            body=$(jq -nc --arg source "$video" '{files:[{source:$source}],frame:0}')
+            shrimply clips insert-files --project "$alice" --body "$body" --dry-run | jq -e '.success'
+            shrimply clips insert-files --project "$alice" --body "$body" | jq -e '.success'
+            clip=$(await_result "$bob" clips list -r --arg blob "blobs/$digest.mp4" \
+              '.result.clips[] | select(.asset_path == $blob) | .address.item_id')
+            token=$(curl -fsS -u editor:new-ci-password -X POST "$server/v1/login" | jq -er '.token')
+            curl -fsS -H "Authorization: Bearer $token" -H 'Range: bytes=0-1023' \
+              "$server/v1/projects/$id/blobs/$digest" > "$RUNNER_TEMP/media-prefix"
+            cmp "$RUNNER_TEMP/media-prefix" <(head -c 1024 "$video")
+            metadata() {
+              shrimply clips inspect --project "$bob" --item-id "$clip" | jq -e --argjson size "$size" '
+                .success and .result.source_error == null
+                and .result.source.file.byte_size == $size and .result.source.file.canonical_path == null
+                and any(.result.source.streams[]; .video.width == 640 and .video.height == 360)'
+            }
+            metadata
+            read -r workspace _ < <(printf '%s' "$(realpath "$bob")" | sha256sum)
+            cache="$HOME/.var/app/dev.shrimply.Shrimply/cache/shrimply/shared-media/$workspace"
+            cached=$(find "$cache" -type f -name '*.range' -printf '%s\n' | awk '{ bytes += $1 } END { print bytes + 0 }')
+            test "$cached" -gt 0
+            test "$cached" -lt "$size"
+            test -z "$(find "$cache" -type f -name '*.asset' -print -quit)"
+            docker rm -f shrimply-session-test
+            shrimply project close --project "$bob" | jq -e '.success and .result.closed'
+            metadata
+            test "$(cat "$bob.lock")" != "$bob_owner"
+          fi
           BASH
