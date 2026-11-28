@@ -5,7 +5,6 @@ mod mdct;
 mod psychoacoustics;
 mod quantize;
 mod tables;
-mod tns;
 
 use std::ops::Range;
 
@@ -159,18 +158,6 @@ impl Encoder {
             self.analysis
                 .transform(self.window, &self.overlap, channel, spectrum);
         }
-        let filters = spectra.each_mut().map(|spectrum| {
-            if layout.windows == 1 {
-                tns::Filter::apply(
-                    layout,
-                    usize::from(self.rate_index),
-                    self.sample_rate,
-                    spectrum,
-                )
-            } else {
-                None
-            }
-        });
         let stereo = stereo(layout, &mut spectra);
         let masking = spectra
             .each_ref()
@@ -182,7 +169,7 @@ impl Encoder {
         self.remainder %= u64::from(self.sample_rate);
         let available = (frame_budget + self.reservoir.min(frame_budget)) as usize;
         let limit = available.min(FRAME_LIMIT) / 8;
-        let packet = self.allocate(layout, &spectra, &stereo, &filters, limit);
+        let packet = self.allocate(layout, &spectra, &stereo, limit);
         self.reservoir =
             (self.reservoir + frame_budget - (packet.len() * 8) as i64).min(frame_budget * 2);
         Some(packet)
@@ -193,7 +180,6 @@ impl Encoder {
         layout: Layout,
         spectra: &[[f32; FRAME_SAMPLES]; 2],
         stereo: &[bool],
-        filters: &[Option<tns::Filter>; 2],
         limit: usize,
     ) -> Vec<u8> {
         let size = |choices: &[Vec<Choice>; 2]| {
@@ -207,11 +193,7 @@ impl Encoder {
             (stereo_bits
                 + choices
                     .iter()
-                    .zip(filters)
-                    .map(|(channel, filter)| {
-                        channel_bits(layout, channel, max_sfb)
-                            + filter.as_ref().map_or(0, tns::Filter::bits)
-                    })
+                    .map(|channel| channel_bits(layout, channel, max_sfb))
                     .sum::<usize>())
             .div_ceil(8)
         };
@@ -275,7 +257,7 @@ impl Encoder {
                 picks[channel][band] = best;
             }
         }
-        let packet = self.packet(layout, spectra, stereo, filters, &picks);
+        let packet = self.packet(layout, spectra, stereo, &picks);
         debug_assert_eq!(packet.len(), size(&picks));
         debug_assert!(packet.len() <= limit);
         packet
@@ -286,7 +268,6 @@ impl Encoder {
         layout: Layout,
         spectra: &[[f32; FRAME_SAMPLES]; 2],
         stereo: &[bool],
-        filters: &[Option<tns::Filter>; 2],
         choices: &[Vec<Choice>; 2],
     ) -> Vec<u8> {
         let max_sfb = max_band(layout, choices);
@@ -336,13 +317,7 @@ impl Encoder {
                 bits.code(SCALEFACTORS[(delta + 60) as usize]);
                 previous = choice.sf;
             }
-            bits.put(1, 0); // No pulse data.
-            let filter = &filters[channel];
-            bits.put(1, u32::from(filter.is_some()));
-            if let Some(filter) = filter {
-                filter.write(&mut bits);
-            }
-            bits.put(1, 0); // No gain control.
+            bits.put(3, 0); // No pulse data, TNS or gain control.
             for (index, choice) in choices
                 .iter()
                 .enumerate()

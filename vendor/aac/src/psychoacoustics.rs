@@ -72,7 +72,7 @@ impl Masking {
                         .map(|(power, weight)| power * weight)
                         .sum();
                     let width = layout.bands[band + 1] - layout.bands[band];
-                    (masking + quiet) / width as f32
+                    (masking + quiet) / (width as f32).sqrt()
                 },
             ));
         }
