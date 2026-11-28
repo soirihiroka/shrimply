@@ -208,7 +208,7 @@ def verify_sample_rates(encoder, raw, adts):
 def matched_rates(rows):
     metrics = (
         "visqol_moslqo", "waveform_snr_db_lr_ms", "gain_db_lr_ms", "stereo_balance_delta_db",
-        "spurious_spectral_energy_db_lr_ms", "pre_echo_db",
+        "spurious_spectral_energy_db_lr_ms", "pre_echo_db", "realtime", "median_cpu_seconds",
         *(f"spectral_rmse_{size}_db_lr_ms" for size in (256, 1024, 4096)),
     )
     by_item = {}
@@ -294,6 +294,7 @@ def main():
                                payload_bps=round(8 * payload_size(adts) / seconds),
                                delay_samples=lag, wall_seconds=wall, cpu_seconds=cpu,
                                realtime=seconds / statistics.median(wall),
+                               median_cpu_seconds=statistics.median(cpu),
                                **metrics(reference, decoded, onsets))
                     if score_perceptual:
                         executable, model = [path.resolve() for path in args.visqol]
