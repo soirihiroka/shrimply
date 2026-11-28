@@ -1,7 +1,7 @@
 use super::error_alert;
 use objc2::rc::{Retained, Weak};
 use objc2::runtime::{AnyObject, ProtocolObject};
-use objc2::{DefinedClass, MainThreadOnly, Message, define_class, msg_send, sel};
+use objc2::{DefinedClass, MainThreadOnly, define_class, msg_send, sel};
 use objc2_app_kit::{
     NSAccessibility, NSAlert, NSAlertFirstButtonReturn, NSAutoresizingMaskOptions,
     NSBackingStoreType, NSBezelStyle, NSBox, NSBoxType, NSButton, NSColor, NSControl,
@@ -145,27 +145,23 @@ define_class!(
     unsafe impl NSToolbarDelegate for PreferencesWindow {
         #[unsafe(method_id(toolbarDefaultItemIdentifiers:))]
         fn toolbar_items(&self, _toolbar: &NSToolbar) -> Retained<NSArray<NSString>> {
-            NSArray::from_slice(&[
-                unsafe { NSToolbarSidebarTrackingSeparatorItemIdentifier },
-                ns_string!("settings-page"),
-            ])
+            settings_toolbar_items()
         }
 
         #[unsafe(method_id(toolbarAllowedItemIdentifiers:))]
-        fn allowed_toolbar_items(&self, toolbar: &NSToolbar) -> Retained<NSArray<NSString>> {
-            self.toolbar_items(toolbar)
+        fn allowed_toolbar_items(&self, _toolbar: &NSToolbar) -> Retained<NSArray<NSString>> {
+            settings_toolbar_items()
         }
 
         #[unsafe(method_id(toolbar:itemForItemIdentifier:willBeInsertedIntoToolbar:))]
         fn toolbar_item(&self, _toolbar: &NSToolbar, identifier: &NSString, _inserted: bool) -> Option<Retained<NSToolbarItem>> {
-            if identifier != ns_string!("settings-page") {
-                return None;
-            }
-            let layout = self.ivars().layout.get().expect("settings layout");
-            let item = NSToolbarItem::initWithItemIdentifier(NSToolbarItem::alloc(self.mtm()), identifier);
-            item.setLabel(&NSString::from_str(&text(preferences::SETTINGS_TITLE)));
-            item.setView(Some(&layout.header));
-            Some(item)
+            (identifier == ns_string!("settings-page")).then(|| {
+                let layout = self.ivars().layout.get().expect("settings layout");
+                let item = NSToolbarItem::initWithItemIdentifier(NSToolbarItem::alloc(self.mtm()), identifier);
+                item.setLabel(&NSString::from_str(&text(preferences::SETTINGS_TITLE)));
+                item.setView(Some(&layout.header));
+                item
+            })
         }
     }
 
@@ -186,14 +182,15 @@ define_class!(
     unsafe impl NSTableViewDelegate for PreferencesWindow {
         #[unsafe(method_id(tableView:viewForTableColumn:row:))]
         fn table_row(&self, table: &NSTableView, _column: Option<&NSTableColumn>, row: isize) -> Option<Retained<NSView>> {
-            let index = usize::try_from(row).ok()?;
-            if self.is_sidebar(table) {
-                return PreferencePage::ALL.get(index).map(|page| sidebar_row(*page, self.mtm()));
-            }
-            let lists = self.ivars().server_lists.borrow();
-            let server = lists.iter().find(|list| &*list.table == table)?.urls.get(index)?;
-            let label = settings_label(server, self.mtm());
-            Some(settings_table_cell(&label, &label, self.mtm()))
+            usize::try_from(row).ok().and_then(|index| {
+                if self.is_sidebar(table) {
+                    return PreferencePage::ALL.get(index).map(|page| sidebar_row(*page, self.mtm()));
+                }
+                let lists = self.ivars().server_lists.borrow();
+                let server = lists.iter().find(|list| &*list.table == table)?.urls.get(index)?;
+                let label = settings_label(server, self.mtm());
+                Some(settings_table_cell(&label, &label, self.mtm()))
+            })
         }
 
         #[unsafe(method(tableViewSelectionDidChange:))]
@@ -1011,6 +1008,13 @@ fn settings_table(
     }
     table.addTableColumn(&column);
     table
+}
+
+fn settings_toolbar_items() -> Retained<NSArray<NSString>> {
+    NSArray::from_slice(&[
+        unsafe { NSToolbarSidebarTrackingSeparatorItemIdentifier },
+        ns_string!("settings-page"),
+    ])
 }
 
 fn sidebar_row(page: PreferencePage, mtm: MainThreadMarker) -> Retained<NSView> {

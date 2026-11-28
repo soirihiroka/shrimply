@@ -363,15 +363,16 @@ define_class!(
         #[unsafe(method_id(tableView:viewForTableColumn:row:))]
         fn project_row(&self, table: &NSTableView, column: Option<&NSTableColumn>, row: isize) -> Option<Retained<NSView>> {
             let model = self.ivars().model.borrow();
-            if self.ivars().sources.get().is_some_and(|sources| std::ptr::eq(&**sources, table)) {
-                let (url, name) = model.sources().nth(usize::try_from(row).ok()?)?;
-                let label = NSTextField::labelWithString(&NSString::from_str(name), self.mtm());
-                if url.starts_with("http") {
-                    label.setToolTip(Some(&NSString::from_str(url)));
+            usize::try_from(row).ok().and_then(|index| {
+                if self.ivars().sources.get().is_some_and(|sources| std::ptr::eq(&**sources, table)) {
+                    let (url, name) = model.sources().nth(index)?;
+                    let label = NSTextField::labelWithString(&NSString::from_str(name), self.mtm());
+                    if url.starts_with("http") {
+                        label.setToolTip(Some(&NSString::from_str(url)));
+                    }
+                    return Some(label.into_super().into_super());
                 }
-                return Some(label.into_super().into_super());
-            }
-            usize::try_from(row).ok().and_then(|index| model.project(index)).map(|project| {
+                let project = model.project(index)?;
                 let width = column.map_or(table.bounds().size.width, NSTableColumn::width);
                 let height = table.rowHeight();
                 let view = NSView::initWithFrame(NSView::alloc(self.mtm()),
@@ -426,7 +427,7 @@ define_class!(
                 );
                 options.setAutoresizingMask(NSAutoresizingMaskOptions::ViewMinXMargin);
                 view.addSubview(&options);
-                view
+                Some(view)
             })
         }
     }
