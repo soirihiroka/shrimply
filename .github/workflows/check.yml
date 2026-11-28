@@ -65,24 +65,34 @@ jobs:
           login() {
             printf '%s\n' "$1" | shrimply project login --server "$server" --username editor | jq -e '.success'
           }
-          await_name() {
+          await_project() {
+            local path=$1
+            shift
             for _ in {1..30}; do
-              if shrimply project get --project "$1" | jq -e --arg name "$2" '.success and .result.project_name == $name'; then
+              if shrimply project get --project "$path" | jq -e "$@"; then
                 return
               fi
               sleep 1
             done
             return 1
           }
+          await_name() {
+            await_project "$1" --arg name "$2" '.success and .result.project_name == $name'
+          }
           start_server first-ci-password
           old_token=$(curl -fsS -u editor:first-ci-password -X POST "$server/v1/login" | jq -er '.token')
           login first-ci-password
           printf 'Create the first remote workspace\n'
-          id=$(shrimply project create --project "$alice" --server "$server" --name Original | jq -er '.result.location.id')
+          id=$(shrimply project create --project "$alice" --server "$server" --name Original --fps 30 | jq -er '.result.location.id')
           printf 'Join from an independent workspace\n'
           shrimply project open --project "$bob" --server "$server" --remote-project-id "$id" | jq -e '.success and .result.ready'
           shrimply project set --project "$alice" --name Shared | jq -e '.success'
           await_name "$bob" Shared
+          revision=$(shrimply project get --project "$alice" | jq -er '.result.content_revision')
+          shrimply player seek --project "$bob" --frame 30 | jq -e '.success'
+          await_project "$alice" --arg revision "$revision" '
+            .success and .result.content_revision == $revision
+            and any(.result.shared_project.participants[]; .position.seconds == {numerator: 1, denominator: 1})'
           alice_owner=$(cat "$alice.lock")
           bob_owner=$(cat "$bob.lock")
           docker rm -f shrimply-session-test
