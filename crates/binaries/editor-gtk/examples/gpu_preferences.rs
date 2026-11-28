@@ -148,13 +148,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .default_height(600)
         .build();
     window.present();
-    shrimply_preferences_gtk::page::show_settings(&window, store.clone());
-    let dialog = window
-        .visible_dialog()
-        .ok_or("Preferences dialog was not presented")?
-        .downcast::<adw::PreferencesDialog>()
-        .map_err(|_| "Wrong preferences dialog type")?;
-    dialog.set_visible_page_name("performance");
+    let dialog = shrimply_preferences_gtk::page::show_settings(&window, store.clone());
     let row = acceleration_row(dialog.upcast_ref())
         .ok_or("Performance page omitted its acceleration ComboRow")?;
     let devices = gpu::acceleration_devices()?;

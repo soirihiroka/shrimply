@@ -354,10 +354,7 @@ fn build_ui(app: &adw::Application) {
                 &window.upgrade()?,
                 shrimply_preferences_gtk::store::open_with_defaults(),
             )
-            .connect_close_request(move |_| {
-                reload();
-                glib::Propagation::Proceed
-            });
+            .connect_closed(move |_| reload());
             None
         }
     }));

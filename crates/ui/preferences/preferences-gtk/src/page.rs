@@ -7,14 +7,11 @@ use store::{PreferenceId, PreferencePage, PreferenceValue, SharedPreferences};
 pub fn show_settings(
     window: &adw::ApplicationWindow,
     preferences: SharedPreferences,
-) -> adw::Window {
-    let settings = adw::Window::builder()
+) -> adw::Dialog {
+    let settings = adw::Dialog::builder()
         .title(tr!(store::SETTINGS_TITLE).as_ref())
-        .default_width(980)
-        .default_height(640)
-        .transient_for(window)
-        .destroy_with_parent(true)
-        .modal(true)
+        .content_width(880)
+        .content_height(620)
         .build();
     let categories = gtk::ListBox::builder()
         .selection_mode(gtk::SelectionMode::Single)
@@ -25,8 +22,8 @@ pub fn show_settings(
     for id in PreferencePage::ALL {
         let item = gtk::Box::builder()
             .spacing(12)
-            .margin_top(12)
-            .margin_bottom(12)
+            .margin_top(8)
+            .margin_bottom(8)
             .margin_start(6)
             .margin_end(6)
             .build();
@@ -93,6 +90,8 @@ pub fn show_settings(
     let split = adw::NavigationSplitView::builder()
         .sidebar(&sidebar)
         .content(&page)
+        .min_sidebar_width(168.0)
+        .max_sidebar_width(192.0)
         .build();
     categories.select_row(categories.row_at_index(0).as_ref());
     categories.connect_row_activated({
@@ -113,8 +112,8 @@ pub fn show_settings(
     ));
     narrow.add_setter(&split, "collapsed", Some(&true.to_value()));
     settings.add_breakpoint(narrow);
-    settings.set_content(Some(&split));
-    settings.present();
+    settings.set_child(Some(&split));
+    settings.present(Some(window));
     settings
 }
 
