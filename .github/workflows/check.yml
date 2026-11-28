@@ -2,8 +2,14 @@ name: Verify packaged desktop editing sessions
 
 on:
   workflow_dispatch:
+    inputs:
+      windows-run:
+        description: Windows build run to verify
+        required: true
+        type: string
 
 permissions:
+  actions: read
   contents: read
 
 env:
@@ -29,14 +35,15 @@ jobs:
           ditto -x -k shrimply-macos-arm64.zip .
           codesign --verify --deep --strict Shrimply.app
           echo "SHRIMPLY_EXE=$RUNNER_TEMP/Shrimply.app/Contents/MacOS/shrimply" >> "$GITHUB_ENV"
-      - name: Download the published Windows app
+      - name: Download the hosted Windows app
         if: runner.os == 'Windows'
         env:
           GH_TOKEN: ${{ github.token }}
+          WINDOWS_RUN: ${{ inputs.windows-run }}
         shell: pwsh
         run: |
           Set-Location $env:RUNNER_TEMP
-          gh release download prerelease-20261128T034822Z-26a2667ee9e7 --repo $env:GITHUB_REPOSITORY --pattern shrimply-windows-x86_64.zip
+          gh run download $env:WINDOWS_RUN --repo $env:GITHUB_REPOSITORY --name shrimply-windows-x86_64
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Expand-Archive shrimply-windows-x86_64.zip app
           $exe = Join-Path $PWD app/shrimply.exe
