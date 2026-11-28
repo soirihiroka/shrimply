@@ -854,12 +854,17 @@ impl Runtime {
             }
             self.status = serde_json::to_string(&self.backend.snapshot()?)
                 .map_err(|error| error.to_string())?;
-            self.error = version_notice.or_else(|| changed.as_ref().err().cloned());
+            self.error = version_notice
+                .clone()
+                .or_else(|| changed.as_ref().err().cloned());
         }
         #[cfg(target_os = "android")]
         if let Some(error) = self.audio.as_ref().and_then(|audio| audio.take_failure()) {
             player::set_playing(&self.player, false);
-            self.error = Some(error);
+            self.error = Some(match version_notice {
+                Some(notice) => format!("{notice}\n\n{error}"),
+                None => error,
+            });
             return Ok(true);
         }
         changed
