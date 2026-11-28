@@ -59,7 +59,7 @@ pub struct ToolkitTimeline {
     track_remux_request: Option<shrimply_timeline_skia::import_queue::BatchId>,
     source_deletion: Option<shrimply_timeline_skia::import_queue::SourceDeletion>,
     interaction_error: Option<String>,
-    screen_recording: Option<video_recording::ScreenRecording>,
+    video_recording: Option<video_recording::VideoRecording>,
     #[cfg(windows)]
     native_window: usize,
     deletion: Option<TrackDeletion>,
@@ -100,7 +100,7 @@ impl ToolkitTimeline {
             track_remux_request: None,
             source_deletion: None,
             interaction_error: None,
-            screen_recording: None,
+            video_recording: None,
             #[cfg(windows)]
             native_window: 0,
             deletion: None,
@@ -125,7 +125,7 @@ impl ToolkitTimeline {
         }
         #[cfg(not(windows))]
         let _ = native_window;
-        self.poll_screen_recording();
+        self.poll_video_recording();
         self.poll_pointer_lock();
         let size = vec2(width as f32 / scale, height as f32 / scale);
         if !force_redraw && !self.scene.needs_redraw(size) {
@@ -171,8 +171,7 @@ impl ToolkitTimeline {
                 .scene
                 .toggle_video_recording_at(request.key, request.position)
         {
-            self.interaction_error =
-                Some(format!("Could not record screen or application: {error}"));
+            self.interaction_error = Some(format!("Could not record video: {error}"));
         }
         if let Some(request) = requests.track_add {
             self.track_add_presentation = Some(TrackAddMenuPresentation {
@@ -186,18 +185,17 @@ impl ToolkitTimeline {
             self.track_add_request = Some(request);
         }
         if let Err(error) = self.apply_video_recording_commands() {
-            self.interaction_error =
-                Some(format!("Could not record screen or application: {error}"));
+            self.interaction_error = Some(format!("Could not record video: {error}"));
         }
         Ok(())
     }
 
-    fn poll_screen_recording(&mut self) {
+    fn poll_video_recording(&mut self) {
         loop {
             let event = match self
-                .screen_recording
+                .video_recording
                 .as_ref()
-                .map(video_recording::ScreenRecording::try_event)
+                .map(video_recording::VideoRecording::try_event)
             {
                 Some(Ok(event)) => event,
                 Some(Err(std::sync::mpsc::TryRecvError::Empty)) | None => return,
@@ -215,11 +213,10 @@ impl ToolkitTimeline {
 
             let result = self.scene.handle_video_recording_event(event);
             if terminal {
-                self.screen_recording = None;
+                self.video_recording = None;
             }
             if let Err(error) = result.and_then(|()| self.apply_video_recording_commands()) {
-                self.interaction_error =
-                    Some(format!("Could not record screen or application: {error}"));
+                self.interaction_error = Some(format!("Could not record video: {error}"));
             }
             if terminal {
                 return;
@@ -230,16 +227,20 @@ impl ToolkitTimeline {
     fn apply_video_recording_commands(&mut self) -> Result<(), String> {
         while let Some(command) = self.scene.take_video_recording_command() {
             match command {
-                shrimply_timeline_skia::recording::VideoRecordingCommand::Start { fps } => {
-                    if self.screen_recording.is_some() {
-                        return Err("A screen recording is already active".into());
+                shrimply_timeline_skia::recording::VideoRecordingCommand::Start { fps, source } => {
+                    if self.video_recording.is_some() {
+                        return Err("A video recording is already active".into());
                     }
                     #[cfg(target_os = "linux")]
-                    let result = video_recording::ScreenRecording::start(fps);
+                    let result = video_recording::VideoRecording::start(fps, source.as_deref());
                     #[cfg(windows)]
-                    let result = video_recording::ScreenRecording::start(fps, self.native_window);
+                    let result = video_recording::VideoRecording::start(
+                        fps,
+                        source.as_deref(),
+                        self.native_window,
+                    );
                     match result {
-                        Ok(recording) => self.screen_recording = Some(recording),
+                        Ok(recording) => self.video_recording = Some(recording),
                         Err(error) => self.scene.handle_video_recording_event(
                             shrimply_timeline_skia::recording::VideoRecordingEvent::Finished(Err(
                                 error,
@@ -248,7 +249,7 @@ impl ToolkitTimeline {
                     }
                 }
                 shrimply_timeline_skia::recording::VideoRecordingCommand::Stop => {
-                    if let Some(recording) = self.screen_recording.as_ref() {
+                    if let Some(recording) = self.video_recording.as_ref() {
                         recording.stop();
                     }
                 }
@@ -496,7 +497,11 @@ impl ToolkitTimeline {
         self.prepare_context_menu_for_input(vec2(x, y), false);
     }
     fn prepare_context_menu_for_input(&mut self, point: Vec2, touch: bool) {
-        self.context_menu = self.scene.prepare_context_menu_for_input(point, touch);
+        self.context_menu = self.scene.prepare_context_menu_with_cameras(
+            point,
+            touch,
+            video_recording::camera_devices,
+        );
         self.deletion = None;
     }
     pub fn take_context_menu(&mut self) -> Option<(Vec2, bool)> {

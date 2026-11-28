@@ -401,15 +401,11 @@ impl CanvasView {
                 break;
             };
             match command {
-                shrimply_timeline_skia::recording::VideoRecordingCommand::Start { fps } => {
+                shrimply_timeline_skia::recording::VideoRecordingCommand::Start { fps, source } => {
                     if self.ivars().video_recording.borrow().is_some() {
                         failure.get_or_insert_with(|| "A video recording is already active".into());
                         continue;
                     }
-                    let source = match &*self.ivars().content.borrow() {
-                        Content::Timeline(scene) => scene.video_source().map(str::to_owned),
-                        _ => None,
-                    };
                     let started = match source {
                         Some(source) => {
                             camera::CameraRecording::start(source).map(VideoRecording::Camera)

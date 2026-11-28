@@ -6508,6 +6508,7 @@ dependencies = [
  "shrimply-inspector-appkit",
  "shrimply-inspector-document",
  "shrimply-math-core",
+ "shrimply-media-info",
  "shrimply-paint-edit-skia",
  "shrimply-playback-performance",
  "shrimply-preview-interaction-skia",

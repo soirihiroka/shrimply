@@ -123,9 +123,12 @@ fn ensure_duration(player: &SharedPlayerState, position: Time) {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Debug)]
 pub enum VideoRecordingCommand {
-    Start { fps: crate::Fraction },
+    Start {
+        fps: crate::Fraction,
+        source: Option<String>,
+    },
     Stop,
 }
 
@@ -201,7 +204,10 @@ impl Scene {
             stopping: false,
         });
         self.video_recording_commands
-            .push_back(VideoRecordingCommand::Start { fps });
+            .push_back(VideoRecordingCommand::Start {
+                fps,
+                source: self.video_source.clone(),
+            });
         Ok(())
     }
 

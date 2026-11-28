@@ -1,4 +1,4 @@
-use super::{Event, RecordingDelegate};
+use super::{Event, FinishedVideoRecording, RecordingDelegate};
 use block2::RcBlock;
 use objc2::rc::{Retained, autoreleasepool};
 use objc2::runtime::{Bool, ProtocolObject};
@@ -8,10 +8,10 @@ use objc2_av_foundation::{
     AVCaptureDevicePosition, AVCaptureDeviceTypeBuiltInWideAngleCamera,
     AVCaptureDeviceTypeContinuityCamera, AVCaptureDeviceTypeExternal, AVCaptureFileOutput,
     AVCaptureFileOutputRecordingDelegate, AVCaptureMovieFileOutput, AVCaptureSession,
-    AVMediaTypeVideo,
+    AVErrorRecordingSuccessfullyFinishedKey, AVMediaTypeVideo,
 };
 use objc2_core_media::CMVideoFormatDescriptionGetDimensions;
-use objc2_foundation::{NSArray, NSError, NSObject, NSObjectProtocol, NSString, NSURL};
+use objc2_foundation::{NSArray, NSError, NSNumber, NSObject, NSObjectProtocol, NSString, NSURL};
 use std::sync::{atomic::Ordering, mpsc};
 
 pub(in crate::macos::canvas) fn devices() -> Vec<(String, String)> {
@@ -71,24 +71,60 @@ define_class!(
         #[unsafe(method(captureOutput:didFinishRecordingToOutputFileAtURL:fromConnections:error:))]
         unsafe fn did_finish(
             &self,
-            output: &AVCaptureFileOutput,
+            _output: &AVCaptureFileOutput,
             _url: &NSURL,
             _connections: &NSArray<AVCaptureConnection>,
             error: Option<&NSError>,
         ) {
-            if let Some(error) = error {
-                self.ivars()
-                    .recording
-                    .fail(error.localizedDescription().to_string());
-            } else {
-                self.ivars()
-                    .recording
-                    .finish_duration(unsafe { output.recordedDuration() });
+            let recording = &self.ivars().recording;
+            let result = match error {
+                Some(error)
+                    if !unsafe { AVErrorRecordingSuccessfullyFinishedKey }
+                        .and_then(|key| error.userInfo().objectForKey(key))
+                        .and_then(|value| value.downcast::<NSNumber>().ok())
+                        .is_some_and(|value| value.boolValue()) =>
+                {
+                    Err(error.localizedDescription().to_string())
+                }
+                _ => completed(&recording.ivars().path),
+            };
+            match result {
+                Ok(file) => recording.finish(file),
+                Err(error) => recording.fail(error),
             }
             let _ = self.ivars().commands.send(Command::Finished);
         }
     }
 );
+
+fn completed(path: &std::path::Path) -> Result<FinishedVideoRecording, String> {
+    let file = shrimply_media_info::inspect(path, None)?;
+    let (stream, video) = file
+        .streams
+        .iter()
+        .find_map(|stream| Some((stream, stream.video.as_ref()?)))
+        .ok_or("The camera recording contains no video")?;
+    let duration = stream
+        .duration
+        .as_ref()
+        .or_else(|| file.container.as_ref()?.duration.as_ref())
+        .filter(|duration| {
+            duration.value > 0
+                && duration.time_base.numerator > 0
+                && duration.time_base.denominator > 0
+        })
+        .ok_or("The camera recording has no duration")?;
+    Ok(FinishedVideoRecording::new(
+        path.to_owned(),
+        shrimply_math_core::Time::from_fraction(
+            duration.value.saturating_mul(duration.time_base.numerator),
+            duration.time_base.denominator,
+        ),
+        video.width,
+        video.height,
+        None,
+    ))
+}
 
 pub(in crate::macos::canvas) struct CameraRecording {
     stop: mpsc::Sender<Command>,

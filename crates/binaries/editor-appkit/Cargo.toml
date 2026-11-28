@@ -24,7 +24,7 @@ shrimply-inspector-appkit = { workspace = true }
 skia-safe.workspace = true
 objc2.workspace = true
 objc2-app-kit = { workspace = true, features = ["objc2-uniform-type-identifiers"] }
-objc2-av-foundation = { version = "0.3", default-features = false, features = ["std", "AVCaptureDevice", "AVCaptureInput", "AVCaptureFileOutput", "AVCaptureOutputBase", "AVCaptureSession", "AVMediaFormat", "block2", "objc2-core-media"] }
+objc2-av-foundation = { version = "0.3", default-features = false, features = ["std", "AVError", "AVCaptureDevice", "AVCaptureInput", "AVCaptureFileOutput", "AVCaptureOutputBase", "AVCaptureSession", "AVMediaFormat", "block2", "objc2-core-media"] }
 objc2-foundation.workspace = true
 objc2-quartz-core.workspace = true
 objc2-core-graphics.workspace = true
@@ -39,6 +39,7 @@ shrimply-preview-interaction-skia = { workspace = true }
 shrimply-project-document = { workspace = true, default-features = true }
 shrimply-editor-state = { workspace = true }
 shrimply-math-core = { workspace = true }
+shrimply-media-info.workspace = true
 glam.workspace = true
 shrimply-preview-provider-skia = { workspace = true }
 shrimply-preview-render-core.workspace = true

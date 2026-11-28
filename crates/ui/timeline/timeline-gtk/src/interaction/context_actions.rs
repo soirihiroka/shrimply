@@ -1,5 +1,5 @@
 use super::*;
-use crate::RenderedVideoFrame;
+use crate::{RenderedVideoFrame, video_recording};
 use shrimply_components_gtk::tr;
 use shrimply_components_gtk::ui::I18nAlertDialogExt;
 use shrimply_components_gtk::ui::I18nFileFilterExt;
@@ -23,7 +23,7 @@ pub(crate) fn show_timeline_item_context_menu(
     let contract = runtime
         .borrow_mut()
         .scene
-        .prepare_context_menu_for_input(point, touch);
+        .prepare_context_menu_with_cameras(point, touch, video_recording::camera_devices);
     if contract.sections.is_empty() {
         return;
     }

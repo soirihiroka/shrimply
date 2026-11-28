@@ -13,7 +13,7 @@ pub(super) fn handle_video_recording(
         .scene
         .toggle_video_recording_at(request.key, request.position)
     {
-        interaction::show_error_dialog(area, "Could not record screen or application", &error);
+        interaction::show_error_dialog(area, "Could not record video", &error);
         return true;
     }
     match apply_video_recording_commands(runtime) {
@@ -23,7 +23,7 @@ pub(super) fn handle_video_recording(
             }
         }
         Err(error) => {
-            interaction::show_error_dialog(area, "Could not record screen or application", &error);
+            interaction::show_error_dialog(area, "Could not record video", &error);
         }
     }
     area.queue_render();
@@ -36,13 +36,13 @@ pub(super) fn apply_video_recording_commands(
     let mut started = false;
     while let Some(command) = runtime.scene.take_video_recording_command() {
         match command {
-            shrimply_timeline_skia::recording::VideoRecordingCommand::Start { fps } => {
-                if runtime.screen_recording.is_some() {
-                    return Err("A screen recording is already active".into());
+            shrimply_timeline_skia::recording::VideoRecordingCommand::Start { fps, source } => {
+                if runtime.video_recording.is_some() {
+                    return Err("A video recording is already active".into());
                 }
-                match video_recording::ScreenRecording::start(fps) {
+                match video_recording::VideoRecording::start(fps, source.as_deref()) {
                     Ok(recording) => {
-                        runtime.screen_recording = Some(recording);
+                        runtime.video_recording = Some(recording);
                         started = true;
                     }
                     Err(error) => runtime.scene.handle_video_recording_event(
@@ -53,7 +53,7 @@ pub(super) fn apply_video_recording_commands(
                 }
             }
             shrimply_timeline_skia::recording::VideoRecordingCommand::Stop => {
-                if let Some(recording) = runtime.screen_recording.as_ref() {
+                if let Some(recording) = runtime.video_recording.as_ref() {
                     recording.stop();
                 }
             }
@@ -67,9 +67,9 @@ fn poll_video_recording(area: &gtk::GLArea, runtime: Rc<RefCell<TimelineRuntime>
     glib::timeout_add_local(VIDEO_RECORDING_POLL_INTERVAL, move || {
         let event = match runtime
             .borrow()
-            .screen_recording
+            .video_recording
             .as_ref()
-            .map(video_recording::ScreenRecording::try_event)
+            .map(video_recording::VideoRecording::try_event)
         {
             Some(Ok(event)) => event,
             Some(Err(std::sync::mpsc::TryRecvError::Empty)) => {
@@ -92,12 +92,12 @@ fn poll_video_recording(area: &gtk::GLArea, runtime: Rc<RefCell<TimelineRuntime>
             let mut runtime = runtime.borrow_mut();
             let result = runtime.scene.handle_video_recording_event(event);
             if terminal {
-                runtime.screen_recording = None;
+                runtime.video_recording = None;
             }
             result.and_then(|()| apply_video_recording_commands(&mut runtime).map(|_| ()))
         };
         if let Err(error) = result {
-            interaction::show_error_dialog(&area, "Could not record screen or application", &error);
+            interaction::show_error_dialog(&area, "Could not record video", &error);
         }
         area.queue_render();
         if terminal {

@@ -42,6 +42,7 @@ pub(crate) struct Runtime {
     file_drop: Option<file_drop::Session>,
     timeline_service: Option<shrimply_inspector_document::timeline_service::Session>,
     video_recording: Option<video_recording::Recording>,
+    camera_sources: Vec<(String, String)>,
     inspect_serial: u64,
     pub backend: ProjectBackend,
     #[cfg(target_os = "android")]
@@ -144,6 +145,7 @@ impl Runtime {
             file_drop: None,
             timeline_service: None,
             video_recording: None,
+            camera_sources: Vec::new(),
             inspect_serial: 0,
             #[cfg(target_os = "android")]
             export: None,
@@ -490,6 +492,11 @@ impl Runtime {
                     .ok_or("open a project first")?
                     .toggle_video_recording_at(key, position)?;
                 self.backend.snapshot()
+            }
+            "camera_sources" => {
+                self.camera_sources = serde_json::from_value(request["sources"].clone())
+                    .map_err(|error| error.to_string())?;
+                Ok(json!({}))
             }
             "video_recording_event" => self.video_recording_event(request),
             "play" | "pause" | "step" | "seek" => {

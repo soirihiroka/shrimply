@@ -6,7 +6,7 @@ pub(super) struct TimelineRuntime {
     pub(super) scene: shrimply_timeline_skia::scene::Scene,
     pub(super) renderer: TimelineRenderer,
     pub(super) animation_tick_active: bool,
-    pub(super) screen_recording: Option<video_recording::ScreenRecording>,
+    pub(super) video_recording: Option<video_recording::VideoRecording>,
     pub(super) active_context_menu: Option<crate::context_menu::PresentedMenu>,
 }
 impl TimelineRuntime {
@@ -31,7 +31,7 @@ impl TimelineRuntime {
             scene,
             renderer: TimelineRenderer::new(),
             animation_tick_active: false,
-            screen_recording: None,
+            video_recording: None,
             active_context_menu: None,
         }
     }

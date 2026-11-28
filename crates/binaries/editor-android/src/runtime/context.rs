@@ -40,7 +40,8 @@ impl Runtime {
         let Some(scene) = self.timeline.as_mut() else {
             return;
         };
-        let model = scene.prepare_context_menu_for_input(point, touch);
+        let model =
+            scene.prepare_context_menu_with_cameras(point, touch, || self.camera_sources.clone());
         if model.sections.is_empty() {
             self.context_menu = None;
         } else {

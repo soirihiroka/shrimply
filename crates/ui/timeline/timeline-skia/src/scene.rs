@@ -193,10 +193,6 @@ impl Scene {
         selection_state::focused_video_address(&self.selection, &self.project.borrow())
     }
 
-    pub fn video_source(&self) -> Option<&str> {
-        self.video_source.as_deref()
-    }
-
     pub fn set_recording_available(&mut self, audio: bool, video: bool) {
         self.recording_available = (audio, video);
     }

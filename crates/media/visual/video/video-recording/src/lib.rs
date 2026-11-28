@@ -14,6 +14,49 @@ mod windows_capture;
 #[cfg(all(feature = "capture", windows))]
 pub use windows_capture::ScreenRecording;
 
+#[cfg(all(feature = "capture", any(target_os = "linux", windows)))]
+mod camera;
+#[cfg(all(feature = "capture", any(target_os = "linux", windows)))]
+pub use camera::devices as camera_devices;
+
+#[cfg(all(feature = "capture", any(target_os = "linux", windows)))]
+pub enum VideoRecording {
+    Screen(ScreenRecording),
+    Camera(camera::CameraRecording),
+}
+
+#[cfg(all(feature = "capture", any(target_os = "linux", windows)))]
+impl VideoRecording {
+    pub fn start(
+        fps: shrimply_math_core::Fraction,
+        source: Option<&str>,
+        #[cfg(windows)] native_window: usize,
+    ) -> Result<Self, String> {
+        if let Some(source) = source {
+            return camera::CameraRecording::start(source, fps).map(Self::Camera);
+        }
+        #[cfg(target_os = "linux")]
+        let result = ScreenRecording::start(fps);
+        #[cfg(windows)]
+        let result = ScreenRecording::start(fps, native_window);
+        result.map(Self::Screen)
+    }
+
+    pub fn stop(&self) {
+        match self {
+            Self::Screen(recording) => recording.stop(),
+            Self::Camera(recording) => recording.stop(),
+        }
+    }
+
+    pub fn try_event(&self) -> Result<VideoRecordingEvent, std::sync::mpsc::TryRecvError> {
+        match self {
+            Self::Screen(recording) => recording.try_event(),
+            Self::Camera(recording) => recording.try_event(),
+        }
+    }
+}
+
 pub enum VideoRecordingEvent {
     Ready { width: u32, height: u32 },
     Cancelled,

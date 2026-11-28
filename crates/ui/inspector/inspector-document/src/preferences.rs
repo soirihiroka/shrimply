@@ -58,6 +58,7 @@ impl Preferences {
         self.trust.decorate(&mut document);
         #[cfg(not(target_os = "android"))]
         self.desktop.decorate(store, &mut document);
+        document["pending"] = json!(self.has_pending_changes());
         document["close_command"] = json!({"action":"preferences_close"});
         document
     }

@@ -726,10 +726,12 @@ impl qobject::EditorBackend {
     }
 
     pub fn settings_document(&self) -> QString {
-        let mut settings = self.settings.borrow_mut();
-        let mut document = settings.snapshot(self.settings_store());
-        document["pending"] = serde_json::json!(settings.has_pending_changes());
-        QString::from(document.to_string())
+        QString::from(
+            self.settings
+                .borrow_mut()
+                .snapshot(self.settings_store())
+                .to_string(),
+        )
     }
 
     pub fn apply_settings(&self, command: &QString) -> QString {
@@ -738,10 +740,7 @@ impl qobject::EditorBackend {
             .map_err(|error| error.to_string())
             .and_then(|command| settings.apply(self.settings_store(), &command));
         let document = match result {
-            Ok(mut document) => {
-                document["pending"] = serde_json::json!(settings.has_pending_changes());
-                document
-            }
+            Ok(document) => document,
             Err(error) => serde_json::json!({"error":error}),
         };
         QString::from(document.to_string())

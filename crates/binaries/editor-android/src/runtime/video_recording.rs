@@ -15,6 +15,7 @@ pub(super) struct Recording {
     id: String,
     path: PathBuf,
     fps: Fraction,
+    camera_id: Option<String>,
     stopping: bool,
     discard: bool,
 }
@@ -64,13 +65,13 @@ impl Runtime {
         {
             changed = true;
             match command {
-                VideoRecordingCommand::Start { fps } => {
+                VideoRecordingCommand::Start { fps, source } => {
                     if self.video_recording.is_some() {
                         self.timeline
                             .as_mut()
                             .expect("recording scene")
                             .handle_video_recording_event(VideoRecordingEvent::Finished(Err(
-                                "A screen recording is already active".into(),
+                                "A video recording is already active".into(),
                             )))?;
                         continue;
                     }
@@ -81,6 +82,7 @@ impl Runtime {
                             path: directory.join(format!(".incoming-{id}")),
                             id,
                             fps,
+                            camera_id: source,
                             stopping: false,
                             discard: false,
                         })
@@ -138,7 +140,7 @@ impl Runtime {
             .as_ref()
             .map_or(Value::Null, |recording| {
                 json!({
-                    "id":recording.id, "path":recording.path,
+                    "id":recording.id, "path":recording.path, "camera_id":recording.camera_id,
                     "state":if recording.stopping { "stop" } else { "start" },
                     "fps_numerator":fraction_numerator(recording.fps),
                     "fps_denominator":fraction_denominator(recording.fps),
@@ -160,7 +162,7 @@ impl Runtime {
         }
         let event = request["event"]
             .as_str()
-            .ok_or("Screen recording event is required")?;
+            .ok_or("Video recording event is required")?;
         if event == "ready" {
             if recording.stopping {
                 return Ok(json!({}));
@@ -170,7 +172,7 @@ impl Runtime {
                     .as_u64()
                     .and_then(|value| u32::try_from(value).ok())
                     .filter(|value| *value > 0)
-                    .ok_or("Invalid screen recording dimensions")
+                    .ok_or("Invalid recording dimensions")
             };
             self.timeline
                 .as_mut()
@@ -188,7 +190,7 @@ impl Runtime {
                 "cancelled" => VideoRecordingEvent::Cancelled,
                 "failed" => VideoRecordingEvent::Finished(Err(request["error"]
                     .as_str()
-                    .unwrap_or("Screen capture failed")
+                    .unwrap_or("Video capture failed")
                     .to_owned())),
                 _ => {
                     let result = (|| {
@@ -196,7 +198,7 @@ impl Runtime {
                             .as_i64()
                             .filter(|value| *value > 0)
                             .map(|value| Time::from_fraction(value, MICROSECONDS_PER_SECOND))
-                            .ok_or("The screen recording has no duration")?;
+                            .ok_or("The video recording has no duration")?;
                         let width = request["width"]
                             .as_u64()
                             .and_then(|value| u32::try_from(value).ok())
