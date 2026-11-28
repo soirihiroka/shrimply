@@ -31,7 +31,9 @@ import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.font.FontFamily
@@ -487,9 +489,11 @@ private fun targetArguments(saved: String): Array<Pair<String, Any>> {
 @Composable
 private fun Launcher(projects: List<JSONObject>, version: String, daemon: String, enabled: Boolean,
     create: () -> Unit, open: () -> Unit, settings: () -> Unit, delete: (JSONObject) -> Unit, select: (JSONObject) -> Unit) {
-    val context = LocalContext.current
-    val logo = remember(context) {
-        checkNotNull(context.getDrawable(R.mipmap.ic_launcher)).toBitmap(96, 96).asImageBitmap()
+    val resources = LocalResources.current
+    val configuration = LocalConfiguration.current
+    val theme = LocalContext.current.theme
+    val logo = remember(resources, configuration, theme) {
+        resources.getDrawable(R.mipmap.ic_launcher, theme).toBitmap(96, 96).asImageBitmap()
     }
     var search by rememberSaveable { mutableStateOf("") }
     var showMenu by rememberSaveable { mutableStateOf(false) }
