@@ -1,0 +1,10 @@
+diff --git a/configure b/configure
+--- a/configure
++++ b/configure
+@@ -5182,5 +5182,6 @@ msvc_common_flags(){
+             -lz)                  echo ${zlib_msvc_lib:-zlib.lib} ;;
+             -lx264)               echo libx264.lib ;;
++            -lmp3lame)            echo libmp3lame.lib ;;
+             -lstdc++)             ;;
+             -l*)                  echo ${flag#-l}.lib ;;
+             -LARGEADDRESSAWARE)   echo $flag ;;

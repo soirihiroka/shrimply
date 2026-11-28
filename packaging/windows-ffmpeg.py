@@ -36,13 +36,14 @@ def main():
         if name == "ffmpeg":
             # 9.1 removed the OpenGL output device; our port does not request it.
             build = build.replace(" --disable-opengl", "")
-            patch = Path(__file__).with_name("windows") / "vcpkg/prebuilt-bin2c.patch"
-            shutil.copyfile(patch, overlay / patch.name)
+            for patch in ("prebuilt-bin2c.patch", "libmp3lame-msvc.patch"):
+                shutil.copyfile(Path(__file__).with_name("windows") / "vcpkg" / patch, overlay / patch)
             declaration += '''    PATCHES
         0003-fix-windowsinclude.patch
         0005-fix-nasm.patch
         0013-define-WINVER.patch
         prebuilt-bin2c.patch
+        libmp3lame-msvc.patch
         0046-fix-msvc-detection.patch
         0050-fix-test-ld-absolute-lib-paths.patch
         0051-fix-msvc-undef-flags.patch
