@@ -235,7 +235,7 @@ impl Encoder {
         bits.put(1, 1); // Common window.
         bits.put(1, 0);
         bits.put(2, self.window as u32);
-        bits.put(1, 0); // Sine window.
+        bits.put(1, 1); // Kaiser–Bessel derived window.
         if layout.windows == 8 {
             bits.put(4, max_sfb as u32);
             bits.put(7, 0b1010101); // Four groups of two short windows.

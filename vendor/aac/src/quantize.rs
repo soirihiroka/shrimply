@@ -12,16 +12,24 @@ pub(crate) struct Choice {
 
 pub(crate) struct Search {
     inverse: Vec<f32>,
+    boundaries: Vec<f32>,
     bands: [Vec<Vec<Choice>>; 2],
     powers: [[f32; FRAME_SAMPLES]; 2],
 }
 
 impl Search {
     pub fn new() -> Self {
+        let inverse: Vec<_> = (0..=MAX_QUANTIZED)
+            .map(|value| (value as f32).powf(4.0 / 3.0))
+            .collect();
+        let boundaries = inverse
+            .windows(2)
+            .map(|adjacent| ((adjacent[0] + adjacent[1]) * 0.5).powf(0.75))
+            .chain([f32::INFINITY])
+            .collect();
         Self {
-            inverse: (0..=MAX_QUANTIZED)
-                .map(|value| (value as f32).powf(4.0 / 3.0))
-                .collect(),
+            inverse,
+            boundaries,
             bands: std::array::from_fn(|_| (0..64).map(|_| Vec::with_capacity(24)).collect()),
             powers: [[0.0; FRAME_SAMPLES]; 2],
         }
@@ -40,7 +48,8 @@ impl Search {
             .zip(spectra.iter().zip(masking))
         {
             for (power, sample) in powers.iter_mut().zip(source) {
-                *power = sample.abs().sqrt().sqrt() * sample.abs().sqrt();
+                let root = sample.abs().sqrt();
+                *power = root * root.sqrt();
             }
             for group in 0..layout.groups {
                 for band in 0..layout.band_count() {
@@ -84,7 +93,7 @@ impl Search {
                             .iter_mut()
                             .zip(layout.ranges(group, band).flatten())
                         {
-                            *value = quantize(source[i], powers[i], factor);
+                            *value = quantize(source[i], powers[i], factor, &self.boundaries);
                             let magnitude = value.unsigned_abs();
                             high = high.max(magnitude);
                             error += (source[i].abs()
@@ -149,7 +158,12 @@ impl Search {
     }
 
     pub fn coefficient(&self, channel: usize, index: usize, sample: f32, factor: f32) -> i16 {
-        quantize(sample, self.powers[channel][index], factor)
+        quantize(
+            sample,
+            self.powers[channel][index],
+            factor,
+            &self.boundaries,
+        )
     }
 }
 
@@ -157,7 +171,9 @@ pub(crate) fn gain(sf: u8) -> f32 {
     ((f32::from(sf) - 100.0) * 0.25).exp2()
 }
 
-fn quantize(sample: f32, power: f32, factor: f32) -> i16 {
-    let magnitude = (power * factor + 0.4054).min(MAX_QUANTIZED as f32) as i16;
+fn quantize(sample: f32, power: f32, factor: f32, boundaries: &[f32]) -> i16 {
+    let scaled = power * factor;
+    let floor = (scaled as usize).min(MAX_QUANTIZED);
+    let magnitude = (floor + usize::from(scaled > boundaries[floor])) as i16;
     if sample < 0.0 { -magnitude } else { magnitude }
 }
