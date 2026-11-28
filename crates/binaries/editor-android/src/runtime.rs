@@ -383,6 +383,8 @@ impl Runtime {
                 Ok(layout.json())
             }
             "preferences_schema" | "preferences" => {
+                let previous_font = shrimply_preferences_core::snapshot(&self.backend.preferences)
+                    .default_text_font_family;
                 let schema = if operation == "preferences" {
                     self.preferences_ui
                         .apply(&self.backend.preferences, request)?
@@ -391,11 +393,13 @@ impl Runtime {
                 };
                 let font = shrimply_preferences_core::snapshot(&self.backend.preferences)
                     .default_text_font_family;
-                self.inspector = self
-                    .inspector
-                    .take()
-                    .map(|controller| controller.with_default_text_font(font));
-                self.inspector_stamp = None;
+                if font != previous_font {
+                    self.inspector = self
+                        .inspector
+                        .take()
+                        .map(|controller| controller.with_default_text_font(font));
+                    self.inspector_stamp = None;
+                }
                 Ok(schema)
             }
             "preview_context_action" | "preview_context_dismiss" => {

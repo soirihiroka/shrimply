@@ -62,6 +62,9 @@ pub fn page(page: PreferencePage, controls: Vec<Value>) -> Value {
 
 fn preference(store: &SharedPreferences, id: Id) -> Value {
     let presentation = id.presentation();
+    if !presentation.available {
+        return unavailable(presentation.label);
+    }
     let command = json!({"action":"set","key":id.key()});
     let mut control = match value(store, id) {
         StoredValue::Boolean(value) => {
@@ -115,6 +118,10 @@ fn preference(store: &SharedPreferences, id: Id) -> Value {
     control
 }
 
+fn unavailable(label: &str) -> Value {
+    json!({"widget":"text","label":text(label),"display":text("Unavailable on this platform"),"editable":false})
+}
+
 impl PreferencesUi {
     /// Network calls run away from the editor/render thread. Hosts refresh this
     /// schema while the dialog is visible; no host interprets server responses.
@@ -128,29 +135,26 @@ impl PreferencesUi {
         if !self.servers.contains_key(&selected) {
             self.request_server(selected, None);
         }
-        let mut groups: Vec<(&str, Vec<Value>)> = Vec::new();
+        let mut groups = HashMap::<_, Vec<_>>::new();
         for id in Id::ALL {
             let presentation = id.presentation();
-            if !presentation.available || presentation.page.is_none() {
-                continue;
+            if presentation.page.is_some() {
+                groups
+                    .entry(presentation.group)
+                    .or_default()
+                    .push(preference(store, id));
             }
-            let index = groups
-                .iter()
-                .position(|(group, _)| *group == presentation.group)
-                .unwrap_or_else(|| {
-                    groups.push((presentation.group, Vec::new()));
-                    groups.len() - 1
-                });
-            groups[index].1.push(preference(store, id));
         }
-        let mut groups = groups.into_iter().collect::<HashMap<_, _>>();
-        for group in self.compute_servers(store) {
-            groups.insert(group.0, group.1);
-        }
-        let controls = PreferencePage::ALL.into_iter().filter_map(|id| {
+        #[cfg(target_os = "android")]
+        groups.extend([
+            ("Command Line", vec![unavailable("CLI")]),
+            ("Acceleration Device", vec![json!({"widget":"text","label":text("Acceleration Device"),"display":"Vulkan","editable":false})]),
+        ]);
+        groups.extend(self.compute_servers(store));
+        let controls = PreferencePage::ALL.map(|id| {
             let controls = id.groups().iter().filter_map(|label| groups.remove(label).map(|controls| json!({"widget":"group","label":text(label),"controls":controls}))).collect::<Vec<_>>();
-            (!controls.is_empty()).then(|| page(id, controls))
-        }).collect::<Vec<_>>();
+            page(id, controls)
+        });
         json!({"title":text(SETTINGS_TITLE),"wide_width":SETTINGS_WIDE_WIDTH,"sidebar_width":SETTINGS_SIDEBAR_WIDTH,"back_label":text("Back"),"close_label":text("Close"),"controls":controls})
     }
 

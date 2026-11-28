@@ -6,7 +6,7 @@
         window:splitMinHeightDp="0"
         window:splitMinSmallestWidthDp="0"
         window:splitMaxAspectRatioInPortrait="alwaysAllow"
-        window:finishPrimaryWithSecondary="adjacent"
+        window:finishPrimaryWithSecondary="never"
         window:finishSecondaryWithPrimary="always"
         window:clearTop="true">
         <SplitPairFilter
