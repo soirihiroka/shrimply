@@ -222,17 +222,21 @@ internal fun TimelineContextMenu(menu: JSONObject, enabled: Boolean, origin: DpO
     if (clipboardRequest != null) return
     val bottomSheet = remember(menu.getLong("serial")) { menu.getBoolean("bottom_sheet") }
     val sections = menu.getJSONArray("sections")
+    val activate: (JSONObject) -> Unit = { entry -> command("context_action", arrayOf("action" to entry.getString("action"))) }
     val content: @Composable () -> Unit = {
-        for (sectionIndex in 0 until sections.length()) {
+        if (menu.optBoolean("radio")) {
+            val entries = sections.getJSONArray(0).objects()
+            ChoiceMenuItems(entries.map { tr(it.getString("label")) },
+                selected = entries.indexOfFirst { it.optBoolean("checked") },
+                radioRows = true, enabled = enabled) { activate(entries[it]) }
+        } else for (sectionIndex in 0 until sections.length()) {
             if (sectionIndex > 0) HorizontalDivider()
             val section = sections.getJSONArray(sectionIndex)
             for (index in 0 until section.length()) {
                 val entry = section.getJSONObject(index)
                 if (entry.has("action")) DropdownMenuItem(text = { Text(tr(entry.getString("label"))) },
                     trailingIcon = if (entry.isNull("checked")) null else { { Checkbox(checked = entry.getBoolean("checked"), onCheckedChange = null) } },
-                    enabled = enabled && entry.getBoolean("enabled"), onClick = {
-                    command("context_action", arrayOf("action" to entry.getString("action")))
-                }) else {
+                    enabled = enabled && entry.getBoolean("enabled"), onClick = { activate(entry) }) else {
                     var value by remember(menu.getLong("serial"), sectionIndex, index, entry.getDouble("value")) { mutableFloatStateOf(entry.getDouble("value").toFloat()) }
                     Column(Modifier.widthIn(min = 240.dp).padding(horizontal = 16.dp)) {
                         Text(tr(entry.getString("label")))
@@ -254,24 +258,25 @@ internal fun TimelineContextMenu(menu: JSONObject, enabled: Boolean, origin: DpO
 
 /** Search eligibility and matching are the same Rust selector contract used by GTK. */
 @Composable
-internal fun ChoiceMenuItems(labels: List<String>, selected: Int = -1, radioRows: Boolean = false, select: (Int) -> Unit) {
+internal fun ChoiceMenuItems(labels: List<String>, selected: Int = -1, radioRows: Boolean = false,
+    enabled: Boolean = true, select: (Int) -> Unit) {
     var query by remember { mutableStateOf("") }
     val encoded = remember(labels) { JSONArray(labels).toString() }
     val matches = remember(encoded, query) { JSONArray(NativeLayout.matchingChoices(encoded, query)) }
     if (NativeLayout.choiceSearchable(labels.size)) {
         val width = if (LocalMenuBottomSheet.current || radioRows) Modifier.fillMaxWidth() else Modifier.widthIn(min = 240.dp)
-        OutlinedTextField(value = query, onValueChange = { query = it }, singleLine = true,
+        OutlinedTextField(value = query, onValueChange = { query = it }, singleLine = true, enabled = enabled,
             label = { Text(tr("Search")) }, modifier = Modifier.padding(12.dp).then(width))
     }
     for (index in 0 until matches.length()) {
         val choice = matches.getInt(index)
         if (radioRows || selected >= 0) Row(
-            Modifier.fillMaxWidth().selectable(selected = choice == selected, role = Role.RadioButton,
+            Modifier.fillMaxWidth().selectable(selected = choice == selected, enabled = enabled, role = Role.RadioButton,
                 onClick = { select(choice) }).heightIn(min = 48.dp).padding(horizontal = 12.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically,
         ) {
-            RadioButton(selected = choice == selected, onClick = null)
+            RadioButton(selected = choice == selected, enabled = enabled, onClick = null)
             Text(labels[choice])
-        } else DropdownMenuItem(text = { Text(labels[choice]) }, onClick = { select(choice) })
+        } else DropdownMenuItem(text = { Text(labels[choice]) }, enabled = enabled, onClick = { select(choice) })
     }
 }

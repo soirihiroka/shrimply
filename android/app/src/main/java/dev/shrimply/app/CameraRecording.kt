@@ -31,7 +31,6 @@ internal class CameraRecording(
     private var started = false
     private var finished = false
     private lateinit var size: Size
-    private var orientation = 0
 
     init { handler.post { attempt(::open) } }
 
@@ -63,9 +62,12 @@ internal class CameraRecording(
         video.setVideoFrameRate(range?.upper ?: requestedRate)
         video.setVideoEncodingBitRate(config.getInt("bitrate"))
         val sensorRotation = characteristics.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 0
-        val front = characteristics.get(CameraCharacteristics.LENS_FACING) == CameraCharacteristics.LENS_FACING_FRONT
-        orientation = (sensorRotation + (if (front) -deviceRotation else deviceRotation) + 360) % 360
-        video.setOrientationHint(orientation)
+        val relativeRotation = when (characteristics.get(CameraCharacteristics.LENS_FACING)) {
+            CameraCharacteristics.LENS_FACING_BACK -> -deviceRotation
+            CameraCharacteristics.LENS_FACING_FRONT -> deviceRotation
+            else -> 0
+        }
+        video.setOrientationHint((sensorRotation + relativeRotation + 360) % 360)
         video.setOutputFile(config.getString("path"))
         video.prepare()
         val surface = video.surface
@@ -135,11 +137,13 @@ internal class CameraRecording(
             if (error != null) return@runCatching event("failed").put("error", error)
             if (!started) return@runCatching event("cancelled")
             recorder?.stop()
-            val duration = MediaMetadataRetriever().use {
+            MediaMetadataRetriever().use {
                 it.setDataSource(config.getString("path"))
-                it.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()
-            } ?: kotlin.error("The camera recording has no duration")
-            event("finished").put("duration_us", duration * 1000).put("rotation", orientation)
+                val duration = it.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()
+                    ?: kotlin.error("The camera recording has no duration")
+                val rotation = it.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)?.toIntOrNull() ?: 0
+                event("finished").put("duration_us", duration * 1000).put("rotation", rotation)
+            }
         }.getOrElse { event("failed").put("error", it.message ?: it.javaClass.simpleName) }
         session?.close()
         camera?.close()

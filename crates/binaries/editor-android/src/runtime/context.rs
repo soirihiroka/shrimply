@@ -30,7 +30,10 @@ impl Menu {
                 "command":{"op":"context_clipboard","serial":self.serial}
             })
         });
-        json!({"clipboard":clipboard,"serial":self.serial,"bottom_sheet":shrimply_components_core::layout::menu_uses_bottom_sheet(if self.touch { "touch" } else { "pointer" }),"x":self.point.x,"y":self.point.y,"sections":sections,"delete_count":self.delete_count})
+        let radio = self.model.actions().any(|item| {
+            matches!(item.action, ContextMenuAction::SelectRecordingSource(_))
+        });
+        json!({"clipboard":clipboard,"serial":self.serial,"radio":radio,"bottom_sheet":!radio && shrimply_components_core::layout::menu_uses_bottom_sheet(if self.touch { "touch" } else { "pointer" }),"x":self.point.x,"y":self.point.y,"sections":sections,"delete_count":self.delete_count})
     }
 }
 
