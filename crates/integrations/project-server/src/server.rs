@@ -79,6 +79,9 @@ pub async fn serve(
         version: shrimply_project_protocol::ServerVersion {
             protocol: shrimply_project_protocol::SERVER_PROTOCOL,
             version: Some(env!("CARGO_PKG_VERSION").into()),
+            git_hash: std::env::var("SHRIMPLY_BUILD_GIT_HASH")
+                .ok()
+                .filter(|hash| !hash.is_empty()),
             name: std::env::var("SHRIMPLY_PROJECT_SERVER_NAME")
                 .ok()
                 .filter(|name| !name.trim().is_empty())
