@@ -1,4 +1,4 @@
-name: AAC comparison
+name: AAC fresh-corpus comparison
 
 on:
   workflow_dispatch:
@@ -49,17 +49,8 @@ jobs:
           )
           export PATH="$RUNNER_TEMP/ffmpeg:$PATH"
           curl -fsSL --retry 3 'https://qc.ebu.io/testmaterials/523/1/download/' -o "$RUNNER_TEMP/sqam.zip"
-          mkdir -p "$RUNNER_TEMP/sqam" "$RUNNER_TEMP/holdout"
-          unzip -j "$RUNNER_TEMP/sqam.zip" 27.flac 35.flac 42.flac 48.flac 49.flac 50.flac -d "$RUNNER_TEMP/sqam"
-          unzip -j "$RUNNER_TEMP/sqam.zip" 40.flac 51.flac 52.flac 60.flac 66.flac 70.flac -d "$RUNNER_TEMP/holdout"
-          /usr/bin/python3 vendor/aac/benchmark.py "$AAC_ENCODER" --fdk --bitrates 64 96 128 192 256 320 --repeat 3 --corpus "$RUNNER_TEMP"/sqam/*.flac > aac-comparison.json
-          /usr/bin/python3 vendor/aac/benchmark.py "$AAC_ENCODER" --fdk --bitrates 64 96 128 192 256 320 --repeat 2 --corpus "$RUNNER_TEMP"/holdout/*.flac > aac-holdout.json
-      - uses: actions/upload-artifact@v7
-        with:
-          name: aac-spectral
-          path: |
-            aac-comparison.json
-            aac-holdout.json
+          mkdir "$RUNNER_TEMP/fresh"
+          unzip -j "$RUNNER_TEMP/sqam.zip" 31.flac 39.flac 44.flac 54.flac 64.flac 69.flac -d "$RUNNER_TEMP/fresh"
       - name: Add ViSQOL audio scores
         env:
           LC_ALL: C
@@ -71,10 +62,10 @@ jobs:
           (cd "$RUNNER_TEMP/visqol" && "$RUNNER_TEMP/bazel" --batch build :visqol -c opt --cxxopt=-include --cxxopt=cstdint --cxxopt=-DFLATBUFFERS_LOCALE_INDEPENDENT=0)
           export PATH="$RUNNER_TEMP/ffmpeg:$PATH"
           mkdir "$RUNNER_TEMP/excerpts"
-          for track in "$RUNNER_TEMP"/holdout/*.flac; do
+          for track in "$RUNNER_TEMP"/fresh/*.flac; do
             ffmpeg -v error -ss 4 -i "$track" -t 8 -c:a pcm_s16le "$RUNNER_TEMP/excerpts/$(basename "$track" .flac).wav"
           done
-          /usr/bin/python3 vendor/aac/benchmark.py "$AAC_ENCODER" --fdk --bitrates 64 96 128 192 256 320 --repeat 2 \
+          /usr/bin/python3 vendor/aac/benchmark.py "$AAC_ENCODER" --fdk --bitrates 48 64 80 96 128 192 256 320 --repeat 2 \
             --corpus "$RUNNER_TEMP"/excerpts/*.wav --visqol "$RUNNER_TEMP/visqol/bazel-bin/visqol" \
             "$RUNNER_TEMP/visqol/model/libsvm_nu_svr_model.txt" > aac-perceptual.json
       - uses: actions/upload-artifact@v7
