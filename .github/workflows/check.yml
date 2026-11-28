@@ -51,20 +51,12 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Packaged CLI --version exited $LASTEXITCODE" }
           "SHRIMPLY_EXE=$exe" >> $env:GITHUB_ENV
       - name: Verify shared edit, stale revision, history, and session restart
+        if: runner.os == 'macOS'
         shell: bash
         run: |
-          if [[ "$RUNNER_OS" == Windows ]]; then
-            RUNNER_TEMP=$(cygpath -u "$RUNNER_TEMP")
-            SHRIMPLY_EXE=$(cygpath -u "$SHRIMPLY_EXE")
-          fi
           cd "$RUNNER_TEMP"
           project=session.shrimp
-          shrimply() {
-            printf 'Running %s %s\n' "$1" "$2" >&2
-            local -a limit=()
-            if [[ "$RUNNER_OS" == Windows ]]; then limit=(timeout --kill-after=5s 45s); fi
-            "${limit[@]}" "$SHRIMPLY_EXE" "$@" --project "$project"
-          }
+          shrimply() { "$SHRIMPLY_EXE" "$@" --project "$project"; }
           trap 'shrimply project close || true' EXIT
           if creation=$(shrimply project create --name Original); then
             jq -e '.success and .result.created' <<<"$creation"
@@ -95,3 +87,50 @@ jobs:
           shrimply project get | jq -e --arg name "$winner" '.result.project_name == $name'
           shrimply project close | jq -e '.success and .result.saved and .result.closed and (.result.already_closed != true)'
           shrimply project get | jq -e --arg name "$winner" '.result.project_name == $name'
+      - name: Verify the same editing commands on native Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Set-Location $env:RUNNER_TEMP
+          function Start-Shrimply([string[]]$Command) {
+            $name = $Command[0..1] -join ' '
+            Write-Host "Running $name"
+            $prefix = [guid]::NewGuid().ToString()
+            $process = Start-Process -FilePath $env:SHRIMPLY_EXE -PassThru -NoNewWindow `
+              -ArgumentList ($Command + @('--project', 'session.shrimp')) `
+              -RedirectStandardOutput "$prefix.json" -RedirectStandardError "$prefix.stderr"
+            @{ Name = $name; Process = $process; Prefix = $prefix }
+          }
+          function Receive-Shrimply($Call) {
+            if (!$Call.Process.WaitForExit(45000)) {
+              Stop-Process -Id $Call.Process.Id -ErrorAction SilentlyContinue
+              Write-Host (Get-Content -Raw "$($Call.Prefix).stderr")
+              throw "$($Call.Name) did not exit within 45 seconds"
+            }
+            Write-Host (Get-Content -Raw "$($Call.Prefix).stderr")
+            @{ Code = $Call.Process.ExitCode; Reply = Get-Content -Raw "$($Call.Prefix).json" | ConvertFrom-Json }
+          }
+          function Invoke-Shrimply([string[]]$Command) {
+            $result = Receive-Shrimply (Start-Shrimply $Command)
+            if ($result.Code -ne 0 -or !$result.Reply.success) { throw ($result.Reply | ConvertTo-Json -Depth 10) }
+            $result.Reply.result
+          }
+          try {
+            if (!(Invoke-Shrimply @('project','create','--name','Original')).created) { throw 'Creation failed' }
+            $revision = (Invoke-Shrimply @('project','get')).content_revision
+            $first = Start-Shrimply @('project','set','--name','First','--if-revision',$revision)
+            $second = Start-Shrimply @('project','set','--name','Second','--if-revision',$revision)
+            $results = (Receive-Shrimply $first), (Receive-Shrimply $second)
+            $wins = @($results | Where-Object { $_.Code -eq 0 -and $_.Reply.success })
+            $conflicts = @($results | Where-Object { $_.Code -ne 0 -and $_.Reply.error.code -eq 'revision_conflict' })
+            if ($wins.Count -ne 1 -or $conflicts.Count -ne 1) { throw 'Expected one edit and one stale revision' }
+            $winner = if ($results[0].Reply.success) { 'First' } else { 'Second' }
+            if ((Invoke-Shrimply @('project','get')).project_name -ne $winner) { throw 'Edit was not visible' }
+            if (!(Invoke-Shrimply @('history','undo')).changed -or (Invoke-Shrimply @('project','get')).project_name -ne 'Original') { throw 'Undo failed' }
+            if (!(Invoke-Shrimply @('history','redo')).changed -or (Invoke-Shrimply @('project','get')).project_name -ne $winner) { throw 'Redo failed' }
+            $closed = Invoke-Shrimply @('project','close')
+            if (!$closed.saved -or !$closed.closed -or $closed.already_closed) { throw 'Daemon did not close' }
+            if ((Invoke-Shrimply @('project','get')).project_name -ne $winner) { throw 'Restart lost the edit' }
+          } finally {
+            if (Test-Path session.shrimp.lock) { Invoke-Shrimply @('project','close') }
+          }
