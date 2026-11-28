@@ -111,7 +111,7 @@ pub fn from_request(
     let audio_encoder = match request.audio_encoder.as_deref() {
         None => ExportAudioEncoder::default(),
         Some("aac") => ExportAudioEncoder::Aac,
-        Some("fdk-aac") => ExportAudioEncoder::FdkAac,
+        Some("shrimply-aac") => ExportAudioEncoder::ShrimplyAac,
         Some("opus") => ExportAudioEncoder::Opus,
         #[cfg(target_os = "macos")]
         Some("audiotoolbox-aac") => ExportAudioEncoder::AudioToolboxAac,

@@ -53,7 +53,7 @@ pub enum ExportRateControl {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ExportAudioEncoder {
-    FdkAac,
+    ShrimplyAac,
     Aac,
     #[cfg(target_os = "macos")]
     AudioToolboxAac,
@@ -374,13 +374,7 @@ where
     };
 
     let audio = if let Some(encoder) = audio_encoder {
-        let index = {
-            let mut stream = output
-                .add_stream_with(encoder.as_ref())
-                .map_err(|error| error.to_string())?;
-            stream.set_time_base(encoder.time_base());
-            stream.index()
-        };
+        let index = encoder.add_stream(&mut output)?;
         let packets = crate::audio::AudioPackets::new(encoder, project, &assets);
         Some(mux::AudioTrack::new(index, packets, cancelled))
     } else {
@@ -635,17 +629,24 @@ pub(crate) fn probe_encoder(
 fn open_audio_encoder(
     settings: &ExportSettings,
     global_header: bool,
-) -> Result<ffmpeg::codec::encoder::audio::Encoder, String> {
-    let encoder_name = audio_encoder_name(settings.audio_encoder);
-    let codec = ffmpeg::codec::encoder::find_by_name(encoder_name)
-        .ok_or_else(|| format!("FFmpeg encoder {encoder_name} was not found"))?;
+) -> Result<crate::audio::Encoder, String> {
+    let bitrate = settings
+        .audio_bitrate_kbps
+        .checked_mul(1_000)
+        .ok_or("Audio bitrate out of range")?;
+    let Some((name, format)) = ffmpeg_audio_encoder(settings.audio_encoder) else {
+        return crate::audio::Encoder::shrimply(settings.audio_sample_rate, bitrate);
+    };
+    let codec = ffmpeg::codec::encoder::find_by_name(name)
+        .ok_or_else(|| format!("FFmpeg encoder {name} was not found"))?;
     crate::audio::open_encoder(
         codec,
         settings.audio_sample_rate,
-        audio_sample_format(settings.audio_encoder),
-        Some(settings.audio_bitrate_kbps as usize * 1_000),
+        format,
+        Some(bitrate as usize),
         global_header,
     )
+    .map(crate::audio::Encoder::Ffmpeg)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -868,44 +869,30 @@ fn receive_video_packets(
 
 pub fn available_audio_encoders() -> impl Iterator<Item = (ExportAudioEncoder, &'static str)> {
     [
-        (ExportAudioEncoder::FdkAac, "FDK AAC"),
         #[cfg(target_os = "macos")]
         (ExportAudioEncoder::AudioToolboxAac, "AudioToolbox AAC"),
         (ExportAudioEncoder::Aac, "AAC"),
+        (ExportAudioEncoder::ShrimplyAac, "Shrimply AAC"),
         (ExportAudioEncoder::Opus, "Opus"),
     ]
     .into_iter()
     .filter(|(encoder, _)| {
-        ffmpeg::codec::encoder::find_by_name(audio_encoder_name(*encoder)).is_some()
+        ffmpeg_audio_encoder(*encoder)
+            .is_none_or(|(name, _)| ffmpeg::codec::encoder::find_by_name(name).is_some())
     })
 }
 
-fn audio_encoder_name(encoder: ExportAudioEncoder) -> &'static str {
-    match encoder {
-        ExportAudioEncoder::FdkAac => "libfdk_aac",
-        ExportAudioEncoder::Aac => "aac",
+fn ffmpeg_audio_encoder(
+    encoder: ExportAudioEncoder,
+) -> Option<(&'static str, ffmpeg::format::Sample)> {
+    use ffmpeg::format::{Sample, sample::Type};
+    Some(match encoder {
+        ExportAudioEncoder::ShrimplyAac => return None,
+        ExportAudioEncoder::Aac => ("aac", Sample::F32(Type::Planar)),
         #[cfg(target_os = "macos")]
-        ExportAudioEncoder::AudioToolboxAac => "aac_at",
-        ExportAudioEncoder::Opus => "libopus",
-    }
-}
-
-fn audio_sample_format(encoder: ExportAudioEncoder) -> ffmpeg::format::Sample {
-    match encoder {
-        ExportAudioEncoder::FdkAac => {
-            ffmpeg::format::Sample::I16(ffmpeg::format::sample::Type::Packed)
-        }
-        ExportAudioEncoder::Aac => {
-            ffmpeg::format::Sample::F32(ffmpeg::format::sample::Type::Planar)
-        }
-        #[cfg(target_os = "macos")]
-        ExportAudioEncoder::AudioToolboxAac => {
-            ffmpeg::format::Sample::I16(ffmpeg::format::sample::Type::Packed)
-        }
-        ExportAudioEncoder::Opus => {
-            ffmpeg::format::Sample::F32(ffmpeg::format::sample::Type::Packed)
-        }
-    }
+        ExportAudioEncoder::AudioToolboxAac => ("aac_at", Sample::I16(Type::Packed)),
+        ExportAudioEncoder::Opus => ("libopus", Sample::F32(Type::Packed)),
+    })
 }
 
 pub fn video_time_base(fps: Fraction) -> Result<ffmpeg::Rational, String> {

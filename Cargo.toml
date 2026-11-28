@@ -142,6 +142,7 @@ members = [
     "crates/media/visual/video/decoder-pool",
     "crates/gpu/cuda/gpu-cuda-memory",
     "crates/media/visual/visual-frame",
+    "vendor/aac",
     "vendor/vision",
     "vendor/rubberband",
     "vendor/pocketsphinx",
@@ -389,6 +390,7 @@ objc2-core-media = "0.3"
 objc2-screen-capture-kit = { version = "0.3", default-features = false }
 objc2-vision = "0.3"
 oklab = "1"
+shrimply-aac = { path = "vendor/aac" }
 shrimply-vision = { path = "vendor/vision" }
 shrimply-rubberband = { path = "vendor/rubberband" }
 pango = "0.22"

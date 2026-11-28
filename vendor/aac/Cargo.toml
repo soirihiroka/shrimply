@@ -1,0 +1,12 @@
+[package]
+name = "shrimply-aac"
+version.workspace = true
+edition = "2024"
+license = "GPL-3.0-or-later"
+
+[dependencies]
+rustfft.workspace = true
+
+[[example]]
+name = "encode"
+harness = false

@@ -5899,6 +5899,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "shrimply-aac"
+version = "0.1.0"
+dependencies = [
+ "rustfft",
+]
+
+[[package]]
 name = "shrimply-affine-l1-stabilization"
 version = "0.1.0"
 dependencies = [
@@ -6651,6 +6658,7 @@ dependencies = [
  "ndk",
  "serde",
  "serde_json",
+ "shrimply-aac",
  "shrimply-audio-engine",
  "shrimply-i18n",
  "shrimply-math-color",
