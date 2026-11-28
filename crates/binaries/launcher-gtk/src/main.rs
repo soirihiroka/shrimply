@@ -70,8 +70,18 @@ fn build_ui(app: &adw::Application) {
         .model(&gtk::NoSelection::new(Some(entries.clone())))
         .factory(&factory)
         .single_click_activate(true)
-        .css_classes(["background"])
+        .css_classes(["background", "project-list"])
         .build();
+    let style = gtk::CssProvider::new();
+    style.load_from_string(
+        "listview.project-list > row { background: none; padding: 4px 12px; }\n\
+         listview.project-list > row > box.card { padding: 8px 12px; }",
+    );
+    gtk::style_context_add_provider_for_display(
+        &gtk::gdk::Display::default().expect("GTK display must exist"),
+        &style,
+        gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+    );
     let hint = gtk::Label::new(Some(tr!("No Projects").as_ref()));
     let clamp = adw::ClampScrollable::builder().child(&list).build();
     let scroller = gtk::ScrolledWindow::builder()
@@ -460,23 +470,31 @@ fn build_ui(app: &adw::Application) {
 fn project_row(
     project: &launcher::ProjectEntry,
     window: Option<&adw::ApplicationWindow>,
-) -> adw::ActionRow {
-    let row = adw::ActionRow::builder()
-        .title(&project.name)
-        .use_markup(false)
-        .css_classes(["card"])
-        .focusable(false)
-        .margin_start(12)
-        .margin_end(12)
-        .margin_top(4)
-        .margin_bottom(4)
+) -> gtk::Box {
+    let row = gtk::Box::builder()
+        .orientation(gtk::Orientation::Horizontal)
+        .spacing(12)
+        .css_classes(["card", "activatable"])
         .build();
     let icon = gtk::Image::from_icon_name(if project.remote.is_some() {
         "folder-remote-symbolic"
     } else {
         "folder-symbolic"
     });
-    row.add_prefix(&icon);
+    row.append(&icon);
+    let labels = gtk::Box::builder()
+        .orientation(gtk::Orientation::Vertical)
+        .spacing(2)
+        .valign(gtk::Align::Center)
+        .hexpand(true)
+        .build();
+    labels.append(
+        &gtk::Label::builder()
+            .label(&project.name)
+            .xalign(0.0)
+            .ellipsize(gtk::pango::EllipsizeMode::End)
+            .build(),
+    );
     let subtitle = [
         launcher::project_access_label(project),
         project.remote.as_ref().map(|remote| remote.server.clone()),
@@ -485,7 +503,17 @@ fn project_row(
     .flatten()
     .collect::<Vec<_>>()
     .join(" · ");
-    row.set_subtitle(&subtitle);
+    if !subtitle.is_empty() {
+        labels.append(
+            &gtk::Label::builder()
+                .label(&subtitle)
+                .xalign(0.0)
+                .ellipsize(gtk::pango::EllipsizeMode::End)
+                .css_classes(["dim-label", "caption"])
+                .build(),
+        );
+    }
+    row.append(&labels);
     let menu = gio::Menu::new();
     for (visible, label, action) in [
         (true, "Project Information", "win.info"),
@@ -513,7 +541,7 @@ fn project_row(
     if let Some(window) = window {
         adaptive_menu(&options, "win", window);
     }
-    row.add_suffix(&options);
+    row.append(&options);
     row
 }
 
