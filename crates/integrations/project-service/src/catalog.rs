@@ -5,6 +5,7 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 use shrimply_resource_pipeline::fingerprint;
+use uuid::Uuid;
 
 use crate::{ProjectClient, ProjectLink, SharedWorkspace};
 
