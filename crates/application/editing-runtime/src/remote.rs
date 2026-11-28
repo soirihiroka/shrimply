@@ -1,13 +1,14 @@
 use std::{path::Path, sync::Mutex};
 
 use shrimply_project_service::{
-    MediaCache, Presence, ProjectClient, SharedWorkspace, WorkspaceUpdate,
+    MediaCache, Presence, ProjectClient, ServerVersion, SharedWorkspace, WorkspaceUpdate,
 };
 
 use super::*;
 
 const SYNC_INTERVAL: Duration = Duration::from_millis(200);
 const RETRY_INTERVAL: Duration = Duration::from_secs(2);
+const VERSION_PROBE_INTERVAL: Duration = Duration::from_secs(15);
 
 pub(super) struct Session {
     workspace: SharedWorkspace,
@@ -24,12 +25,13 @@ pub(super) struct Session {
     participants: Vec<Presence>,
     revision: Option<u64>,
     last_error: Option<String>,
+    pub(super) server_version: Option<ServerVersion>,
     pub(super) connected: bool,
 }
 
 struct SyncWorker {
     send: async_channel::Sender<Vec<Presence>>,
-    receive: async_channel::Receiver<Result<WorkspaceUpdate, String>>,
+    receive: async_channel::Receiver<(Option<ServerVersion>, Result<WorkspaceUpdate, String>)>,
 }
 
 impl SyncWorker {
@@ -55,11 +57,12 @@ impl SyncWorker {
         let (outgoing, receive) = async_channel::bounded(1);
         thread::spawn(move || {
             let mut workspace = workspace;
+            let mut next_version_probe = Instant::now();
             while let Ok(presence) = incoming.recv_blocking() {
                 if workspace.has_pending_uploads().unwrap_or_default() {
                     let _ = wake_upload.try_send(());
                 }
-                let result = workspace.synchronize(&client, presence).map(|mut update| {
+                let mut result = workspace.synchronize(&client, presence).map(|mut update| {
                     if update.conflict.is_none() {
                         update.conflict = upload_error
                             .lock()
@@ -68,7 +71,18 @@ impl SyncWorker {
                     }
                     update
                 });
-                if outgoing.send_blocking(result).is_err() {
+                let mut version = result
+                    .as_mut()
+                    .ok()
+                    .and_then(|update| update.server_version.take());
+                if version.is_some() {
+                    next_version_probe = Instant::now();
+                } else if Instant::now() >= next_version_probe {
+                    // Also cover older servers and servers that reject the sync protocol.
+                    version = client.version().ok();
+                    next_version_probe = Instant::now() + VERSION_PROBE_INTERVAL;
+                }
+                if outgoing.send_blocking((version, result)).is_err() {
                     break;
                 }
             }
@@ -116,6 +130,7 @@ impl Session {
             participants: Vec::new(),
             revision,
             last_error: None,
+            server_version: None,
             connected: false,
         };
         session.adopt_draft()?;
@@ -163,6 +178,7 @@ impl Session {
                     "revision": self.revision,
                     "participants": self.participants,
                     "error": self.last_error,
+                    "server_version": self.server_version,
                 }),
             );
         }
@@ -170,14 +186,17 @@ impl Session {
 
     pub(super) fn poll(&mut self, mut local: Vec<Presence>) {
         if self.pending {
-            let result = match self.worker.receive.try_recv() {
+            let (version, result) = match self.worker.receive.try_recv() {
                 Ok(result) => result,
                 Err(async_channel::TryRecvError::Empty) => return,
                 Err(async_channel::TryRecvError::Closed) => {
-                    Err("project synchronization worker stopped".into())
+                    (None, Err("project synchronization worker stopped".into()))
                 }
             };
             self.pending = false;
+            if version.is_some() {
+                self.server_version = version;
+            }
             let result = result.and_then(|update| {
                 if self.revision != Some(update.revision) || update.draft_changed {
                     self.adopt_draft()?;

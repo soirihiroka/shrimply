@@ -16,7 +16,7 @@ use shrimply_editing_api::{
     },
 };
 use shrimply_project_document::project::{self, Project, ProjectChanges, PublishError};
-use shrimply_project_service::{MediaCache, ProjectClient, SharedWorkspace};
+use shrimply_project_service::{MediaCache, ProjectClient, ServerVersion, SharedWorkspace};
 use uuid::Uuid;
 
 use super::{
@@ -353,6 +353,7 @@ pub struct Editor {
     next_update: Cell<Instant>,
     sync_error: RefCell<Option<String>>,
     server_connected: Cell<Option<bool>>,
+    server_version: RefCell<Option<ServerVersion>>,
     send: async_channel::Sender<SessionUpdates>,
     receive: async_channel::Receiver<(Instant, Result<SessionState, String>)>,
 }
@@ -392,12 +393,14 @@ impl Editor {
             next_update: Cell::new(Instant::now()),
             sync_error: RefCell::new(None),
             server_connected: Cell::new(None),
+            server_version: RefCell::new(None),
             send,
             receive,
         })
     }
 
-    pub fn poll(&self) {
+    pub fn poll(&self) -> Option<String> {
+        let mut version_notice = None;
         if let Ok((started, result)) = self.receive.try_recv() {
             match result {
                 Err(error) => {
@@ -406,6 +409,19 @@ impl Editor {
                 }
                 Ok(mut state) => {
                     self.sync_error.replace(state.sync_error.take());
+                    if let Some(version) = state.server_version.take()
+                        && self
+                            .server_version
+                            .replace(Some(version.clone()))
+                            .is_some_and(|previous| {
+                                previous.protocol != version.protocol
+                                    || previous.version != version.version
+                            })
+                        && let Some(media) = &self.media
+                    {
+                        version_notice = VersionPrompt::for_remote(&media.workspace.link().server, version)
+                            .map(|prompt| format!("The project server version changed. Reopen the project to check it.\n\n{prompt}"));
+                    }
                     let recovered = self.server_connected.replace(state.server_connected)
                         == Some(false)
                         && state.server_connected == Some(true);
@@ -428,7 +444,7 @@ impl Editor {
             }
         }
         if Instant::now() < self.next_update.get() {
-            return;
+            return version_notice;
         }
         let presence = super::peers::capture(
             self.presence_id,
@@ -442,6 +458,7 @@ impl Editor {
             version: self.version.get(),
             presence,
         });
+        version_notice
     }
 
     pub fn sync_error(&self) -> Option<String> {

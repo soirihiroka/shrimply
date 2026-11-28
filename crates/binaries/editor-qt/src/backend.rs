@@ -383,6 +383,12 @@ impl qobject::EditorBackend {
         if let Some(error) = session_update.audio_playback_stopped {
             self.as_mut().show_playback_error(QString::from(error));
         }
+        if let Some(notice) = session_update.version_notice {
+            self.as_mut().show_error(
+                QString::from("Service Version Mismatch"),
+                QString::from(notice),
+            );
+        }
         if let Some(title) = session_update.title {
             self.as_mut()
                 .set_project_title(QString::from(title.text.as_str()));

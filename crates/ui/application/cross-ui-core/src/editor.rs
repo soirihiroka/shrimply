@@ -68,6 +68,7 @@ pub struct EditorTitle {
 #[derive(Default)]
 pub struct SessionUpdate {
     pub audio_playback_stopped: Option<String>,
+    pub version_notice: Option<String>,
     pub title: Option<EditorTitle>,
     pub has_collaborators: bool,
 }
@@ -210,16 +211,17 @@ impl EditorSession {
     }
 
     pub fn poll(&self) -> SessionUpdate {
-        {
+        let version_notice = {
             let editing = self.editing.borrow();
-            editing.poll();
+            let notice = editing.poll();
             let error = editing.sync_error();
             let mut current_error = self.sync_error.borrow_mut();
             if *current_error != error {
                 *current_error = error;
                 self.title_dirty.set(true);
             }
-        }
+            notice
+        };
         project::poll_commit_status();
         player_state::tick(&self.player_state);
         let audio_playback_stopped = self.audio_player.take_failure();
@@ -280,6 +282,7 @@ impl EditorSession {
         }
         SessionUpdate {
             audio_playback_stopped,
+            version_notice,
             title: self.title_dirty.replace(false).then(|| self.title()),
             has_collaborators: !player_state::collaborators(&self.player_state).is_empty(),
         }

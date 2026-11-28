@@ -316,6 +316,7 @@ fn start_session(
                     participants,
                     sync_error: remote.as_ref().and_then(|remote| remote.sync_error()),
                     server_connected: remote.map(|remote| remote.connected),
+                    server_version: remote.and_then(|remote| remote.server_version.clone()),
                 })
                 .map_err(|error| error.to_string())
             };

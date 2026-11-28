@@ -72,10 +72,11 @@ pub struct VersionPrompt {
 impl VersionPrompt {
     pub fn remote(server: &str) -> Option<Self> {
         let service = ProjectClient::new(server).ok()?.version().ok()?;
-        if service.matches(env!("CARGO_PKG_VERSION")) {
-            return None;
-        }
-        Some(Self {
+        Self::for_remote(server, service)
+    }
+
+    pub(super) fn for_remote(server: &str, service: ServerVersion) -> Option<Self> {
+        (!service.matches(env!("CARGO_PKG_VERSION"))).then(|| Self {
             mismatch: VersionMismatch::Remote {
                 server: server.to_owned(),
                 service,

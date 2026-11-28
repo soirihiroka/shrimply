@@ -76,6 +76,8 @@ pub struct SyncRequest<P> {
 pub struct SyncResponse<T, P> {
     pub version: Option<ProjectVersion<T>>,
     pub participants: Vec<P>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server_version: Option<ServerVersion>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

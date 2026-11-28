@@ -246,7 +246,7 @@ async fn dispatch(
         }
         (&Method::POST, "sync") => {
             let request: SyncRequest<Presence> = read_json(request).await?;
-            let sync = transact(authority, move |store| {
+            let mut sync = transact(authority.clone(), move |store| {
                 store.sync(
                     id,
                     request.revision,
@@ -254,6 +254,7 @@ async fn dispatch(
                 )
             })
             .await?;
+            sync.server_version = Some(authority.version.clone());
             Ok(json(StatusCode::OK, sync))
         }
         _ => Err(Failure::Missing),
