@@ -32,15 +32,21 @@ import org.json.JSONArray
 internal fun SettingsRow(title: String, summary: String = "", enabled: Boolean = true,
     modifier: Modifier = Modifier, leading: (@Composable () -> Unit)? = null,
     trailing: (@Composable () -> Unit)? = null) {
+    val opacity = if (enabled) 1f else 0.38f
     Row(Modifier.fillMaxWidth().clip(MaterialTheme.shapes.extraSmall)
-        .background(MaterialTheme.colorScheme.surfaceContainerLow).then(modifier).padding(end = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-        if (leading == null) Spacer(Modifier.width(16.dp))
-        else Box(Modifier.size(56.dp).alpha(if (enabled) 1f else 0.38f), contentAlignment = Alignment.Center) { leading() }
-        Column(Modifier.weight(1f).padding(vertical = 16.dp).alpha(if (enabled) 1f else 0.38f)) {
-            Text(title, Modifier.padding(vertical = 2.dp), style = MaterialTheme.typography.titleMedium)
-            if (summary.isNotEmpty()) Text(summary, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        .background(MaterialTheme.colorScheme.surfaceContainerHighest).then(modifier)
+        .heightIn(min = if (summary.isEmpty()) 56.dp else 72.dp)
+        .padding(horizontal = 16.dp, vertical = 12.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+        if (leading != null) Box(Modifier.size(40.dp).alpha(opacity), contentAlignment = Alignment.Center) {
+            leading()
         }
-        if (trailing != null) { Spacer(Modifier.width(16.dp)); trailing() }
+        Column(Modifier.weight(1f).alpha(opacity)) {
+            Text(title, style = MaterialTheme.typography.bodyLarge)
+            if (summary.isNotEmpty()) Text(summary, style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        if (trailing != null) trailing()
     }
 }
 

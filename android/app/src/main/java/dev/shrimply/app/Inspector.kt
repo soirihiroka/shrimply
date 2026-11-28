@@ -196,7 +196,7 @@ internal fun InspectorControl(timeline: TimelineSession, control: JSONObject, en
                                 key(child.getString("id")) { InspectorControl(timeline, child, active, send, selectFile, settings) }
                             }
                         }
-                        if (settings) SettingsGroup(label, children)
+                        if (settings) SettingsGroup(label, content = children)
                         else {
                             if (label.isNotEmpty()) Text(label, color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 style = MaterialTheme.typography.labelLarge)
@@ -311,10 +311,13 @@ internal fun InspectorControl(timeline: TimelineSession, control: JSONObject, en
                     "inline_text" -> InlineTextInput(label, control.getJSONObject("editor"), editable, send)
                     "editor" -> {
                         val description = control.getJSONObject("editor")
-                        if (settings) SettingsRow(label,
-                            listOf(control.getString("display"), summary).filter { it.isNotEmpty() }.joinToString("\n"), editable,
-                            modifier = Modifier.clickable(enabled = editable) { editor = description })
-                        else InspectorEditorButton(label, control.getString("display"), editable) { editor = description }
+                        if (settings) {
+                            val icon = control.optString("icon").takeIf { it.isNotEmpty() }
+                            SettingsRow(label,
+                                listOf(control.getString("display"), summary).filter { it.isNotEmpty() }.joinToString("\n"), editable,
+                                modifier = Modifier.clickable(enabled = editable, role = Role.Button) { editor = description },
+                                leading = icon?.let { { Icon(iconVector(it), null, Modifier.size(20.dp)) } })
+                        } else InspectorEditorButton(label, control.getString("display"), editable) { editor = description }
                     }
                     else -> error("Unknown native widget: $widget")
                 }

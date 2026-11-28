@@ -42,7 +42,10 @@ impl Settings {
         }) else {
             return;
         };
-        let mut rows = vec![editor("Add Project Server", None, self.sign_in.is_none())];
+        let mut add_server = editor("Add Project Server", None, self.sign_in.is_none());
+        add_server["icon"] = json!("list-add-symbolic");
+        add_server["standalone"] = json!(true);
+        let mut rows = vec![add_server];
         for url in preferences::snapshot(store).project_server_urls {
             rows.push(editor("Sign In", Some(&url), self.sign_in.is_none()));
             rows.push(json!({

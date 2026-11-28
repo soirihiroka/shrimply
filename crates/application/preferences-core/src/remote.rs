@@ -161,13 +161,16 @@ impl PreferencesUi {
         let server = status
             .and_then(Option::as_ref)
             .and_then(|result| result.as_ref().ok());
+        let mut add_server = editor(
+            "Add Server",
+            vec![text_field("URL", "")],
+            json!({"action":"server_add"}),
+        );
+        add_server["icon"] = json!("list-add-symbolic");
+        add_server["standalone"] = json!(true);
         let mut endpoints = vec![
+            add_server,
             json!({"widget":"choice","choice_style":"row","label":text("Server"),"display":url,"choices":settings.compute_server_urls.iter().map(|url|json!({"label":url,"command":{"action":"server_select","url":url}})).collect::<Vec<_>>()}),
-            editor(
-                "Add Server",
-                vec![text_field("URL", "")],
-                json!({"action":"server_add"}),
-            ),
             editor(
                 "Edit Server",
                 vec![text_field("URL", url)],
