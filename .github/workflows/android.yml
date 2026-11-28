@@ -37,7 +37,6 @@ permissions:
 
 concurrency:
   group: android-prerelease-${{ github.ref }}
-  cancel-in-progress: true
 
 env:
   TZ: UTC

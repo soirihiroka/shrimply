@@ -36,7 +36,6 @@ permissions:
 
 concurrency:
   group: windows-prerelease-${{ github.ref }}
-  cancel-in-progress: true
 
 env:
   TZ: UTC
