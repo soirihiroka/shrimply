@@ -20,7 +20,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends flatpak dbus-daemon
+          sudo apt-get install -y --no-install-recommends flatpak dbus-daemon gdb
           flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
           flatpak remote-add --user shrimply-prerelease https://soirihiroka.github.io/shrimply/shrimply-prerelease.flatpakrepo
           flatpak install --user --noninteractive shrimply-prerelease dev.shrimply.Shrimply
@@ -36,7 +36,7 @@ jobs:
           alice="$RUNNER_TEMP/alice.shrimp"
           bob="$RUNNER_TEMP/bob.shrimp"
           shrimply() {
-            flatpak run --user --filesystem="$RUNNER_TEMP:rw" dev.shrimply.Shrimply "$@"
+            timeout -k 5s 45s flatpak run --user --filesystem="$RUNNER_TEMP:rw" dev.shrimply.Shrimply "$@"
           }
           cleanup() {
             for project in "$alice" "$bob"; do
@@ -70,7 +70,24 @@ jobs:
           start_server first-ci-password
           old_token=$(curl -fsS -u editor:first-ci-password -X POST "$server/v1/login" | jq -er '.token')
           login first-ci-password
-          id=$(shrimply project create --project "$alice" --server "$server" --name Original | jq -er '.result.location.id')
+          printf 'Create the first remote workspace\n'
+          (
+            sleep 10
+            for pid in $(pgrep -x shrimply); do
+              sudo timeout 15s gdb --batch -ex 'set debuginfod enabled off' \
+                -ex "set sysroot /proc/$pid/root" -p "$pid" -ex 'thread apply all bt 12' || true
+            done
+            docker logs --tail 20 shrimply-session-test
+          ) >&2 &
+          probe=$!
+          if shrimply project create --project "$alice" --server "$server" --name Original > "$RUNNER_TEMP/creation.json"; then
+            kill "$probe" 2>/dev/null || true
+          else
+            cat "$RUNNER_TEMP/creation.json"
+            wait "$probe" || true
+            exit 1
+          fi
+          id=$(jq -er '.result.location.id' "$RUNNER_TEMP/creation.json")
           shrimply project open --project "$bob" --server "$server" --remote-project-id "$id" | jq -e '.success and .result.ready'
           shrimply project set --project "$alice" --name Shared | jq -e '.success'
           await_name "$bob" Shared
