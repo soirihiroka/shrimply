@@ -23,7 +23,7 @@ jobs:
       - name: Install display and Flatpak tools
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends flatpak dbus-daemon xvfb xauth xdotool imagemagick
+          sudo apt-get install -y --no-install-recommends flatpak dbus-daemon xvfb xauth xdotool x11-utils imagemagick gdb
           flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
       - name: Install the exact hosted Flatpak
         env:
@@ -50,7 +50,18 @@ jobs:
           shrimply > "$RUNNER_TEMP/screenshots/launcher.log" 2>&1 &
           launcher=$!
           trap 'kill "$launcher" 2>/dev/null || true' EXIT
-          window=$(timeout 20s xdotool search --sync --onlyvisible --name '^Shrimply$')
+          if ! window=$(timeout 20s xdotool search --sync --onlyvisible --name '^Shrimply$'); then
+            cat "$RUNNER_TEMP/screenshots/launcher.log"
+            xwininfo -root -tree
+            import -window root "$RUNNER_TEMP/screenshots/startup.png"
+            instance=$(flatpak ps --columns=application,child-pid | awk '$1 == "dev.shrimply.Shrimply" {print $2; exit}')
+            if [[ "$instance" =~ ^[0-9]+$ ]]; then
+              ps -p "$instance" -o pid,ppid,stat,pcpu,wchan,args
+              sudo timeout 12s gdb -q -batch -ex 'thread apply all bt 16' -p "$instance" \
+                > "$RUNNER_TEMP/screenshots/backtrace.log" 2>&1 || true
+            fi
+            exit 1
+          fi
           xdotool windowfocus --sync "$window"
           sleep 1
           import -window "$window" "$RUNNER_TEMP/screenshots/top.png"
