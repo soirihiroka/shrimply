@@ -1,4 +1,4 @@
-name: Android Skia cache
+name: Android Rust cache experiment
 
 on:
   workflow_dispatch:
@@ -23,7 +23,10 @@ jobs:
         id: setup
 
       - name: Build the Android native library
-        run: make android-native ANDROID_PROFILE=release ANDROID_SDK_ROOT="${ANDROID_HOME}"
+        run: |
+          # cc-rs only adopts RUSTC_WRAPPER for C compilers with a recognized basename.
+          ln -s "$SCCACHE_PATH" "$RUNNER_TEMP/sccache-rust"
+          RUSTC_WRAPPER="$RUNNER_TEMP/sccache-rust" make android-native ANDROID_PROFILE=release ANDROID_SDK_ROOT="$ANDROID_HOME"
 
       - name: Archive compiled Skia binaries
         id: skia-archive
