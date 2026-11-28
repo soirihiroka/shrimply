@@ -23,7 +23,7 @@ use objc2_foundation::{
 };
 use shrimply_components_appkit::{bundled_symbol, column_stack, row_stack};
 use shrimply_cross_ui_core::launcher::{self, Launcher, ProjectLocation};
-use std::cell::{OnceCell, RefCell};
+use std::cell::{Cell, OnceCell, RefCell};
 use std::path::{Path, PathBuf};
 
 const WINDOW_SIZE: NSSize = NSSize::new(760.0, 560.0);
@@ -37,6 +37,8 @@ const SIDEBAR_ICON_SIZE: f64 = 56.0;
 
 struct DelegateIvars {
     window: OnceCell<Retained<NSWindow>>,
+    capture_directory: OnceCell<PathBuf>,
+    capture_step: Cell<usize>,
     projects: OnceCell<Retained<NSTableView>>,
     sources: OnceCell<Retained<NSTableView>>,
     model: RefCell<Launcher>,
@@ -284,7 +286,12 @@ define_class!(
 
             app.activate();
             if let Some(directory) = std::env::var_os("SHRIMPLY_CAPTURE_WINDOWS") {
-                self.capture_windows(directory.into());
+                self.ivars().capture_directory.set(directory.into()).expect("capture directory");
+                let _ = unsafe {
+                    NSTimer::scheduledTimerWithTimeInterval_target_selector_userInfo_repeats(
+                        1.0, self, sel!(captureNativeWindow:), None, true,
+                    )
+                };
             }
         }
     }
@@ -441,6 +448,65 @@ define_class!(
     }
 
     impl Delegate {
+        #[unsafe(method(captureNativeWindow:))]
+        fn capture_native_window(&self, timer: &NSTimer) {
+            let step = self.ivars().capture_step.get();
+            self.ivars().capture_step.set(step + 1);
+            let app = NSApplication::sharedApplication(self.mtm());
+            let (title, name) = [
+                ("Shrimply", "launcher"),
+                ("Settings", "appearance"),
+                ("Settings", "servers"),
+                ("About Shrimply", "about"),
+            ][step];
+            let window = app
+                .windows()
+                .iter()
+                .find(|window| window.isVisible() && window.title().to_string() == title)
+                .expect("visible native window");
+            let path = self.ivars().capture_directory.get().expect("capture directory").join(format!("{name}.png"));
+            let captured = std::process::Command::new("/usr/sbin/screencapture")
+                .args(["-x", "-l", &window.windowNumber().to_string()])
+                .arg(&path)
+                .status()
+                .is_ok_and(|status| status.success() && path.is_file());
+            if !captured {
+                eprintln!("WindowServer capture unavailable for {name}; drawing the native view");
+                let view = window.contentView().expect("window content");
+                view.layoutSubtreeIfNeeded();
+                let rect = view.bounds();
+                let bitmap = view
+                    .bitmapImageRepForCachingDisplayInRect(rect)
+                    .expect("window bitmap");
+                view.cacheDisplayInRect_toBitmapImageRep(rect, &bitmap);
+                let png = unsafe {
+                    bitmap.representationUsingType_properties(
+                        objc2_app_kit::NSBitmapImageFileType::PNG,
+                        &objc2_foundation::NSDictionary::new(),
+                    )
+                }
+                .expect("window PNG");
+                assert!(png.writeToFile_atomically(
+                    &NSString::from_str(path.to_str().expect("UTF-8 capture path")),
+                    true
+                ));
+            }
+            match step {
+                0 => self.settings(),
+                1 => self
+                    .ivars()
+                    .preferences
+                    .get()
+                    .expect("preferences open")
+                    .choose_servers_for_capture(),
+                2 => shrimply_editor_appkit::show_about(self.mtm()),
+                _ => {
+                    timer.invalidate();
+                    app.terminate(None);
+                }
+            }
+        }
+
         #[unsafe(method(searchChanged:))]
         fn search_changed(&self, sender: &NSSearchField) {
             self.ivars().model.borrow_mut().set_search(&sender.stringValue().to_string());
@@ -656,69 +722,6 @@ impl Delegate {
         });
     }
 
-    fn capture_windows(&self, directory: PathBuf) {
-        let delegate = self.retain();
-        let step = std::cell::Cell::new(0);
-        let capture = block2::RcBlock::new(move |timer: std::ptr::NonNull<NSTimer>| {
-            let app = NSApplication::sharedApplication(delegate.mtm());
-            let (title, name) = [
-                ("Shrimply", "launcher"),
-                ("Settings", "appearance"),
-                ("Settings", "servers"),
-                ("About Shrimply", "about"),
-            ][step.get()];
-            let window = app
-                .windows()
-                .iter()
-                .find(|window| window.isVisible() && window.title().to_string() == title)
-                .expect("visible native window");
-            let path = directory.join(format!("{name}.png"));
-            let captured = std::process::Command::new("/usr/sbin/screencapture")
-                .args(["-x", "-l", &window.windowNumber().to_string()])
-                .arg(&path)
-                .status()
-                .is_ok_and(|status| status.success() && path.is_file());
-            if !captured {
-                eprintln!("WindowServer capture unavailable for {name}; drawing the native view");
-                let view = window.contentView().expect("window content");
-                view.layoutSubtreeIfNeeded();
-                let rect = view.bounds();
-                let bitmap = view
-                    .bitmapImageRepForCachingDisplayInRect(rect)
-                    .expect("window bitmap");
-                view.cacheDisplayInRect_toBitmapImageRep(rect, &bitmap);
-                let png = unsafe {
-                    bitmap.representationUsingType_properties(
-                        objc2_app_kit::NSBitmapImageFileType::PNG,
-                        &objc2_foundation::NSDictionary::new(),
-                    )
-                }
-                .expect("window PNG");
-                assert!(png.writeToFile_atomically(
-                    &NSString::from_str(path.to_str().expect("UTF-8 capture path")),
-                    true
-                ));
-            }
-            match step.get() {
-                0 => delegate.settings(),
-                1 => delegate
-                    .ivars()
-                    .preferences
-                    .get()
-                    .expect("preferences open")
-                    .choose_servers_for_capture(),
-                2 => shrimply_editor_appkit::show_about(delegate.mtm()),
-                _ => {
-                    unsafe { timer.as_ref() }.invalidate();
-                    app.terminate(None);
-                }
-            }
-            step.set(step.get() + 1);
-        });
-        let _ =
-            unsafe { NSTimer::scheduledTimerWithTimeInterval_repeats_block(1.0, true, &capture) };
-    }
-
     fn settings(&self) {
         let owner = Weak::new(self);
         self.ivars()
@@ -862,6 +865,8 @@ impl Delegate {
     fn new(mtm: MainThreadMarker) -> Retained<Self> {
         let this = Self::alloc(mtm).set_ivars(DelegateIvars {
             window: OnceCell::new(),
+            capture_directory: OnceCell::new(),
+            capture_step: Cell::new(0),
             projects: OnceCell::new(),
             sources: OnceCell::new(),
             model: RefCell::new(Launcher::default()),

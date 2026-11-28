@@ -457,7 +457,6 @@ impl PreferencesWindow {
             .expect("preferences open")
             .navigation
             .selectRowIndexes_byExtendingSelection(&NSIndexSet::indexSetWithIndex(index), false);
-        self.select(index);
     }
 
     fn select(&self, index: usize) {
