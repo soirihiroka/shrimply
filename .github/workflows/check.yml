@@ -7,6 +7,10 @@ on:
         description: Flatpak build run to verify
         required: true
         type: string
+      server-run:
+        description: Project server build run to verify
+        required: true
+        type: string
       media:
         description: Verify automatic media upload and offline metadata reads
         type: boolean
@@ -29,6 +33,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PACKAGE_RUN: ${{ inputs.package-run }}
+          SERVER_RUN: ${{ inputs.server-run }}
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends flatpak dbus-daemon
@@ -38,7 +43,12 @@ jobs:
           gh run download "$PACKAGE_RUN" --name "flatpak-$PACKAGE_RUN-$attempt" --repo "$GITHUB_REPOSITORY" --dir "$RUNNER_TEMP"
           flatpak install --user --noninteractive "$RUNNER_TEMP/shrimply-gtk-x86_64.flatpak"
           flatpak info --user --show-commit dev.shrimply.Shrimply
-          gh run download 46121355579 --name shrimply-project-server-image --repo "$GITHUB_REPOSITORY" --dir "$RUNNER_TEMP"
+          gh run download "$SERVER_RUN" --name shrimply-project-server-image --repo "$GITHUB_REPOSITORY" --dir "$RUNNER_TEMP"
+          for kind in PACKAGE SERVER; do
+            run_variable="${kind}_RUN"
+            sha=$(gh run view "${!run_variable}" --repo "$GITHUB_REPOSITORY" --json headSha --jq .headSha)
+            printf '%s_SHA=%s\n' "$kind" "$sha" >> "$GITHUB_ENV"
+          done
           docker load < "$RUNNER_TEMP/shrimply-project-server.tar.gz"
       - name: Verify an offline edit syncs after signing in again
         shell: bash
@@ -66,7 +76,7 @@ jobs:
               -e SHRIMPLY_PROJECT_SERVER_PASSWORD="$1" \
               shrimply-project-server:prerelease
             curl -fsS --max-time 2 --retry 15 --retry-connrefused --retry-delay 1 "$server/v1" |
-              jq -e '.protocol == 3'
+              jq -e --arg sha "$SERVER_SHA" '.protocol == 3 and .git_hash == $sha'
           }
           login() {
             printf '%s\n' "$1" | shrimply project login --server "$server" --username editor | jq -e '.success'
@@ -85,6 +95,7 @@ jobs:
           await_name() {
             await_result "$1" project get --arg name "$2" '.success and .result.project_name == $name'
           }
+          shrimply version | jq -e --arg sha "$PACKAGE_SHA" '.cli.git_hash == $sha'
           start_server first-ci-password
           old_token=$(curl -fsS -u editor:first-ci-password -X POST "$server/v1/login" | jq -er '.token')
           login first-ci-password
@@ -94,6 +105,7 @@ jobs:
           shrimply project open --project "$bob" --server "$server" --remote-project-id "$id" | jq -e '.success and .result.ready'
           shrimply project set --project "$alice" --name Shared | jq -e '.success'
           await_name "$bob" Shared
+          await_result "$bob" project get --arg sha "$SERVER_SHA" '.result.shared_project.server_version.git_hash == $sha'
           revision=$(shrimply project get --project "$alice" | jq -er '.result.content_revision')
           shrimply player seek --project "$bob" --frame 30 | jq -e '.success'
           await_result "$alice" project get --arg revision "$revision" '
