@@ -80,6 +80,7 @@ internal fun ProjectApp(timeline: TimelineSession, files: ProjectFiles, caption:
     var exportSettings by rememberSaveable { mutableStateOf<String?>(null) }
     var pendingExport by rememberSaveable { mutableStateOf<String?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
+    var serverNotice by remember { mutableStateOf<String?>(null) }
     val servers = status.optJSONArray("project_servers")?.let { values ->
         List(values.length()) { values.getString(it) }
     }.orEmpty()
@@ -292,6 +293,9 @@ internal fun ProjectApp(timeline: TimelineSession, files: ProjectFiles, caption:
     LaunchedEffect(event.optString("error")) {
         event.optString("error").takeIf { it.isNotEmpty() && it != "null" }?.let { error = it }
     }
+    LaunchedEffect(event.optString("version_notice")) {
+        event.optString("version_notice").takeIf { it.isNotEmpty() && it != "null" }?.let { serverNotice = it }
+    }
     LaunchedEffect(status.optString("watch_error")) {
         status.optString("watch_error").takeIf { it.isNotEmpty() && it != "null" }?.let { error = it }
     }
@@ -458,8 +462,14 @@ internal fun ProjectApp(timeline: TimelineSession, files: ProjectFiles, caption:
             }
         }
     }
-    error?.let { message -> AlertDialog(onDismissRequest = { error = null }, title = { Text(tr("Operation failed")) },
-        text = { Text(message) }, confirmButton = { TextButton(onClick = { error = null }) { Text(tr("Close")) } }) }
+    (error ?: serverNotice)?.let { message ->
+        val failed = error != null
+        val dismiss = { if (failed) error = null else serverNotice = null }
+        AlertDialog(onDismissRequest = dismiss,
+            title = { Text(tr(if (failed) "Operation failed" else "Project Server Changed")) },
+            text = { Text(message) },
+            confirmButton = { TextButton(onClick = dismiss) { Text(tr("Close")) } })
+    }
     if (project != null) exportSettings?.let { kind ->
         val projectPath = project.getString("path")
         val submit: (Array<out Pair<String, Any>>) -> Unit = { values -> pickExport(kind, projectPath, values) }

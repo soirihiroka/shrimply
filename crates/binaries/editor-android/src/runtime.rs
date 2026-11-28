@@ -87,6 +87,7 @@ pub(crate) struct Runtime {
     >,
     status: String,
     pub error: Option<String>,
+    version_notice: Option<String>,
     lifecycle: SharedLifecycle,
     pub foreground: bool,
     pub generation: u64,
@@ -156,6 +157,7 @@ impl Runtime {
             #[cfg(target_os = "android")]
             media: None,
             error: None,
+            version_notice: None,
             lifecycle,
             foreground: true,
             generation: 0,
@@ -855,17 +857,13 @@ impl Runtime {
             }
             self.status = serde_json::to_string(&self.backend.snapshot()?)
                 .map_err(|error| error.to_string())?;
-            self.error = version_notice
-                .clone()
-                .or_else(|| changed.as_ref().err().cloned());
+            self.error = changed.as_ref().err().cloned();
+            self.version_notice = version_notice;
         }
         #[cfg(target_os = "android")]
         if let Some(error) = self.audio.as_ref().and_then(|audio| audio.take_failure()) {
             player::set_playing(&self.player, false);
-            self.error = Some(match version_notice {
-                Some(notice) => format!("{notice}\n\n{error}"),
-                None => error,
-            });
+            self.error = Some(error);
             return Ok(true);
         }
         changed
@@ -937,7 +935,7 @@ impl Runtime {
         let sync_error: Option<&str> = None;
         // The project/recents payload changes only on project events, not every frame.
         format!(
-            "{{\"status\":{},\"sync_error\":{},\"editor_layout\":{},\"playback\":{},\"preview_controls\":{},\"preview_context\":{},\"preview_image\":{},\"timeline_service\":{},\"error\":{},\"inspector\":{},\"video_recording\":{},\"export\":{},\"timeline\":{{\"button_feedback\":{},\"tools_progress\":{},\"show_tools\":{},\"audio_monitor_progress\":{},\"show_audio_monitor\":{},\"ruler_height\":{},\"action\":{},\"tools\":{},\"context\":{},\"inspect_serial\":{}}}}}",
+            "{{\"status\":{},\"sync_error\":{},\"editor_layout\":{},\"playback\":{},\"preview_controls\":{},\"preview_context\":{},\"preview_image\":{},\"timeline_service\":{},\"error\":{},\"version_notice\":{},\"inspector\":{},\"video_recording\":{},\"export\":{},\"timeline\":{{\"button_feedback\":{},\"tools_progress\":{},\"show_tools\":{},\"audio_monitor_progress\":{},\"show_audio_monitor\":{},\"ruler_height\":{},\"action\":{},\"tools\":{},\"context\":{},\"inspect_serial\":{}}}}}",
             self.status,
             json!(sync_error),
             shrimply_preferences_core::snapshot(&self.backend.preferences)
@@ -951,6 +949,7 @@ impl Runtime {
                 .as_ref()
                 .map_or(Value::Null, |service| service.snapshot()),
             json!(self.error),
+            json!(self.version_notice),
             self.inspector_status,
             self.video_recording_snapshot(),
             json!(export),
