@@ -139,12 +139,6 @@ define_class!(
             if let Err(error) = trust::manage(self.mtm()) { self.show_error(&error); }
         }
 
-        #[unsafe(method(changePreviewZoomPan:))]
-        fn change_preview_zoom_pan(&self, sender: &NSButton) {
-            let store = &self.ivars().store;
-            preferences::set_preview_zoom_pan_enabled(store, sender.state() == objc2_app_kit::NSControlStateValueOn);
-        }
-
         #[unsafe(method(changePreviewFilter:))]
         fn change_preview_filter(&self, sender: &NSPopUpButton) {
             let store = &self.ivars().store;
@@ -628,27 +622,22 @@ fn build(editor: &PreferencesWindow) -> objc2::rc::Retained<NSWindow> {
         mtm,
     );
     section(&appearance, "Preview", &mut y, mtm);
-    let zoom_pan = unsafe {
-        NSButton::checkboxWithTitle_target_action(
-            ns_string!("Preview zoom and pan"),
-            Some(editor),
-            Some(sel!(changePreviewZoomPan:)),
-            mtm,
-        )
-    };
-    zoom_pan.setFrame(NSRect::new(
-        NSPoint::new(CONTENT_MARGIN, y - CONTROL_Y_OFFSET),
-        NSSize::new(PANE_WIDTH - CONTENT_MARGIN * 2.0, CONTROL_HEIGHT),
+    let zoom_pan = PreferenceId::PreviewZoomPan.presentation();
+    let preview_navigation = shrimply_components_appkit::switch_row(
+        zoom_pan.label,
+        Some(zoom_pan.subtitle),
+        snapshot.preview_zoom_pan_enabled,
+        {
+            let store = store.clone();
+            move |enabled| preferences::set_preview_zoom_pan_enabled(&store, enabled)
+        },
+        mtm,
+    );
+    preview_navigation.setFrame(NSRect::new(
+        NSPoint::new(CONTENT_MARGIN, y + (LABEL_HEIGHT - ROW_HEIGHT) / 2.0),
+        NSSize::new(PANE_WIDTH - CONTENT_MARGIN * 2.0, ROW_HEIGHT),
     ));
-    zoom_pan.setState(if snapshot.preview_zoom_pan_enabled {
-        objc2_app_kit::NSControlStateValueOn
-    } else {
-        objc2_app_kit::NSControlStateValueOff
-    });
-    zoom_pan.setToolTip(Some(ns_string!(
-        "Scroll to zoom; middle-drag to pan; middle-click to fit."
-    )));
-    appearance.addSubview(&zoom_pan);
+    appearance.addSubview(&preview_navigation);
     y -= ROW_HEIGHT;
     numeric_row(
         &appearance,
