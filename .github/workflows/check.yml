@@ -9,6 +9,9 @@ on:
       export:
         type: boolean
         default: false
+      speed:
+        type: boolean
+        default: false
       cache:
         type: boolean
         default: false
@@ -25,6 +28,7 @@ jobs:
         with:
           persist-credentials: false
           submodules: recursive
+          fetch-depth: ${{ inputs.speed && 2 || 1 }}
       - name: Round-trip and compare
         run: |
           sudo apt-get update -qq
@@ -35,6 +39,39 @@ jobs:
           test -x "$encoder"
           echo "AAC_ENCODER=$encoder" >> "$GITHUB_ENV"
           /usr/bin/python3 vendor/aac/benchmark.py "$encoder" --smoke > aac-smoke.json
+      - name: Check identical AAC payload and compare codebook search time
+        if: inputs.speed
+        run: |
+          cp "$AAC_ENCODER" "$RUNNER_TEMP/optimized"
+          git show HEAD^:vendor/aac/src/bits.rs > vendor/aac/src/bits.rs
+          make -s test -o native-deps -o cuda-target-check ARGS='--locked --release -p shrimply-aac --example encode --no-run --message-format=json' > baseline.jsonl
+          cp "$(jq -r 'select(.reason? == "compiler-artifact" and .target.name == "encode") | .executable // empty' baseline.jsonl)" "$RUNNER_TEMP/baseline"
+          /usr/bin/python3 - <<'PYTHON'
+          import statistics
+          import subprocess
+          import sys
+          import os
+          from pathlib import Path
+          import numpy as np
+          sys.path.insert(0, "vendor/aac")
+          from benchmark import cases, trials
+          folder = Path(os.environ["RUNNER_TEMP"])
+          for name, pcm, _ in cases():
+              raw = folder / "source.f32"
+              raw.write_bytes(np.tile(pcm, (8, 1)).astype("<f4").tobytes())
+              for rate in (64000, 128000, 192000, 256000):
+                  files = [folder / f"{encoder}.aac" for encoder in ("optimized", "baseline")]
+                  commands = [(folder / encoder, raw, path, "48000", str(rate))
+                              for encoder, path in zip(("optimized", "baseline"), files)]
+                  results = [[], []]
+                  for i in range(3):
+                      for j in (i % 2, 1 - i % 2):
+                          _, cpu = trials(commands[j], 3)
+                          results[j].extend(cpu)
+                  assert files[0].read_bytes() == files[1].read_bytes(), (name, rate)
+                  optimized, baseline = map(statistics.median, results)
+                  print(f"{name} {rate // 1000} kb/s optimized {optimized:.4f}s baseline {baseline:.4f}s speedup {baseline / optimized:.2f}")
+          PYTHON
       - name: Compare pinned FFmpeg and FDK AAC
         if: inputs.comparison
         run: |

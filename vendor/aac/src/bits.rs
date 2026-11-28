@@ -52,27 +52,26 @@ impl Book {
         }
     }
 
-    pub fn code(&self, id: u8, values: &[i16]) -> u32 {
+    fn index(&self, values: &[i16]) -> usize {
         let limit = self.limit as usize;
         let radix = if self.signed {
             2 * limit + 1
         } else {
             limit + 1
         };
-        let index = values.iter().fold(0, |index, &value| {
+        values.iter().fold(0, |index, &value| {
             let digit = if self.signed {
                 (value + self.limit as i16) as usize
             } else {
                 usize::from(value.unsigned_abs()).min(limit)
             };
             index * radix + digit
-        });
-        SPECTRUM[usize::from(id - 1)][index]
+        })
     }
 
     pub fn write(&self, out: &mut Bits, id: u8, values: &[i16]) {
         for tuple in values.chunks_exact(self.width) {
-            out.code(self.code(id, tuple));
+            out.code(SPECTRUM[usize::from(id - 1)][self.index(tuple)]);
             if self.signed {
                 continue;
             }
@@ -107,27 +106,39 @@ pub(crate) fn best_book(values: &[i16], peak: u16) -> (u8, u16) {
         _ => 11,
     };
     let signs = values.iter().filter(|&&sample| sample != 0).count() as u16;
-    let escapes: u16 = values
+    // Adjacent books share a coefficient layout and index, but have different codes.
+    let mut best = (0, u16::MAX);
+    for id in (first..11).step_by(2) {
+        let book = Book::new(id);
+        let table = usize::from(id - 1);
+        let initial = if book.signed { 0 } else { signs };
+        let mut cost = [initial; 2];
+        for tuple in values.chunks_exact(book.width) {
+            let index = book.index(tuple);
+            cost[0] += (SPECTRUM[table][index] & 31) as u16;
+            cost[1] += (SPECTRUM[table + 1][index] & 31) as u16;
+        }
+        for (id, cost) in (id..=id + 1).zip(cost) {
+            if cost < best.1 {
+                best = (id, cost);
+            }
+        }
+    }
+    let book = Book::new(11);
+    let cost = signs
+        + values
+            .chunks_exact(book.width)
+            .map(|tuple| (SPECTRUM[10][book.index(tuple)] & 31) as u16)
+            .sum::<u16>();
+    let escapes = values
         .iter()
         .map(|sample| sample.unsigned_abs())
         .filter(|&sample| sample >= 16)
         .map(|sample| (2 * sample.ilog2() - 3) as u16)
-        .sum();
-    (first..=11)
-        .map(|id| {
-            let book = Book::new(id);
-            let mut cost: u16 = values
-                .chunks_exact(book.width)
-                .map(|tuple| (book.code(id, tuple) & 31) as u16)
-                .sum();
-            if !book.signed {
-                cost += signs;
-                if id == 11 {
-                    cost += escapes;
-                }
-            }
-            (id, cost)
-        })
-        .min_by_key(|&(_, cost)| cost)
-        .unwrap()
+        .sum::<u16>();
+    if cost + escapes < best.1 {
+        (11, cost + escapes)
+    } else {
+        best
+    }
 }
