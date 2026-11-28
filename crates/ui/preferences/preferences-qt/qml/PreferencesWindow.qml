@@ -1,5 +1,6 @@
+pragma ComponentBehavior: Bound
+
 import dev.shrimply.components
-import QtCore
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Dialogs
@@ -10,557 +11,302 @@ ApplicationWindow {
 
     required property var backend
     required property var owner
-    property int trustedLocationCount: 0
-    property bool loading: false
-    property int currentPage: 0
-    property bool blenderBusy: false
-    property bool serverBusy: false
-    property string serverError: ""
-    property bool cliBusy: true
-    property bool cliAvailable: false
-    property bool cliOverwrite: false
-    property string cliMessage: ""
+    signal settingsClosed()
+    property string serialized: ""
+    property var document: ({})
+    property int selected: 0
+    property bool finishWhenIdle: false
+    readonly property var pages: document.controls || []
+    readonly property var page: pages[selected]
+    readonly property bool wide: width >= (document.wide_width || 780)
 
-    title: backend.translate("Preferences — Shrimply")
+    title: document.title || backend.translate("Settings")
     transientParent: owner
     modality: Qt.WindowModal
     flags: Qt.Dialog
-    width: 980
-    height: 680
-    minimumWidth: 760
-    minimumHeight: 520
+    width: 900
+    height: 610
+    minimumWidth: 460
+    minimumHeight: 390
 
-    function numberValue(key) { return Number(backend.preferenceValue(key)) }
-    function configure(spin, key) {
-        spin.from = backend.preferenceMinimum(key)
-        spin.to = backend.preferenceMaximum(key)
-        spin.stepSize = backend.preferenceStep(key)
-        if ("valueScale" in spin)
-            spin.valueScale = backend.preferenceScale(key)
-        spin.value = numberValue(key)
+    function refresh() {
+        const next = backend.settingsDocument()
+        if (serialized !== next)
+            update(next)
+        if (finishWhenIdle && !document.pending) {
+            finishWhenIdle = false
+            settingsClosed()
+        }
     }
-    function reloadServers() {
-        serverModel.clear()
-        for (let index = 0; index < backend.preferenceServerCount(); ++index)
-            serverModel.append({ url: backend.preferenceServerUrl(index) })
-        serverChoice.currentIndex = backend.preferenceSelectedServer()
-        serverUrl.text = serverChoice.currentIndex >= 0
-            ? serverModel.get(serverChoice.currentIndex).url : ""
-        serverError = ""
-        serverBusy = true
-        clearServerStatus()
-        backend.refreshPreferenceServerStatus()
+
+    function update(next) {
+        serialized = next
+        document = JSON.parse(next)
     }
-    function clearServerStatus() {
-        serverDeviceModel.clear()
-        serverDevice.currentIndex = -1
-        serverVersion.text = ""
-        serverProtocol.text = ""
-        serverTorch.text = ""
-        serverCuda.text = ""
-        serverJobs.text = ""
-        serverReservations.text = ""
-        serverWorkers.text = ""
-        serverFeatures.text = ""
-    }
-    function reloadServerStatus() {
-        serverDeviceModel.clear()
-        for (let index = 0; index < backend.preferenceServerDeviceCount(); ++index)
-            serverDeviceModel.append({ label: backend.preferenceServerDeviceLabel(index) })
-        serverDevice.currentIndex = backend.preferenceServerSelectedDevice()
-        serverVersion.text = backend.preferenceServerDetail("version")
-        serverProtocol.text = backend.preferenceServerDetail("protocol")
-        serverTorch.text = backend.preferenceServerDetail("torch")
-        serverCuda.text = backend.preferenceServerDetail("cuda")
-        serverJobs.text = backend.preferenceServerDetail("jobs")
-        serverReservations.text = backend.preferenceServerDetail("reservations")
-        serverWorkers.text = backend.preferenceServerDetail("workers")
-        serverFeatures.text = backend.preferenceServerDetail("features")
-    }
-    function showConnectorError(message) {
-        if (message.length === 0)
-            return false
-        settingsErrorText.text = message
-        settingsError.open()
-        return true
-    }
-    function openPreferences() {
-        trustedLocationCount = backend.refreshTrustedLocations()
-        loading = true
-        configure(captionSize, "caption-font-size")
-        captionColor.text = backend.preferenceValue("caption-background-color")
-        fontFamily.text = backend.preferenceValue("default-text-font-family")
-        configure(visualDuration, "default-visual-duration")
-        configure(snapRadius, "timeline-snap-radius")
-        previewZoomPan.checked = backend.preferenceValue("preview-zoom-pan") === "true"
-        configure(previewPadding, "preview-padding")
-        configure(previewShadow, "preview-shadow-size")
-        previewUpsample.currentIndex = numberValue("preview-upsample-method")
-        previewDownsample.currentIndex = numberValue("preview-downsample-method")
-        configure(decoderPool, "temporal-decoder-pool-size")
-        configure(gpuMemory, "gpu-host-memory")
-        blenderPath.text = backend.preferenceValue("blender-binary")
-        cliBusy = true
-        cliAvailable = false
-        backend.configurePreferenceCli(false)
-        reloadServers()
-        loading = false
+
+    function openPreferences(pageId) {
+        refresh()
+        const index = pages.findIndex(page => page.id === pageId)
+        if (index >= 0)
+            selected = index
+        finishWhenIdle = false
         show()
         raise()
         requestActivate()
     }
 
-    Shortcut { sequence: StandardKey.Cancel; onActivated: root.close() }
-
-    Connections {
-        target: backend
-        function onPreferenceCliFinished(overwrite, message, error) {
-            root.cliBusy = false
-            if (error.length > 0) {
-                root.showConnectorError(error)
-                return
-            }
-            root.cliOverwrite = overwrite
-            root.cliMessage = message
-            root.cliAvailable = true
+    function send(command) {
+        const next = backend.applySettings(JSON.stringify(command))
+        const result = JSON.parse(next)
+        if (result.error) {
+            notice.heading = backend.translate("Settings")
+            notice.message = result.error
+            notice.dismiss = null
+            notice.open()
+            return
         }
-        function onPreferenceBlenderFinished(error) {
-            root.blenderBusy = false
-            if (!root.showConnectorError(error))
-                blenderPath.text = backend.preferenceValue("blender-binary")
+        update(next)
+        if (result.dialog) {
+            notice.heading = result.dialog.title
+            notice.message = result.dialog.body
+            notice.dismiss = result.dialog.command
+            notice.open()
         }
-        function onPreferenceServerStatusChanged(error) {
-            root.serverBusy = false
-            root.serverError = error
-            if (error.length === 0)
-                root.reloadServerStatus()
-            else
-                root.clearServerStatus()
+        if (result.source_picker) {
+            const picker = result.source_picker.folder ? folder : file
+            picker.settings = result.source_picker
+            picker.title = result.source_picker.title
+            picker.open()
+        }
+        if (result.show_in_files) {
+            const url = backend.revealSettingsPath(result.show_in_files)
+            if (url.toString().length)
+                Qt.openUrlExternally(url)
         }
     }
+
+    onClosing: {
+        if (document.pending)
+            finishWhenIdle = true
+        else
+            settingsClosed()
+    }
+    Shortcut { sequence: StandardKey.Cancel; onActivated: root.close() }
+    Timer { interval: 400; repeat: true; running: root.visible || root.finishWhenIdle; onTriggered: root.refresh() }
 
     RowLayout {
         anchors.fill: parent
         spacing: 0
 
         Pane {
+            visible: root.wide
             Layout.fillHeight: true
-            Layout.preferredWidth: 210
-            Layout.minimumWidth: 210
-            padding: 10
+            Layout.preferredWidth: root.document.sidebar_width || 200
 
             ColumnLayout {
-                anchors.fill: parent
-                spacing: 4
-
-                ItemDelegate {
-                    Layout.fillWidth: true
-                    text: backend.translate("Appearance")
-                    icon.source: "qrc:/shrimply/icons/appearance-symbolic.svg"
-                    highlighted: root.currentPage === 0
-                    onClicked: root.currentPage = 0
+                width: parent.width
+                Repeater {
+                    model: root.pages
+                    ItemDelegate {
+                        required property var modelData
+                        required property int index
+                        Layout.fillWidth: true
+                        text: modelData.label
+                        icon.source: "qrc:/shrimply/icons/" + modelData.icon + ".svg"
+                        icon.color: modelData.color
+                        highlighted: root.selected === index
+                        onClicked: root.selected = index
+                    }
                 }
-                ItemDelegate {
-                    Layout.fillWidth: true
-                    text: backend.translate("Performance")
-                    icon.source: "qrc:/shrimply/icons/speedometer-symbolic.svg"
-                    highlighted: root.currentPage === 1
-                    onClicked: root.currentPage = 1
-                }
-                ItemDelegate {
-                    Layout.fillWidth: true
-                    text: backend.translate("External")
-                    icon.source: "qrc:/shrimply/icons/application-x-executable-symbolic.svg"
-                    highlighted: root.currentPage === 2
-                    onClicked: root.currentPage = 2
-                }
-                Item { Layout.fillHeight: true }
             }
         }
 
-        Rectangle { Layout.fillHeight: true; Layout.preferredWidth: 1; color: palette.mid }
+        Rectangle { visible: root.wide; Layout.fillHeight: true; Layout.preferredWidth: 1; color: palette.mid }
 
         ColumnLayout {
             Layout.fillWidth: true
             Layout.fillHeight: true
             spacing: 0
 
-            StackLayout {
+            AdaptiveComboBox {
+                visible: !root.wide
+                Layout.fillWidth: true
+                Layout.margins: 16
+                model: root.pages.map(page => page.label)
+                currentIndex: root.selected
+                onActivated: index => root.selected = index
+            }
+
+            ScrollView {
+                id: scroll
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                currentIndex: root.currentPage
+                clip: true
+                padding: 20
+                contentWidth: availableWidth
 
-                ScrollView {
-                    id: appearanceScroll
-                    clip: true
-                    padding: 18
-                    contentWidth: availableWidth
-                    ColumnLayout {
-                        width: appearanceScroll.availableWidth
-                        spacing: 16
-
-                        GroupBox {
-                            title: backend.translate("Captions")
-                            Layout.fillWidth: true
-                            GridLayout {
-                                anchors.fill: parent
-                                columns: 2
-                                columnSpacing: 24
-                                rowSpacing: 12
-                                Label { text: backend.translate("Font Size") }
-                                SpinBox {
-                                    id: captionSize
-                                    Layout.fillWidth: true
-                                    editable: true
-                                    onValueModified: if (!root.loading)
-                                        backend.setPreferenceValue("caption-font-size", String(value))
-                                }
-                                Label { text: backend.translate("Background Color") }
-                                RowLayout {
-                                    Layout.fillWidth: true
-                                    TextField { id: captionColor; Layout.fillWidth: true; readOnly: true }
-                                    Button { text: backend.translate("Choose…"); onClicked: captionColorDialog.open() }
-                                }
-                            }
-                        }
-
-                        GroupBox {
-                            title: backend.translate("Text")
-                            Layout.fillWidth: true
-                            GridLayout {
-                                anchors.fill: parent
-                                columns: 2
-                                columnSpacing: 24
-                                Label { text: backend.translate("Default Text Font") }
-                                RowLayout {
-                                    Layout.fillWidth: true
-                                    TextField {
-                                        id: fontFamily
-                                        Layout.fillWidth: true
-                                        onEditingFinished: if (!root.loading && text.length > 0)
-                                            backend.setPreferenceValue("default-text-font-family", text)
-                                    }
-                                    Button { text: backend.translate("Choose…"); onClicked: fontDialog.open() }
-                                }
-                            }
-                        }
-
-                        GroupBox {
-                            title: backend.translate("Timeline")
-                            Layout.fillWidth: true
-                            GridLayout {
-                                anchors.fill: parent
-                                columns: 2
-                                columnSpacing: 24
-                                rowSpacing: 12
-                                Label { text: backend.translate("Default Visual Duration") }
-                                SpinBox {
-                                    id: visualDuration
-                                    property int valueScale: 1
-                                    Layout.fillWidth: true
-                                    editable: true
-                                    textFromValue: (value, locale) => Number(value / valueScale).toLocaleString(locale, "f", 1) + backend.translate(" s")
-                                    valueFromText: (text, locale) => Math.round(Number.fromLocaleString(locale, text.replace(/[^0-9.,-]/g, "")) * valueScale)
-                                    onValueModified: if (!root.loading)
-                                        backend.setPreferenceValue("default-visual-duration", String(value))
-                                }
-                                Label { text: backend.translate("Snap Attraction Radius") }
-                                SpinBox {
-                                    id: snapRadius
-                                    Layout.fillWidth: true
-                                    editable: true
-                                    onValueModified: if (!root.loading)
-                                        backend.setPreferenceValue("timeline-snap-radius", String(value))
-                                }
-                            }
-                        }
-
-                        GroupBox {
-                            title: backend.translate("Preview")
-                            Layout.fillWidth: true
-                            GridLayout {
-                                anchors.fill: parent
-                                columns: 2
-                                columnSpacing: 24
-                                rowSpacing: 12
-                                Label { text: backend.translate("Preview zoom and pan") }
-                                Switch {
-                                    id: previewZoomPan
-                                    ToolTip.text: backend.translate("Scroll to zoom; middle-drag to pan; middle-click to fit.")
-                                    ToolTip.visible: hovered
-                                    onToggled: if (!root.loading)
-                                        backend.setPreferenceValue("preview-zoom-pan", String(checked))
-                                }
-                                Label { text: backend.translate("Padding") }
-                                SpinBox {
-                                    id: previewPadding
-                                    Layout.fillWidth: true
-                                    editable: true
-                                    onValueModified: if (!root.loading)
-                                        backend.setPreferenceValue("preview-padding", String(value))
-                                }
-                                Label { text: backend.translate("Shadow Size") }
-                                SpinBox {
-                                    id: previewShadow
-                                    Layout.fillWidth: true
-                                    editable: true
-                                    onValueModified: if (!root.loading)
-                                        backend.setPreferenceValue("preview-shadow-size", String(value))
-                                }
-                                Label { text: backend.translate("Upsample Method") }
-                                AdaptiveComboBox {
-                                    id: previewUpsample
-                                    Layout.fillWidth: true
-                                    model: [backend.translate("Nearest"), backend.translate("Bilinear")]
-                                    onActivated: if (!root.loading)
-                                        backend.setPreferenceValue("preview-upsample-method", String(currentIndex))
-                                }
-                                Label { text: backend.translate("Downsample Method") }
-                                AdaptiveComboBox {
-                                    id: previewDownsample
-                                    Layout.fillWidth: true
-                                    model: [backend.translate("Nearest"), backend.translate("Bilinear"), backend.translate("Trilinear")]
-                                    onActivated: if (!root.loading)
-                                        backend.setPreferenceValue("preview-downsample-method", String(currentIndex))
-                                }
-                            }
-                        }
-                        Item { Layout.fillHeight: true }
+                ColumnLayout {
+                    width: scroll.availableWidth
+                    spacing: 16
+                    Label {
+                        visible: root.wide
+                        text: root.page?.label || ""
+                        font.pixelSize: 22
+                        font.bold: true
                     }
-                }
-
-                ScrollView {
-                    id: performanceScroll
-                    clip: true
-                    padding: 18
-                    contentWidth: availableWidth
-                    ColumnLayout {
-                        width: performanceScroll.availableWidth
-                        spacing: 16
+                    Repeater {
+                        model: root.page?.controls || []
                         GroupBox {
-                            title: backend.translate("Playback and Rendering")
+                            id: section
+                            required property var modelData
                             Layout.fillWidth: true
-                            GridLayout {
-                                anchors.fill: parent
-                                columns: 2
-                                columnSpacing: 24
-                                rowSpacing: 12
-                                Label { text: backend.translate("Temporal Decoder Pool Size") }
-                                SpinBox {
-                                    id: decoderPool
-                                    Layout.fillWidth: true
-                                    editable: true
-                                    onValueModified: if (!root.loading)
-                                        backend.setPreferenceValue("temporal-decoder-pool-size", String(value))
-                                }
-                                Label { text: backend.translate("GPU Host Memory Budget") }
-                                SpinBox {
-                                    id: gpuMemory
-                                    property int valueScale: 1
-                                    Layout.fillWidth: true
-                                    editable: true
-                                    textFromValue: (value, locale) => Number(value / valueScale).toLocaleString(locale, "f", 2) + backend.translate(" GiB")
-                                    valueFromText: (text, locale) => Math.round(Number.fromLocaleString(locale, text.replace(/[^0-9.,-]/g, "")) * valueScale)
-                                    onValueModified: if (!root.loading)
-                                        backend.setPreferenceValue("gpu-host-memory", String(value))
-                                }
-                            }
-                        }
-                        Item { Layout.fillHeight: true }
-                    }
-                }
-
-                ScrollView {
-                    id: servicesScroll
-                    clip: true
-                    padding: 18
-                    contentWidth: availableWidth
-                    ColumnLayout {
-                        width: servicesScroll.availableWidth
-                        spacing: 16
-                        GroupBox {
-                            Layout.fillWidth: true
-                            RowLayout {
-                                anchors.fill: parent
-                                ColumnLayout {
-                                    Layout.fillWidth: true
-                                    Label { text: backend.translate("CLI") }
-                                    Label {
-                                        text: root.cliMessage.length > 0 ? root.cliMessage : "shrimply"
-                                        textFormat: Text.PlainText
-                                        wrapMode: Text.Wrap
-                                        Layout.fillWidth: true
-                                    }
-                                }
-                                Button {
-                                    text: root.cliOverwrite ? backend.translate("Overwrite") : backend.translate("Install")
-                                    enabled: !root.cliBusy && root.cliAvailable
-                                    onClicked: {
-                                        root.cliBusy = true
-                                        backend.configurePreferenceCli(true)
-                                    }
-                                }
-                            }
-                        }
-                        GroupBox {
-                            title: backend.translate("Trusted executable sources")
-                            Layout.fillWidth: true
+                            title: modelData.label
                             ColumnLayout {
                                 anchors.fill: parent
-                                Label { text: backend.translate("Removing trust stops affected workers. Folder entries include subfolders."); wrapMode: Text.WordWrap; Layout.fillWidth: true }
                                 Repeater {
-                                    model: root.trustedLocationCount
-                                    RowLayout {
-                                        required property int index
-                                        Layout.fillWidth: true
-                                        Label { text: backend.trustedLocation(index); textFormat: Text.PlainText; wrapMode: Text.WrapAnywhere; Layout.fillWidth: true }
-                                        Button { text: backend.translate("Remove"); onClicked: { const count = backend.revokeTrust(index); root.trustedLocationCount = 0; root.trustedLocationCount = count } }
-                                    }
-                                }
-                                Label { visible: root.trustedLocationCount === 0; text: backend.translate("No trusted locations") }
-                            }
-                        }
-                        GroupBox {
-                            title: backend.translate("Blender")
-                            Layout.fillWidth: true
-                            RowLayout {
-                                anchors.fill: parent
-                                TextField { id: blenderPath; Layout.fillWidth: true; readOnly: true; placeholderText: backend.translate("Not configured") }
-                                Button {
-                                    text: backend.translate("Choose…")
-                                    enabled: !root.blenderBusy
-                                    onClicked: root.blenderBusy = backend.choosePreferenceBlenderBinary()
-                                }
-                                Button {
-                                    text: backend.translate("Clear")
-                                    enabled: !root.blenderBusy && blenderPath.text.length > 0
-                                    onClicked: { backend.clearPreferenceBlenderBinary(); blenderPath.clear() }
+                                    model: section.modelData.controls
+                                    SettingRow {}
                                 }
                             }
                         }
-                        GroupBox {
-                            title: backend.translate("Compute Server")
-                            Layout.fillWidth: true
-                            ColumnLayout {
-                                anchors.fill: parent
-                                AdaptiveComboBox {
-                                    id: serverChoice
-                                    Layout.fillWidth: true
-                                    model: ListModel { id: serverModel }
-                                    textRole: "url"
-                                    onActivated: {
-                                        backend.selectPreferenceServer(currentIndex)
-                                        serverUrl.text = currentText
-                                        root.serverBusy = true
-                                        root.serverError = ""
-                                        root.clearServerStatus()
-                                        backend.refreshPreferenceServerStatus()
-                                    }
-                                }
-                                TextField { id: serverUrl; Layout.fillWidth: true; placeholderText: "https://server.example" }
-                                RowLayout {
-                                    Button {
-                                        text: backend.translate("Add")
-                                        onClicked: if (!root.showConnectorError(backend.addPreferenceServer(serverUrl.text)))
-                                            root.reloadServers()
-                                    }
-                                    Button {
-                                        text: backend.translate("Save")
-                                        enabled: serverChoice.currentIndex >= 0
-                                        onClicked: if (!root.showConnectorError(backend.editPreferenceServer(serverChoice.currentIndex, serverUrl.text)))
-                                            root.reloadServers()
-                                    }
-                                    Button {
-                                        text: backend.translate("Remove")
-                                        enabled: serverModel.count > 1 && serverChoice.currentIndex >= 0
-                                        onClicked: {
-                                            backend.removePreferenceServer(serverChoice.currentIndex)
-                                            root.reloadServers()
-                                        }
-                                    }
-                                    Item { Layout.fillWidth: true }
-                                }
-                            }
-                        }
-                        GroupBox {
-                            title: backend.translate("Selected Server")
-                            Layout.fillWidth: true
-                            GridLayout {
-                                anchors.fill: parent
-                                columns: 2
-                                columnSpacing: 24
-                                rowSpacing: 10
-                                Label { text: backend.translate("Status") }
-                                RowLayout {
-                                    Layout.fillWidth: true
-                                    BusyIndicator { running: root.serverBusy; visible: running; implicitWidth: 22; implicitHeight: 22 }
-                                    Label {
-                                        Layout.fillWidth: true
-                                        text: root.serverBusy ? backend.translate("Checking…")
-                                            : root.serverError.length > 0 ? root.serverError : backend.translate("Available")
-                                        wrapMode: Text.Wrap
-                                    }
-                                }
-                                Label { text: backend.translate("Version") }
-                                Label { id: serverVersion; Layout.fillWidth: true }
-                                Label { text: backend.translate("Protocol") }
-                                Label { id: serverProtocol; Layout.fillWidth: true }
-                                Label { text: backend.translate("Torch") }
-                                Label { id: serverTorch; Layout.fillWidth: true }
-                                Label { text: backend.translate("CUDA") }
-                                Label { id: serverCuda; Layout.fillWidth: true }
-                                Label { text: backend.translate("Device") }
-                                AdaptiveComboBox {
-                                    id: serverDevice
-                                    Layout.fillWidth: true
-                                    enabled: !root.serverBusy && currentIndex >= 0
-                                    model: ListModel { id: serverDeviceModel }
-                                    textRole: "label"
-                                    onActivated: {
-                                        root.serverBusy = true
-                                        backend.selectPreferenceServerDevice(currentIndex)
-                                    }
-                                }
-                                Label { text: backend.translate("Jobs") }
-                                Label { id: serverJobs; Layout.fillWidth: true }
-                                Label { text: backend.translate("Reserved memory") }
-                                Label { id: serverReservations; Layout.fillWidth: true }
-                                Label { text: backend.translate("Workers") }
-                                Label { id: serverWorkers; Layout.fillWidth: true; wrapMode: Text.Wrap }
-                                Label { text: backend.translate("Available") }
-                                Label { id: serverFeatures; Layout.fillWidth: true; wrapMode: Text.Wrap }
-                            }
-                        }
-                        Item { Layout.fillHeight: true }
                     }
                 }
             }
         }
     }
 
-    ColorDialog {
-        id: captionColorDialog
-        title: backend.translate("Caption Background Color")
-        options: ColorDialog.ShowAlphaChannel
-        onAccepted: {
-            captionColor.text = String(selectedColor)
-            backend.setPreferenceValue("caption-background-color", captionColor.text)
+    component SettingRow: RowLayout {
+        id: row
+        required property var modelData
+        readonly property string kind: modelData.widget
+        Layout.fillWidth: true
+        enabled: modelData.enabled !== false
+        ColumnLayout {
+            Layout.fillWidth: true
+            visible: row.kind !== "button" || !!row.modelData.subtitle
+            Label {
+                text: row.kind === "button" ? row.modelData.subtitle : row.modelData.label
+                textFormat: Text.PlainText
+                wrapMode: Text.WrapAnywhere
+                Layout.fillWidth: true
+            }
+            Label {
+                visible: row.kind !== "button" && text.length > 0
+                text: row.modelData.subtitle || ""
+                textFormat: Text.PlainText
+                wrapMode: Text.WordWrap
+                Layout.fillWidth: true
+                opacity: 0.7
+            }
         }
+        Switch {
+            visible: row.kind === "toggle"
+            checked: row.modelData.selected === true
+            Accessible.name: row.modelData.label
+            onToggled: root.send(row.modelData.command)
+        }
+        AdaptiveComboBox {
+            visible: row.kind === "choice"
+            Layout.maximumWidth: 270
+            model: (row.modelData.choices || []).map(choice => choice.label)
+            currentIndex: (row.modelData.choices || []).findIndex(choice => choice.label === row.modelData.display)
+            displayText: row.modelData.display || ""
+            Accessible.name: row.modelData.label
+            onActivated: index => root.send(row.modelData.choices[index].command)
+        }
+        Button {
+            visible: row.kind === "editor" || row.kind === "font" || row.kind === "button"
+            Layout.maximumWidth: 270
+            text: row.kind === "button" ? row.modelData.label : row.modelData.display || root.backend.translate("Choose…")
+            onClicked: {
+                if (row.kind === "editor") {
+                    editor.settings = row.modelData.editor
+                    editor.open()
+                } else if (row.kind === "font") {
+                    fontDialog.open()
+                } else {
+                    root.send(row.modelData.command)
+                }
+            }
+        }
+        Label {
+            visible: row.kind === "text"
+            text: row.modelData.display || ""
+            textFormat: Text.PlainText
+            wrapMode: Text.WrapAnywhere
+            Layout.maximumWidth: 330
+            opacity: 0.7
+        }
+        BusyIndicator { visible: row.kind === "loading"; running: visible }
+    }
+
+    Dialog {
+        id: editor
+        property var settings: ({})
+        modal: true
+        anchors.centerIn: parent
+        width: Math.min(root.width - 32, 420)
+        title: settings.title || ""
+        contentItem: ColumnLayout {
+            Repeater {
+                id: inputs
+                model: editor.settings.fields || []
+                TextField {
+                    required property var modelData
+                    Layout.fillWidth: true
+                    placeholderText: modelData.label || ""
+                    text: modelData.value || ""
+                    echoMode: modelData.keyboard === "password" ? TextInput.Password : TextInput.Normal
+                    Accessible.name: modelData.label || editor.title
+                }
+            }
+        }
+        footer: DialogButtonBox {
+            Button {
+                text: editor.settings.cancel_label || ""
+                DialogButtonBox.buttonRole: DialogButtonBox.RejectRole
+            }
+            Button {
+                text: editor.settings.confirm_label || ""
+                DialogButtonBox.buttonRole: DialogButtonBox.AcceptRole
+            }
+        }
+        onAccepted: {
+            const values = []
+            for (let index = 0; index < inputs.count; ++index)
+                values.push(inputs.itemAt(index).text)
+            root.send(Object.assign({}, settings.command, {values: values}))
+        }
+        onClosed: settings = ({})
+    }
+
+    Dialog {
+        id: notice
+        property string heading: ""
+        property string message: ""
+        property var dismiss: null
+        anchors.centerIn: parent
+        width: Math.min(root.width - 32, 440)
+        title: heading
+        modal: true
+        standardButtons: Dialog.Close
+        contentItem: Label { text: notice.message; textFormat: Text.PlainText; wrapMode: Text.Wrap }
+        onClosed: if (dismiss) root.send(dismiss)
+    }
+    FileDialog {
+        id: file
+        property var settings
+        onAccepted: root.send(Object.assign({}, settings.complete, {path: root.backend.settingsPath(selectedFile)}))
+        onRejected: root.send(settings.cancel)
+    }
+    FolderDialog {
+        id: folder
+        property var settings
+        onAccepted: root.send(Object.assign({}, settings.complete, {path: root.backend.settingsPath(selectedFolder)}))
+        onRejected: root.send(settings.cancel)
     }
     FontDialog {
         id: fontDialog
-        title: backend.translate("Default Text Font")
-        onAccepted: {
-            fontFamily.text = selectedFont.family
-            backend.setPreferenceValue("default-text-font-family", fontFamily.text)
-        }
-    }
-    Dialog {
-        id: settingsError
-        anchors.centerIn: parent
-        modal: true
-        title: backend.translate("Could Not Save Preference")
-        standardButtons: Dialog.Ok
-        Label { id: settingsErrorText; wrapMode: Text.Wrap; width: 420 }
+        onAccepted: root.send({action: "desktop_font", name: selectedFont.family})
     }
 }

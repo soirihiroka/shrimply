@@ -59,7 +59,7 @@ define_class!(
 
         #[unsafe(method(windowWillClose:))]
         fn window_will_close(&self, _event: &NSNotification) {
-            if !self.ivars().settings.borrow().pending_project_sign_in() {
+            if !self.ivars().settings.borrow().has_pending_changes() {
                 self.finish_closing();
             }
         }
@@ -70,7 +70,7 @@ define_class!(
         fn poll_settings(&self, _timer: &NSTimer) {
             self.refresh();
             if !self.ivars().layout.get().expect("settings layout").window.isVisible()
-                && !self.ivars().settings.borrow().pending_project_sign_in()
+                && !self.ivars().settings.borrow().has_pending_changes()
             {
                 self.finish_closing();
             }
@@ -314,31 +314,6 @@ impl PreferencesWindow {
                 column_append(&group, &self.control(control));
             }
             column_append(&layout.body, &group);
-        }
-        if id == "preferences:external" {
-            let button = ActionButton::new(
-                text("Install Command Line Tool").as_ref(),
-                {
-                    let weak = Weak::new(self);
-                    move || {
-                        if let Some(window) = weak.load() {
-                            match preferences::cli::install() {
-                                Ok(path) => {
-                                    let alert = NSAlert::new(window.mtm());
-                                    alert.setMessageText(&NSString::from_str(
-                                        text("Command Line Tool Installed").as_ref(),
-                                    ));
-                                    alert.setInformativeText(&NSString::from_str(&path));
-                                    alert.runModal();
-                                }
-                                Err(error) => error_alert::show(window.mtm(), &error),
-                            };
-                        }
-                    }
-                },
-                mtm,
-            );
-            column_append(&layout.body, button.view());
         }
     }
 
@@ -587,11 +562,7 @@ impl PreferencesWindow {
             current.name().to_owned(),
             move |name| {
                 if let Some(settings) = weak.load() {
-                    preferences::set_default_text_font_family(
-                        &settings.ivars().store,
-                        preferences::FontFamily::Local { name },
-                    );
-                    settings.refresh();
+                    settings.apply(&json!({"action":"desktop_font","name":name}));
                 }
             },
             mtm,
@@ -621,6 +592,7 @@ impl PreferencesWindow {
         }
         if let Some(picker) = document["source_picker"].as_object() {
             let panel = NSOpenPanel::openPanel(self.mtm());
+            panel.setTitle(Some(&NSString::from_str(string(&picker["title"]))));
             let folder = picker["folder"] == true;
             panel.setCanChooseFiles(!folder);
             panel.setCanChooseDirectories(folder);

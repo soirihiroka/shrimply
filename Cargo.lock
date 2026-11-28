@@ -6587,12 +6587,14 @@ dependencies = [
  "cxx-qt-build",
  "cxx-qt-lib",
  "ffmpeg-next",
+ "serde_json",
  "shrimply-application-qt",
  "shrimply-components-qt",
  "shrimply-cross-ui-core",
  "shrimply-editor-state",
  "shrimply-export-qt",
  "shrimply-i18n-qt",
+ "shrimply-inspector-document",
  "shrimply-inspector-qt",
  "shrimply-math-core",
  "shrimply-preferences-qt",
@@ -7557,9 +7559,6 @@ version = "0.1.0"
 dependencies = [
  "cxx-qt",
  "cxx-qt-build",
- "cxx-qt-lib",
- "shrimply-math-color",
- "shrimply-preferences-core",
 ]
 
 [[package]]

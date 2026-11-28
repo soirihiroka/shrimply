@@ -44,18 +44,8 @@ pub mod qobject {
         fn project_servers(self: &LauncherBackend, include_local: bool) -> QStringList;
 
         #[qinvokable]
-        #[cxx_name = "updateProjectServer"]
-        fn update_project_server(
-            self: Pin<&mut LauncherBackend>,
-            previous: &QString,
-            url: &QString,
-            username: &QString,
-            password: &QString,
-        );
-
-        #[qsignal]
-        #[cxx_name = "projectServersUpdated"]
-        fn project_servers_updated(self: Pin<&mut LauncherBackend>, success: bool);
+        #[cxx_name = "reloadProjects"]
+        fn reload_projects(self: Pin<&mut LauncherBackend>);
 
         #[qinvokable]
         #[cxx_name = "setSearch"]
@@ -159,35 +149,6 @@ impl qobject::LauncherBackend {
             .collect()
     }
 
-    pub fn update_project_server(
-        self: Pin<&mut Self>,
-        previous: &QString,
-        url: &QString,
-        username: &QString,
-        password: &QString,
-    ) {
-        let previous = previous.to_string();
-        let url = url.to_string();
-        let username = username.to_string();
-        let password = password.to_string();
-        let qt_thread = self.qt_thread();
-        std::thread::spawn(move || {
-            let previous = (!previous.is_empty()).then_some(previous.as_str());
-            let result = if url.is_empty() {
-                launcher::update_project_servers(previous, None)
-            } else {
-                launcher::sign_in_project_server(previous, &url, &username, &password)
-            };
-            let _ = qt_thread.queue(move |mut backend| {
-                backend.as_mut().project_servers_updated(result.is_ok());
-                match result {
-                    Ok(()) => backend.reload_projects(),
-                    Err(error) => backend.emit_error("Could not update project server", &error),
-                }
-            });
-        });
-    }
-
     fn open_project_async(
         self: Pin<&mut Self>,
         heading: &'static str,
@@ -283,7 +244,7 @@ impl qobject::LauncherBackend {
         });
     }
 
-    fn reload_projects(mut self: Pin<&mut Self>) {
+    pub fn reload_projects(mut self: Pin<&mut Self>) {
         let load = self.as_mut().rust_mut().core.begin_project_load();
         let qt_thread = self.qt_thread();
         std::thread::spawn(move || {

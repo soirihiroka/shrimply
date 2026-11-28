@@ -1,4 +1,6 @@
 //! Native preferences reuse the GTK font browser and trust operations.
+#[cfg(not(target_os = "android"))]
+mod desktop;
 mod project_servers;
 mod trust;
 use serde_json::{Value, json};
@@ -10,10 +12,16 @@ pub struct Preferences {
     fonts: crate::font_picker::Picker,
     trust: trust::Sources,
     servers: project_servers::Settings,
+    #[cfg(not(target_os = "android"))]
+    desktop: desktop::Settings,
 }
 
 impl Preferences {
-    pub fn pending_project_sign_in(&self) -> bool {
+    pub fn has_pending_changes(&self) -> bool {
+        #[cfg(not(target_os = "android"))]
+        if self.desktop.pending() {
+            return true;
+        }
         self.servers.pending()
     }
 
@@ -48,6 +56,8 @@ impl Preferences {
             document["font_picker"] = picker;
         }
         self.trust.decorate(&mut document);
+        #[cfg(not(target_os = "android"))]
+        self.desktop.decorate(store, &mut document);
         document["close_command"] = json!({"action":"preferences_close"});
         document
     }
@@ -64,6 +74,10 @@ impl Preferences {
             }
             action if action.starts_with("project_server_") => {
                 self.servers.apply(store, request)?;
+            }
+            #[cfg(not(target_os = "android"))]
+            action if action.starts_with("desktop_") => {
+                self.desktop.apply(store, request)?;
             }
             action if action.starts_with("font_") => {
                 self.fonts.apply(request)?;

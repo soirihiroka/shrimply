@@ -6,6 +6,8 @@ edition = "2024"
 [dependencies]
 shrimply-trust-core.workspace = true
 shrimply-visual-cuda.workspace = true
+serde_json.workspace = true
+shrimply-inspector-document.workspace = true
 cxx.workspace = true
 cxx-qt.workspace = true
 cxx-qt-lib = { workspace = true, features = ["qt_full"] }

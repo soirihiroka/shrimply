@@ -32,16 +32,6 @@ ApplicationWindow {
             errorBody.text = body
             errorDialog.open()
         }
-        function onProjectServersUpdated(success) {
-            projectServersDialog.updating = false
-            if (success) {
-                projectServerRows.model = backend.projectServers(false)
-                projectServersDialog.previous = ""
-                newProjectServer.clear()
-                projectUsername.clear()
-            }
-        }
-
         function onEditorStarted() {
             window.hide()
         }
@@ -163,6 +153,7 @@ ApplicationWindow {
         id: preferencesWindow
         backend: settingsBackend
         owner: window
+        onSettingsClosed: backend.reloadProjects()
     }
 
     Shortcut {
@@ -170,18 +161,11 @@ ApplicationWindow {
         onActivated: preferencesWindow.openPreferences()
     }
 
-    Timer {
-        interval: 100
-        repeat: true
-        running: preferencesWindow.visible
-        onTriggered: settingsBackend.pollPreferenceTasks()
-    }
-
     AdaptiveMenu {
         id: mainMenu
         pointerPopupType: Qt.platform.os === "windows" ? Popup.Item : Popup.Window
         Action { text: backend.text("Settings"); onTriggered: preferencesWindow.openPreferences() }
-        Action { text: backend.text("Project Servers"); onTriggered: projectServersDialog.open() }
+        Action { text: backend.text("Project Servers"); onTriggered: preferencesWindow.openPreferences("preferences:external") }
         Action { text: backend.text("About Shrimply"); onTriggered: aboutWindow.openAbout() }
     }
 
@@ -247,104 +231,6 @@ ApplicationWindow {
             id: errorBody
             width: parent.width
             wrapMode: Text.Wrap
-        }
-    }
-
-    Dialog {
-        id: projectServersDialog
-        anchors.centerIn: parent
-        width: Math.min(500, window.width - 48)
-        title: backend.text("Project Servers")
-        modal: true
-        standardButtons: Dialog.Close
-        property bool updating: false
-        property string previous: ""
-        onOpened: projectServerRows.model = backend.projectServers(false)
-        onClosed: {
-            previous = ""
-            newProjectServer.clear()
-            projectUsername.clear()
-            projectPassword.clear()
-        }
-
-        ColumnLayout {
-            width: parent.width
-
-            ListView {
-                id: projectServerRows
-                Layout.fillWidth: true
-                Layout.preferredHeight: Math.min(contentHeight, 220)
-                clip: true
-                delegate: RowLayout {
-                    required property string modelData
-                    width: projectServerRows.width
-
-                    Label {
-                        Layout.fillWidth: true
-                        text: modelData
-                        elide: Text.ElideRight
-                    }
-
-                    ToolButton {
-                        icon.source: "qrc:/shrimply/icons/pencil-symbolic.svg"
-                        text: backend.text("Edit")
-                        display: AbstractButton.IconOnly
-                        enabled: !projectServersDialog.updating
-                        onClicked: {
-                            projectServersDialog.previous = modelData
-                            newProjectServer.text = modelData
-                            projectPassword.clear()
-                            projectUsername.forceActiveFocus()
-                        }
-                    }
-
-                    ToolButton {
-                        icon.source: "qrc:/shrimply/icons/user-trash-symbolic.svg"
-                        text: backend.text("Remove Server")
-                        display: AbstractButton.IconOnly
-                        ToolTip.visible: hovered
-                        ToolTip.text: text
-                        enabled: !projectServersDialog.updating
-                        onClicked: {
-                            projectServersDialog.updating = true
-                            backend.updateProjectServer(modelData, "", "", "")
-                        }
-                    }
-                }
-            }
-
-            TextField {
-                id: newProjectServer
-                Layout.fillWidth: true
-                enabled: !projectServersDialog.updating
-                placeholderText: backend.text("Server URL")
-            }
-            TextField {
-                id: projectUsername
-                Layout.fillWidth: true
-                enabled: !projectServersDialog.updating
-                placeholderText: backend.text("Username")
-            }
-            TextField {
-                id: projectPassword
-                Layout.fillWidth: true
-                enabled: !projectServersDialog.updating
-                placeholderText: backend.text("Password")
-                echoMode: TextInput.Password
-                onAccepted: if (signIn.enabled) signIn.clicked()
-            }
-            Button {
-                id: signIn
-                text: backend.text("Sign In")
-                enabled: !projectServersDialog.updating && newProjectServer.text.trim().length > 0 &&
-                    projectUsername.text.trim().length > 0 && projectPassword.text.length > 0
-                onClicked: {
-                    projectServersDialog.updating = true
-                    backend.updateProjectServer(projectServersDialog.previous, newProjectServer.text,
-                                                projectUsername.text, projectPassword.text)
-                    projectPassword.clear()
-                }
-            }
         }
     }
 

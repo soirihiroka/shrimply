@@ -23,7 +23,7 @@ pub(in crate::macos::canvas) fn devices() -> Vec<(String, String)> {
         ]);
         AVCaptureDeviceDiscoverySession::discoverySessionWithDeviceTypes_mediaType_position(
             &kinds,
-            Some(AVMediaTypeVideo),
+            AVMediaTypeVideo,
             AVCaptureDevicePosition::Unspecified,
         )
         .devices()
@@ -139,7 +139,8 @@ fn record(
         let _ = permission.send(Command::Permission(allowed.as_bool()));
     });
     unsafe {
-        AVCaptureDevice::requestAccessForMediaType_completionHandler(AVMediaTypeVideo, &callback);
+        let video = AVMediaTypeVideo.ok_or("Camera capture is unavailable")?;
+        AVCaptureDevice::requestAccessForMediaType_completionHandler(video, &callback);
     }
     match commands.recv() {
         Ok(Command::Permission(true)) => {}
