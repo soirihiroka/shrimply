@@ -10,10 +10,6 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: ci-checks-${{ github.ref }}
-  cancel-in-progress: true
-
 env:
   TZ: UTC
   CARGO_PROFILE_DEV_DEBUG: "0"
@@ -21,6 +17,9 @@ env:
 jobs:
   check:
     name: ${{ matrix.platform }}
+    concurrency:
+      group: ci-checks-${{ github.ref }}-${{ matrix.platform }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     strategy:
       fail-fast: false
       matrix:
@@ -80,13 +79,6 @@ jobs:
 
       - name: Check
         run: ${{ matrix.command }}
-
-      - name: Save Rust compiler cache after a failed check
-        if: failure() && env.SCCACHE_CACHE_KEY != ''
-        uses: actions/cache/save@v6
-        with:
-          path: ${{ env.SCCACHE_DIR }}
-          key: ${{ env.SCCACHE_CACHE_KEY }}
 
       - name: Save macOS check cache
         if: matrix.platform == 'macos' && steps.macos-setup.outputs.application-hit != 'true'

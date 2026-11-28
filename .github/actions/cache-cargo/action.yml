@@ -22,6 +22,7 @@ runs:
         DOWNLOADS: ${{ inputs.cargo-home || env.CARGO_HOME || '~/.cargo' }}
         DOWNLOAD_PREFIX: cargo-downloads-v1-${{ runner.os }}-${{ runner.arch }}-${{ inputs.scope }}
         LOCKS: ${{ hashFiles('Cargo.lock', 'sanim/Cargo.lock', 'sanim/editors/zed/Cargo.lock') }}
+        BUILD_INPUTS: ${{ hashFiles('Makefile', '.cargo/config.toml') }}
         SANDBOX_CACHE: ${{ inputs.sandbox-cache }}
         COMPILER_PREFIX: sccache-v1-${{ runner.os }}-${{ runner.arch }}-${{ inputs.scope }}-${{ github.workflow }}-${{ hashFiles('rust-toolchain.toml') }}
       run: |
@@ -42,7 +43,7 @@ runs:
           echo "CARGO_DOWNLOADS_LOCK_PREFIX=$DOWNLOAD_PREFIX-$LOCKS"
           echo "SCCACHE_DIR=$directory"
           echo "SCCACHE_CACHE_PREFIX=$COMPILER_PREFIX"
-          echo "SCCACHE_CACHE_KEY=$COMPILER_PREFIX-$GITHUB_SHA"
+          echo "SCCACHE_CACHE_KEY=$COMPILER_PREFIX-deps-$LOCKS-$BUILD_INPUTS"
         } >> "$GITHUB_ENV"
 
     - name: Cache Cargo downloads
