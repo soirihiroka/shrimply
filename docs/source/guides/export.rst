@@ -41,7 +41,7 @@ Video and GIF
 -------------
 
 Export video as **H.264** or **H.265** (MP4 or Matroska ``.mkv``), or export
-an animated **GIF**. Audio tracks export as AAC, FDK AAC, or Opus depending on
+an animated **GIF**. Audio tracks export as AAC or Opus depending on
 the container.
 
 For H.264 and H.265, the export form lists the encoder with the format and
