@@ -248,10 +248,9 @@ pub fn launch_editor(path: &Path) -> Result<Child, String> {
 
 pub fn launch_listed_project(entry: &ProjectEntry) -> Result<Child, String> {
     let path = entry.destination(None)?;
-    if entry.path.is_some() || path.is_file() {
-        launch_editor(&path)
-    } else {
-        launch(&path, entry.remote.as_ref())
+    match &entry.remote {
+        Some(remote) => launch(&path, Some(remote)),
+        None => launch_editor(&path),
     }
 }
 

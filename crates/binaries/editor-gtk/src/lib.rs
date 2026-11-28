@@ -610,6 +610,7 @@ fn handle_load_event(
             build_ui(window, *project);
         }
         LoadEvent::Error { heading, body } => show_project_load_error(app, window, heading, &body),
+        LoadEvent::HandedOff => app.quit(),
         LoadEvent::Canceled => {
             STARTUP_CANCELLED.set(true);
             app.quit();

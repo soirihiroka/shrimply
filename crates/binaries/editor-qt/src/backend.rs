@@ -821,6 +821,7 @@ impl qobject::EditorBackend {
                 self.as_mut().update_player_properties();
             }
             LoadEvent::Error { heading, body } => self.emit_error(heading, &body),
+            LoadEvent::HandedOff => self.as_mut().canceled(0),
             LoadEvent::Canceled => self.as_mut().canceled(i32::from(
                 shrimply_cross_ui_core::launcher::EDITOR_OPEN_CANCELED_EXIT_CODE,
             )),

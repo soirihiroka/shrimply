@@ -386,7 +386,7 @@ define_class!(
         #[unsafe(method(openListedProject:))]
         fn open_listed_project(&self, sender: &NSButton) {
             if let Some(project) = self.ivars().model.borrow().project(sender.tag() as usize).cloned() {
-                self.start_editor(launcher::launch_listed_project(&project));
+                self.open_remote("Could not open project", move || launcher::launch_listed_project(&project));
             }
         }
 
@@ -398,9 +398,10 @@ define_class!(
             };
             if let Some(server) = request.server {
                 self.open_remote("Could not create project", move || {
-                    launcher::create_project(
+                    let path = launcher::create_project(
                         ProjectLocation::Remote(server), &request.name, (request.canvas_size, request.fps), &[],
-                    )
+                    )?;
+                    launcher::launch_editor(&path)
                 });
                 return;
             }
@@ -626,10 +627,10 @@ impl Delegate {
     fn open_remote(
         &self,
         heading: &'static str,
-        operation: impl FnOnce() -> Result<PathBuf, String> + Send + 'static,
+        operation: impl FnOnce() -> Result<std::process::Child, String> + Send + 'static,
     ) {
         self.project_task(operation, move |delegate, result| match result {
-            Ok(path) => delegate.open_in_editor(&path),
+            Ok(child) => delegate.start_editor(Ok(child)),
             Err(error) => delegate.show_error(heading, &error),
         });
     }

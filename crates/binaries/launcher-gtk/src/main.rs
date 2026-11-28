@@ -247,7 +247,9 @@ fn build_ui(app: &adw::Application) {
         let (window, app) = (window.clone(), app.clone());
         move |_, row| {
             if let Some(entry) = model.borrow().project(row.index() as usize).cloned() {
-                start_editor(&window, &app, launcher::launch_listed_project(&entry));
+                open_remote(&window, &app, "Could not open project", move || {
+                    launcher::launch_listed_project(&entry)
+                });
             }
         }
     });
@@ -439,7 +441,7 @@ fn open_remote(
     window: &adw::ApplicationWindow,
     app: &adw::Application,
     heading: &'static str,
-    operation: impl FnOnce() -> Result<PathBuf, String> + Send + 'static,
+    operation: impl FnOnce() -> Result<std::process::Child, String> + Send + 'static,
 ) {
     let (send, receive) = mpsc::channel();
     thread::spawn(move || {
@@ -449,7 +451,7 @@ fn open_remote(
     let app = app.clone();
     glib::timeout_add_local(Duration::from_millis(50), move || {
         match receive.try_recv() {
-            Ok(Ok(path)) => open_in_editor(&window, &app, &path),
+            Ok(Ok(editor)) => start_editor(&window, &app, Ok(editor)),
             Ok(Err(error)) => show_error(&window, heading, &error),
             Err(mpsc::TryRecvError::Empty) => return glib::ControlFlow::Continue,
             Err(mpsc::TryRecvError::Disconnected) => {
@@ -521,12 +523,13 @@ fn show_create_project(window: &adw::ApplicationWindow, app: &adw::Application) 
             {
                 dialog.close();
                 open_remote(&window, &app, "Could not create project", move || {
-                    launcher::create_project(
+                    let path = launcher::create_project(
                         ProjectLocation::Remote(server),
                         &project_name,
                         (canvas_size, fps),
                         &project_tags,
-                    )
+                    )?;
+                    launcher::launch_editor(&path)
                 });
                 return;
             }

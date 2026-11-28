@@ -201,7 +201,7 @@ impl Editor {
                     .set(layout)
                     .unwrap_or_else(|_| panic!("layout already installed"));
             }
-            Ok(None) => self.stop_loading(Ok(false)),
+            Ok(None) => self.stop_loading(Ok(true)),
             Err(OpenError::Version(prompt)) => {
                 let alert = NSAlert::new(self.mtm());
                 alert.setMessageText(ns_string!("Service Version Mismatch"));

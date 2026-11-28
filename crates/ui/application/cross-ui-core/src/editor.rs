@@ -50,6 +50,7 @@ pub enum LoadEvent {
         body: String,
     },
     Canceled,
+    HandedOff,
 }
 
 pub enum VersionChoice {
@@ -746,7 +747,7 @@ impl ProjectLoader {
             }
             Ok(None) => {
                 self.state = State::Finished;
-                LoadEvent::Canceled
+                LoadEvent::HandedOff
             }
             Err(OpenError::Version(prompt)) => {
                 self.state = State::WaitingForVersion(prompt.clone());

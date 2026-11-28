@@ -179,13 +179,13 @@ impl qobject::LauncherBackend {
     fn open_project_async(
         self: Pin<&mut Self>,
         heading: &'static str,
-        operation: impl FnOnce() -> Result<PathBuf, String> + Send + 'static,
+        operation: impl FnOnce() -> Result<Child, String> + Send + 'static,
     ) {
         let qt_thread = self.qt_thread();
         std::thread::spawn(move || {
             let result = operation();
             let _ = qt_thread.queue(move |backend| match result {
-                Ok(path) => backend.start_editor(launcher::launch_editor(&path)),
+                Ok(child) => backend.start_editor(Ok(child)),
                 Err(error) => backend.emit_error(heading, &error),
             });
         });
@@ -204,9 +204,10 @@ impl qobject::LauncherBackend {
     }
 
     pub fn open_listed_project(self: Pin<&mut Self>, key: &QString) {
-        if let Some(project) = self.core.project_by_key(&key.to_string()) {
-            let result = launcher::launch_listed_project(project);
-            self.start_editor(result);
+        if let Some(project) = self.core.project_by_key(&key.to_string()).cloned() {
+            self.open_project_async("Could not open project", move || {
+                launcher::launch_listed_project(&project)
+            });
         }
     }
 
@@ -268,7 +269,8 @@ impl qobject::LauncherBackend {
         };
         self.open_project_async("Could not create project", move || {
             let settings = launcher::project_settings_from_values(width, height, frame_rate_index)?;
-            launcher::create_project(location, &name, settings, &[])
+            let path = launcher::create_project(location, &name, settings, &[])?;
+            launcher::launch_editor(&path)
         });
     }
 
