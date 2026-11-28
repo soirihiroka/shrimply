@@ -6375,6 +6375,7 @@ dependencies = [
 name = "shrimply-editing-api"
 version = "0.1.0"
 dependencies = [
+ "gio",
  "glam 0.34.1",
  "regex",
  "schemars",
