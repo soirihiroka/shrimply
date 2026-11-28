@@ -530,18 +530,6 @@ fn search_popover(
 
     let weak_button = main_button;
     let weak_popover = Weak::new(&*popover);
-    populate_search_results(
-        &list,
-        "",
-        &choices,
-        &selected,
-        &weak_button,
-        &weak_popover,
-        update_title,
-        &on_select,
-        &native_menu,
-        mtm,
-    );
     action::attach(
         &search,
         {
