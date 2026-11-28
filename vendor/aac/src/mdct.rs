@@ -173,7 +173,7 @@ pub(crate) fn transient(
             }
         }
         for (long, current) in smooth.iter_mut().zip(energy) {
-            attack[usize::from(index * 64 >= OFFSET)] |= current > 12.0 * *long + 0.0003;
+            attack[usize::from(index * 64 >= FRAME_SAMPLES / 2)] |= current > 12.0 * *long + 0.0003;
             *long = *long * 0.8 + current * 0.2;
         }
     }
@@ -198,6 +198,8 @@ mod tests {
                 .collect();
             let mut output = vec![0.0; size];
             transform.run(&pcm, 0, None, &mut output);
+            let mut error = 0.0;
+            let mut power = 0.0;
             for (k, output) in output.into_iter().enumerate() {
                 let direct = pcm
                     .iter()
@@ -210,11 +212,14 @@ mod tests {
                         f64::from(sample[0] * window) * phase.cos() * 65536.0
                     })
                     .sum::<f64>();
-                assert!(
-                    (f64::from(output) - direct).abs() < 0.65 + direct.abs() * 2.0e-7,
-                    "{size} {k} {output} {direct}"
-                );
+                error += (f64::from(output) - direct).powi(2);
+                power += direct.powi(2);
             }
+            assert!(
+                error / power < 1.0e-12,
+                "{size} bins, relative error {}",
+                error / power
+            );
         }
     }
 }

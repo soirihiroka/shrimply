@@ -45,7 +45,8 @@ def cases():
         [0.3 * np.sin(2 * np.pi * 613 * t + offset * phase) for offset in (1, -1)], axis=1
     )
     # Vary attack phase relative to the long window, with a silent lead-in for each attack.
-    onsets = RATE // 4 + np.arange(8) * (RATE // 3 + 57)
+    phases = np.array([*range(0, 1024, 64), 447, 449, 511, 513])
+    onsets = 8192 + np.arange(len(phases)) * 6144 + phases
     transient = np.zeros_like(tone)
     length = 1100
     decay = np.exp(-np.arange(length) / 145)
