@@ -1,6 +1,6 @@
 [package]
 name = "shrimply-editor-appkit"
-version = "0.1.0"
+version.workspace = true
 edition = "2024"
 
 [target.'cfg(target_os = "macos")'.dependencies]

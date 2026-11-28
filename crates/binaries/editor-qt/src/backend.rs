@@ -1,5 +1,5 @@
 use core::pin::Pin;
-use cxx_qt::CxxQtType;
+use cxx_qt::{CxxQtType, Threading};
 use cxx_qt_lib::{QString, QStringList, QUrl};
 use shrimply_components_qt::about;
 use shrimply_cross_ui_core::editor::project_menu::{self, Action as ProjectAction};
@@ -199,6 +199,10 @@ pub mod qobject {
         #[cxx_name = "licenseText"]
         fn license_text(self: Pin<&mut EditorBackend>) -> QString;
         #[qinvokable]
+        #[cxx_name = "pollPreferenceTasks"]
+        fn poll_preference_tasks(self: Pin<&mut EditorBackend>);
+
+        #[qinvokable]
         #[cxx_name = "preferenceValue"]
         fn preference_value(self: Pin<&mut EditorBackend>, key: &QString) -> QString;
         #[qinvokable]
@@ -334,6 +338,7 @@ pub mod qobject {
     }
 
     impl cxx_qt::Initialize for EditorBackend {}
+    impl cxx_qt::Threading for EditorBackend {}
 }
 
 pub struct EditorBackendRust {
@@ -364,6 +369,8 @@ pub struct EditorBackendRust {
     cli_request: Option<Receiver<Result<(bool, String), String>>>,
     server_request: Option<Receiver<Result<shrimply_preferences_qt::ServerStatus, String>>>,
     server_status: Option<shrimply_preferences_qt::ServerStatus>,
+    launcher_preferences:
+        std::cell::OnceCell<shrimply_editor_state::preferences::SharedPreferences>,
 }
 
 impl cxx_qt::Initialize for qobject::EditorBackend {
@@ -405,6 +412,7 @@ impl Default for EditorBackendRust {
             cli_request: None,
             server_request: None,
             server_status: None,
+            launcher_preferences: std::cell::OnceCell::new(),
         }
     }
 }
@@ -685,6 +693,7 @@ impl qobject::EditorBackend {
         Some(match action {
             ProjectAction::SaveAs => Self::show_save_as_dialog,
             ProjectAction::Preferences => Self::project_preferences_requested,
+            ProjectAction::RestartService => Self::restart_local_service,
             ProjectAction::About => Self::project_about_requested,
             ProjectAction::Close => Self::project_close_requested,
             _ => return None,
@@ -704,6 +713,18 @@ impl qobject::EditorBackend {
             Ok(None) => {}
             Err(error) => self.emit_error(action.label(), &error),
         }
+    }
+
+    fn restart_local_service(self: Pin<&mut Self>) {
+        let path = project::active_project_path();
+        let qt_thread = self.qt_thread();
+        std::thread::spawn(move || {
+            if let Err(error) = shrimply_cross_ui_core::launcher::restart_local_service(&path) {
+                let _ = qt_thread.queue(move |backend| {
+                    backend.emit_error("Could not restart the project service", &error)
+                });
+            }
+        });
     }
 
     pub fn save(self: Pin<&mut Self>) {
@@ -1046,7 +1067,7 @@ impl qobject::EditorBackend {
         self.as_mut().rust_mut().get_mut().server_request = Some(receiver);
     }
 
-    fn poll_preference_tasks(mut self: Pin<&mut Self>) {
+    pub fn poll_preference_tasks(mut self: Pin<&mut Self>) {
         let cli = self
             .as_ref()
             .rust()
@@ -1135,13 +1156,17 @@ impl qobject::EditorBackend {
     }
 
     fn preference_connector(self: Pin<&mut Self>) -> shrimply_preferences_qt::Connector {
-        let preferences = self
-            .as_ref()
-            .rust()
+        let this = self.as_ref();
+        let preferences = this
             .session
             .as_deref()
-            .expect("preferences require a ready editor session")
-            .preferences
+            .map_or_else(
+                || {
+                    this.launcher_preferences
+                        .get_or_init(shrimply_editor_state::preferences::open_with_defaults)
+                },
+                |session| &session.preferences,
+            )
             .clone();
         shrimply_preferences_qt::Connector::new(preferences)
     }

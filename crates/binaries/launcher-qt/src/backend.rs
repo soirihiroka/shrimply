@@ -1,6 +1,6 @@
 use core::pin::Pin;
 use cxx_qt::{CxxQtType, Threading};
-use cxx_qt_lib::{QString, QStringList, QUrl};
+use cxx_qt_lib::{QList, QMap, QMapPair_QString_QVariant, QString, QStringList, QUrl, QVariant};
 use shrimply_cross_ui_core::launcher::{self, Launcher, ProjectLocation};
 use std::path::{Path, PathBuf};
 use std::process::Child;
@@ -18,20 +18,22 @@ pub mod qobject {
         type QStringList = cxx_qt_lib::QStringList;
         include!("cxx-qt-lib/qurl.h");
         type QUrl = cxx_qt_lib::QUrl;
+        include!("cxx-qt-lib/qlist.h");
+        type QList_QVariant = cxx_qt_lib::QList<cxx_qt_lib::QVariant>;
     }
 
     extern "RustQt" {
         #[qobject]
         #[qml_element]
-        #[qproperty(QStringList, projects)]
+        #[qproperty(QList_QVariant, projects)]
         type LauncherBackend = super::LauncherBackendRust;
 
         #[qinvokable]
         fn text(self: &LauncherBackend, key: &QString) -> QString;
 
         #[qinvokable]
-        #[cxx_name = "projectIsRemote"]
-        fn project_is_remote(self: &LauncherBackend, index: i32) -> bool;
+        #[cxx_name = "manageListedProject"]
+        fn manage_listed_project(self: Pin<&mut LauncherBackend>, key: &QString, delete: bool);
 
         #[qinvokable]
         #[cxx_name = "projectServers"]
@@ -57,7 +59,7 @@ pub mod qobject {
 
         #[qinvokable]
         #[cxx_name = "openListedProject"]
-        fn open_listed_project(self: Pin<&mut LauncherBackend>, index: i32);
+        fn open_listed_project(self: Pin<&mut LauncherBackend>, key: &QString);
 
         #[qinvokable]
         #[cxx_name = "openProject"]
@@ -98,7 +100,7 @@ pub mod qobject {
 
 #[derive(Default)]
 pub struct LauncherBackendRust {
-    projects: QStringList,
+    projects: QList<QVariant>,
     core: Launcher,
 }
 
@@ -117,10 +119,32 @@ impl qobject::LauncherBackend {
         shrimply_i18n_qt::text(&key.to_string())
     }
 
-    pub fn project_is_remote(&self, index: i32) -> bool {
-        index_of(index)
-            .and_then(|index| self.core.project(index))
-            .is_some_and(|project| project.remote.is_some())
+    pub fn manage_listed_project(self: Pin<&mut Self>, key: &QString, delete: bool) {
+        let Some(project) = self.core.project_by_key(&key.to_string()).cloned() else {
+            return;
+        };
+        let qt_thread = self.qt_thread();
+        std::thread::spawn(move || {
+            let (heading, result) = if delete {
+                (
+                    "Could not delete project",
+                    launcher::delete_project(&project),
+                )
+            } else {
+                let Some(path) = project.path else {
+                    return;
+                };
+                (
+                    "Could not restart the project service",
+                    launcher::restart_local_service(&path),
+                )
+            };
+            let _ = qt_thread.queue(move |backend| match result {
+                Ok(()) if delete => backend.reload_projects(),
+                Ok(()) => (),
+                Err(error) => backend.emit_error(heading, &error),
+            });
+        });
     }
 
     pub fn project_servers(&self, include_local: bool) -> QStringList {
@@ -187,11 +211,8 @@ impl qobject::LauncherBackend {
         self.update_projects();
     }
 
-    pub fn open_listed_project(self: Pin<&mut Self>, index: i32) {
-        if let Some(project) = index_of(index)
-            .and_then(|index| self.core.project(index))
-            .cloned()
-        {
+    pub fn open_listed_project(self: Pin<&mut Self>, key: &QString) {
+        if let Some(project) = self.core.project_by_key(&key.to_string()).cloned() {
             self.open_project_async("Could not open project", move || project.open(None));
         }
     }
@@ -282,10 +303,33 @@ impl qobject::LauncherBackend {
         let projects = (0..self.core.project_count())
             .filter_map(|index| self.core.project(index))
             .map(|project| {
-                QString::from(match &project.remote {
-                    Some(remote) => format!("{}\n{}", project.name, remote.server),
-                    None => project.name.clone(),
-                })
+                let record: QMap<QMapPair_QString_QVariant> = [
+                    ("key", QVariant::from(&QString::from(project.key()))),
+                    (
+                        "name",
+                        QVariant::from(&QString::from(project.name.as_str())),
+                    ),
+                    (
+                        "access",
+                        QVariant::from(&QString::from(
+                            launcher::project_access_label(project).unwrap_or_default(),
+                        )),
+                    ),
+                    (
+                        "remote",
+                        QVariant::from(&QString::from(
+                            project
+                                .remote
+                                .as_ref()
+                                .map_or("", |remote| remote.server.as_str()),
+                        )),
+                    ),
+                    ("cached", QVariant::from(&project.path.is_some())),
+                ]
+                .into_iter()
+                .map(|(key, value)| (QString::from(key), value))
+                .collect();
+                QVariant::from(&record)
             })
             .collect();
         self.set_projects(projects);
@@ -322,10 +366,6 @@ impl qobject::LauncherBackend {
             }
         });
     }
-}
-
-fn index_of(index: i32) -> Option<usize> {
-    usize::try_from(index).ok()
 }
 
 fn local_path(url: &QUrl) -> Option<PathBuf> {

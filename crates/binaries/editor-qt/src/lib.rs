@@ -4,12 +4,15 @@ pub use backend::qobject::register_gpu_surfaces;
 
 pub const MAIN_QML: &str = "qrc:/qt/qml/dev/shrimply/editor/qml/Main.qml";
 
-pub fn configure() {
-    shrimply_process_reporting::crash::install();
+pub fn register_qml() {
     cxx_qt::init_qml_module!("dev.shrimply.editor");
+    shrimply_preferences_qt::init();
+}
+
+pub fn configure_editor() {
+    shrimply_process_reporting::crash::install();
     shrimply_export_qt::init();
     shrimply_inspector_qt::init();
-    shrimply_preferences_qt::init();
     backend::qobject::force_opengl();
 }
 

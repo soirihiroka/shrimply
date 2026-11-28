@@ -4,11 +4,6 @@ use cxx_qt_lib::{QGuiApplication, QQmlApplicationEngine, QString, QUrl};
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
-    #[cfg(windows)]
-    if std::env::var_os("CUDA_MODULE_LOADING").is_none() {
-        // This is the first operation in main, before Qt or any worker threads exist.
-        unsafe { std::env::set_var("CUDA_MODULE_LOADING", "EAGER") };
-    }
     if let Some(status) = shrimply_cli::run_if_requested() {
         return ExitCode::from(status);
     }
@@ -19,6 +14,11 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    #[cfg(windows)]
+    if edit && std::env::var_os("CUDA_MODULE_LOADING").is_none() {
+        // CLI dispatch returned without running commands or starting threads.
+        unsafe { std::env::set_var("CUDA_MODULE_LOADING", "EAGER") };
+    }
     shrimply_process_reporting::diagnostics::init();
     shrimply_i18n_qt::init_system_locale();
     shrimply_components_qt::init();
@@ -37,8 +37,9 @@ fn main() -> ExitCode {
         return ExitCode::FAILURE;
     }
 
+    shrimply_editor_qt::register_qml();
     if edit {
-        shrimply_editor_qt::configure();
+        shrimply_editor_qt::configure_editor();
     }
     QGuiApplication::set_desktop_file_name(&QString::from("dev.shrimply.Shrimply.Qt"));
     let mut app = shrimply_application_qt::new_widget_application();
