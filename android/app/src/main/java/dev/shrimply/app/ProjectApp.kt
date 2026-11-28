@@ -80,7 +80,7 @@ internal fun ProjectApp(timeline: TimelineSession, files: ProjectFiles, caption:
     var exportSettings by rememberSaveable { mutableStateOf<String?>(null) }
     var pendingExport by rememberSaveable { mutableStateOf<String?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
-    var serverNotice by remember { mutableStateOf<String?>(null) }
+    var serverNotice by remember(workspaceKey) { mutableStateOf<String?>(null) }
     val servers = status.optJSONArray("project_servers")?.let { values ->
         List(values.length()) { values.getString(it) }
     }.orEmpty()
@@ -293,7 +293,7 @@ internal fun ProjectApp(timeline: TimelineSession, files: ProjectFiles, caption:
     LaunchedEffect(event.optString("error")) {
         event.optString("error").takeIf { it.isNotEmpty() && it != "null" }?.let { error = it }
     }
-    LaunchedEffect(event.optString("version_notice")) {
+    LaunchedEffect(workspaceKey, event.optString("version_notice")) {
         event.optString("version_notice").takeIf { it.isNotEmpty() && it != "null" }?.let { serverNotice = it }
     }
     LaunchedEffect(status.optString("watch_error")) {

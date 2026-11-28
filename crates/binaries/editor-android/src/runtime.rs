@@ -649,6 +649,7 @@ impl Runtime {
 
     fn refresh(&mut self, reset: bool) {
         if reset {
+            self.version_notice = None;
             #[cfg(target_os = "android")]
             {
                 self.sync_error = None;
@@ -858,7 +859,9 @@ impl Runtime {
             self.status = serde_json::to_string(&self.backend.snapshot()?)
                 .map_err(|error| error.to_string())?;
             self.error = changed.as_ref().err().cloned();
-            self.version_notice = version_notice;
+            if let Some(notice) = version_notice {
+                self.version_notice = Some(notice);
+            }
         }
         #[cfg(target_os = "android")]
         if let Some(error) = self.audio.as_ref().and_then(|audio| audio.take_failure()) {
