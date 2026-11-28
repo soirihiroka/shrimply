@@ -52,7 +52,12 @@ def cases():
     decay = np.exp(-np.arange(length) / 145)
     for onset in onsets:
         transient[onset : onset + length] = 0.33 * rng.uniform(-1, 1, (length, 2)) * decay[:, None]
-    return [("tones", tone, []), ("stereo", stereo, []), ("attacks", transient, onsets.tolist())]
+    treble = 0.35 * np.sin(2 * np.pi * 11_003 * t[:RATE])
+    return [
+        ("tones", tone, []), ("stereo", stereo, []), ("attacks", transient, onsets.tolist()),
+        ("treble_left", np.stack((treble, treble / 1024), axis=1), []),
+        ("treble_right", np.stack((treble / 1024, treble), axis=1), []),
+    ]
 
 
 def payload_size(path, sample_index=3):
@@ -117,11 +122,17 @@ def calibrate_delays(encoder, raw, adts, encoders):
         if codec == "shrimply":
             assert delay == PRIMING
             if b"libfdk_aac" in run("ffmpeg", "-decoders"):
-                _, independent = align(reference, decode(adts, decoder="libfdk_aac"), delay)
-                error = float(db_ratio(np.square(actual - independent).sum(), np.square(actual).sum()))
-                assert error < -60, ("Independent AAC decoder differs", error)
+                verify_independent_decode(reference, adts, actual, delay)
         delays[codec] = delay
     return delays
+
+
+def verify_independent_decode(reference, adts, actual, delay):
+    _, independent = align(reference, decode(adts, decoder="libfdk_aac"), delay)
+    signal = max(float(np.square(actual).sum()), 1e-20)
+    error = float(db_ratio(np.square(actual - independent).sum() / signal, 1.0))
+    assert error < -60, ("Independent AAC decoder differs", error)
+    return error
 
 
 def db_ratio(numerator, denominator):
@@ -296,6 +307,10 @@ def main():
                                realtime=seconds / statistics.median(wall),
                                median_cpu_seconds=statistics.median(cpu),
                                **metrics(reference, decoded, onsets))
+                    if args.fdk and codec == "shrimply":
+                        row["independent_decoder_error_db"] = verify_independent_decode(
+                            reference, adts, decoded, lag,
+                        )
                     if score_perceptual:
                         executable, model = [path.resolve() for path in args.visqol]
                         aligned.write_bytes(decoded.astype("<f4").tobytes())
