@@ -9,6 +9,9 @@ on:
 
 jobs:
   publish:
+    concurrency:
+      group: publish-${{ inputs.artifact }}
+      queue: max
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     permissions:

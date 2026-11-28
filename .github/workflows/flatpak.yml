@@ -33,9 +33,6 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: flatpak-prerelease-${{ github.ref }}
-
 defaults:
   run:
     shell: bash
@@ -49,6 +46,9 @@ env:
 
 jobs:
   build:
+    concurrency:
+      group: flatpak-build-${{ github.ref }}
+      cancel-in-progress: ${{ github.event_name == 'push' }}
     runs-on: ubuntu-24.04
     permissions:
       actions: write
@@ -143,8 +143,12 @@ jobs:
   publish:
     if: github.ref == 'refs/heads/main'
     needs: build
+    concurrency:
+      group: flatpak-prerelease-${{ github.ref }}
+      queue: max
     runs-on: ubuntu-24.04
     permissions:
+      actions: read
       contents: write
       pages: write
       id-token: write
@@ -161,22 +165,36 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Check whether this build is current
+        id: revision
+        run: |
+          latest=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/flatpak.yml/runs?branch=main&per_page=1" --jq '.workflow_runs[0].run_number')
+          if [[ "$GITHUB_RUN_NUMBER" == "$latest" ]]; then
+            echo "current=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::Keeping the current Flatpak repository because this build was superseded"
+          fi
+
       - name: Download release assets
+        if: steps.revision.outputs.current == 'true'
         uses: actions/download-artifact@v8
         with:
           name: ${{ needs.build.outputs.tag }}
           path: dist
 
       - name: Configure Pages
+        if: steps.revision.outputs.current == 'true'
         uses: actions/configure-pages@v5
 
       - name: Deploy Pages repository
+        if: steps.revision.outputs.current == 'true'
         id: deployment
         uses: actions/deploy-pages@v4
         with:
           artifact_name: pages-${{ needs.build.outputs.tag }}
 
       - name: Verify published remote
+        if: steps.revision.outputs.current == 'true'
         run: |
           for source in /etc/apt/sources.list.d/*; do
             if grep -q 'dl.google.com/linux/chrome' "${source}"; then
@@ -194,6 +212,7 @@ jobs:
           test "${actual_commit}" = "${EXPECTED_COMMIT}"
 
       - name: Publish prerelease
+        if: steps.revision.outputs.current == 'true'
         run: |
           bash .github/scripts/publish-prerelease.sh \
             "${FLATPAK_BUNDLE}"
