@@ -9,6 +9,7 @@ use uuid::Uuid;
 pub const UPLOAD_CHUNK_BYTES: usize = 4 * 1024 * 1024;
 pub const LEGACY_CHECKPOINT_FIELD: &str = "$shrimp";
 pub const SERVER_PROTOCOL: u32 = 3;
+pub const PROJECT_SERVER_NAME_HEADER: &str = "x-shrimply-project-server";
 
 #[derive(Serialize, Deserialize)]
 pub struct SignIn {
@@ -20,6 +21,8 @@ pub struct ServerVersion {
     pub protocol: u32,
     #[serde(default)]
     pub version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
 }
 
 impl ServerVersion {

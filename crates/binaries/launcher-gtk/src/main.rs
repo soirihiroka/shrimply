@@ -69,17 +69,18 @@ fn build_ui(app: &adw::Application) {
         .selection_mode(gtk::SelectionMode::None)
         .activate_on_single_click(true)
         .build();
+    list.set_margin_start(12);
+    list.set_margin_end(12);
+    list.set_margin_bottom(12);
     let hint = gtk::Label::new(Some(tr!("No Projects").as_ref()));
     list.set_placeholder(Some(&hint));
     let scroller = gtk::ScrolledWindow::builder()
         .hscrollbar_policy(gtk::PolicyType::Never)
+        .overlay_scrolling(false)
         .vexpand(true)
         .child(&list)
         .build();
     let projects = gtk::Box::new(gtk::Orientation::Vertical, 12);
-    projects.set_margin_start(12);
-    projects.set_margin_end(12);
-    projects.set_margin_bottom(12);
     let create = gtk::Button::builder()
         .icon_name("list-add-symbolic")
         .tooltip_text(tr!("Create Project").as_ref())
@@ -90,6 +91,8 @@ fn build_ui(app: &adw::Application) {
         .tooltip_text(tr!("Open Project").as_ref())
         .build();
     let project_tools = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    project_tools.set_margin_start(12);
+    project_tools.set_margin_end(12);
     for widget in [
         search.upcast_ref::<gtk::Widget>(),
         create.upcast_ref(),
@@ -120,31 +123,44 @@ fn build_ui(app: &adw::Application) {
         .build();
     let icon = gtk::Image::builder()
         .icon_name("dev.shrimply.Shrimply")
-        .pixel_size(48)
+        .pixel_size(56)
         .build();
     let heading = gtk::Label::builder()
         .label(tr!("Shrimply").as_ref())
+        .xalign(0.0)
         .css_classes(["title-4"])
         .build();
     let version = gtk::Label::builder()
-        .label(env!("CARGO_PKG_VERSION"))
+        .label(launcher::version())
+        .xalign(0.0)
         .css_classes(["dim-label", "caption"])
         .build();
-    let daemon = gtk::Label::builder()
-        .css_classes(["dim-label", "caption"])
+    let labels = gtk::Box::new(gtk::Orientation::Vertical, 3);
+    labels.set_valign(gtk::Align::Center);
+    labels.append(&heading);
+    labels.append(&version);
+    let identity = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    identity.set_margin_start(12);
+    identity.set_margin_end(12);
+    identity.append(&icon);
+    identity.append(&labels);
+    let sources = gtk::ListBox::builder()
+        .selection_mode(gtk::SelectionMode::Single)
+        .css_classes(["navigation-sidebar"])
         .build();
-    let actions = gtk::Box::new(gtk::Orientation::Vertical, 6);
+    let actions = gtk::Box::new(gtk::Orientation::Vertical, 8);
     actions.set_margin_top(12);
     actions.set_margin_bottom(12);
-    actions.set_margin_start(12);
-    actions.set_margin_end(12);
-    actions.append(&icon);
-    actions.append(&heading);
-    actions.append(&version);
-    actions.append(&daemon);
-    let spacer = gtk::Box::builder().vexpand(true).build();
-    actions.append(&spacer);
+    actions.append(&identity);
+    actions.append(
+        &gtk::ScrolledWindow::builder()
+            .hscrollbar_policy(gtk::PolicyType::Never)
+            .vexpand(true)
+            .child(&sources)
+            .build(),
+    );
     menu_button.set_halign(gtk::Align::Start);
+    menu_button.set_margin_start(12);
     actions.append(&menu_button);
     let actions = adw::NavigationPage::builder()
         .title(tr!("Shrimply").as_ref())
@@ -153,8 +169,8 @@ fn build_ui(app: &adw::Application) {
     let split = adw::NavigationSplitView::builder()
         .sidebar(&actions)
         .content(&projects)
-        .min_sidebar_width(140.0)
-        .max_sidebar_width(140.0)
+        .min_sidebar_width(212.0)
+        .max_sidebar_width(212.0)
         .sidebar_width_unit(adw::LengthUnit::Px)
         .build();
     let window = adw::ApplicationWindow::builder()
@@ -165,28 +181,53 @@ fn build_ui(app: &adw::Application) {
         .content(&split)
         .build();
     adaptive_menu(&menu_button, "win", &window);
-    glib::timeout_add_seconds_local(2, {
-        let daemon = daemon.downgrade();
-        move || {
-            let Some(label) = daemon.upgrade() else {
-                return glib::ControlFlow::Break;
-            };
-            glib::spawn_future_local(async move {
-                let status = gio::spawn_blocking(launcher::local_service_status)
-                    .await
-                    .expect("daemon status worker");
-                label.set_label(tr!(status).as_ref());
-            });
-            glib::ControlFlow::Continue
-        }
-    });
-
     let model = Rc::new(RefCell::new(Launcher::default()));
+    let rebuild_sources = {
+        let (sources, model) = (sources.clone(), model.clone());
+        move || {
+            while let Some(row) = sources.row_at_index(0) {
+                sources.remove(&row);
+            }
+            let model = model.borrow();
+            let mut selected = None;
+            for (source, name) in model.sources() {
+                let remote = source.starts_with("http");
+                let name = if remote {
+                    std::borrow::Cow::Borrowed(name)
+                } else {
+                    tr!(name)
+                };
+                let label = gtk::Label::builder()
+                    .label(name.as_ref())
+                    .xalign(0.0)
+                    .ellipsize(gtk::pango::EllipsizeMode::End)
+                    .margin_top(8)
+                    .margin_bottom(8)
+                    .margin_start(8)
+                    .margin_end(8)
+                    .build();
+                let row = gtk::ListBoxRow::builder().child(&label).build();
+                row.set_tooltip_text(remote.then_some(source));
+                sources.append(&row);
+                if model.source() == source {
+                    selected = Some(row);
+                }
+            }
+            drop(model);
+            sources.select_row(selected.as_ref());
+        }
+    };
     let rebuild = {
-        let (list, search, hint, model) =
-            (list.clone(), search.clone(), hint.clone(), model.clone());
+        let (list, search, hint, model, scroller) = (
+            list.clone(),
+            search.clone(),
+            hint.clone(),
+            model.clone(),
+            scroller.clone(),
+        );
         move || {
             model.borrow_mut().set_search(&search.text());
+            scroller.vadjustment().set_value(0.0);
             while let Some(row) = list.row_at_index(0) {
                 list.remove(&row);
             }
@@ -202,14 +243,20 @@ fn build_ui(app: &adw::Application) {
         }
     };
     let reload = {
-        let (model, rebuild, window, hint) = (
+        let (model, rebuild, rebuild_sources, window, hint) = (
             model.clone(),
             rebuild.clone(),
+            rebuild_sources.clone(),
             window.downgrade(),
             hint.clone(),
         );
         move || {
-            let (model, rebuild, window) = (model.clone(), rebuild.clone(), window.clone());
+            let (model, rebuild, rebuild_sources, window) = (
+                model.clone(),
+                rebuild.clone(),
+                rebuild_sources.clone(),
+                window.clone(),
+            );
             hint.set_label(tr!("Loading Projects").as_ref());
             let load = model.borrow_mut().begin_project_load();
             glib::spawn_future_local(async move {
@@ -218,7 +265,10 @@ fn build_ui(app: &adw::Application) {
                     .expect("project catalog worker");
                 let result = model.borrow_mut().finish_project_load(load, projects);
                 match result {
-                    Ok(true) => rebuild(),
+                    Ok(true) => {
+                        rebuild_sources();
+                        rebuild();
+                    }
                     Ok(false) => (),
                     Err(error) => {
                         if let Some(window) = window.upgrade() {
@@ -229,7 +279,28 @@ fn build_ui(app: &adw::Application) {
             });
         }
     };
-    search.connect_search_changed(move |_| rebuild());
+    sources.connect_row_selected({
+        let (model, rebuild) = (model.clone(), rebuild.clone());
+        move |_, row| {
+            let Some(row) = row else { return };
+            let mut model = model.borrow_mut();
+            let source = model
+                .sources()
+                .nth(row.index() as usize)
+                .map(|(source, _)| source.to_owned());
+            if let Some(source) = source
+                && model.source() != source
+            {
+                model.set_source(source);
+                drop(model);
+                rebuild();
+            }
+        }
+    });
+    search.connect_search_changed({
+        let rebuild = rebuild.clone();
+        move |_| rebuild()
+    });
     scroller.connect_edge_reached({
         let (list, model) = (list.clone(), model.clone());
         move |_, edge| {
@@ -237,7 +308,11 @@ fn build_ui(app: &adw::Application) {
                 append_projects(
                     &list,
                     &model.borrow(),
-                    list.observe_children().n_items() as usize,
+                    list.observe_children()
+                        .iter::<gtk::Widget>()
+                        .filter_map(Result::ok)
+                        .filter(|child| child.is::<gtk::ListBoxRow>())
+                        .count(),
                 );
             }
         }
@@ -261,10 +336,11 @@ fn build_ui(app: &adw::Application) {
         let (window, app) = (window.clone(), app.clone());
         move |_| show_open_project(&window, &app)
     });
-    match launcher::local_projects() {
-        Ok(projects) => {
-            model.borrow_mut().set_projects(projects);
-            append_projects(&list, &model.borrow(), 0);
+    match launcher::local_catalog() {
+        Ok(catalog) => {
+            model.borrow_mut().set_catalog(catalog);
+            rebuild_sources();
+            rebuild();
         }
         Err(error) => show_error(&window, "Could not load projects", &error),
     }

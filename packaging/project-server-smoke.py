@@ -28,6 +28,8 @@ def request(method, path, authorization="", *, status=200, data=None, headers=No
     with response:
         body = response.read()
         assert response.status == status, (method, path, response.status, body)
+        if method == "GET" and path == "/projects" and status == 200:
+            assert response.headers["x-shrimply-project-server"] == "project-server-smoke"
         return json.loads(body) if response.headers.get_content_type() == "application/json" else body
 
 

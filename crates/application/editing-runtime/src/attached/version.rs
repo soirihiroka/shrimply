@@ -90,7 +90,7 @@ impl VersionPrompt {
 
 impl fmt::Display for VersionPrompt {
     fn fmt(&self, output: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let app = BuildVersion::current(env!("CARGO_PKG_VERSION"));
+        let app = BuildVersion::current();
         match &self.mismatch {
             VersionMismatch::Local { service, .. } => {
                 let guidance = match compare_builds(&app, service) {
@@ -103,10 +103,7 @@ impl fmt::Display for VersionPrompt {
                 write!(
                     output,
                     "Shrimply is running build {} with editing protocol {}. The local service is running build {} with protocol {}.\n\n{guidance}",
-                    build_label(&app),
-                    app.protocol,
-                    build_label(service),
-                    service.protocol
+                    app, app.protocol, service, service.protocol
                 )
             }
             VersionMismatch::Remote { server, service } => {
@@ -137,13 +134,6 @@ impl fmt::Display for VersionPrompt {
             output,
             "\n\nForce Open may fail if the versions are incompatible."
         )
-    }
-}
-
-fn build_label(version: &BuildVersion) -> String {
-    match version.git_hash.as_deref().and_then(|hash| hash.get(..7)) {
-        Some(hash) => format!("{} ({hash})", version.version),
-        None => version.version.clone(),
     }
 }
 
@@ -212,7 +202,7 @@ fn check_bridge(
 ) -> Result<Bridge, super::OpenError> {
     let owner = bridge.owner.clone();
     let service = bridge.version()?;
-    let app = BuildVersion::current(env!("CARGO_PKG_VERSION"));
+    let app = BuildVersion::current();
     if !app.matches(&service) {
         let mismatch = VersionMismatch::Local {
             owner: owner.clone(),

@@ -26,7 +26,8 @@ pub mod qobject {
         #[qobject]
         #[qml_element]
         #[qproperty(QList_QVariant, projects)]
-        #[qproperty(QString, daemon_status, cxx_name = "daemonStatus")]
+        #[qproperty(QList_QVariant, sources)]
+        #[qproperty(QString, selected_source, cxx_name = "selectedSource")]
         type LauncherBackend = super::LauncherBackendRust;
 
         #[qinvokable]
@@ -36,8 +37,8 @@ pub mod qobject {
         fn version(self: &LauncherBackend) -> QString;
 
         #[qinvokable]
-        #[cxx_name = "refreshDaemonStatus"]
-        fn refresh_daemon_status(self: Pin<&mut LauncherBackend>);
+        #[cxx_name = "selectSource"]
+        fn select_source(self: Pin<&mut LauncherBackend>, source: &QString);
 
         #[qinvokable]
         #[cxx_name = "manageListedProject"]
@@ -107,16 +108,17 @@ pub mod qobject {
 #[derive(Default)]
 pub struct LauncherBackendRust {
     projects: QList<QVariant>,
-    daemon_status: QString,
+    sources: QList<QVariant>,
+    selected_source: QString,
     core: Launcher,
 }
 
 impl cxx_qt::Initialize for qobject::LauncherBackend {
     fn initialize(mut self: Pin<&mut Self>) {
-        if let Ok(projects) = launcher::local_projects() {
-            self.as_mut().rust_mut().core.set_projects(projects);
-            self.as_mut().update_projects();
+        if let Ok(catalog) = launcher::local_catalog() {
+            self.as_mut().rust_mut().core.set_catalog(catalog);
         }
+        self.as_mut().update_sources();
         self.reload_projects();
     }
 }
@@ -127,17 +129,38 @@ impl qobject::LauncherBackend {
     }
 
     pub fn version(&self) -> QString {
-        QString::from(env!("CARGO_PKG_VERSION"))
+        QString::from(launcher::version().as_str())
     }
 
-    pub fn refresh_daemon_status(self: Pin<&mut Self>) {
-        let qt_thread = self.qt_thread();
-        std::thread::spawn(move || {
-            let status = launcher::local_service_status();
-            let _ = qt_thread.queue(move |backend| {
-                backend.set_daemon_status(shrimply_i18n_qt::text(status));
-            });
-        });
+    pub fn select_source(mut self: Pin<&mut Self>, source: &QString) {
+        self.as_mut().rust_mut().core.set_source(source.to_string());
+        self.as_mut().set_selected_source(source.clone());
+        self.update_projects();
+    }
+
+    fn update_sources(mut self: Pin<&mut Self>) {
+        let sources = self
+            .core
+            .sources()
+            .map(|(url, name)| {
+                let name = if url.starts_with("http") {
+                    QString::from(name)
+                } else {
+                    shrimply_i18n_qt::text(name)
+                };
+                let entry: QMap<QMapPair_QString_QVariant> = [
+                    (QString::from("name"), QVariant::from(&name)),
+                    (QString::from("url"), QVariant::from(&QString::from(url))),
+                ]
+                .into_iter()
+                .collect();
+                QVariant::from(&entry)
+            })
+            .collect();
+        let source = QString::from(self.core.source());
+        self.as_mut().set_sources(sources);
+        self.as_mut().set_selected_source(source);
+        self.update_projects();
     }
 
     pub fn manage_listed_project(self: Pin<&mut Self>, key: &QString, remove_project: bool) {
@@ -286,7 +309,7 @@ impl qobject::LauncherBackend {
                     .core
                     .finish_project_load(load, projects);
                 match result {
-                    Ok(true) => backend.update_projects(),
+                    Ok(true) => backend.update_sources(),
                     Ok(false) => (),
                     Err(error) => backend.emit_error("Could not load projects", &error),
                 }

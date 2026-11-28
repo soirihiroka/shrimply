@@ -16,6 +16,7 @@ import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.rememberScrollState
@@ -83,7 +84,7 @@ internal fun ProjectApp(timeline: TimelineSession, files: ProjectFiles, caption:
     val servers = status.optJSONArray("project_servers")?.let { values ->
         List(values.length()) { values.getString(it) }
     }.orEmpty()
-    var daemon by remember { mutableStateOf("") }
+    var projectSources by remember { mutableStateOf<List<JSONObject>?>(null) }
     var version by remember { mutableStateOf("") }
     var projects by remember { mutableStateOf<List<JSONObject>>(emptyList()) }
     var catalogRevision by remember { mutableIntStateOf(0) }
@@ -133,7 +134,7 @@ internal fun ProjectApp(timeline: TimelineSession, files: ProjectFiles, caption:
                 val response = withContext(Dispatchers.IO) { JSONObject(NativeTimeline.listProjects(includeRemote)) }
                 check(!response.has("error")) { response.getString("error") }
                 projects = response.getJSONArray("projects").objects()
-                daemon = response.getString("daemon")
+                projectSources = response.getJSONArray("servers").objects()
                 version = response.getString("version")
             }
         } catch (cancelled: kotlinx.coroutines.CancellationException) {
@@ -311,7 +312,7 @@ internal fun ProjectApp(timeline: TimelineSession, files: ProjectFiles, caption:
     val workspace: @Composable (Boolean) -> Unit = { renderOnly -> workspaceState.SaveableStateProvider(workspaceKey) {
     Box(Modifier.fillMaxSize().then(if (project == null) Modifier.safeDrawingPadding() else Modifier).then(if (renderOnly) Modifier.clearAndSetSemantics {}.focusProperties { canFocus = false } else Modifier)) {
         if (project == null) {
-            Launcher(projects, version, daemon, !renderOnly && !busy && schema.has("defaults"),
+            Launcher(projects, projectSources, version, !renderOnly && !busy && schema.has("defaults"),
                 { useSettings(schema.getJSONObject("defaults")); projectServer = ""; create = true },
                 { choicesBottomSheet = NativeLayout.menuUsesBottomSheet(menuInputSource.value); openFolder.launch(null) },
                 { preferences = true },
@@ -487,13 +488,15 @@ private fun targetArguments(saved: String): Array<Pair<String, Any>> {
 }
 
 @Composable
-private fun Launcher(projects: List<JSONObject>, version: String, daemon: String, enabled: Boolean,
+private fun Launcher(projects: List<JSONObject>, servers: List<JSONObject>?, version: String, enabled: Boolean,
     create: () -> Unit, open: () -> Unit, settings: () -> Unit, delete: (JSONObject) -> Unit, select: (JSONObject) -> Unit) {
     val resources = LocalResources.current
     val configuration = LocalConfiguration.current
     val theme = LocalContext.current.theme
-    val logo = remember(resources, configuration, theme) {
-        resources.getDrawable(R.mipmap.ic_launcher, theme).toBitmap(96, 96).asImageBitmap()
+    val logoSize = 56.dp
+    val logoPixels = with(LocalDensity.current) { logoSize.roundToPx() }
+    val logo = remember(resources, configuration, theme, logoPixels) {
+        resources.getDrawable(R.mipmap.ic_launcher, theme).toBitmap(logoPixels, logoPixels).asImageBitmap()
     }
     var search by rememberSaveable { mutableStateOf("") }
     var showMenu by rememberSaveable { mutableStateOf(false) }
@@ -506,30 +509,43 @@ private fun Launcher(projects: List<JSONObject>, version: String, daemon: String
             }
         }
     }
+    val sources = listOf("" to tr("All"), "local" to tr("Local")) +
+        servers.orEmpty().map { it.getString("url") to it.getString("name") }
+    var source by rememberSaveable { mutableStateOf("") }
+    LaunchedEffect(servers) {
+        if (servers != null && sources.none { it.first == source }) source = ""
+    }
     val appIdentity: @Composable () -> Unit = {
-        Image(logo, contentDescription = tr("Shrimply"), modifier = Modifier.size(48.dp))
-        Text(version, style = MaterialTheme.typography.labelMedium)
-        if (daemon.isNotEmpty()) Text(tr(daemon), style = MaterialTheme.typography.labelSmall)
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Image(logo, contentDescription = null, modifier = Modifier.size(logoSize))
+            Column {
+                Text(tr("Shrimply"), style = MaterialTheme.typography.titleMedium)
+                Text(version, style = MaterialTheme.typography.labelMedium)
+            }
+        }
     }
     val projectsPane: @Composable ColumnScope.() -> Unit = {
-        Text(tr("Projects"), style = MaterialTheme.typography.titleMedium)
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(tr("Projects"), Modifier.padding(horizontal = 12.dp), style = MaterialTheme.typography.titleMedium)
+        Row(Modifier.padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             OutlinedTextField(search, { search = it }, label = { Text(tr("Search Projects")) },
                 singleLine = true, modifier = Modifier.weight(1f))
             ActionIcon("list-add-symbolic", "Create Project", enabled, action = create)
             ActionIcon("document-open-symbolic", "Open Project", enabled, action = open)
         }
         val query = search.trim()
-        val visible = remember(projects, query) { projects.filter { project ->
-            sequenceOf(project.getString("name"), project.optString("path"),
-                project.optJSONObject("remote")?.optString("server").orEmpty(),
-                project.getJSONArray("tags").toString()).any { it.contains(query, ignoreCase = true) }
+        val visible = remember(projects, query, source) { projects.filter { project ->
+            val server = project.optJSONObject("remote")?.getString("server")
+            (source.isEmpty() || source == (server ?: "local")) &&
+                sequenceOf(project.getString("name"), project.optString("path"), server.orEmpty(),
+                    project.getJSONArray("tags").toString()).any { it.contains(query, ignoreCase = true) }
         } }
         if (visible.isEmpty()) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text(tr(if (query.isEmpty()) "No Projects" else "No Matching Projects"))
             }
-        } else LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        } else LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(start = 12.dp, end = 12.dp, bottom = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)) {
             items(visible) { project ->
                 val server = project.optJSONObject("remote")?.getString("server")
                 val access = project.optLong("opened_at").takeIf { it > 0 }?.let {
@@ -564,18 +580,29 @@ private fun Launcher(projects: List<JSONObject>, version: String, daemon: String
     }
     BoxWithConstraints(Modifier.fillMaxSize()) {
         if (maxWidth >= ExpandedWidth) Row(Modifier.fillMaxSize()) {
-            Column(Modifier.width(140.dp).fillMaxHeight().padding(12.dp),
-                horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Column(Modifier.width(212.dp).fillMaxHeight().padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 appIdentity()
-                Spacer(Modifier.weight(1f))
+                LazyColumn(Modifier.weight(1f)) {
+                    items(sources, key = { it.first }) { (key, label) ->
+                        NavigationDrawerItem(label = { Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                            selected = source == key, onClick = { source = key })
+                    }
+                }
                 settingsMenu()
             }
-            Column(Modifier.weight(1f).fillMaxHeight().background(MaterialTheme.colorScheme.surfaceContainerLow).padding(12.dp),
+            Column(Modifier.weight(1f).fillMaxHeight().background(MaterialTheme.colorScheme.surfaceContainerLow),
                 verticalArrangement = Arrangement.spacedBy(8.dp), content = projectsPane)
-        } else Column(Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                appIdentity()
+        } else Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(Modifier.padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Box(Modifier.weight(1f)) { appIdentity() }
                 settingsMenu()
+            }
+            LazyRow(contentPadding = PaddingValues(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                items(sources, key = { it.first }) { (key, label) ->
+                    FilterChip(selected = source == key, onClick = { source = key }, label = { Text(label) })
+                }
             }
             projectsPane()
         }

@@ -1,12 +1,21 @@
-pub use shrimply_editing_runtime::attached::{local_service_status, restart_local_service};
+use shrimply_editing_runtime::attached::BuildVersion;
+pub use shrimply_editing_runtime::attached::restart_local_service;
 use shrimply_math_core::Fraction;
 use shrimply_project_document::project;
-pub use shrimply_project_service::catalog::{ProjectEntry, list as load_projects, local_projects};
+pub use shrimply_project_service::catalog::{
+    ProjectCatalog, ProjectEntry, ProjectSource, list as load_projects, local_catalog,
+};
 use shrimply_project_types::CanvasSize;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
 
+pub fn version() -> String {
+    BuildVersion::current().to_string()
+}
+
 pub const EDITOR_OPEN_CANCELED_EXIT_CODE: u8 = 2;
+
+pub const LOCAL_SOURCE: &str = "local";
 
 pub const PROJECT_FILE_PATTERNS: [&str; 5] =
     ["*.shrimp", "*.sjson", "*.json", "*.otio", "*.kdenlive"];
@@ -56,15 +65,21 @@ pub fn check_nvidia_gpu() -> Result<(), String> {
 #[derive(Default)]
 pub struct Launcher {
     query: String,
+    source: String,
+    servers: Vec<ProjectSource>,
     projects: Vec<ProjectEntry>,
     visible: Vec<usize>,
     project_load: u64,
 }
 
 impl Launcher {
-    pub fn set_projects(&mut self, projects: Vec<ProjectEntry>) {
-        self.projects = projects;
-        self.set_search(&self.query.clone());
+    pub fn set_catalog(&mut self, catalog: ProjectCatalog) {
+        self.servers = catalog.servers;
+        if self.source != LOCAL_SOURCE && !self.servers.iter().any(|item| item.url == self.source) {
+            self.source.clear();
+        }
+        self.projects = catalog.projects;
+        self.refresh_visible();
     }
 
     pub fn begin_project_load(&mut self) -> u64 {
@@ -75,22 +90,52 @@ impl Launcher {
     pub fn finish_project_load(
         &mut self,
         load: u64,
-        projects: Result<Vec<ProjectEntry>, String>,
+        projects: Result<ProjectCatalog, String>,
     ) -> Result<bool, String> {
         if load != self.project_load {
             return Ok(false);
         }
-        self.set_projects(projects?);
+        self.set_catalog(projects?);
         Ok(true)
     }
 
     pub fn set_search(&mut self, query: &str) {
         self.query = query.trim().to_lowercase();
+        self.refresh_visible();
+    }
+
+    pub fn sources(&self) -> impl Iterator<Item = (&str, &str)> {
+        [("", "All"), (LOCAL_SOURCE, "Local")].into_iter().chain(
+            self.servers
+                .iter()
+                .map(|server| (server.url.as_str(), server.name.as_str())),
+        )
+    }
+
+    pub fn source(&self) -> &str {
+        &self.source
+    }
+
+    pub fn set_source(&mut self, source: String) {
+        self.source = source;
+        self.refresh_visible();
+    }
+
+    fn refresh_visible(&mut self) {
         self.visible = self
             .projects
             .iter()
             .enumerate()
-            .filter_map(|(index, project)| project.matches(&self.query).then_some(index))
+            .filter_map(|(index, project)| {
+                ((self.source.is_empty()
+                    || project
+                        .remote
+                        .as_ref()
+                        .map_or(LOCAL_SOURCE, |link| link.server.as_str())
+                        == self.source)
+                    && project.matches(&self.query))
+                .then_some(index)
+            })
             .collect();
     }
 

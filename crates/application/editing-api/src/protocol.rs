@@ -273,9 +273,9 @@ pub struct BuildVersion {
 }
 
 impl BuildVersion {
-    pub fn current(version: &str) -> Self {
+    pub fn current() -> Self {
         Self {
-            version: version.into(),
+            version: env!("CARGO_PKG_VERSION").into(),
             git_hash: option_env!("SHRIMPLY_BUILD_GIT_HASH").map(str::to_owned),
             protocol: EDITING_PROTOCOL,
             source_time: option_env!("SHRIMPLY_BUILD_SOURCE_TIME")
@@ -291,6 +291,16 @@ impl BuildVersion {
                 .as_ref()
                 .zip(peer.git_hash.as_ref())
                 .is_none_or(|(client, service)| client == service)
+    }
+}
+
+impl std::fmt::Display for BuildVersion {
+    fn fmt(&self, output: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        output.write_str(&self.version)?;
+        if let Some(hash) = &self.git_hash {
+            write!(output, " ({})", hash.get(..7).unwrap_or(hash))?;
+        }
+        Ok(())
     }
 }
 

@@ -1456,13 +1456,13 @@ pub extern "system" fn Java_dev_shrimply_app_NativeTimeline_listProjects<'caller
             let result = if include_remote {
                 catalog::list()
             } else {
-                catalog::local_projects()
+                catalog::local_catalog()
             };
             let payload = match result {
-                Ok(projects) => json!({
-                    "projects": projects,
-                    "daemon": shrimply_editing_api::bridge::local_service_status(),
-                    "version": env!("CARGO_PKG_VERSION"),
+                Ok(catalog) => json!({
+                    "projects": catalog.projects,
+                    "servers": catalog.servers,
+                    "version": shrimply_editing_api::protocol::BuildVersion::current().to_string(),
                 }),
                 Err(error) => json!({ "error": error }),
             };

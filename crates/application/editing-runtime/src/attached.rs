@@ -24,7 +24,7 @@ use super::{
 };
 
 mod version;
-pub use shrimply_editing_api::bridge::local_service_status;
+pub use shrimply_editing_api::protocol::BuildVersion;
 pub use version::{MatchVersion, VersionMismatch, VersionPrompt};
 
 const UPDATE_INTERVAL: Duration = Duration::from_millis(100);

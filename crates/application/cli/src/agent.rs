@@ -215,7 +215,7 @@ fn execute(path: &str, leaf: &ArgMatches, root: &ArgMatches) -> Result<Value, St
             }
         }
         return Ok(
-            json!({"cli":BuildVersion::current(env!("CARGO_PKG_VERSION")),"editor":editor,"editor_error":editor_error}),
+            json!({"cli":BuildVersion::current(),"editor":editor,"editor_error":editor_error}),
         );
     }
     let path = project_path

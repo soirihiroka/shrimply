@@ -32,7 +32,8 @@ use uuid::Uuid;
 use crate::media::BlobStore;
 use crate::store::{Failure, Presence, Store};
 use shrimply_project_protocol::{
-    ErrorResponse, ProjectVersionReceipt, PublishRequest, SignIn, SyncRequest, UPLOAD_CHUNK_BYTES,
+    ErrorResponse, PROJECT_SERVER_NAME_HEADER, ProjectVersionReceipt, PublishRequest, SignIn,
+    SyncRequest, UPLOAD_CHUNK_BYTES,
 };
 
 pub(super) type Body = http_body_util::combinators::UnsyncBoxBody<Bytes, io::Error>;
@@ -40,6 +41,7 @@ pub(super) type Body = http_body_util::combinators::UnsyncBoxBody<Bytes, io::Err
 const MAX_DOCUMENT_BYTES: usize = 64 * 1024 * 1024;
 
 struct Authority {
+    version: shrimply_project_protocol::ServerVersion,
     store: Mutex<Store>,
     blobs: Arc<BlobStore>,
     media_lifecycle: Arc<RwLock<()>>,
@@ -74,6 +76,28 @@ pub async fn serve(
     let token = URL_SAFE_NO_PAD.encode(password_tag.as_ref());
     let session = hmac::sign(&signing_key, format!("Bearer {token}").as_bytes());
     let authority = Arc::new(Authority {
+        version: shrimply_project_protocol::ServerVersion {
+            protocol: shrimply_project_protocol::SERVER_PROTOCOL,
+            version: Some(env!("CARGO_PKG_VERSION").into()),
+            name: std::env::var("SHRIMPLY_PROJECT_SERVER_NAME")
+                .ok()
+                .filter(|name| !name.trim().is_empty())
+                .or_else(|| {
+                    let hostname = std::process::Command::new("hostname").output().ok()?;
+                    hostname
+                        .status
+                        .success()
+                        .then(|| String::from_utf8_lossy(&hostname.stdout).into_owned())
+                })
+                .map(|name| {
+                    name.trim()
+                        .chars()
+                        .filter(|ch| !ch.is_control())
+                        .take(80)
+                        .collect::<String>()
+                })
+                .filter(|name| !name.is_empty()),
+        },
         store: Mutex::new(store),
         blobs,
         media_lifecycle: Arc::new(RwLock::new(())),
@@ -113,13 +137,7 @@ async fn dispatch(
 ) -> Result<Response<Body>, Failure> {
     let path = request.uri().path();
     if request.method() == Method::GET && path == "/v1" {
-        return Ok(json(
-            StatusCode::OK,
-            shrimply_project_protocol::ServerVersion {
-                protocol: shrimply_project_protocol::SERVER_PROTOCOL,
-                version: Some(env!("CARGO_PKG_VERSION").into()),
-            },
-        ));
+        return Ok(json(StatusCode::OK, &authority.version));
     }
     let authorization = request
         .headers()
@@ -174,8 +192,16 @@ async fn dispatch(
     }
     drop(attempt);
     if request.method() == Method::GET && path == "/v1/projects" {
-        let projects = transact(authority, |store| store.list()).await?;
-        return Ok(json(StatusCode::OK, projects));
+        let projects = transact(authority.clone(), |store| store.list()).await?;
+        let mut response = json(StatusCode::OK, projects);
+        if let Some(name) = &authority.version.name
+            && let Ok(name) = header::HeaderValue::from_bytes(name.as_bytes())
+        {
+            response
+                .headers_mut()
+                .insert(PROJECT_SERVER_NAME_HEADER, name);
+        }
+        return Ok(response);
     }
     let relative = path.strip_prefix("/v1/projects/").ok_or(Failure::Missing)?;
     let (id, action) = relative.split_once('/').unwrap_or((relative, ""));

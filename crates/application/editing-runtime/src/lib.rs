@@ -543,12 +543,15 @@ fn serve_connection(
         let metadata = match request.command {
             BridgeCommand::Handshake => Some(json!({"ready":true,"mode":"headless"})),
             BridgeCommand::Version => Some(json!(
-                shrimply_editing_api::protocol::BuildVersion::current(env!("CARGO_PKG_VERSION"))
+                shrimply_editing_api::protocol::BuildVersion::current()
             )),
             _ => None,
         };
         if let Some(metadata) = metadata {
-            let result = if request.project_path == project_path {
+            let result = if request.project_path == project_path
+                || matches!(request.command, BridgeCommand::Version)
+                    && request.project_path.is_empty()
+            {
                 Ok(metadata)
             } else {
                 Err(format!("editing service is open for {project_path}"))

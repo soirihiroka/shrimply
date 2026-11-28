@@ -123,7 +123,7 @@ fn build(mtm: MainThreadMarker) -> Retained<NSWindow> {
     window
 }
 
-pub fn bundle_version() -> (String, Option<String>) {
+fn bundle_version() -> (String, Option<String>) {
     let bundle = NSBundle::mainBundle();
     let string = |key: &str| {
         bundle

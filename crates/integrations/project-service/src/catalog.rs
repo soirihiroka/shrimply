@@ -139,28 +139,68 @@ pub fn local_projects() -> Result<Vec<ProjectEntry>, String> {
     Ok(projects)
 }
 
-pub fn list() -> Result<Vec<ProjectEntry>, String> {
-    let mut projects = local_projects()?;
+#[derive(Serialize)]
+pub struct ProjectSource {
+    pub url: String,
+    pub name: String,
+}
+
+impl ProjectSource {
+    fn new(url: String) -> Self {
+        let name = url
+            .trim_start_matches("https://")
+            .trim_start_matches("http://")
+            .to_owned();
+        Self { url, name }
+    }
+}
+
+fn project_sources() -> Vec<ProjectSource> {
+    let preferences = shrimply_preferences_core::open_with_defaults();
+    shrimply_preferences_core::snapshot(&preferences)
+        .project_server_urls
+        .into_iter()
+        .map(ProjectSource::new)
+        .collect()
+}
+
+pub struct ProjectCatalog {
+    pub projects: Vec<ProjectEntry>,
+    pub servers: Vec<ProjectSource>,
+}
+
+pub fn local_catalog() -> Result<ProjectCatalog, String> {
+    Ok(ProjectCatalog {
+        projects: local_projects()?,
+        servers: project_sources(),
+    })
+}
+
+pub fn list() -> Result<ProjectCatalog, String> {
+    let ProjectCatalog {
+        mut projects,
+        servers,
+    } = local_catalog()?;
     let cached: HashMap<_, _> = projects
         .iter()
         .enumerate()
         .filter_map(|(index, entry)| entry.remote.clone().map(|link| (link, index)))
         .collect();
-    let preferences = shrimply_preferences_core::open_with_defaults();
-    let servers = shrimply_preferences_core::snapshot(&preferences).project_server_urls;
     let remote = std::thread::scope(|scope| {
-        servers
-            .into_iter()
-            .map(|server| {
+        servers.into_iter().map(|mut source| {
                 scope.spawn(move || {
-                    let projects = ProjectClient::configured(&server)
-                        .and_then(|client| {
-                            client.list_projects().map_err(|error| error.to_string())
+                    let projects = ProjectClient::configured(&source.url)
+                        .and_then(|client| client.list_projects().map_err(|error| error.to_string()))
+                        .map(|(projects, name)| {
+                            if let Some(name) = name {
+                                source.name = name;
+                            }
+                            projects
                         })
                         .inspect_err(
-                            |error| tracing::warn!(%server, %error, "Could not list projects"),
+                            |error| tracing::warn!(server = %source.url, %error, "Could not list projects"),
                         );
-                    (server, projects)
+                    (source, projects)
                 })
             })
             .collect::<Vec<_>>()
@@ -170,7 +210,10 @@ pub fn list() -> Result<Vec<ProjectEntry>, String> {
     });
     let mut available = HashSet::new();
     let mut listed = HashSet::new();
-    for (server, entries) in remote {
+    let mut servers = Vec::with_capacity(remote.len());
+    for (source, entries) in remote {
+        let server = source.url.clone();
+        servers.push(source);
         let Ok(entries) = entries else { continue };
         for entry in entries {
             let link = ProjectLink {
@@ -205,5 +248,5 @@ pub fn list() -> Result<Vec<ProjectEntry>, String> {
             entry.name.to_lowercase(),
         )
     });
-    Ok(projects)
+    Ok(ProjectCatalog { projects, servers })
 }

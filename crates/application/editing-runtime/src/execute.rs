@@ -214,8 +214,9 @@ pub(super) async fn call(
                 json!({"changed":changed,"can_undo":shrimply_project_document::project::can_undo(),"can_redo":shrimply_project_document::project::can_redo()}),
             )
         }
-        "get_version" => serde_json::to_value(BuildVersion::current(env!("CARGO_PKG_VERSION")))
-            .map_err(|error| error.to_string()),
+        "get_version" => {
+            serde_json::to_value(BuildVersion::current()).map_err(|error| error.to_string())
+        }
         _ => Err(format!("{} is a CLI lifecycle command", call.name)),
     }?;
     let mut result = result;

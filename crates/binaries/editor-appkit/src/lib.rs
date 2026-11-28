@@ -2,10 +2,7 @@
 mod macos;
 
 #[cfg(target_os = "macos")]
-pub use macos::{
-    about::{bundle_version, show as show_about},
-    settings::PreferencesWindow,
-};
+pub use macos::{about::show as show_about, settings::PreferencesWindow};
 
 #[cfg(target_os = "macos")]
 pub fn run(project: &std::path::Path) -> std::process::ExitCode {

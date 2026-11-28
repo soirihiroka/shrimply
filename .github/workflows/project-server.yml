@@ -56,7 +56,7 @@ jobs:
           expected="$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["workspace"]["package"]["version"])')"
           test "$(docker run --rm shrimply-project-server:ci --version)" = "shrimply-project-server ${expected}"
           port=8788
-          docker run --detach --name project-server-smoke \
+          docker run --detach --name project-server-smoke --hostname project-server-smoke \
             --env SHRIMPLY_PROJECT_SERVER_USERNAME --env SHRIMPLY_PROJECT_SERVER_PASSWORD \
             --publish "127.0.0.1::${port}/tcp" \
             shrimply-project-server:ci
@@ -64,7 +64,7 @@ jobs:
           endpoint="http://$(docker port project-server-smoke "${port}/tcp")/v1"
           curl --fail --silent --show-error --max-time 3 --retry 20 --retry-connrefused --retry-delay 1 \
             "${endpoint}" \
-            | python3 -c 'import json, sys; info = json.load(sys.stdin); assert info["protocol"] == 3 and info["version"] == sys.argv[1]' "${expected}"
+            | python3 -c 'import json, sys; info = json.load(sys.stdin); assert info["protocol"] == 3 and info["version"] == sys.argv[1] and info["name"] == "project-server-smoke"' "${expected}"
           python3 packaging/project-server-smoke.py "${endpoint}"
 
       - name: Export prerelease image

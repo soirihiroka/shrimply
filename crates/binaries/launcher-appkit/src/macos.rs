@@ -10,23 +10,26 @@ use objc2_app_kit::{
     NSBackingStoreType, NSBezelStyle, NSButton, NSCellImagePosition, NSColor, NSControlSize,
     NSControlTextEditingDelegate, NSEventModifierFlags, NSFont, NSImageView, NSMenu, NSMenuItem,
     NSModalResponseOK, NSOpenPanel, NSOpenSavePanelDelegate, NSPopUpButton, NSSavePanel,
-    NSScrollView, NSSearchField, NSTableColumn, NSTableView, NSTableViewDataSource,
-    NSTableViewDelegate, NSTableViewRowSizeStyle, NSTableViewStyle, NSTextAlignment, NSTextField,
-    NSTitlebarSeparatorStyle, NSToolbar, NSView, NSWindow, NSWindowDelegate, NSWindowStyleMask,
-    NSWindowTitleVisibility, NSWindowToolbarStyle, NSWorkspace,
+    NSScrollView, NSScrollerStyle, NSSearchField, NSTableColumn, NSTableView,
+    NSTableViewDataSource, NSTableViewDelegate, NSTableViewRowSizeStyle, NSTableViewStyle,
+    NSTextAlignment, NSTextField, NSTitlebarSeparatorStyle, NSToolbar, NSView, NSWindow,
+    NSWindowDelegate, NSWindowStyleMask, NSWindowTitleVisibility, NSWindowToolbarStyle,
+    NSWorkspace,
 };
 use objc2_foundation::{
-    MainThreadMarker, NSArray, NSNotification, NSObject, NSObjectProtocol, NSPoint, NSProcessInfo,
-    NSRect, NSSize, NSString, NSTimer, NSURL, ns_string,
+    MainThreadMarker, NSArray, NSIndexSet, NSNotification, NSObject, NSObjectProtocol, NSPoint,
+    NSProcessInfo, NSRect, NSSize, NSString, NSTimer, NSURL, ns_string,
 };
-use shrimply_components_appkit::{EffectRole, EffectView, bundled_symbol, column_stack, group_box};
+use shrimply_components_appkit::{
+    EffectRole, EffectView, bundled_symbol, column_stack, group_box, row_stack,
+};
 use shrimply_cross_ui_core::launcher::{self, Launcher, ProjectLocation};
-use std::cell::{Cell, OnceCell, RefCell};
+use std::cell::{OnceCell, RefCell};
 use std::path::{Path, PathBuf};
 
 const WINDOW_SIZE: NSSize = NSSize::new(760.0, 560.0);
 const MINIMUM_WINDOW_SIZE: NSSize = NSSize::new(560.0, 420.0);
-const SIDEBAR_WIDTH: f64 = 180.0;
+const SIDEBAR_WIDTH: f64 = 212.0;
 const CONTENT_MARGIN: f64 = 12.0;
 const TITLEBAR_HEIGHT: f64 = 52.0;
 const SEARCH_HEIGHT: f64 = 32.0;
@@ -36,8 +39,7 @@ const SIDEBAR_ICON_SIZE: f64 = 56.0;
 struct DelegateIvars {
     window: OnceCell<Retained<NSWindow>>,
     projects: OnceCell<Retained<NSTableView>>,
-    service_status: OnceCell<Retained<NSTextField>>,
-    checking_service: Cell<bool>,
+    sources: OnceCell<Retained<NSTableView>>,
     model: RefCell<Launcher>,
     preferences: OnceCell<Retained<shrimply_editor_appkit::PreferencesWindow>>,
 }
@@ -149,46 +151,66 @@ define_class!(
             sidebar_content.setAutoresizingMask(NSAutoresizingMaskOptions::ViewHeightSizable);
             sidebar_effect.set_content_view(Some(&sidebar_content));
 
-            let rail = column_stack(6.0, mtm);
+            let identity = row_stack(8.0, mtm);
             let icon = NSImageView::new(mtm);
             icon.setImage(app.applicationIconImage().as_deref());
-            rail.addArrangedSubview(&icon);
+            identity.addArrangedSubview(&icon);
             icon.widthAnchor().constraintEqualToConstant(SIDEBAR_ICON_SIZE).setActive(true);
             icon.heightAnchor().constraintEqualToConstant(SIDEBAR_ICON_SIZE).setActive(true);
-            let (mut version, build) = shrimply_editor_appkit::bundle_version();
-            if let Some(build) = build {
-                version.push_str(&format!(" ({build})"));
-            }
-            let version = NSTextField::labelWithString(&NSString::from_str(&version), mtm);
-            let status = NSTextField::wrappingLabelWithString(ns_string!("Checking local service…"), mtm);
-            for label in [&version, &status] {
-                label.setFont(Some(&NSFont::systemFontOfSize(NSFont::smallSystemFontSize())));
-                label.setTextColor(Some(&NSColor::secondaryLabelColor()));
-                rail.addArrangedSubview(label);
-            }
-            rail.setCustomSpacing_afterView(CONTENT_MARGIN, &status);
-            self.ivars().service_status.set(status).expect("local service status is set once");
+            let labels = column_stack(3.0, mtm);
+            let name = NSTextField::labelWithString(ns_string!("Shrimply"), mtm);
+            name.setFont(Some(&NSFont::boldSystemFontOfSize(NSFont::systemFontSize())));
+            labels.addArrangedSubview(&name);
+            let version = NSTextField::labelWithString(&NSString::from_str(&launcher::version()), mtm);
+            version.setFont(Some(&NSFont::systemFontOfSize(NSFont::smallSystemFontSize())));
+            version.setTextColor(Some(&NSColor::secondaryLabelColor()));
+            labels.addArrangedSubview(&version);
+            identity.addArrangedSubview(&labels);
+            let identity_y = WINDOW_SIZE.height - TITLEBAR_HEIGHT - SIDEBAR_ICON_SIZE;
+            identity.setFrame(NSRect::new(
+                NSPoint::new(CONTENT_MARGIN, identity_y),
+                NSSize::new(SIDEBAR_WIDTH - 2.0 * CONTENT_MARGIN, SIDEBAR_ICON_SIZE),
+            ));
+            identity.setAutoresizingMask(NSAutoresizingMaskOptions::ViewMinYMargin);
+            sidebar_content.addSubview(&identity);
+
             let menu = self.popup(
-                NSPoint::ZERO,
-                ("preferences-system-symbolic", "Settings"),
+                NSPoint::new(CONTENT_MARGIN, CONTENT_MARGIN),
+                ("open-menu-symbolic", "Main Menu"),
                 &[
                     ("Settings", sel!(showPreferences:)),
                     ("About Shrimply", sel!(showAbout:)),
                 ],
                 None,
             );
-            menu.setTitle(ns_string!("Settings"));
-            menu.setAlignment(NSTextAlignment::Left);
-            rail.addArrangedSubview(&menu);
-            rail.setTranslatesAutoresizingMaskIntoConstraints(false);
-            sidebar_content.addSubview(&rail);
-            for constraint in [
-                rail.leadingAnchor().constraintEqualToAnchor_constant(&sidebar_content.leadingAnchor(), CONTENT_MARGIN),
-                rail.trailingAnchor().constraintLessThanOrEqualToAnchor_constant(&sidebar_content.trailingAnchor(), -CONTENT_MARGIN),
-                rail.topAnchor().constraintEqualToAnchor_constant(&sidebar_content.topAnchor(), TITLEBAR_HEIGHT),
-            ] {
-                constraint.setActive(true);
+            sidebar_content.addSubview(&menu);
+            let sources_y = CONTENT_MARGIN * 2.0 + MENU_SIZE;
+            let sources_frame = NSRect::new(
+                NSPoint::new(0.0, sources_y),
+                NSSize::new(SIDEBAR_WIDTH, identity_y - sources_y - CONTENT_MARGIN),
+            );
+            let source_scroll = NSScrollView::initWithFrame(NSScrollView::alloc(mtm), sources_frame);
+            source_scroll.setDrawsBackground(false);
+            source_scroll.setHasVerticalScroller(true);
+            source_scroll.setAutohidesScrollers(true);
+            source_scroll.setAutoresizingMask(NSAutoresizingMaskOptions::ViewHeightSizable);
+            let sources = NSTableView::initWithFrame(
+                NSTableView::alloc(mtm), NSRect::new(NSPoint::ZERO, source_scroll.contentSize())
+            );
+            sources.setAutoresizingMask(NSAutoresizingMaskOptions::ViewWidthSizable);
+            sources.setBackgroundColor(&NSColor::clearColor());
+            sources.setHeaderView(None);
+            sources.setStyle(NSTableViewStyle::SourceList);
+            let column = NSTableColumn::initWithIdentifier(NSTableColumn::alloc(mtm), ns_string!("source"));
+            column.setWidth(source_scroll.contentSize().width);
+            sources.addTableColumn(&column);
+            self.ivars().sources.set(sources.clone()).expect("create source list once");
+            unsafe {
+                sources.setDataSource(Some(ProtocolObject::from_ref(self)));
+                sources.setDelegate(Some(ProtocolObject::from_ref(self)));
             }
+            source_scroll.setDocumentView(Some(&sources));
+            sidebar_content.addSubview(&source_scroll);
             content.addSubview(sidebar);
 
             let x = SIDEBAR_WIDTH + CONTENT_MARGIN;
@@ -238,16 +260,19 @@ define_class!(
             }
             content.addSubview(&search);
 
-            let frame = NSRect::new(NSPoint::new(x, CONTENT_MARGIN), NSSize::new(
-                width, WINDOW_SIZE.height - TITLEBAR_HEIGHT - SEARCH_HEIGHT - CONTENT_MARGIN * 2.0,
+            let frame = NSRect::new(NSPoint::new(SIDEBAR_WIDTH, 0.0), NSSize::new(
+                WINDOW_SIZE.width - SIDEBAR_WIDTH, WINDOW_SIZE.height - TITLEBAR_HEIGHT - SEARCH_HEIGHT - CONTENT_MARGIN,
             ));
             let scroll = NSScrollView::initWithFrame(NSScrollView::alloc(mtm), frame);
             scroll.setDrawsBackground(false);
             scroll.setHasVerticalScroller(true);
+            scroll.setScrollerStyle(NSScrollerStyle::Legacy);
+            scroll.setAutohidesScrollers(true);
             scroll.setAutoresizingMask(NSAutoresizingMaskOptions::ViewHeightSizable
                 | NSAutoresizingMaskOptions::ViewWidthSizable);
+            let list_size = scroll.contentSize();
             let table = NSTableView::initWithFrame(NSTableView::alloc(mtm),
-                NSRect::new(NSPoint::new(0.0, 0.0), frame.size));
+                NSRect::new(NSPoint::new(0.0, 0.0), list_size));
             table.setAutoresizingMask(NSAutoresizingMaskOptions::ViewWidthSizable);
             table.setBackgroundColor(&NSColor::clearColor());
             table.setHeaderView(None);
@@ -256,7 +281,7 @@ define_class!(
             table.setRowHeight(50.0);
             table.setIntercellSpacing(NSSize::new(0.0, 7.0));
             let column = NSTableColumn::initWithIdentifier(NSTableColumn::alloc(mtm), ns_string!("project"));
-            column.setWidth(width);
+            column.setWidth(list_size.width);
             table.addTableColumn(&column);
             unsafe {
                 table.setDataSource(Some(ProtocolObject::from_ref(self)));
@@ -270,10 +295,10 @@ define_class!(
             self.ivars().window.set(window.clone()).expect("window must only be created once");
             window.makeKeyAndOrderFront(None);
             window.makeFirstResponder(None);
-            if let Ok(projects) = launcher::local_projects() {
-                self.ivars().model.borrow_mut().set_projects(projects);
-                self.ivars().projects.get().expect("project list").reloadData();
+            if let Ok(catalog) = launcher::local_catalog() {
+                self.ivars().model.borrow_mut().set_catalog(catalog);
             }
+            self.reload_lists();
             self.reload_projects();
 
             app.activate();
@@ -281,11 +306,6 @@ define_class!(
     }
 
     unsafe impl NSWindowDelegate for Delegate {
-        #[unsafe(method(windowDidBecomeKey:))]
-        fn window_did_become_key(&self, _notification: &NSNotification) {
-            self.refresh_local_status();
-        }
-
         #[unsafe(method(windowWillClose:))]
         fn window_will_close(&self, _notification: &NSNotification) {
             NSApplication::sharedApplication(self.mtm()).terminate(None);
@@ -305,17 +325,52 @@ define_class!(
 
     unsafe impl NSTableViewDataSource for Delegate {
         #[unsafe(method(numberOfRowsInTableView:))]
-        fn project_count(&self, _table: &NSTableView) -> isize {
-            self.ivars().model.borrow().project_count() as isize
+        fn project_count(&self, table: &NSTableView) -> isize {
+            let model = self.ivars().model.borrow();
+            if self.ivars().sources.get().is_some_and(|sources| std::ptr::eq(&**sources, table)) {
+                return model.sources().count() as isize;
+            }
+            model.project_count() as isize
         }
     }
 
     unsafe impl NSControlTextEditingDelegate for Delegate {}
 
     unsafe impl NSTableViewDelegate for Delegate {
+        #[unsafe(method(tableViewSelectionDidChange:))]
+        fn source_changed(&self, notification: &NSNotification) {
+            let sources = self.ivars().sources.get().expect("source list");
+            if !notification.object()
+                .and_then(|object| object.downcast::<NSTableView>().ok())
+                .is_some_and(|table| std::ptr::eq(&*table, &**sources))
+            {
+                return;
+            }
+            let mut model = self.ivars().model.borrow_mut();
+            let Some((source, _)) = model.sources().nth(sources.selectedRow() as usize) else { return; };
+            let source = source.to_owned();
+            if model.source() != source {
+                model.set_source(source);
+                drop(model);
+                let projects = self.ivars().projects.get().expect("project list");
+                projects.reloadData();
+                if projects.numberOfRows() > 0 {
+                    projects.scrollRowToVisible(0);
+                }
+            }
+        }
+
         #[unsafe(method_id(tableView:viewForTableColumn:row:))]
         fn project_row(&self, table: &NSTableView, column: Option<&NSTableColumn>, row: isize) -> Option<Retained<NSView>> {
             let model = self.ivars().model.borrow();
+            if self.ivars().sources.get().is_some_and(|sources| std::ptr::eq(&**sources, table)) {
+                let (url, name) = model.sources().nth(usize::try_from(row).ok()?)?;
+                let label = NSTextField::labelWithString(&NSString::from_str(name), self.mtm());
+                if url.starts_with("http") {
+                    label.setToolTip(Some(&NSString::from_str(url)));
+                }
+                return Some(label.into_super().into_super());
+            }
             usize::try_from(row).ok().and_then(|index| model.project(index)).map(|project| {
                 let width = column.map_or(table.bounds().size.width, NSTableColumn::width);
                 let height = table.rowHeight();
@@ -466,7 +521,6 @@ define_class!(
         fn restart_project_service(&self, sender: &NSMenuItem) {
             if let Some(path) = self.menu_project(sender).and_then(|project| project.path) {
                 self.project_task(move || launcher::restart_local_service(&path), |delegate, result| {
-                    delegate.refresh_local_status();
                     if let Err(error) = result {
                         delegate.show_error("Could not restart the project service", &error);
                     }
@@ -605,25 +659,6 @@ impl Delegate {
             });
     }
 
-    fn refresh_local_status(&self) {
-        if !self.ivars().checking_service.replace(true) {
-            self.project_task(
-                || Ok(launcher::local_service_status()),
-                |delegate, result| {
-                    delegate.ivars().checking_service.set(false);
-                    if let Ok(status) = result {
-                        delegate
-                            .ivars()
-                            .service_status
-                            .get()
-                            .expect("local service status")
-                            .setStringValue(&NSString::from_str(status));
-                    }
-                },
-            );
-        }
-    }
-
     fn open_remote(
         &self,
         heading: &'static str,
@@ -636,7 +671,6 @@ impl Delegate {
     }
 
     fn reload_projects(&self) {
-        self.refresh_local_status();
         let load = self.ivars().model.borrow_mut().begin_project_load();
         self.project_task(launcher::load_projects, move |delegate, projects| {
             let result = delegate
@@ -645,16 +679,30 @@ impl Delegate {
                 .borrow_mut()
                 .finish_project_load(load, projects);
             match result {
-                Ok(true) => delegate
-                    .ivars()
-                    .projects
-                    .get()
-                    .expect("project list")
-                    .reloadData(),
+                Ok(true) => delegate.reload_lists(),
                 Ok(false) => (),
                 Err(error) => delegate.show_error("Could not load projects", &error),
             }
         });
+    }
+
+    fn reload_lists(&self) {
+        let sources = self.ivars().sources.get().expect("source list");
+        let selected = {
+            let model = self.ivars().model.borrow();
+            model
+                .sources()
+                .position(|(url, _)| url == model.source())
+                .unwrap_or(0)
+        };
+        sources.reloadData();
+        sources
+            .selectRowIndexes_byExtendingSelection(&NSIndexSet::indexSetWithIndex(selected), false);
+        self.ivars()
+            .projects
+            .get()
+            .expect("project list")
+            .reloadData();
     }
 
     fn project_task<T: Send + 'static>(
@@ -737,8 +785,7 @@ impl Delegate {
         let this = Self::alloc(mtm).set_ivars(DelegateIvars {
             window: OnceCell::new(),
             projects: OnceCell::new(),
-            service_status: OnceCell::new(),
-            checking_service: Cell::default(),
+            sources: OnceCell::new(),
             model: RefCell::new(Launcher::default()),
             preferences: OnceCell::new(),
         });

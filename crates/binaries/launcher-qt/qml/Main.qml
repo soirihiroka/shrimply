@@ -17,19 +17,11 @@ ApplicationWindow {
     visible: true
     title: backend.text("Shrimply")
 
-    readonly property int sidebarWidth: 140
+    readonly property int sidebarWidth: 212
     readonly property int pageMargin: 12
 
     LauncherBackend {
         id: backend
-    }
-
-    Timer {
-        interval: 2000
-        running: window.active
-        repeat: true
-        triggeredOnStart: true
-        onTriggered: backend.refreshDaemonStatus()
     }
 
     Connections {
@@ -63,28 +55,40 @@ ApplicationWindow {
             Layout.preferredWidth: window.sidebarWidth
             Layout.fillHeight: true
             Layout.margins: window.pageMargin
-            Image {
-                Layout.alignment: Qt.AlignHCenter
-                Layout.preferredWidth: 48
-                Layout.preferredHeight: 48
-                source: "qrc:/shrimply/icons/dev.shrimply.Shrimply.svg"
+            RowLayout {
+                spacing: 8
+                Image {
+                    Layout.preferredWidth: 56
+                    Layout.preferredHeight: 56
+                    source: "qrc:/shrimply/icons/dev.shrimply.Shrimply.svg"
+                }
+                ColumnLayout {
+                    spacing: 3
+                    Label {
+                        text: window.title
+                        font.bold: true
+                    }
+                    Label {
+                        text: backend.version()
+                        opacity: 0.75
+                    }
+                }
             }
-            Label {
-                Layout.alignment: Qt.AlignHCenter
-                text: window.title
-                font.bold: true
+            ListView {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                clip: true
+                model: backend.sources
+                delegate: ItemDelegate {
+                    required property var modelData
+                    width: ListView.view.width
+                    text: modelData.name
+                    highlighted: backend.selectedSource === modelData.url
+                    ToolTip.visible: hovered && modelData.url.startsWith("http")
+                    ToolTip.text: modelData.url
+                    onClicked: backend.selectSource(modelData.url)
+                }
             }
-            Label {
-                Layout.alignment: Qt.AlignHCenter
-                text: backend.version()
-                opacity: 0.75
-            }
-            Label {
-                Layout.alignment: Qt.AlignHCenter
-                text: backend.daemonStatus
-                opacity: 0.75
-            }
-            Item { Layout.fillHeight: true }
             ToolButton {
                 id: mainMenuButton
                 text: backend.text("Main Menu")
@@ -99,14 +103,19 @@ ApplicationWindow {
         Pane {
             Layout.fillWidth: true
             Layout.fillHeight: true
+            padding: 0
             ColumnLayout {
                 anchors.fill: parent
                 Label {
+                    Layout.topMargin: window.pageMargin
+                    Layout.leftMargin: window.pageMargin
                     text: backend.text("Projects")
                     font.bold: true
                 }
                 RowLayout {
                     Layout.fillWidth: true
+                    Layout.leftMargin: window.pageMargin
+                    Layout.rightMargin: window.pageMargin
                     TextField {
                         id: search
                         Layout.fillWidth: true
@@ -132,17 +141,22 @@ ApplicationWindow {
                     }
                 }
                 Item {
+                    id: projectViewport
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     ListView {
                         id: projects
                         anchors.fill: parent
+                        anchors.rightMargin: projectScrollBar.visible ? projectScrollBar.width + 6 : 0
                         clip: true
                         model: backend.projects
+                        bottomMargin: window.pageMargin
                         spacing: 8
+                        onModelChanged: positionViewAtBeginning()
                         delegate: Rectangle {
                             required property var modelData
-                            width: projects.width - (projectScrollBar.visible ? projectScrollBar.width : 0)
+                            x: window.pageMargin
+                            width: projects.width - 2 * window.pageMargin
                             height: card.implicitHeight + 8
                             radius: 8
                             color: window.palette.alternateBase
@@ -174,7 +188,14 @@ ApplicationWindow {
                                 }
                             }
                         }
-                        ScrollBar.vertical: ScrollBar { id: projectScrollBar; policy: ScrollBar.AsNeeded }
+                        ScrollBar.vertical: ScrollBar {
+                            id: projectScrollBar
+                            parent: projectViewport
+                            anchors.top: projects.top
+                            anchors.bottom: projects.bottom
+                            anchors.right: parent.right
+                            policy: ScrollBar.AsNeeded
+                        }
                     }
                     Label {
                         anchors.centerIn: parent

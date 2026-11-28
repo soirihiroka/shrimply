@@ -21,8 +21,9 @@ use shrimply_resource_pipeline::fingerprint::Writer;
 
 use crate::{MediaCache, MediaReader, ProjectVersion, SyncRequest, SyncResponse};
 use shrimply_project_protocol::{
-    ErrorResponse, LEGACY_CHECKPOINT_FIELD, MediaBlob, ProjectSummary, ProjectVersionReceipt,
-    PublishRequest, ServerVersion, SignIn, UPLOAD_CHUNK_BYTES, UploadReceipt, valid_digest,
+    ErrorResponse, LEGACY_CHECKPOINT_FIELD, MediaBlob, PROJECT_SERVER_NAME_HEADER, ProjectSummary,
+    ProjectVersionReceipt, PublishRequest, ServerVersion, SignIn, UPLOAD_CHUNK_BYTES,
+    UploadReceipt, valid_digest,
 };
 
 #[derive(Debug)]
@@ -167,8 +168,17 @@ impl ProjectClient {
         .and_then(decode_version)
     }
 
-    pub fn list_projects(&self) -> Result<Vec<ProjectSummary>, RequestError> {
-        response(self.request(Method::GET, None, &[]).send())
+    pub fn list_projects(&self) -> Result<(Vec<ProjectSummary>, Option<String>), RequestError> {
+        let reply = self.request(Method::GET, None, &[]).send();
+        let name = reply
+            .as_ref()
+            .ok()
+            .and_then(|reply| reply.headers().get(PROJECT_SERVER_NAME_HEADER))
+            .and_then(|name| std::str::from_utf8(name.as_bytes()).ok())
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .map(str::to_owned);
+        response(reply).map(|projects| (projects, name))
     }
 
     pub fn version(&self) -> Result<ServerVersion, RequestError> {
