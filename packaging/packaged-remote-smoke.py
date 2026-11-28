@@ -148,6 +148,8 @@ def smoke(executable, server_executable, directory):
 
 if __name__ == "__main__":
     app_path, server_path = (Path(arg).resolve(strict=True) for arg in sys.argv[1:])
-    subprocess.run([app_path, "--version"], check=True, timeout=15)
+    build = json.loads(subprocess.check_output([app_path, "version"], timeout=15))["cli"]
+    assert build["git_hash"] == os.environ["PACKAGE_SHA"], build
+    print(f"Packaged source checked at {build['git_hash']}", flush=True)
     with tempfile.TemporaryDirectory() as temporary:
         smoke(app_path, server_path, Path(temporary))

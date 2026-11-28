@@ -50,6 +50,7 @@ jobs:
           make project-server
 
       - name: Download the exact application package
+        id: package
         env:
           GH_TOKEN: ${{ github.token }}
           PACKAGE_RUN: ${{ matrix.build }}
@@ -59,6 +60,8 @@ jobs:
           cd "$RUNNER_TEMP"
           for attempt in {1..65}; do
             if gh run download "$PACKAGE_RUN" --repo "$GITHUB_REPOSITORY" --name "$PACKAGE_NAME"; then
+              sha=$(gh run view "$PACKAGE_RUN" --repo "$GITHUB_REPOSITORY" --json headSha --jq .headSha)
+              printf 'sha=%s\n' "$sha" >> "$GITHUB_OUTPUT"
               exit 0
             fi
             status=$(gh run view "$PACKAGE_RUN" --repo "$GITHUB_REPOSITORY" --json status --jq .status)
@@ -84,6 +87,7 @@ jobs:
         env:
           APP_ENTRY: ${{ matrix.executable }}
           SERVER_ENTRY: ${{ matrix.server }}
+          PACKAGE_SHA: ${{ steps.package.outputs.sha }}
         shell: bash
         run: python packaging/packaged-remote-smoke.py "$RUNNER_TEMP/$APP_ENTRY" "$SERVER_ENTRY"
 
