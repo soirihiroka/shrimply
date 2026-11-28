@@ -2,13 +2,14 @@ pub const NAME: &str = "Shrimply";
 pub const DESCRIPTION: &str = "A simple yet powerful cross platform video editor.";
 pub const DEVELOPER: &str = "Soiri Hiroka";
 pub const WEBSITE: (&str, &str) = ("Website", "https://github.com/soirihiroka/shrimply");
+pub const DOCUMENTATION: (&str, &str) = ("Documentation", "https://shrimply.pages.dev/");
 pub const REPORT_ISSUE: (&str, &str) = (
     "Report an Issue",
     "https://github.com/soirihiroka/shrimply/issues/new",
 );
 pub const LINKS: &[(&str, &str)] = &[
     WEBSITE,
-    ("Documentation", "https://shrimply.pages.dev/"),
+    DOCUMENTATION,
     (
         "Discussion",
         "https://yapioca.com/thread/oxB4ibobSf-GU8BdisXgIg/",
