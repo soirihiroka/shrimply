@@ -262,7 +262,7 @@ pub(crate) fn short_grouping(spectra: &[[f32; FRAME_SAMPLES]; 2]) -> (u8, usize,
     let mut low = [[0.0_f32; 8]; 2];
     let mut high = [[0.0_f32; 8]; 2];
     for c in 0..2 {
-        for (w, win) in spectra[c].chunks_exact(SHORT).enumerate() {
+        for (w, win) in spectra[c].as_chunks::<SHORT>().0.iter().enumerate() {
             let mut e_low = 0.0;
             let mut e_mid = 0.0;
             let mut e_high = 0.0;

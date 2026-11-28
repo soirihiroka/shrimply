@@ -337,8 +337,8 @@ impl Psychoacoustics {
                     in_group = 0;
                 }
             }
-            for c in 0..2 {
-                self.prev_long_thr[c].fill(0.0);
+            for prev in &mut self.prev_long_thr {
+                prev.fill(0.0);
             }
             let mut thr_eff = [Vec::with_capacity(total), Vec::with_capacity(total)];
             for c in 0..2 {
