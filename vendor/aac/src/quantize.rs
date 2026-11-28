@@ -282,8 +282,13 @@ impl Search {
             } else {
                 1.0_f32
             };
-            // Clamp to ±28 (±7 dB) so consecutive IS scalefactor deltas never exceed ±60.
-            let is_pos = (2.0 * (e_l / e_r).log2()).round().clamp(-28.0, 28.0) as i16;
+            // Skip extreme panning (> ±28 IS steps = ±42 dB) so consecutive IS scalefactor
+            // deltas never exceed ±60 and extreme single-channel treble bands keep exact gain.
+            let raw_is_pos = (2.0 * (e_l / e_r).log2()).round();
+            if raw_is_pos.abs() > 28.0 {
+                continue;
+            }
+            let is_pos = raw_is_pos as i16;
             let mut e_sum = 0.0_f32;
             for i in start..end {
                 let v = frame.spectra_lr[0][i] + c_want * frame.spectra_lr[1][i];

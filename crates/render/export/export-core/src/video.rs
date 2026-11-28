@@ -50,22 +50,15 @@ pub enum ExportRateControl {
     Lossless,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ExportAudioEncoder {
+    #[default]
     ShrimplyAac,
     Aac,
     #[cfg(target_os = "macos")]
     AudioToolboxAac,
     Opus,
-}
-
-impl Default for ExportAudioEncoder {
-    fn default() -> Self {
-        available_audio_encoders()
-            .next()
-            .map_or(Self::Aac, |(encoder, _)| encoder)
-    }
 }
 
 #[derive(Clone, Debug)]
@@ -869,10 +862,10 @@ fn receive_video_packets(
 
 pub fn available_audio_encoders() -> impl Iterator<Item = (ExportAudioEncoder, &'static str)> {
     [
+        (ExportAudioEncoder::ShrimplyAac, "Shrimply AAC"),
         #[cfg(target_os = "macos")]
         (ExportAudioEncoder::AudioToolboxAac, "AudioToolbox AAC"),
         (ExportAudioEncoder::Aac, "AAC"),
-        (ExportAudioEncoder::ShrimplyAac, "Shrimply AAC"),
         (ExportAudioEncoder::Opus, "Opus"),
     ]
     .into_iter()
